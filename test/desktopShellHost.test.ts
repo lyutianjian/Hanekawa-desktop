@@ -1632,9 +1632,10 @@ test('delete-session deletes by the resolved id, not the prefix it was given', a
   }
 })
 
-test('delete-session rejects an unknown session and an unopened project', async () => {
+test('delete-session sweeps an unknown session and rejects an unopened project', async () => {
   const h = createHarness()
-  await assert.rejects(h.client.deleteSession(h.entry.root, 'nope'), /Session not found: nope/)
+  assert.deepEqual(await h.client.deleteSession(h.entry.root, 'nope'), { ok: true })
+  assert.deepEqual(h.project.store.deleted, ['nope'])
   await assert.rejects(
     h.client.deleteSession(fixturePath('repo', 'never-opened'), 's1'),
     /No project is open at/,

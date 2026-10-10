@@ -27,7 +27,7 @@ import {
   type StartupPermissionMode,
 } from '../config/settings.js'
 import { DEFAULT_CONTEXT_MANAGEMENT, type ContextManagementConfig } from '../prompts/budget.js'
-import { deleteSessionArtifacts } from '../runtime/deleteSession.js'
+import { coordinatedThreadSessionIds, deleteSessionArtifacts } from '../runtime/deleteSession.js'
 import type { ProviderConfigChangeScope } from '../runtime/providerRuntime.js'
 import type { SessionMeta } from '../sessions/service.js'
 import { SessionStore } from '../sessions/service.js'
@@ -1603,9 +1603,9 @@ export class ShellHost<
    *     would work until the day someone deletes their only open session.
    *  2. The id is **resolved** first. `SessionStore.delete` accepts a prefix but
    *     `deleteSessionArtifacts` does not, so passing the raw wire string
-   *     through would delete the right session and the wrong file history (or
-   *     throw on the guard). An id that resolves to nothing fails rather than
-   *     silently answering `ok`.
+   *     through would delete the right session and the wrong file history. An
+   *     id that resolves to nothing is swept as given: a delete interrupted
+   *     after the store step leaves artifacts only a retry can reach.
    *  3. The lane goes before the files. `detachLane` is the single exit path,
    *     and a pane still holding a session whose JSONL just vanished is a ghost
    *     row whose next append recreates the file.
@@ -1645,21 +1645,23 @@ export class ShellHost<
       if (cwd === undefined) throw new Error(`No project is open at ${projectRoot}`)
       const store = new SessionStore(cwd)
       const session = await store.resolve(sessionId)
-      if (!session) throw new Error(`Session not found: ${sessionId}`)
-      await deleteSessionArtifacts(cwd, store, session.id)
+      await deleteSessionArtifacts(cwd, store, session?.id ?? sessionId)
       return { ok: true } satisfies WireShellDeleteSessionResult
     }
     const { store } = entry.project
     const { cwd } = entry
 
-    const session = await store.resolve(sessionId)
-    if (!session) throw new Error(`Session not found: ${sessionId}`)
+    // A session already gone from the store may still have left artifacts —
+    // a coordination pointer naming it, say — so its id is swept all the same.
+    const session = (await store.resolve(sessionId)) ?? { id: sessionId }
 
-    const lane = this.laneForSessionId(session.id)
-    // The window's last lane: the project must stay open, because the draft
+    // A coordinator takes its threads with it, so their lanes go too.
+    const ids = [...(await coordinatedThreadSessionIds(cwd, session.id)), session.id]
+    const lanes = ids.flatMap((id) => this.laneForSessionId(id) ?? [])
+    // The window's last lanes: the project must stay open, because the draft
     // below is going to be opened on it.
-    const replacing = lane !== undefined && this.lanes.size === 1
-    if (lane !== undefined) this.detachLane(lane, 'session-deleted', { deferExit: replacing })
+    const replacing = lanes.length > 0 && lanes.length === this.lanes.size
+    for (const lane of lanes) this.detachLane(lane, 'session-deleted', { deferExit: replacing })
 
     await deleteSessionArtifacts(cwd, store, session.id)
 

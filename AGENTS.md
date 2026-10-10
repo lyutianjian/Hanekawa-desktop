@@ -69,7 +69,7 @@ tui/ or desktop/ -> runtime/ + harness/ -> config/providers/
 - Board snapshots and thread notes reach the coordinator as `coordination_update` records, delivered at step boundaries (and before a user/wake message) via `peekCoordinationUpdate` then `ackCoordinationUpdate` after the append; unsent snapshots coalesce, sent ones are never rewritten (cache prefix).
 - The shell pushes `coordination-threads` to the renderer, coalesced per root. Notes are wrapped in an app-added `<thread-note>` marker, parsed by `renderer/model/threadNotes.ts` into cards; keep the two in step.
 - Merges run in the app via git, never through the model: dirty main tree refuses, conflict runs `git merge --abort`.
-- Thread/coordinator sessions refuse `/clear`, `/resume` and session switches. Deleting a thread marks it stale; deleting the coordinator clears the pointer.
+- Thread/coordinator sessions refuse `/clear`, `/resume` and session switches. Deleting a thread marks it stale; deleting the coordinator ends the project's coordination: every thread session and worktree and the coordination directory go with it.
 
 ## Loop, tools, and context
 

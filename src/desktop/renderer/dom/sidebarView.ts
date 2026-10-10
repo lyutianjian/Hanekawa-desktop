@@ -505,7 +505,7 @@ export function createSidebarView(
         index,
         index >= 0 && index === selectedIndex,
         trailing,
-        `项目「${entry.projectName}」的协调会话`,
+        `项目「${entry.projectName}」的协调会话及其全部线程`,
       )
     }
     const open = button('session-open', entry.projectName, '打开此项目的协调会话', () =>

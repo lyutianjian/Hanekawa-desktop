@@ -141,13 +141,6 @@ export class CoordinationStore {
     })
   }
 
-  /** Forgets the coordinator and its inbox; the thread table stays. */
-  async clearCoordinator(): Promise<void> {
-    await this.update((f) => {
-      delete f.coordinator
-    })
-  }
-
   /** Mutates the coordinator state, which must already exist. */
   private async mutateCoordinator(fn: (c: CoordinatorState) => void): Promise<void> {
     await this.update((f) => {

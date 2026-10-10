@@ -64,7 +64,7 @@ export async function deleteSessionArtifacts(
   // `attachments/`: the files the user imported *from* are theirs and
   // are never touched.
   await removeSessionAttachmentsAt(cwd, sessionId)
-  await cleanupCoordination(cwd, sessionId)
+  await cleanupCoordination(cwd, store, sessionId)
   // Last: the only removal here that runs git, so the one most likely to throw.
   await new GitSubagentWorktreeManager().cleanupSession({ cwd, parentSessionId: sessionId })
 }
@@ -84,17 +84,35 @@ export async function removeSubagentTranscripts(cwd: string, sessionId: string):
 export type { SessionMeta }
 
 /**
- * A deleted thread session stays in the table as `stale` so `message_thread`
- * can say why it is gone; a deleted coordinator just loses the pointer, and the
- * next entry creates a new one. A project without a coordination file is left
- * untouched — `read()` does not create it and nothing is written.
+ * The thread sessions deleting `sessionId` takes with it: none unless it is the
+ * project's coordinator. The shell detaches their lanes before deleting.
  */
-async function cleanupCoordination(cwd: string, sessionId: string): Promise<void> {
-  const store = new CoordinationStore(cwd)
-  const file = await store.read()
-  if (file.coordinator?.sessionId === sessionId) await store.clearCoordinator()
+export async function coordinatedThreadSessionIds(cwd: string, sessionId: string): Promise<string[]> {
+  const file = await new CoordinationStore(cwd).read()
+  if (file.coordinator?.sessionId !== sessionId) return []
+  return file.threads.flatMap((t) => (t.sessionId && t.status !== 'stale' ? [t.sessionId] : []))
+}
+
+/**
+ * A deleted thread session stays in the table as `stale` so `message_thread`
+ * can say why it is gone. A deleted coordinator ends the project's
+ * coordination: the file goes first, so the thread deletions below find no
+ * table to patch, then every thread's worktree and session. A project without
+ * a coordination file is left untouched — `read()` does not create it.
+ */
+async function cleanupCoordination(cwd: string, store: SessionArtifactStore, sessionId: string): Promise<void> {
+  const coordination = new CoordinationStore(cwd)
+  const file = await coordination.read()
+  if (file.coordinator?.sessionId === sessionId) {
+    await coordination.removeAll()
+    for (const thread of file.threads) {
+      if (thread.worktree) await removeThreadWorktree(cwd, thread.worktree)
+      if (thread.sessionId && thread.status !== 'stale') await deleteSessionArtifacts(cwd, store, thread.sessionId)
+    }
+    return
+  }
   const thread = file.threads.find((t) => t.sessionId === sessionId)
   if (!thread) return
-  await store.patchThread(thread.threadId, { status: 'stale', statusLine: 'session deleted' })
+  await coordination.patchThread(thread.threadId, { status: 'stale', statusLine: 'session deleted' })
   if (thread.worktree) await removeThreadWorktree(cwd, thread.worktree)
 }

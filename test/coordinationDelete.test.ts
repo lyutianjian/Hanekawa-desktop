@@ -5,7 +5,7 @@ import { existsSync } from 'node:fs'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { deleteSessionArtifacts } from '../src/runtime/deleteSession.js'
+import { coordinatedThreadSessionIds, deleteSessionArtifacts } from '../src/runtime/deleteSession.js'
 import { CoordinationStore } from '../src/services/coordination/threadStore.js'
 import type { ThreadRecord } from '../src/services/coordination/types.js'
 import { SessionStore } from '../src/sessions/service.js'
@@ -47,16 +47,28 @@ test('deleting a thread session marks it stale and keeps the others', async () =
   })
 })
 
-test('deleting the coordinator clears the pointer and keeps threads', async () => {
+test('deleting the coordinator removes the coordination and every thread session', async () => {
+  await withCwd(async (cwd) => {
+    const coord = new CoordinationStore(cwd)
+    await coord.setCoordinatorSessionId(COORD)
+    await coord.upsertThread(thread('thr_a', T1))
+    await coord.upsertThread(thread('thr_b', T2, { status: 'stale' }))
+    assert.deepEqual(await coordinatedThreadSessionIds(cwd, COORD), [T1])
+    assert.deepEqual(await coordinatedThreadSessionIds(cwd, T1), [])
+    const deleted: string[] = []
+    await deleteSessionArtifacts(cwd, { delete: async (id) => { deleted.push(id) } }, COORD)
+    assert.deepEqual(deleted, [COORD, T1])
+    assert.equal(await coord.exists(), false)
+  })
+})
+
+test('a coordinator already gone from the store is still swept on retry', async () => {
   await withCwd(async (cwd) => {
     const coord = new CoordinationStore(cwd)
     await coord.setCoordinatorSessionId(COORD)
     await coord.upsertThread(thread('thr_a', T1))
     await deleteSessionArtifacts(cwd, noopStore, COORD)
-    const file = await coord.read()
-    assert.equal(file.coordinator, undefined)
-    assert.equal(file.threads.length, 1)
-    assert.equal(file.threads[0]!.status, 'idle')
+    assert.equal(await coord.exists(), false)
   })
 })
 
