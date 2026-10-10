@@ -1151,7 +1151,19 @@ body.settings-open #browser-resizer { display: none; }
   padding: 0 var(--space-2);
   cursor: default;
 }
-.side-tab-close:hover { background: var(--surface-active); color: var(--text-primary); }
+.side-tab-x {
+  margin-left: calc(-1 * var(--space-1));
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: var(--type-meta);
+  padding: 0 var(--space-1);
+  cursor: default;
+}
+.side-tab-close:hover,
+.side-tab-x:hover { background: var(--surface-active); color: var(--text-primary); }
 #subagent-view {
   flex: 1 1 auto;
   min-height: 0;
@@ -3131,7 +3143,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 #task-panel:empty { display: none; }
 /* The running-process tag: a quiet pill above the composer that opens `/tasks`. */
 #process-strip:empty { display: none; }
-#process-strip { display: flex; margin-bottom: var(--space-2); }
+#process-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-2); }
 .process-chip {
   display: inline-flex;
   align-items: center;
@@ -3147,6 +3159,13 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 .process-chip:hover { color: var(--text-primary); background: var(--surface-hover); }
 .process-chip .icon { width: 8px; height: 8px; color: var(--text-success); }
+.thread-chip .icon {
+  width: 12px;
+  height: 12px;
+  color: var(--accent-brand-strong);
+  animation: spin var(--motion-running) linear infinite;
+}
+.thread-chip-blocked { color: var(--text-warn); }
 .task-panel {
   position: relative;
   background: var(--surface-card);

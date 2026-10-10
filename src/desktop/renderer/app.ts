@@ -124,6 +124,20 @@ import type { WireCoordinationThreads, WireThreadMerge, WireThreadStatus } from 
 import { THREAD_STATUS_LABEL, coordinationCounts, threadBySession, threadFinished, threadTone } from './model/coordinationStatus.js'
 import { threadPanelView, type ThreadFold, type ThreadPanelIntent } from './model/threadPanel.js'
 import { mergeBarView, type MergeBarIntent } from './model/mergeBar.js'
+import {
+  OVERVIEW_CLOSED_STORAGE_KEY,
+  autoOpensOverview,
+  parseOverviewClosed,
+  serializeOverviewClosed,
+  keepSelectedSubagent,
+  pruneExtras,
+  sidePanelView,
+  sideTabEntries,
+  threadStripView,
+  type ExtraTab,
+  type SidePanelInput,
+  type SideTab,
+} from './model/sidePanel.js'
 import { createThreadPanelView } from './dom/threadPanelView.js'
 import { createMergeBarView } from './dom/mergeBarView.js'
 
@@ -221,7 +235,14 @@ const suggestions = createSuggestionsView(required('suggestions'), (index) => {
 // Resident, and window-level like every other singleton the active pane drives:
 // it lives on the composer's own axis, so exactly one is on screen at a time.
 const taskPanel = createTaskPanelView(required('task-panel'))
-const processStrip = createProcessStripView(required('process-strip'), () => activePane()?.toggleBackgroundTasks())
+const processStrip = createProcessStripView(
+  required('process-strip'),
+  () => activePane()?.toggleBackgroundTasks(),
+  (target) => {
+    if (target.kind === 'overview') showSideTab('threads')
+    else openSessionById(activeLaneInfo()!.projectRoot, target.sessionId)
+  },
+)
 const status = createStatusView({
   usage: required('status-usage'),
   cost: required('status-cost'),
@@ -416,6 +437,7 @@ function activateLane(lane: string): void {
   activeLane = lane
   lastActiveTick.set(lane, ++tick)
   paneSessions.get(lane)!.activate()
+  pruneSidePanel()
   applyPaneBudget()
   renderSidebar()
   // A switch changes which session the header is about, so a rename in progress
@@ -430,6 +452,7 @@ function activateLane(lane: string): void {
   // The merge bar belongs to the lane's project and role: hide what the last
   // lane showed now, and pull this one's after the debounce.
   renderMergeBar()
+  renderThreadStrip()
   scheduleMergePull()
   openModelSetupIfNeeded()
 }
@@ -596,7 +619,7 @@ function renderSidebar(): void {
     menus: titleMenus,
     openMenu: titleBarMenu,
     sidebarCollapsed: view.collapsed,
-    browserOpen: browserOpen && sideTab === 'browser',
+    browserOpen: browserPanelShown(),
     canCreate: view.canCreate,
   })
 }
@@ -1077,7 +1100,10 @@ shellClient.onCoordinationThreads((state) => {
   // first pull has nothing to compare with, so opening the app opens nothing.
   const started = previous !== undefined
     && state.threads.some((thread) => !previous.threads.some((known) => known.threadId === thread.threadId))
-  if (started && state.projectRoot === activeLaneInfo()?.projectRoot) showSideTab('threads')
+  if (state.projectRoot === activeLaneInfo()?.projectRoot) {
+    if (autoOpensOverview(started, overviewClosed.has(state.projectRoot)) && !coordinated()) showSideTab('threads')
+    renderThreadStrip()
+  }
   renderSidebar()
   renderCanvasHeader()
   renderSubagents()
@@ -1219,7 +1245,7 @@ const canvasHeader = createCanvasHeaderView(required('canvas-header'), {
     const thread = activeThread()
     if (lane && thread) runThreadCommand(lane.projectRoot, thread.threadId, 'stop')
   },
-  onOpenThreads: () => showSideTab('threads'),
+  onOpenThreads: () => toggleOverview(),
 })
 
 // --- settings ---------------------------------------------------------------
@@ -1385,7 +1411,69 @@ let browserOpen = false
  * Which view the side panel shows while `browserOpen`. The panel is shared: the
  * browser and the session's sub-agents take turns in it.
  */
-let sideTab: 'browser' | 'subagents' | 'threads' = 'browser'
+let sideTab: SideTab = 'browser'
+/**
+ * A coordinator or thread session ignores `browserOpen`: its 概览 switch is
+ * remembered per project, and the browser and sub-agents are tabs beside 概览.
+ */
+let overviewClosed = parseOverviewClosed(localStorage.getItem(OVERVIEW_CLOSED_STORAGE_KEY))
+let extraTabs: Set<ExtraTab> = new Set()
+/** The tab a coordination session has up, kept apart from the ordinary session's `sideTab`. */
+let coordTab: SideTab = 'threads'
+
+function coordinated(): boolean {
+  return activeLaneInfo()?.coordinationRole !== undefined
+}
+
+function sidePanelInput(): SidePanelInput {
+  const root = activeLaneInfo()?.projectRoot
+  return {
+    coordinated: coordinated(),
+    browserOpen,
+    sideTab: coordinated() ? coordTab : sideTab,
+    extras: extraTabs,
+    overviewClosed: root !== undefined && overviewClosed.has(root),
+  }
+}
+
+function setTab(tab: SideTab): void {
+  if (coordinated()) coordTab = tab
+  else sideTab = tab
+}
+
+/** Drops extra tabs and a sub-agent selection the session on screen has nothing behind. */
+function pruneSidePanel(): void {
+  const lane = activeLane
+  const entries = activePane()?.subagents() ?? []
+  extraTabs = pruneExtras(extraTabs, {
+    browserTabs: mintingTabs > 0 || (lane !== undefined && tabsForLane(shellClient.getBrowserTabs(), lane).length > 0),
+    subagents: entries.length > 0,
+  })
+  selectedSubagent = keepSelectedSubagent(selectedSubagent, entries.map((entry) => entry.id))
+}
+
+function browserPanelShown(): boolean {
+  const { open, tab } = sidePanelView(sidePanelInput())
+  return open && tab === 'browser'
+}
+
+/** Opens or collapses the panel: the 概览 switch in a coordination session, the browser switch elsewhere. */
+function setPanelOpen(open: boolean): void {
+  const root = activeLaneInfo()?.projectRoot
+  if (coordinated() && root !== undefined) {
+    const next = new Set(overviewClosed)
+    if (open) next.delete(root)
+    else next.add(root)
+    overviewClosed = next
+    try {
+      localStorage.setItem(OVERVIEW_CLOSED_STORAGE_KEY, serializeOverviewClosed(next))
+    } catch {
+      // Storage full or blocked: the choice still holds for this window.
+    }
+  } else {
+    browserOpen = open
+  }
+}
 /** The sub-agent on its own page in the panel; `undefined` is the list. */
 let selectedSubagent: string | undefined
 /** Which tab each lane last had on screen, so switching back restores it. */
@@ -1427,7 +1515,7 @@ function renderBrowser(): void {
     tabs,
     lane,
     activeTabId,
-    open: browserOpen && sideTab === 'browser',
+    open: browserPanelShown(),
     // The settings screen fills the canvas and owns the window; a page painted
     // beside it would be the one thing on screen it does not cover.
     occluded: settingsState.open,
@@ -1461,41 +1549,44 @@ const threadPanel = createThreadPanelView(threadView, (intent) => runThreadPanel
 let sideTabsDrawn: string | undefined
 
 function renderSubagents(): void {
-  const visible = browserOpen && !settingsState.open
+  const input = sidePanelInput()
+  const { open, tab } = sidePanelView(input)
+  const visible = open && !settingsState.open
   show(sidePanel, visible)
   show(sideResizer, visible)
   const pane = activePane()
   const entries = visible ? pane?.subagents() ?? [] : []
-  const onSubagents = visible && sideTab === 'subagents'
-  const onThreads = visible && sideTab === 'threads'
+  const onSubagents = visible && tab === 'subagents'
+  const onThreads = visible && tab === 'threads'
   const coordination = activeCoordination()
-  const threadsTab = hasCoordination(coordination) || onThreads
-  // The strip exists once there is something to switch to; the browser alone needs none.
-  const withTabs = visible && (entries.length > 0 || onSubagents || threadsTab)
-  show(sideTabs, withTabs)
+  const tabEntries = visible ? sideTabEntries(input, tab, hasCoordination(coordination), entries.length > 0) : []
+  show(sideTabs, tabEntries.length > 0)
   const running = entries.filter((entry) => entry.status === 'running' || entry.status === 'awaiting-approval').length
-  const threadsLabel = hasCoordination(coordination)
-    ? `线程 · ${coordinationCounts(coordination!.threads).running} 运行中`
-    : '线程'
-  const strip = `${withTabs}|${sideTab}|${running}|${threadsTab ? threadsLabel : ''}`
+  const labels: Record<SideTab, string> = {
+    browser: '浏览器',
+    subagents: running > 0 ? `子代理 · ${running} 运行中` : '子代理',
+    threads: hasCoordination(coordination)
+      ? `概览 · ${coordinationCounts(coordination!.threads).running} 运行中`
+      : '概览',
+  }
+  const strip = `${tab}|${tabEntries.map((entry) => `${entry.tab}${entry.closable ? 'x' : ''}:${labels[entry.tab]}`).join('|')}`
   if (strip !== sideTabsDrawn) {
     sideTabsDrawn = strip
-    const tab = (label: string, which: typeof sideTab, onClick: () => void): HTMLElement => {
-      const node = button(`side-tab${sideTab === which ? ' active' : ''}`, label, label, onClick)
+    const tabNodes = tabEntries.flatMap((entry) => {
+      const label = labels[entry.tab]
+      const node = button(`side-tab${tab === entry.tab ? ' active' : ''}`, label, label, () => {
+        if (entry.tab === 'subagents') selectedSubagent = undefined
+        showSideTab(entry.tab)
+      })
       node.setAttribute('role', 'tab')
-      node.setAttribute('aria-selected', String(sideTab === which))
-      return node
-    }
+      node.setAttribute('aria-selected', String(tab === entry.tab))
+      return entry.closable ? [node, button('side-tab-x', '✕', `关闭${label}`, () => closeSideTab(entry.tab as ExtraTab))] : [node]
+    })
     replace(
       sideTabs,
-      tab('浏览器', 'browser', () => showSideTab('browser')),
-      tab(running > 0 ? `子代理 · ${running} 运行中` : '子代理', 'subagents', () => {
-        selectedSubagent = undefined
-        showSideTab('subagents')
-      }),
-      threadsTab ? tab(threadsLabel, 'threads', () => showSideTab('threads')) : undefined,
+      ...tabNodes,
       button('side-tab-close', '✕', '关闭侧栏', () => {
-        browserOpen = false
+        setPanelOpen(false)
         renderSidebar()
         renderBrowser()
       }),
@@ -1516,10 +1607,11 @@ function renderSubagents(): void {
   pane?.setSelectedSubagent(onSubagents ? selectedSubagent : undefined)
 }
 
-/** Raise the panel onto one of its two views. */
-function showSideTab(tab: typeof sideTab): void {
-  browserOpen = true
-  sideTab = tab
+/** Raise the panel onto one of its views. */
+function showSideTab(tab: SideTab): void {
+  if (coordinated() && tab !== 'threads') extraTabs.add(tab)
+  setPanelOpen(true)
+  setTab(tab)
   // The title bar's browser button draws the browser half only.
   renderSidebar()
   // Opening onto nothing would be a blank panel, so the browser's first showing mints a tab.
@@ -1527,6 +1619,29 @@ function showSideTab(tab: typeof sideTab): void {
     createPanelTab(activeLane)
   }
   renderBrowser()
+}
+
+/** Closes an extra tab in a coordination session; the panel stays up on 概览. */
+function closeSideTab(tab: ExtraTab): void {
+  extraTabs.delete(tab)
+  coordTab = 'threads'
+  renderSidebar()
+  renderBrowser()
+}
+
+/** The 概览 button: collapses the panel when it is up, otherwise raises it onto 概览. */
+function toggleOverview(): void {
+  if (!sidePanelView(sidePanelInput()).open) {
+    showSideTab('threads')
+    return
+  }
+  setPanelOpen(false)
+  renderSidebar()
+  renderBrowser()
+}
+
+function renderThreadStrip(): void {
+  processStrip.renderThreads(threadStripView(coordinated(), activeCoordination()))
 }
 
 function openSubagent(id: string): void {
@@ -1585,10 +1700,14 @@ function createPanelTab(lane: string): void {
  * to the lane, not to the panel.
  */
 function toggleBrowserPanel(): void {
-  if (browserOpen && sideTab === 'browser') {
-    browserOpen = false
-    renderSidebar()
-    renderBrowser()
+  if (browserPanelShown()) {
+    if (coordinated()) {
+      closeSideTab('browser')
+    } else {
+      browserOpen = false
+      renderSidebar()
+      renderBrowser()
+    }
     return
   }
   showSideTab('browser')
@@ -1957,6 +2076,7 @@ shellClient.onLanes((lanes) => {
   renderBrowser()
   // The active lane's coordination role can move with the topology.
   renderMergeBar()
+  renderThreadStrip()
   scheduleMergePull()
 })
 
@@ -1972,9 +2092,12 @@ shellClient.onBrowserState((tabs) => {
   const arrived = newTabsForLane(tabs, activeLane, knownBrowserTabs)
   knownBrowserTabs = new Set(tabs.map((tab) => tab.tabId))
   const latest = arrived.at(-1)
-  if (latest !== undefined && activeLane !== undefined && (browserOpen || mintingTabs === 0)) {
-    browserOpen = true
-    sideTab = 'browser'
+  if (latest !== undefined && activeLane !== undefined && (sidePanelView(sidePanelInput()).open || mintingTabs === 0)) {
+    // A coordination session gets the browser as a tab beside 概览; a panel the
+    // user collapsed stays collapsed.
+    if (coordinated()) extraTabs.add('browser')
+    else browserOpen = true
+    setTab('browser')
     // Onto the new tab, not whichever one was last on screen: the page the agent
     // just opened is the one it is asking about.
     browserActiveTab.set(activeLane, latest.tabId)
@@ -1982,6 +2105,7 @@ shellClient.onBrowserState((tabs) => {
     // the only call site that paints the bar.
     renderSidebar()
   }
+  pruneSidePanel()
   renderBrowser()
 })
 

@@ -64,12 +64,17 @@ export function threadBucket(status: WireThreadStatus): ThreadBucket {
   return 'active'
 }
 
+/** Waiting on the user or the coordinator; what the counts call 需要你. */
+export function threadBlocked(status: WireThreadStatus): boolean {
+  return status === 'needs-you' || status === 'awaiting-coordinator'
+}
+
 export function coordinationCounts(threads: readonly WireThreadInfo[]): { running: number; blocked: number } {
   let running = 0
   let blocked = 0
   for (const thread of threads) {
     if (thread.status === 'running') running += 1
-    else if (thread.status === 'needs-you' || thread.status === 'awaiting-coordinator') blocked += 1
+    else if (threadBlocked(thread.status)) blocked += 1
   }
   return { running, blocked }
 }

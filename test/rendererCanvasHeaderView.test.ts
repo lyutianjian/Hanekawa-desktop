@@ -400,7 +400,7 @@ test('renaming a thread session swaps the crumb for the field, and back', (t) =>
   assert.equal(r.titleNode()?.node, r.crumb()!.node)
 })
 
-test('the 线程 button is shown for either coordination role and opens the threads tab', (t) => {
+test('the 概览 button is shown for either coordination role and toggles the overview', (t) => {
   const r = render(t)
   r.paint({})
   assert.equal(r.threadsButton(), undefined, 'an ordinary session has no threads tab to open')
@@ -408,7 +408,7 @@ test('the 线程 button is shown for either coordination role and opens the thre
   r.paint({ role: 'coordinator' })
   r.stub.click(r.threadsButton()!.node)
   r.paint({ role: 'thread', thread })
-  assert.equal(r.threadsButton()?.text, '线程')
+  assert.equal(r.threadsButton()?.text, '概览')
   r.stub.click(r.threadsButton()!.node)
   assert.deepEqual(r.events, ['open-threads', 'open-threads'])
 })

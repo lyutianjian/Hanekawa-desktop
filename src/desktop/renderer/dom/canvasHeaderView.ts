@@ -41,7 +41,7 @@ export interface CanvasHeaderActions {
   onBackToCoordinator?: () => void
   /** 停止 on a thread session that a stop applies to. */
   onStopThread?: () => void
-  /** 线程 — opens the side panel's threads tab, for either role. */
+  /** 概览 — toggles the side panel's overview, for either role. */
   onOpenThreads?: () => void
 }
 
@@ -72,8 +72,8 @@ export function createCanvasHeaderView(
   const locationLabel = el('span', 'btn-label')
   const openLocation = button('canvas-open-location', '', '', actions.onOpenLocation, { icon: 'external' })
   openLocation.appendChild(locationLabel)
-  const threadsLabel = el('span', 'btn-label', '线程')
-  const threadsButton = button('canvas-threads-open', '', '打开线程面板', () => actions.onOpenThreads?.())
+  const threadsLabel = el('span', 'btn-label', '概览')
+  const threadsButton = button('canvas-threads-open', '', '显示 / 隐藏概览', () => actions.onOpenThreads?.())
   threadsButton.appendChild(threadsLabel)
   // The thread crumb is persistent for the same reason the title input is: it
   // repaints with every snapshot. Its parts are built once and only updated.
