@@ -643,6 +643,10 @@ async function ensureShell(): Promise<Shell> {
     // A history row of a not-yet-open project bootstraps it on demand, over
     // the session the click named.
     ensureProject: async (cwd, options) => (await ensureProject(cwd, options)).entry,
+    ensureProjectFresh: async (cwd) => {
+      const { entry, session } = await ensureProject(cwd)
+      return { entry, ...(session ? { session } : {}) }
+    },
     // The write half of "从侧边栏移除": registry only. The shell has already
     // closed the lanes by the time this runs, and nothing on disk is deleted —
     // opening the directory again restores the group and its history.

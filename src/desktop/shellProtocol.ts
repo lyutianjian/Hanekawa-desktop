@@ -208,6 +208,12 @@ export type ShellCommand =
    * coordination pointer names.
    */
   | { type: 'open-coordinator'; id: string; projectRoot: string }
+  /**
+   * Picks a folder (or takes `path`, which spares tests the native modal),
+   * adds it as a project and opens its coordinator session. The home directory
+   * is refused: it is the global workspace and gets no coordinator.
+   */
+  | { type: 'new-coordinator-project'; id: string; path?: string }
   /** Stops the coordinator and every thread of the project that has a live lane. */
   | { type: 'coordination-stop-all'; id: string; projectRoot: string }
   /** Worktree threads whose branch has commits the project's branch lacks. */
@@ -707,6 +713,8 @@ export interface WireSessionSummary {
 export interface WireShellProjectSessions {
   projectRoot: string
   projectName: string
+  /** The real directory, as the user spelled it; `projectRoot` is a case-folded key. */
+  projectPath: string
   /**
    * The home directory's implicit workspace rather than an added project.
    *
@@ -798,6 +806,9 @@ export interface WireShellBrowserOkResult {
 /** `open-coordinator` answers like `open-session`: the lane it landed on. */
 export type WireShellOpenCoordinatorResult = WireShellOpenSessionResult
 
+/** `cancelled` when the folder picker was dismissed. */
+export type WireShellNewCoordinatorProjectResult = WireShellOpenCoordinatorResult | { cancelled: true }
+
 /** `ok` means the command ran; a stop does not wait for the turns to drain. */
 export interface WireShellCoordinationOkResult {
   ok: true
@@ -846,6 +857,8 @@ export interface WireThreadInfo {
 export interface WireCoordinationThreads {
   projectRoot: string
   coordinatorSessionId?: string
+  /** The project has had a coordinator, even if its session was since deleted. */
+  started?: true
   threads: WireThreadInfo[]
 }
 

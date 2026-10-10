@@ -91,6 +91,8 @@ import { button } from './dom/controls.js'
 import { onPressOutside } from './dom/dismiss.js'
 import { createCanvasHeaderView } from './dom/canvasHeaderView.js'
 import { createSettingsView } from './dom/settingsView.js'
+import { createProjectsPageView } from './dom/projectsPageView.js'
+import { projectCards } from './model/projectsPage.js'
 import { createOverlayView } from './dom/overlayView.js'
 import { createPermissionRequestView } from './dom/permissionRequestView.js'
 import { createRewindView } from './dom/rewindView.js'
@@ -430,6 +432,7 @@ function attachPaneSession(lane: string): void {
 }
 
 function activateLane(lane: string): void {
+  leaveProjects()
   if (!paneSessions.has(lane) || activeLane === lane) return
   // Whatever the route in — the sidebar, `Ctrl+T`, the title bar menu, a lane the
   // host opened and asked us to focus — a session coming on screen is the end of
@@ -607,6 +610,7 @@ function currentSidebarState(): SidebarState {
     collapsedProjects,
     helpOpen,
     recentOnly,
+    projectsOpen,
     coordination: coordinationByRoot,
   })
 }
@@ -614,6 +618,7 @@ function currentSidebarState(): SidebarState {
 function renderSidebar(): void {
   const view = buildSidebarView(currentSidebarState())
   sidebar.render(view)
+  renderProjects()
   // The bar's two live fields are the sidebar's: whether the rail is collapsed,
   // and whether anything may be opened right now. One call site, so they cannot
   // drift apart — the bar's own signature guard absorbs the repaints.
@@ -666,6 +671,10 @@ async function refreshSessions(): Promise<void> {
       sessionsAgain = false
       const result = await shellClient.listSessions()
       projects = result.projects
+      // A removed project takes its thread table, and so its pinned row and card, with it.
+      for (const root of coordinationByRoot.keys()) {
+        if (!projects.some((project) => project.projectRoot === root)) coordinationByRoot.delete(root)
+      }
       globalRoot = result.globalRoot
       renderSidebar()
       // The empty state's project switcher reads this list, and nothing else
@@ -713,6 +722,7 @@ function runSidebarIntent(intent: SidebarIntent): void {
       // ends up moving. Waiting for the host's round trip (or for the early
       // return below) would leave the click looking like it did nothing.
       leaveSettings()
+      leaveProjects()
       // Already in a fresh session *of the project being asked about*? Then
       // "new session" is a no-op — an empty session is invisible in the sidebar,
       // so minting another would only pile up panes nobody can see. The composer
@@ -741,6 +751,7 @@ function runSidebarIntent(intent: SidebarIntent): void {
       void shellClient.openProject().catch((error) => activePane()?.note(describe(error), 'error'))
       return
     case 'open-settings':
+      leaveProjects()
       runSettingsIntent({ kind: 'open' })
       return
     case 'toggle-collapse':
@@ -804,6 +815,10 @@ function runSidebarIntent(intent: SidebarIntent): void {
     case 'toggle-help':
       helpOpen = !helpOpen
       renderSidebar()
+      return
+    case 'toggle-projects':
+      if (projectsOpen) leaveProjects()
+      else openProjects()
       return
     case 'toggle-recent':
       recentOnly = !recentOnly
@@ -1256,6 +1271,61 @@ const canvasHeader = createCanvasHeaderView(required('canvas-header'), {
   onOpenThreads: () => toggleOverview(),
 })
 
+// --- the projects page ---------------------------------------------------------
+
+/**
+ * Fills the canvas with one card per coordination project. Unlike settings the
+ * sidebar stays up, and any lane activation ends it — the same choke point.
+ */
+let projectsOpen = false
+let projectsError: string | undefined
+const projectsNode = required('projects')
+projectsNode.tabIndex = -1
+const projectsPage = createProjectsPageView(projectsNode, {
+  onOpen: (projectRoot) => {
+    projectsError = undefined
+    void shellClient.openCoordinator(projectRoot).catch(showProjectsError)
+  },
+  onNew: () => {
+    projectsError = undefined
+    void shellClient.newCoordinatorProject().catch(showProjectsError)
+  },
+})
+
+function showProjectsError(error: unknown): void {
+  projectsError = describe(error)
+  renderProjects()
+}
+
+function renderProjects(): void {
+  projectsNode.hidden = !projectsOpen
+  canvas.classList.toggle('projects-open', projectsOpen)
+  document.body.classList.toggle('projects-open', projectsOpen)
+  if (projectsOpen) {
+    const canCreate = !(activePane()?.shellState().hasOverlay ?? false)
+    projectsPage.render(projectCards(projects, coordinationByRoot, removingProjects, Date.now()), projectsError, canCreate)
+  }
+}
+
+function openProjects(): void {
+  leaveSettings()
+  projectsOpen = true
+  projectsError = undefined
+  renderSidebar()
+  renderBrowser()
+  // Into the page: the composer behind it is hidden, and Escape must reach the page.
+  const first = projectsNode.querySelector<HTMLElement>('.project-card, .projects-new')
+  ;(first ?? projectsNode).focus()
+}
+
+function leaveProjects(): void {
+  if (!projectsOpen) return
+  projectsOpen = false
+  renderSidebar()
+  renderBrowser()
+  composer.focus()
+}
+
 // --- settings ---------------------------------------------------------------
 
 /**
@@ -1526,7 +1596,7 @@ function renderBrowser(): void {
     open: browserPanelShown(),
     // The settings screen fills the canvas and owns the window; a page painted
     // beside it would be the one thing on screen it does not cover.
-    occluded: settingsState.open,
+    occluded: settingsState.open || projectsOpen,
   })
   renderSubagents()
 }
@@ -1583,7 +1653,7 @@ let sideTabsDrawn: string | undefined
 function renderSubagents(): void {
   const input = sidePanelInput()
   const { open, tab } = sidePanelView(input)
-  const visible = open && !settingsState.open
+  const visible = open && !settingsState.open && !projectsOpen
   show(sidePanel, visible)
   show(sideResizer, visible)
   const pane = activePane()
@@ -2003,6 +2073,12 @@ document.addEventListener('keydown', (event) => {
 
   const pane = activePane()
   const action = resolveKey(chord, pane?.shellState() ?? EMPTY_SHELL_STATE)
+  // The page hides its lane, so Escape closes it instead of interrupting that lane's turn.
+  if (projectsOpen && chord.key === 'Escape' && action !== 'overlay' && action !== 'rewind' && !ownedByTarget(event)) {
+    event.preventDefault()
+    leaveProjects()
+    return
+  }
   // A blocking prompt and the rewind panel still take every key, wherever focus is.
   if (action !== 'overlay' && action !== 'rewind' && ownedByTarget(event)) return
   switch (action) {

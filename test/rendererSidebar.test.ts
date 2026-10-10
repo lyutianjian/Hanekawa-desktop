@@ -1010,7 +1010,7 @@ test('a project being removed takes its whole group with it', () => {
   assert.deepEqual(view.groups.map((group) => group.projectRoot), ['/b'])
 })
 
-// --- 项目调度 section -----------------------------------------------------------
+// --- pinned coordination section -----------------------------------------------------------
 
 function threadInfo(id: string, status: WireThreadStatus, title = id) {
   return { threadId: `th-${id}`, sessionId: id, title, status, lastActivityAt: at(0) }
@@ -1031,11 +1031,11 @@ const sampleThreads = [
   threadInfo('t4', 'resolved'),
 ]
 
-test('the coordinator leads its project group; threads stay out of the sidebar', () => {
+test('the pinned coordinator leads the rows; threads stay out of the sidebar', () => {
   const view = sidebarView(coordState({}, sampleThreads))
   assert.deepEqual(view.rows.map((row) => row.sessionId), ['coord', 'plain'])
   assert.deepEqual(view.groups[0]!.rows.map((row) => row.sessionId), ['plain'])
-  const group = view.groups[0]!.coordination!
+  const group = view.pinned[0]!
   assert.equal(group.projectName, 'alpha')
   assert.equal(group.running, 1)
   assert.equal(group.blocked, 1)
@@ -1053,29 +1053,71 @@ test('a thread session is never an ordinary row, even once it left the thread ta
 
 test('the coordinator row is active while one of its threads is on screen', () => {
   const view = sidebarView(coordState({ lanes: [lane('l1', 't1', '/a')], activeLane: 'l1' }, sampleThreads))
-  assert.equal(view.groups[0]!.coordination!.coordinator?.active, true)
+  assert.equal(view.pinned[0]!.coordinator?.active, true)
 })
 
-test('search keeps a coordination group only when its coordinator matches', () => {
+test('search keeps a pinned entry only when its coordinator matches', () => {
   const miss = sidebarView(coordState({ searchQuery: 'review' }, sampleThreads))
-  assert.equal(miss.groups.length, 0)
+  assert.equal(miss.pinned.length, 0)
   assert.equal(miss.noMatches, true)
   const hit = sidebarView(coordState({ searchQuery: '项目' }, sampleThreads))
-  assert.equal(hit.groups[0]!.coordination!.coordinator?.sessionId, 'coord')
+  assert.equal(hit.pinned[0]!.coordinator?.sessionId, 'coord')
 })
 
 test('recentOnly hides the section', () => {
   const view = sidebarView(coordState({ recentOnly: true }, sampleThreads))
-  assert.equal(view.groups.length, 0)
+  assert.equal(view.pinned.length, 0)
   assert.ok(!view.rows.some((row) => row.sessionId === 't1'))
 })
 
-test('a project with threads but no coordinator still gets a group; the signature covers its counts', () => {
+test('a project with threads but no coordinator is still pinned; the signature covers its counts', () => {
   const state = coordState({
     coordination: new Map([['/a', { projectRoot: '/a', threads: sampleThreads }]]),
   })
   const view = sidebarView(state)
-  assert.equal(view.groups[0]!.coordination!.coordinator, undefined)
+  assert.equal(view.pinned[0]!.coordinator, undefined)
   const changed = sidebarView(coordState({}, [threadInfo('t1', 'idle', 'build')]))
   assert.notEqual(sidebarRenderSignature(view), sidebarRenderSignature(changed))
+})
+
+test('pinned entries follow workspace order, skip unstarted projects, and drop one being removed', () => {
+  const table = (root: string, started: boolean): [string, WireCoordinationThreads] => [
+    root,
+    { projectRoot: root, ...(started ? { started: true as const } : {}), threads: [] },
+  ]
+  const state = stateWith({
+    projects: [project('/a', 'alpha', []), project('/b', 'beta', []), project('/c', 'gamma', []), project('/d', 'delta', [])],
+    coordination: new Map([table('/d', true), table('/c', true), table('/b', false), table('/a', true)]),
+    removingProjects: new Set(['/a']),
+  })
+  assert.deepEqual(sidebarView(state).pinned.map((entry) => entry.projectRoot), ['/c', '/d'])
+})
+
+test('a started project whose coordinator was deleted stays pinned with no coordinator row', () => {
+  const view = sidebarView(stateWith({
+    projects: [project('/a', 'alpha', [session('plain')])],
+    coordination: new Map([['/a', { projectRoot: '/a', started: true, threads: [] }]]),
+  }))
+  assert.equal(view.pinned.length, 1)
+  assert.equal(view.pinned[0]!.coordinator, undefined)
+  assert.deepEqual(view.rows.map((row) => row.sessionId), ['plain'])
+})
+
+test('a late thread table for a root that is no longer a project is not pinned', () => {
+  const view = sidebarView(stateWith({
+    projects: [project('/a', 'alpha', [])],
+    coordination: new Map([
+      ['/a', { projectRoot: '/a', started: true, threads: [] }],
+      ['/gone', { projectRoot: '/gone', started: true, threads: [] }],
+    ]),
+  }))
+  assert.deepEqual(view.pinned.map((entry) => entry.projectRoot), ['/a'])
+})
+
+test('a project known only from a lane is still pinned', () => {
+  const view = sidebarView(stateWith({
+    lanes: [lane('l1', 'x', '/lane-only')],
+    coordination: new Map([['/lane-only', { projectRoot: '/lane-only', started: true, threads: [] }]]),
+  }))
+  assert.deepEqual(view.pinned.map((entry) => entry.projectRoot), ['/lane-only'])
 })

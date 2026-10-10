@@ -148,8 +148,9 @@ export class CoordinationService implements CoordinationHost {
   }
 
   /** The project's threads for the desktop, newest activity first; no coordinator check. */
-  async threadInfos(cwd: string): Promise<{ coordinatorSessionId?: string; threads: ThreadInfo[] }> {
-    const file = await this.coordinationStore(cwd).read()
+  async threadInfos(cwd: string): Promise<{ coordinatorSessionId?: string; started: boolean; threads: ThreadInfo[] }> {
+    const store = this.coordinationStore(cwd)
+    const file = await store.read()
     const threads = applyLifecycle(file.threads, new Date(), this.port.settings(cwd))
       .map((thread): ThreadInfo => ({
         ...this.summarize(thread),
@@ -157,7 +158,11 @@ export class CoordinationService implements CoordinationHost {
         ...(thread.statusLine ? { statusLine: sanitizeReportText(thread.statusLine, REPORT_MAX) } : {}),
       }))
       .sort((a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))
-    return { ...(file.coordinator?.sessionId ? { coordinatorSessionId: file.coordinator.sessionId } : {}), threads }
+    return {
+      ...(file.coordinator?.sessionId ? { coordinatorSessionId: file.coordinator.sessionId } : {}),
+      started: await store.exists(),
+      threads,
+    }
   }
 
   private summarize(thread: ThreadRecord): ThreadSummary {

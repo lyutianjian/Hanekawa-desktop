@@ -653,10 +653,11 @@ test('the first-level actions are rows under the search box', (t) => {
   render(viewOf())
 
   const nav = region(root(), 'sidebar-nav')
-  assert.deepEqual(nav.children.map((child) => child.text), ['新建会话', '打开项目…', '最近'])
+  assert.deepEqual(nav.children.map((child) => child.text), ['新建会话', '打开项目…', '项目', '最近'])
   // Rows, not the bordered pills they used to be: they belong to the same column
   // of destinations the session rows are in.
   assert.deepEqual(nav.children.map((child) => child.classes), [
+    ['sidebar-nav-item'],
     ['sidebar-nav-item'],
     ['sidebar-nav-item'],
     ['sidebar-nav-item'],
@@ -665,7 +666,8 @@ test('the first-level actions are rows under the search box', (t) => {
   stub.click(nav.children[0]?.node)
   stub.click(nav.children[1]?.node)
   stub.click(nav.children[2]?.node)
-  assert.deepEqual(intents.map((intent) => intent.kind), ['new', 'open-project', 'toggle-recent'])
+  stub.click(nav.children[3]?.node)
+  assert.deepEqual(intents.map((intent) => intent.kind), ['new', 'open-project', 'toggle-projects', 'toggle-recent'])
 })
 
 test('the recent filter says it is on, and unlike the other two rows never disables', (t) => {
@@ -673,9 +675,9 @@ test('the recent filter says it is on, and unlike the other two rows never disab
   render(viewOf({ recentOnly: true, canCreate: false }))
 
   const rows = region(root(), 'sidebar-nav').children
-  assert.deepEqual(rows.map((child) => child.classes.includes('on')), [false, false, true])
+  assert.deepEqual(rows.map((child) => child.classes.includes('on')), [false, false, false, true])
   // A filter opens nothing, so a blocking dialog is no reason to withhold it.
-  assert.deepEqual(rows.map((child) => child.disabled), [true, true, false])
+  assert.deepEqual(rows.map((child) => child.disabled), [true, true, false, false])
 })
 
 test('both opening nav rows are disabled while a blocking dialog is up', (t) => {
@@ -771,7 +773,7 @@ test('a session waiting for approval says so in words; a running one does not', 
   assert.equal(waiting.attributes.get('aria-label'), '等待授权')
 })
 
-test('a project group draws the coordinator with its thread counts, then ordinary rows; no thread rows', (t) => {
+test('the pinned section draws the coordinator under its project name with thread counts, then ordinary rows; no thread rows', (t) => {
   const { render, root, stub, intents } = mount(t)
   const at = '2026-01-01T00:00:00.000Z'
   render(viewOf({
@@ -793,11 +795,36 @@ test('a project group draws the coordinator with its thread counts, then ordinar
   const section = root()
   assert.equal(find(section, 'coord-section'), undefined, 'no separate section')
   assert.equal(find(section, 'project-empty'), undefined)
-  assert.equal(find(section, 'coord-counts')?.text, '1 运行中 · 1 阻塞')
+  assert.equal(find(section, 'coord-counts')?.text, '1 运行中 · 1 需要你')
   const rows = sessionRows(section)
   assert.deepEqual(rows.length, 2, 'the coordinator plus the ordinary row')
+  assert.equal(find(rows[0]!, 'session-title-run')?.text, 'app', 'the pinned row names the project')
   const open = find(rows[0]!, 'session-open')
   assert.ok(open)
   stub.click(open.node)
   assert.deepEqual(intents, [{ kind: 'open', projectRoot: '/w/app', sessionId: 'c1' }])
+})
+
+test('the projects item wears its on-state while the page is up', (t) => {
+  const { render, root } = mount(t)
+  render(viewOf({ projectsOpen: true }))
+
+  const rows = region(root(), 'sidebar-nav').children
+  assert.deepEqual(rows.map((child) => child.classes.includes('on')), [false, false, true, false])
+})
+
+test('a started project with no coordinator row is pinned as a button that reopens it', (t) => {
+  const { render, root, stub, intents } = mount(t)
+  render(viewOf({
+    projects: [{ projectRoot: '/w/app', projectName: 'app', sessions: [] }],
+    coordination: new Map([['/w/app', { projectRoot: '/w/app', started: true, threads: [] }]]),
+  }))
+
+  const pinned = find(root(), 'sidebar-pinned')
+  assert.ok(pinned)
+  const open = find(pinned, 'session-open')
+  assert.ok(open)
+  assert.equal(open.text, 'app')
+  stub.click(open.node)
+  assert.deepEqual(intents, [{ kind: 'open-coordinator', projectRoot: '/w/app' }])
 })

@@ -23,6 +23,7 @@ import type {
   WireShellBrowserCreateTabResult,
   WireShellBrowserOkResult,
   WireShellCoordinationOkResult,
+  WireShellNewCoordinatorProjectResult,
   WireShellOpenCoordinatorResult,
   WireShellThreadMergeResult,
   WireShellThreadMergesResult,
@@ -236,6 +237,15 @@ export class ShellClient {
       id: crypto.randomUUID(),
       projectRoot,
     }) as Promise<WireShellOpenCoordinatorResult>
+  }
+
+  /** Picks a folder, adds it as a project and opens its coordinator; `cancelled` when the picker is dismissed. */
+  async newCoordinatorProject(path?: string): Promise<WireShellNewCoordinatorProjectResult> {
+    return this.send({
+      type: 'new-coordinator-project',
+      id: crypto.randomUUID(),
+      ...(path !== undefined ? { path } : {}),
+    }) as Promise<WireShellNewCoordinatorProjectResult>
   }
 
   /** Stops the coordinator and every running thread of the project. */

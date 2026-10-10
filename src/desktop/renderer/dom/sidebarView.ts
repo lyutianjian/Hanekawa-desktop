@@ -11,12 +11,14 @@ import {
   newSessionIntent,
   sidebarContentMounted,
   sidebarRenderSignature,
+  type SidebarCoordinationGroup,
   type SidebarGroup,
   type SidebarIntent,
   type SidebarRow,
   type SidebarView,
 } from '../model/sidebar.js'
 import type { DesktopPlatform } from '../../types.js'
+import { PROJECTS_PAGE_TITLE } from '../model/projectsPage.js'
 import { desktopShortcut } from '../model/desktopShortcuts.js'
 import {
   MARQUEE_DURATION_VARIABLE,
@@ -357,6 +359,8 @@ export function createSidebarView(
     index: number,
     selected: boolean,
     trailing?: HTMLElement,
+    /** What the row's delete removes, when that is not simply "this session". */
+    deleteTarget = '会话',
   ): HTMLElement => {
     const classes = ['session-row']
     if (row.active) classes.push('active')
@@ -467,7 +471,7 @@ export function createSidebarView(
       // by a sentence: at 268px a "删除此会话？" label and a title cannot both fit,
       // and the title is the half only the user can supply.
       actions.appendChild(
-        button('session-confirm-yes', '删除', '确认删除', () =>
+        button('session-confirm-yes', '删除', `确认删除${deleteTarget}`, () =>
           onIntent({ kind: 'confirm-delete', projectRoot: row.projectRoot, sessionId: row.sessionId }),
         ),
       )
@@ -476,7 +480,7 @@ export function createSidebarView(
       )
     } else {
       actions.appendChild(
-        button('session-delete', '', '删除会话', () =>
+        button('session-delete', '', `删除${deleteTarget}`, () =>
           onIntent({ kind: 'request-delete', sessionId: row.sessionId }),
           { icon: 'trash' },
         ),
@@ -484,6 +488,30 @@ export function createSidebarView(
     }
     node.appendChild(actions)
     return node
+  }
+
+  /** One pinned coordination project: its coordinator row, or a stand-in that recreates the coordinator. */
+  const pinnedNode = (
+    entry: SidebarCoordinationGroup,
+    indexOf: (row: SidebarRow) => number,
+    selectedIndex: number,
+  ): HTMLElement => {
+    const counts = coordinationCountsText(entry.running, entry.blocked)
+    const trailing = counts ? el('span', 'coord-counts', counts) : undefined
+    if (entry.coordinator) {
+      const index = indexOf(entry.coordinator)
+      return rowNode(
+        { ...entry.coordinator, title: entry.projectName },
+        index,
+        index >= 0 && index === selectedIndex,
+        trailing,
+        `项目「${entry.projectName}」的协调会话`,
+      )
+    }
+    const open = button('session-open', entry.projectName, '打开此项目的协调会话', () =>
+      onIntent({ kind: 'open-coordinator', projectRoot: entry.projectRoot }))
+    if (trailing) open.appendChild(trailing)
+    return el('div', 'session-row', open)
   }
 
   /**
@@ -634,16 +662,6 @@ export function createSidebarView(
     // `view.rows`, so `indexOf` answers -1 for them — which must not read as the
     // "no cursor" index and paint every one of them selected.
     const children: HTMLElement[] = []
-    const co = group.coordination
-    if (co) {
-      const counts = coordinationCountsText(co.running, co.blocked)
-      const draw = (row: SidebarRow, trailing?: HTMLElement): void => {
-        const index = indexOf(row)
-        children.push(rowNode(row, index, index >= 0 && index === selectedIndex, trailing))
-      }
-      if (co.coordinator) draw(co.coordinator, counts ? el('span', 'coord-counts', counts) : undefined)
-      else if (counts) children.push(el('div', 'coord-counts', counts))
-    }
     for (const row of group.rows) {
       const index = indexOf(row)
       children.push(rowNode(row, index, index >= 0 && index === selectedIndex))
@@ -714,6 +732,13 @@ export function createSidebarView(
           () => onIntent({ kind: 'open-project' }),
           { enabled: view.canCreate, icon: 'folder' },
         ),
+        button(
+          `sidebar-nav-item${view.projectsOpen ? ' on' : ''}`,
+          '项目',
+          view.projectsOpen ? '回到会话' : '查看所有项目',
+          () => onIntent({ kind: 'toggle-projects' }),
+          { icon: 'folder' },
+        ),
         // A filter, not a destination: it opens nothing, so unlike the two rows
         // above it stays enabled while a blocking dialog is up.
         button(
@@ -775,6 +800,13 @@ export function createSidebarView(
           : view.noMatches
             ? [el('div', 'sidebar-empty', SIDEBAR_NO_MATCHES_TEXT)]
             : [
+                ...(view.pinned.length === 0
+                  ? []
+                  : [
+                      el('div', 'sidebar-pinned',
+                        el('div', 'sidebar-pinned-title', PROJECTS_PAGE_TITLE),
+                        ...view.pinned.map((entry) => pinnedNode(entry, indexOf, view.selectedIndex))),
+                    ]),
                 ...view.groups.map((group) =>
                   groupNode(group, indexOf, view.selectedIndex, view.canCreate),
                 ),

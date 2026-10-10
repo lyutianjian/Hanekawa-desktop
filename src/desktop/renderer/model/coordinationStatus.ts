@@ -69,6 +69,11 @@ export function threadBlocked(status: WireThreadStatus): boolean {
   return status === 'needs-you' || status === 'awaiting-coordinator'
 }
 
+/** A project with a coordinator now, one that had it deleted, or threads of an earlier one. */
+export function isCoordinationProject(state: WireCoordinationThreads): boolean {
+  return state.started === true || state.coordinatorSessionId !== undefined || state.threads.length > 0
+}
+
 export function coordinationCounts(threads: readonly WireThreadInfo[]): { running: number; blocked: number } {
   let running = 0
   let blocked = 0

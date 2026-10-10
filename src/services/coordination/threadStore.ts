@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto'
-import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { withFileLock } from '../../sessions/fileLock.js'
 import { getCoordinationNotesDir, getProjectDataDir } from '../../utils/paths.js'
@@ -65,6 +65,11 @@ export class CoordinationStore {
       throw new Error(`Coordination file is corrupted or unsupported (${this.filePath})`)
     }
     return file as CoordinationFile
+  }
+
+  /** Whether the project has ever had a coordinator: the file outlives a deleted coordinator session. */
+  async exists(): Promise<boolean> {
+    return access(this.filePath).then(() => true, () => false)
   }
 
   async update(mutator: (f: CoordinationFile) => CoordinationFile | void): Promise<CoordinationFile> {

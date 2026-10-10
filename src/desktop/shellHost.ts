@@ -90,6 +90,7 @@ import {
   type WireEditorTarget,
   type SettingsChange,
   type WireShellCoordinationOkResult,
+  type WireShellNewCoordinatorProjectResult,
   type WireShellOpenCoordinatorResult,
   type WireShellThreadMergeResult,
   type WireShellThreadTranscriptResult,
@@ -267,7 +268,7 @@ export interface ShellCoordination {
   dismissMerge(cwd: string, threadId: string): Promise<void>
   resolveConflictViaThread(cwd: string, threadId: string): Promise<void>
   /** The thread table, lifecycle applied and text sanitized; no coordinator check. */
-  threadInfos(cwd: string): Promise<{ coordinatorSessionId?: string; threads: readonly ShellThreadInfo[] }>
+  threadInfos(cwd: string): Promise<{ coordinatorSessionId?: string; started?: boolean; threads: readonly ShellThreadInfo[] }>
   /** The user's stop of one thread. */
   stopThreadById(cwd: string, threadId: string): Promise<void>
   /** The user's 结案 of one thread. */
@@ -389,6 +390,12 @@ export interface ShellHostDeps<
     cwd: string,
     options?: { sessionId?: string },
   ) => Promise<ProjectEntry<P, W>>
+  /**
+   * `ensureProject` for a caller that will open a lane on a session other than
+   * the bootstrap draft: `session` is that draft when this call created the
+   * project (otherwise absent), so the caller can drop its pane.
+   */
+  ensureProjectFresh?: (cwd: string) => Promise<{ entry: ProjectEntry<P, W>; session?: SessionMeta }>
   /**
    * Drops a project from the "added projects" registry — the write half of
    * `remove-project`. Optional for the same reason `knownProjects` is; a shell
@@ -784,6 +791,9 @@ const SHELL_COMMAND_SCHEMAS = {
   'open-coordinator': z
     .object({ type: z.literal('open-coordinator'), id: commandId, projectRoot: z.string().min(1) })
     .strict(),
+  'new-coordinator-project': z
+    .object({ type: z.literal('new-coordinator-project'), id: commandId, path: z.string().min(1).optional() })
+    .strict(),
   'coordination-stop-all': z
     .object({ type: z.literal('coordination-stop-all'), id: commandId, projectRoot: z.string().min(1) })
     .strict(),
@@ -1078,6 +1088,40 @@ export class ShellHost<
     return known.find((cwd) => projectRootKey(cwd) === projectRoot)
   }
 
+  private refuseGlobalCoordinator(cwd: string): void {
+    if (isGlobalWorkspaceRoot(cwd)) throw new Error('主目录是「最近」工作区，不能作为协调项目；请选择一个具体的项目文件夹。')
+  }
+
+  /** The open project at `cwd`, or a newly bootstrapped one along with its draft session. */
+  private async ensureFresh(cwd: string): Promise<{ entry: ProjectEntry<P, W>; session?: SessionMeta }> {
+    const open = this.deps.directory.get(cwd)
+    if (open) return { entry: open }
+    if (this.deps.ensureProjectFresh) return this.deps.ensureProjectFresh(cwd)
+    if (this.deps.ensureProject) return { entry: await this.deps.ensureProject(cwd) }
+    throw new Error(`No project is open at ${cwd}`)
+  }
+
+  /**
+   * Opens the project's coordinator on the active lane. A project bootstrapped
+   * for it has a lane-less draft pane nobody will open, so that pane is dropped
+   * (as `openProject` avoids it) and a failure shuts the project again.
+   */
+  private async openCoordinator(cwd: string): Promise<WireShellOpenCoordinatorResult> {
+    const coordination = this.requireCoordination()
+    this.refuseGlobalCoordinator(cwd)
+    const { entry, session } = await this.ensureFresh(cwd)
+    try {
+      const sessionId = await coordination.ensureCoordinator(entry.cwd)
+      const opened = await this.openLane(entry, { sessionId, activate: true })
+      const draft = session === undefined ? undefined : entry.workspace.paneForSession(session.id)
+      if (draft) entry.workspace.close(draft)
+      return opened
+    } catch (error) {
+      if (session !== undefined) this.settleAfterLastLane(entry, 'coordinator-failed')
+      throw error
+    }
+  }
+
   /**
    * The real directory a wire root names — open project, registry entry, or the
    * global workspace — without opening anything.
@@ -1279,11 +1323,14 @@ export class ShellHost<
         this.deps.browser?.setBounds(command.tabId, command.rect, command.visible)
         return { ok: true } satisfies WireShellBrowserOkResult
       }
-      case 'open-coordinator': {
-        const coordination = this.requireCoordination()
-        const entry = await this.ensureEntryForRoot(command.projectRoot)
-        const sessionId = await coordination.ensureCoordinator(entry.cwd)
-        return (await this.openLane(entry, { sessionId, activate: true })) satisfies WireShellOpenCoordinatorResult
+      case 'open-coordinator':
+        return this.openCoordinator(await this.requireCwdForRoot(command.projectRoot))
+      case 'new-coordinator-project': {
+        const { onPickDirectory } = this.deps
+        if (command.path === undefined && !onPickDirectory) throw new Error('The shell cannot open projects.')
+        const target = command.path ?? (await onPickDirectory!({ title: '新建项目', buttonLabel: '新建' }))
+        if (target === undefined) return { cancelled: true } satisfies WireShellNewCoordinatorProjectResult
+        return this.openCoordinator(target)
       }
       case 'coordination-stop-all': {
         const coordination = this.requireCoordination()
@@ -1358,6 +1405,7 @@ export class ShellHost<
     const table = await coordination.threadInfos(cwd)
     const state: WireCoordinationThreads = { projectRoot, threads: [] }
     if (table.coordinatorSessionId !== undefined) state.coordinatorSessionId = table.coordinatorSessionId
+    if (table.started === true) state.started = true
     for (const thread of table.threads) {
       const wire = toWireThreadInfo(thread)
       if (wire) state.threads.push(wire)
@@ -1427,6 +1475,7 @@ export class ShellHost<
           open: entry !== undefined,
           projectRoot: projectRootKey(cwd),
           projectName: projectDisplayName(cwd),
+          projectPath: cwd,
           isGlobal: isGlobalWorkspaceRoot(cwd),
           sessions: sessions.map(summarize),
         }

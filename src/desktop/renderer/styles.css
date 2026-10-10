@@ -4508,6 +4508,11 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    what keeps `probes.surface()` honest: it reports "open" from
    `getClientRects()`, not from the `hidden` attribute. */
 body.settings-open #canvas-header,
+body.projects-open #canvas-header,
+body.projects-open #browser-panel,
+body.projects-open #browser-resizer,
+#canvas.projects-open > #transcript-area,
+#canvas.projects-open > #input-row,
 #canvas.settings-open > #transcript-area,
 #canvas.settings-open > #input-row {
   display: none;
@@ -5830,3 +5835,77 @@ body.settings-open #canvas-header,
 }
 .thread-note-open:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
 .thread-note-open:disabled { opacity: 0.5; cursor: default; }
+
+/* --- projects page ----------------------------------------------------------
+   Fills the canvas (the sidebar stays up, so its「项目」item can close it again). */
+#projects {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  background: var(--surface-canvas);
+}
+#projects[hidden] { display: none; }
+.projects-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  max-width: var(--reading-measure);
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4);
+}
+.projects-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.projects-title { margin: 0; color: var(--text-primary); font-size: var(--type-title); font-weight: 600; }
+.projects-new {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--type-meta);
+  cursor: pointer;
+}
+.projects-new:hover { background: var(--surface-hover); }
+.projects-list { display: flex; flex-direction: column; gap: var(--space-2); }
+.project-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.project-card:hover { background: var(--surface-hover); }
+.project-card-name { font-size: var(--type-ui); font-weight: 600; }
+.project-card-path {
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-card-meta { display: flex; justify-content: space-between; gap: var(--space-3); color: var(--text-secondary); font-size: var(--type-meta); }
+.project-card-time { color: var(--text-tertiary); }
+.projects-empty { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-5) 0; text-align: center; }
+.projects-empty-title { margin: 0; color: var(--text-primary); font-size: var(--type-ui); font-weight: 600; }
+.projects-empty-text { margin: 0 auto; max-width: 36em; color: var(--text-secondary); font-size: var(--type-meta); line-height: 1.6; }
+
+/* The pinned coordination projects, above the workspace groups. */
+.sidebar-pinned { display: flex; flex-direction: column; gap: 2px; margin-bottom: var(--space-3); }
+.sidebar-pinned-title {
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+}
+
+.projects-empty .projects-new { align-self: center; }
+.projects-error { color: var(--text-danger); font-size: var(--type-meta); }

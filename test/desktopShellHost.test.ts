@@ -490,12 +490,17 @@ function createHarness(
       cwd: string,
       options?: { sessionId?: string },
     ) => Promise<ProjectEntry<FakeProject, FakeWorkspace>>
+    ensureProjectFresh?: (
+      cwd: string,
+    ) => Promise<{ entry: ProjectEntry<FakeProject, FakeWorkspace>; session?: SessionMeta }>
     /** A shell without an image picker — `pick-images` must reject, not answer empty. */
     withPickImages?: boolean
     /** A shell that cannot write the registry — `remove-project` still detaches. */
     withForgetProject?: boolean
     /** The host-side coordination commands. */
     coordination?: ShellCoordination
+    /** The native folder picker's answer. */
+    pickDirectory?: () => Promise<string | undefined>
   } = {},
 ): Harness {
   const [mainTransport, rendererTransport] = createMemoryChannelPair()
@@ -577,6 +582,7 @@ function createHarness(
         }),
     ...(options.knownProjects ? { knownProjects: options.knownProjects } : {}),
     ...(options.ensureProject ? { ensureProject: options.ensureProject } : {}),
+    ...(options.ensureProjectFresh ? { ensureProjectFresh: options.ensureProjectFresh } : {}),
     ...(options.withForgetProject === false
       ? {}
       : {
@@ -585,6 +591,7 @@ function createHarness(
           },
         }),
     ...(options.coordination ? { coordination: options.coordination } : {}),
+    ...(options.pickDirectory ? { onPickDirectory: options.pickDirectory } : {}),
     isQuitting: () => quitting,
     onAllLanesClosed: (reason) => allLanesClosed.push(reason),
   })
@@ -690,6 +697,7 @@ const COMMAND_SAMPLES = {
     visible: true,
   },
   'open-coordinator': { type: 'open-coordinator', id: 'v', projectRoot: 'r' },
+  'new-coordinator-project': { type: 'new-coordinator-project', id: 'v2', path: 'p' },
   'coordination-stop-all': { type: 'coordination-stop-all', id: 'w', projectRoot: 'r' },
   'thread-merges': { type: 'thread-merges', id: 'x', projectRoot: 'r' },
   'thread-merge': { type: 'thread-merge', id: 'y', projectRoot: 'r', threadId: 't1' },
@@ -810,6 +818,7 @@ test('every shell command variant round-trips through its schema', () => {
       'delete-session',
       'get-settings',
       'list-sessions',
+      'new-coordinator-project',
       'open-coordinator',
       'open-in-editor',
       'open-project',
@@ -2950,6 +2959,72 @@ test('open-coordinator creates the coordinator session once, then reuses its lan
   assert.equal(second.lane, first.lane, 'the second open reuses the lane')
   assert.equal(h.attaches.length, 1)
   assert.deepEqual(h.activates, [first.lane, first.lane])
+})
+
+test('the home directory gets no coordinator', async () => {
+  const calls: string[] = []
+  const h = createHarness({ coordination: fakeCoordination(() => h.project.store, calls) })
+  const home = h.addProject(os.homedir()).entry
+
+  await assert.rejects(h.client.openCoordinator(home.root), /主目录/)
+  assert.deepEqual(calls, [])
+})
+
+test('new-coordinator-project picks a folder, adds it and opens its coordinator; home and a cancelled picker open nothing', async () => {
+  const calls: string[] = []
+  const ensured: string[] = []
+  let picked: string | undefined = fixturePath('repo', 'beta')
+  let fresh: { entry: ProjectEntry<FakeProject, FakeWorkspace>; session: SessionMeta } | undefined
+  const h = createHarness({
+    coordination: fakeCoordination(() => fresh!.entry.project.store, calls),
+    pickDirectory: async () => picked,
+    ensureProjectFresh: async (cwd) => {
+      ensured.push(cwd)
+      // Like the bootstrap: a project with one lane-less draft pane.
+      const { entry } = h.addProject(cwd)
+      const session = sessionOf('draft-1', 'draft')
+      entry.workspace.panes.push(new FakePane(session))
+      fresh = { entry, session }
+      return fresh
+    },
+  })
+
+  const opened = await h.client.newCoordinatorProject()
+  assert.ok('pane' in opened)
+  assert.equal(opened.pane.coordinationRole, 'coordinator')
+  assert.deepEqual(ensured, [fixturePath('repo', 'beta')])
+  assert.deepEqual(
+    fresh!.entry.workspace.panes.map((pane) => pane.getSession().id),
+    ['coord-1'],
+    'the bootstrap draft pane is dropped, not left lane-less',
+  )
+
+  picked = undefined
+  assert.deepEqual(await h.client.newCoordinatorProject(), { cancelled: true })
+
+  await assert.rejects(h.client.newCoordinatorProject(os.homedir()), /主目录/)
+  assert.deepEqual(ensured, [fixturePath('repo', 'beta')], 'home is refused before it is registered')
+})
+
+test('open-coordinator on a registered but closed project drops its bootstrap draft too', async () => {
+  const calls: string[] = []
+  const known = fixturePath('repo', 'gamma')
+  let fresh: ProjectEntry<FakeProject, FakeWorkspace> | undefined
+  const h = createHarness({
+    coordination: fakeCoordination(() => fresh!.project.store, calls),
+    knownProjects: async () => [known],
+    ensureProjectFresh: async (cwd) => {
+      const { entry } = h.addProject(cwd)
+      const session = sessionOf('draft-2', 'draft')
+      entry.workspace.panes.push(new FakePane(session))
+      fresh = entry
+      return { entry, session }
+    },
+  })
+
+  const opened = await h.client.openCoordinator(projectRootKey(known))
+  assert.equal(opened.pane.sessionId, 'coord-1')
+  assert.deepEqual(fresh!.workspace.panes.map((pane) => pane.getSession().id), ['coord-1'])
 })
 
 test('the thread merge commands delegate to the coordination deps with the project cwd', async () => {
