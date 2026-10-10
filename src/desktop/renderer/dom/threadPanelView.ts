@@ -30,14 +30,16 @@ export function createThreadPanelView(root: HTMLElement, onIntent: (intent: Thre
   }
 
   function row(item: ThreadPanelRow): HTMLElement {
-    const actions: Child[] = []
+    const actions: Child[] = [
+      button('thread-row-open', '打开', '在主画布打开这个线程', () => onIntent({ kind: 'open', sessionId: item.sessionId })),
+    ]
     if (item.canStop) {
       actions.push(button('thread-row-stop', '停止', '停止这个线程', () => onIntent({ kind: 'stop', threadId: item.threadId }), { enabled: !item.pending }))
     }
     if (item.canResolve) {
       actions.push(button('thread-row-resolve', '完成', '把这个线程标为已完成（之后不能再发消息）', () => onIntent({ kind: 'resolve', threadId: item.threadId }), { enabled: !item.pending }))
     }
-    const title = button('thread-row-title', item.title, `打开线程 ${item.title}`, () => onIntent({ kind: 'open', sessionId: item.sessionId }))
+    const title = button('thread-row-title', item.title, `查看线程 ${item.title}`, () => onIntent({ kind: 'view', threadId: item.threadId }))
     if (item.current) title.setAttribute('aria-current', 'true')
     const className = ['thread-row', item.current ? 'current' : '', item.pending ? 'pending' : ''].filter(Boolean).join(' ')
     return el(
@@ -45,7 +47,7 @@ export function createThreadPanelView(root: HTMLElement, onIntent: (intent: Thre
       className,
       el('div', 'thread-row-head', title, status(item), el('span', 'thread-row-time', item.lastActivity)),
       item.statusLine === undefined ? undefined : el('div', 'thread-row-line', item.statusLine),
-      actions.length === 0 ? undefined : el('div', 'thread-row-actions', ...actions),
+      el('div', 'thread-row-actions', ...actions),
     )
   }
 
@@ -69,6 +71,7 @@ export function createThreadPanelView(root: HTMLElement, onIntent: (intent: Thre
     return el(
       'div',
       'thread-panel',
+      view.notice === undefined ? undefined : el('div', 'thread-panel-notice', view.notice),
       el('div', 'thread-panel-head', stopAll),
       el('div', 'thread-panel-active', ...view.active.map(row)),
       fold('quiet', view.quiet),
@@ -81,7 +84,7 @@ export function createThreadPanelView(root: HTMLElement, onIntent: (intent: Thre
       const signature = JSON.stringify(view)
       if (signature === drawn) return
       drawn = signature
-      if (!view.available) replace(root, el('p', 'thread-panel-empty', '当前项目还没有线程'))
+      if (!view.available) replace(root, view.notice === undefined ? undefined : el('div', 'thread-panel-notice', view.notice), el('p', 'thread-panel-empty', '当前项目还没有线程'))
       else replace(root, panel(view))
     },
   }

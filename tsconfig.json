@@ -30,6 +30,7 @@
     "test/rendererTaskPanelView.test.ts",
     "test/rendererMergeBarView.test.ts",
     "test/rendererThreadPanelView.test.ts",
+    "test/rendererThreadDetailView.test.ts",
     "test/rendererTitleBarView.test.ts",
     "test/rendererTranscriptView.test.ts",
     "test/rendererWelcomeView.test.ts",

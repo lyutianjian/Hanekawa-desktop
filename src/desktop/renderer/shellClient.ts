@@ -26,6 +26,7 @@ import type {
   WireShellOpenCoordinatorResult,
   WireShellThreadMergeResult,
   WireShellThreadMergesResult,
+  WireShellThreadTranscriptResult,
   WireCoordinationThreads,
 } from '../shellProtocol.js'
 
@@ -280,6 +281,17 @@ export class ShellClient {
       projectRoot,
       threadId,
     }) as Promise<WireShellCoordinationOkResult>
+  }
+
+  /** A thread's records; `since` is the token of the last copy, and an `unchanged` reply carries none. */
+  async threadTranscript(projectRoot: string, threadId: string, since?: string): Promise<WireShellThreadTranscriptResult> {
+    return this.send({
+      type: 'thread-transcript',
+      id: crypto.randomUUID(),
+      projectRoot,
+      threadId,
+      ...(since !== undefined ? { since } : {}),
+    }) as Promise<WireShellThreadTranscriptResult>
   }
 
   /** Pulls a project's thread table; the reply also lands in the cache and wakes the listeners. */

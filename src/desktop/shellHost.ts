@@ -50,6 +50,7 @@ import { projectDisplayName, projectRootKey } from '../runtime/projectDirectory.
 import type { RuntimeChannel } from '../runtime/protocol/channel.js'
 import type { CoordinationLaneControl } from '../runtime/protocol/coordinationHost.js'
 import type { LaneMux } from '../runtime/protocol/laneChannel.js'
+import { projectToolDisplays } from '../runtime/protocol/host.js'
 import type { SessionPane, SessionWorkspace } from '../runtime/sessionWorkspace.js'
 import type { McpConnectionStatus, RuntimeHost } from '../runtime/types.js'
 import {
@@ -91,6 +92,7 @@ import {
   type WireShellCoordinationOkResult,
   type WireShellOpenCoordinatorResult,
   type WireShellThreadMergeResult,
+  type WireShellThreadTranscriptResult,
   type WireShellThreadMergesResult,
   type WireThreadMerge,
   type WireCoordinationThreads,
@@ -831,6 +833,15 @@ const SHELL_COMMAND_SCHEMAS = {
       threadId: z.string().min(1),
     })
     .strict(),
+  'thread-transcript': z
+    .object({
+      type: z.literal('thread-transcript'),
+      id: commandId,
+      projectRoot: z.string().min(1),
+      threadId: z.string().min(1),
+      since: z.string().optional(),
+    })
+    .strict(),
 } as const satisfies Record<ShellCommand['type'], z.ZodTypeAny>
 
 type CommandOption = (typeof SHELL_COMMAND_SCHEMAS)[ShellCommand['type']]
@@ -1318,6 +1329,21 @@ export class ShellHost<
         const coordination = this.requireCoordination()
         await coordination.resolveThreadById(await this.requireCwdForRoot(command.projectRoot), command.threadId)
         return { ok: true } satisfies WireShellCoordinationOkResult
+      }
+      case 'thread-transcript': {
+        const coordination = this.requireCoordination()
+        const cwd = await this.requireCwdForRoot(command.projectRoot)
+        const thread = (await coordination.threadInfos(cwd)).threads.find((info) => info.threadId === command.threadId)
+        if (!thread) throw new Error(`No thread ${command.threadId} in ${command.projectRoot}`)
+        const read = await new SessionStore(cwd).loadRecordsIfChanged(thread.sessionId, command.since)
+        if (read.records === undefined) return { unchanged: true, token: read.token } satisfies WireShellThreadTranscriptResult
+        const toolDisplays = projectToolDisplays(read.records)
+        return {
+          unchanged: false,
+          token: read.token,
+          records: read.records,
+          ...(toolDisplays ? { toolDisplays } : {}),
+        } satisfies WireShellThreadTranscriptResult
       }
       default:
         return assertNever(command)

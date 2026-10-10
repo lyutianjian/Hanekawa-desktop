@@ -106,13 +106,15 @@ test('the header button stops everything and is disabled with nothing running', 
   assert.deepEqual(r.intents, [{ kind: 'stop-all' }])
 })
 
-test('the title opens the session; stop and resolve carry the thread id', (t) => {
+test('the title views the thread, 打开 opens its session; stop and resolve carry the thread id', (t) => {
   const r = mount(t)
   r.render(view([thread('running'), thread('idle')]))
   r.stub.click(r.button('thread-row-title', 0).node)
+  r.stub.click(r.button('thread-row-open', 0).node)
   r.stub.click(r.button('thread-row-stop').node)
   r.stub.click(r.button('thread-row-resolve').node)
   assert.deepEqual(r.intents, [
+    { kind: 'view', threadId: 't-running' },
     { kind: 'open', sessionId: 's-running' },
     { kind: 'stop', threadId: 't-running' },
     { kind: 'resolve', threadId: 't-idle' },

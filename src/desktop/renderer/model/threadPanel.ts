@@ -44,6 +44,8 @@ export interface ThreadPanelView {
   readonly active: readonly ThreadPanelRow[]
   readonly quiet: ThreadPanelFold
   readonly resolved: ThreadPanelFold
+  /** A line above the list, e.g. why the page the user was reading is gone. */
+  readonly notice?: string
 }
 
 export interface ThreadPanelInput {
@@ -54,6 +56,7 @@ export interface ThreadPanelInput {
   readonly expanded: ReadonlySet<ThreadFold>
   /** Thread ids with a stop or resolve in flight. */
   readonly pending: ReadonlySet<string>
+  readonly notice?: string | undefined
 }
 
 const STOPPABLE: ReadonlySet<WireThreadStatus> = new Set(['running', 'needs-you', 'awaiting-coordinator'])
@@ -89,11 +92,13 @@ export function threadPanelView(input: ThreadPanelInput): ThreadPanelView {
     active,
     quiet: { count: quiet.length, expanded: input.expanded.has('quiet'), rows: quiet },
     resolved: { count: resolved.length, expanded: input.expanded.has('resolved'), rows: resolved },
+    ...(input.notice ? { notice: input.notice } : {}),
   }
 }
 
 /** What a control in the panel asks the window to do. */
 export type ThreadPanelIntent =
+  | { readonly kind: 'view'; readonly threadId: string }
   | { readonly kind: 'open'; readonly sessionId: string }
   | { readonly kind: 'stop'; readonly threadId: string }
   | { readonly kind: 'resolve'; readonly threadId: string }

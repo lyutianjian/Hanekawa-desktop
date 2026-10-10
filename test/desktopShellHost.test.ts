@@ -698,6 +698,7 @@ const COMMAND_SAMPLES = {
   'coordination-threads': { type: 'coordination-threads', id: 'ab', projectRoot: 'r' },
   'thread-stop': { type: 'thread-stop', id: 'ac', projectRoot: 'r', threadId: 't1' },
   'thread-resolve': { type: 'thread-resolve', id: 'ad', projectRoot: 'r', threadId: 't1' },
+  'thread-transcript': { type: 'thread-transcript', id: 'ae', projectRoot: 'r', threadId: 't1', since: '10:1' },
 } as const satisfies Record<ShellCommand['type'], ShellCommand>
 
 /**
@@ -825,6 +826,7 @@ test('every shell command variant round-trips through its schema', () => {
       'thread-merges',
       'thread-resolve',
       'thread-stop',
+      'thread-transcript',
     ],
     'a variant added to ShellCommand must fail the satisfies table by name',
   )
@@ -835,6 +837,7 @@ test('a coordination command without a thread id is rejected', () => {
   assert.equal(parseShellCommand({ type: 'open-coordinator', id: 'x', projectRoot: 'r', extra: 1 }).ok, false)
   assert.equal(parseShellCommand({ type: 'thread-stop', id: 'x', projectRoot: 'r' }).ok, false)
   assert.equal(parseShellCommand({ type: 'thread-resolve', id: 'x', projectRoot: 'r', threadId: '' }).ok, false)
+  assert.equal(parseShellCommand({ type: 'thread-transcript', id: 'x', projectRoot: 'r' }).ok, false)
 })
 
 test('a malformed command fails with the id recovered', () => {
@@ -2995,6 +2998,43 @@ test('the thread table commands project to the wire and fill the client cache', 
   assert.deepEqual(await h.client.threadStop(h.entry.root, 't1'), { ok: true })
   assert.deepEqual(await h.client.threadResolve(h.entry.root, 't1'), { ok: true })
   assert.deepEqual(calls, [`threads:${cwd}`, `stop:${cwd}:t1`, `resolve-thread:${cwd}:t1`])
+})
+
+test('thread-transcript reads the thread from disk with no open lane, and answers unchanged until the file moves', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-thread-transcript-'))
+  const store = new SessionStore(dir)
+  await store.init()
+  const session = await store.create('Thread')
+  const message = (id: string) => ({ type: 'message' as const, id, role: 'user' as const, content: id, createdAt: new Date().toISOString() })
+  await store.appendRecord(session.id, message('m1'))
+  try {
+    const coordination: ShellCoordination = {
+      ...fakeCoordination(() => new FakeStore(), []),
+      threadInfos: async () => ({
+        threads: [{ threadId: 't1', sessionId: session.id, title: 'T', status: 'idle', lastActivityAt: '2026-10-10T00:00:00.000Z' }],
+      }),
+    }
+    const h = createHarness({ coordination, knownProjects: () => Promise.resolve([dir]) })
+    const root = projectRootKey(dir)
+
+    const first = await h.client.threadTranscript(root, 't1')
+    assert.equal(first.unchanged, false)
+    assert.deepEqual(first.unchanged ? [] : first.records.map((record) => record.id), ['m1'])
+    assert.deepEqual(h.attaches, [], 'no lane was opened for it')
+
+    const again = await h.client.threadTranscript(root, 't1', first.token)
+    assert.deepEqual(again, { unchanged: true, token: first.token })
+
+    await store.appendRecord(session.id, { type: 'tool_use', id: 'tu1', tool: 'Read', input: { filePath: 'a.txt' }, riskLevel: 'safe', createdAt: 'now' })
+    const grown = await h.client.threadTranscript(root, 't1', first.token)
+    assert.equal(grown.unchanged, false)
+    assert.deepEqual(grown.unchanged ? [] : grown.records.map((record) => record.id), ['m1', 'tu1'])
+    assert.equal(grown.unchanged ? undefined : grown.toolDisplays?.tu1?.displayName, 'Read', 'captions are projected from the records')
+
+    await assert.rejects(h.client.threadTranscript(root, 'nope'), /No thread nope/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('broadcastCoordinationThreads coalesces a burst per open project and stops on dispose', async () => {

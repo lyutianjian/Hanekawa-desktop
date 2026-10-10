@@ -1,5 +1,6 @@
 import type { SessionMeta } from '../sessions/service.js'
-import type { WirePaneInfo } from '../runtime/protocol/wire.js'
+import type { SessionRecord } from '../harness/types.js'
+import type { ToolDisplays, WirePaneInfo } from '../runtime/protocol/wire.js'
 import type { McpServerConfig } from '../services/mcp/types.js'
 import type { EffortLevel } from '../config/effort.js'
 
@@ -223,6 +224,8 @@ export type ShellCommand =
   | { type: 'thread-stop'; id: string; projectRoot: string; threadId: string }
   /** The user's 结案 of one thread. */
   | { type: 'thread-resolve'; id: string; projectRoot: string; threadId: string }
+  /** A thread's records from disk, lane open or not; `since` is the token of the reader's last copy. */
+  | { type: 'thread-transcript'; id: string; projectRoot: string; threadId: string; since?: string }
 
 // --- browser -----------------------------------------------------------------
 
@@ -845,6 +848,11 @@ export interface WireCoordinationThreads {
   coordinatorSessionId?: string
   threads: WireThreadInfo[]
 }
+
+/** `unchanged` when the file still matches the request's `since`; `token` is what to send next time. */
+export type WireShellThreadTranscriptResult =
+  | { unchanged: true; token: string }
+  | { unchanged: false; token: string; records: SessionRecord[]; toolDisplays?: ToolDisplays }
 
 export interface WireShellThreadMergesResult {
   merges: WireThreadMerge[]

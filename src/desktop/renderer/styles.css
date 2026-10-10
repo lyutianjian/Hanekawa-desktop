@@ -1175,6 +1175,28 @@ body.settings-open #browser-resizer { display: none; }
   padding: var(--space-2);
 }
 #subagent-view[hidden] { display: none; }
+#thread-detail-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#thread-detail-view[hidden] { display: none; }
+.thread-detail-head {
+  flex: none;
+  padding: var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.thread-detail-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: clip;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-2);
+}
 .subagent-row {
   display: flex;
   flex-direction: column;
@@ -1240,19 +1262,36 @@ body.settings-open #browser-resizer { display: none; }
   color: var(--text-tertiary);
   font-size: var(--type-micro);
 }
+.thread-detail-actions { display: flex; gap: var(--space-1); }
+.thread-detail-needs-you {
+  align-self: flex-start;
+  margin-top: var(--space-2);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-warn);
+  font: inherit;
+  font-size: var(--type-meta);
+  cursor: pointer;
+}
+.thread-detail-needs-you:hover { background: var(--surface-hover); }
 .subagent-empty { margin: var(--space-3) 0; color: var(--text-tertiary); font-size: var(--type-meta); }
 /* The run's own conversation, drawn by the main transcript's renderer: here it
    is one more block in the panel's scroller, not a scroller of its own, and it
    has no question to lift to the top or a tail to jump to. */
-#subagent-view .transcript {
+#subagent-view .transcript,
+#thread-detail-view .transcript {
   flex: none;
   overflow: visible;
   margin-top: var(--space-3);
   padding: 0;
   font-size: var(--type-ui);
 }
-#subagent-view .transcript[hidden] { display: none; }
-#subagent-view .transcript-column { padding-bottom: 0; }
+#subagent-view .transcript[hidden],
+#thread-detail-view .transcript[hidden] { display: none; }
+#subagent-view .transcript-column,
+#thread-detail-view .transcript-column { padding-bottom: 0; }
 .subagent-float { display: none; }
 /* The session search box, the sidebar's first region. It carries the column's
    top inset now that the workspace header above it is gone — the workspaces are
@@ -5522,6 +5561,7 @@ body.settings-open #canvas-header,
 .canvas-breadcrumb-sep { flex: 0 0 auto; color: var(--text-tertiary); }
 .canvas-status { flex: 0 0 auto; font-size: var(--type-meta); }
 .canvas-stop-thread,
+.thread-row-open,
 .thread-row-stop,
 .thread-row-resolve {
   padding: 2px var(--space-2);
@@ -5534,10 +5574,12 @@ body.settings-open #canvas-header,
   cursor: pointer;
 }
 .canvas-stop-thread:hover:enabled,
+.thread-row-open:hover:enabled,
 .thread-row-stop:hover:enabled,
 .thread-row-resolve:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
 .thread-row-stop:hover:enabled { color: var(--text-danger); }
 .canvas-stop-thread:disabled,
+.thread-row-open:disabled,
 .thread-row-stop:disabled,
 .thread-row-resolve:disabled { opacity: 0.5; cursor: default; }
 .canvas-threads-open {
@@ -5579,6 +5621,12 @@ body.settings-open #canvas-header,
 }
 .thread-panel-stop-all:hover:enabled { color: var(--text-danger); background: var(--surface-hover); }
 .thread-panel-stop-all:disabled { opacity: 0.5; cursor: default; }
+.thread-panel-notice {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+}
 .thread-panel-active { display: flex; flex-direction: column; padding: var(--space-1); }
 .thread-panel-empty {
   margin: 0;

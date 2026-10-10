@@ -245,6 +245,20 @@ export class SessionStore {
     return (await this.loadRecordsWithDiagnostics(sessionIdOrPrefix)).records
   }
 
+  /**
+   * The session's records, unless its file still has the size and mtime
+   * `since` names. A cheap poll for a reader that keeps its last result.
+   */
+  async loadRecordsIfChanged(
+    sessionId: string,
+    since: string | undefined,
+  ): Promise<{ token: string; records: SessionRecord[] } | { token: string; records?: undefined }> {
+    const stats = await stat(this.sessionJsonlPath(sessionId)).catch(() => undefined)
+    const token = stats === undefined ? '' : `${stats.size}:${stats.mtimeMs}`
+    if (since === token) return { token }
+    return { token, records: await this.loadRecords(sessionId) }
+  }
+
   async loadRecordsWithDiagnostics(sessionIdOrPrefix: string): Promise<LoadRecordsResult> {
     const diagnostics: SessionDiagnostic[] = []
     const draft = this.resolveDraft(sessionIdOrPrefix)

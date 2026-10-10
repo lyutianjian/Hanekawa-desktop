@@ -1778,7 +1778,7 @@ function looseThinkingNode(
   })
 }
 
-function isScrolledToBottom(container: HTMLElement): boolean {
+export function isScrolledToBottom(container: HTMLElement): boolean {
   // A few pixels of slack: fractional scroll heights never land exactly.
   return container.scrollHeight - container.scrollTop - container.clientHeight < 24
 }

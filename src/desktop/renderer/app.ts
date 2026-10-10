@@ -138,7 +138,9 @@ import {
   type SidePanelInput,
   type SideTab,
 } from './model/sidePanel.js'
+import { threadPage, type ThreadSelection } from './model/threadDetail.js'
 import { createThreadPanelView } from './dom/threadPanelView.js'
+import { createThreadDetailView } from './dom/threadDetailView.js'
 import { createMergeBarView } from './dom/mergeBarView.js'
 
 const bridge = window.hanekawa
@@ -958,6 +960,12 @@ function runThreadCommand(projectRoot: string, threadId: string, kind: 'stop' | 
 function runThreadPanelIntent(intent: ThreadPanelIntent): void {
   const root = activeLaneInfo()?.projectRoot
   switch (intent.kind) {
+    case 'view':
+      if (root === undefined) return
+      viewedThread = { projectRoot: root, threadId: intent.threadId }
+      threadNotice = undefined
+      renderSubagents()
+      return
     case 'open':
       if (root !== undefined) openSessionById(root, intent.sessionId)
       return
@@ -1545,6 +1553,30 @@ const subagentPanel = createSubagentPanelView(required('subagent-view'), {
 })
 const threadView = required('thread-view')
 const threadPanel = createThreadPanelView(threadView, (intent) => runThreadPanelIntent(intent))
+const threadDetailHost = required('thread-detail-view')
+const threadDetail = createThreadDetailView(threadDetailHost, {
+  onBack: () => {
+    viewedThread = undefined
+    renderSubagents()
+  },
+  onOpen: (sessionId) => {
+    const root = activeLaneInfo()?.projectRoot
+    if (root !== undefined) openSessionById(root, sessionId)
+  },
+  onStop: (threadId) => {
+    const root = activeLaneInfo()?.projectRoot
+    if (root !== undefined) runThreadCommand(root, threadId, 'stop')
+  },
+  loadTranscript: (threadId, since) => viewedThread === undefined ? Promise.reject(new Error('No thread on screen')) : shellClient.threadTranscript(viewedThread.projectRoot, threadId, since),
+  onOpenPath: (path, line) => {
+    if (activeLane !== undefined) openInEditor(activeLane, path, line)
+  },
+})
+/** The thread on its own page in the 概览 tab; `undefined` is the list. */
+let viewedThread: ThreadSelection | undefined
+/** Why the page the user was on went back to the list; gone after a few seconds. */
+let threadNotice: string | undefined
+let threadNoticeTimer: ReturnType<typeof setTimeout> | undefined
 /** The strip's last paint, so a stream delta does not rebuild buttons under the pointer. */
 let sideTabsDrawn: string | undefined
 
@@ -1594,14 +1626,30 @@ function renderSubagents(): void {
   }
   show(required('subagent-view'), onSubagents)
   if (onSubagents) subagentPanel.render({ entries, selected: selectedSubagent })
-  show(threadView, onThreads)
-  if (onThreads) {
+  const page = onThreads ? threadPage(viewedThread, coordination, pendingThreads) : undefined
+  if (page?.kind === 'list' && page.clear) {
+    viewedThread = undefined
+    if (page.notice !== undefined) {
+      threadNotice = page.notice
+      clearTimeout(threadNoticeTimer)
+      threadNoticeTimer = setTimeout(() => {
+        threadNotice = undefined
+        renderSubagents()
+      }, 4000)
+    }
+  }
+  const detail = page?.kind === 'detail' ? page : undefined
+  show(threadView, onThreads && detail === undefined)
+  show(threadDetailHost, detail !== undefined)
+  threadDetail.render(detail)
+  if (onThreads && detail === undefined) {
     threadPanel.render(threadPanelView({
       state: coordination,
       now: Date.now(),
       activeSessionId: activeLaneInfo()?.sessionId,
       expanded: threadFolds,
       pending: pendingThreads,
+      notice: threadNotice,
     }))
   }
   pane?.setSelectedSubagent(onSubagents ? selectedSubagent : undefined)
