@@ -1204,7 +1204,7 @@ test('groupTranscript is memoised on the item list it was handed', () => {
 })
 
 // T6: thread note cards, from the real coordination formatters.
-import { formatCoordinationUpdate, formatThreadNote, formatWakeMessage } from '../src/runtime/coordination/messages.js'
+import { formatCoordinationUpdate, formatOpeningMessage, formatThreadNote, formatWakeMessage } from '../src/runtime/coordination/messages.js'
 
 const NOTE_THREAD = 'thr_0123456789ab'
 
@@ -1219,6 +1219,16 @@ test('T6 a wake message becomes a thread-notes item with cards', () => {
     { threadId: NOTE_THREAD, status: 'idle', title: "Fix 'b''login''/b'", report: 'line one line two' },
   ])
   const live = applySessionEvent(createTranscriptState(), { type: 'turn-start', messageId: 'w2', displayInput: text } as SessionEvent)
+  assert.equal(live.state.items[0]!.kind, 'thread-notes')
+})
+
+test('T6 the opening instruction becomes a card, not a user bubble', () => {
+  const text = formatOpeningMessage()
+  const record: SessionRecord = { type: 'message', id: 'o1', role: 'user', content: text, createdAt: '2026-01-01T00:00:00Z' }
+  const [item] = createTranscriptState([record]).items
+  assert.equal(item!.kind, 'thread-notes')
+  assert.equal(item!.threadNotes!.opening, true)
+  const live = applySessionEvent(createTranscriptState(), { type: 'turn-start', messageId: 'o2', displayInput: text } as SessionEvent)
   assert.equal(live.state.items[0]!.kind, 'thread-notes')
 })
 

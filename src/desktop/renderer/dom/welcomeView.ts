@@ -1,4 +1,5 @@
 import {
+  coordinatorWelcome,
   welcomeRenderSignature,
   type WelcomeHint,
   type WelcomePill,
@@ -236,4 +237,14 @@ export function createWelcomeView(
       projectPicker.render(view.projectPicker)
     },
   }
+}
+
+/** The coordinator's fixed welcome, built once per pane; 「概览」 is a link that opens the panel. */
+export function createCoordinatorWelcome(onOpenOverview: () => void): HTMLElement {
+  const paragraphs = coordinatorWelcome(true)!.map((segments) =>
+    el('p', undefined, ...segments.map((segment) =>
+      typeof segment === 'string'
+        ? segment
+        : button('coordinator-welcome-link', segment.label, '打开概览', onOpenOverview))))
+  return el('div', 'coordinator-welcome', ...paragraphs)
 }

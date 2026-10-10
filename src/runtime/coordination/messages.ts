@@ -3,6 +3,7 @@
 
 import { formatReportNote } from '../../utils/reportSanitizer.js'
 import type { ThreadRecord, ThreadStatus } from '../../services/coordination/types.js'
+import { OPENING_HEAD } from '../protocol/coordinationHost.js'
 import { AUTO_WAKE_LIMIT } from './wakeDecision.js'
 
 const SLUG_MAX = 32
@@ -109,6 +110,16 @@ export function formatWakeMessage(input: WakeMessageInput): string {
     ...input.notes.map(wrapThreadNote),
     '',
     ...instruction,
+  ].join('\n')
+}
+
+/** The app-written instruction for the one opening turn of a coordinator created by 新建项目. */
+export function formatOpeningMessage(): string {
+  return [
+    OPENING_HEAD,
+    'Read the project README, AGENTS.md and CLAUDE.md if they exist, the recent git commits and the directory structure.',
+    'Then briefly summarise the current state of the project and give 2 to 4 concrete suggestions that could each be done as a thread.',
+    'Do not start, message or stop any thread in this turn. Wait for the user to confirm what to do.',
   ].join('\n')
 }
 

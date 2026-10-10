@@ -37,7 +37,7 @@ import type {
   ThreadSummary,
 } from '../protocol/coordinationHost.js'
 import { lastCompactSummary } from './contextPolicy.js'
-import { composeThreadKickoff, formatCoordinatorSeed, threadSlug } from './messages.js'
+import { composeThreadKickoff, formatCoordinatorSeed, formatOpeningMessage, threadSlug } from './messages.js'
 
 export const COORDINATOR_SESSION_TITLE = '项目调度'
 const FETCH_DEFAULT_LIMIT = 20
@@ -327,12 +327,21 @@ export class CoordinationService implements CoordinationHost {
   // Host-side commands (never exposed to the model)
 
   /** The project's coordinator session, created when the pointer is missing or names a session that is gone. */
-  async ensureCoordinator(cwd: string): Promise<string> {
+  async ensureCoordinator(cwd: string, options: { opening?: boolean } = {}): Promise<string> {
     const store = this.coordinationStore(cwd)
     const sessions = this.port.storeFor(cwd)
     const pointer = await store.getCoordinatorSessionId()
     if (pointer && (await sessions.resolve(pointer))) return pointer
-    return await this.createCoordinatorSession(cwd)
+    const id = await this.createCoordinatorSession(cwd)
+    if (options.opening) await this.issueOpening(cwd, id)
+    return id
+  }
+
+  /** The opening turn goes through the wake channel but is never counted in `autoWakeCount`. */
+  private async issueOpening(cwd: string, sessionId: string): Promise<void> {
+    const lane = await this.port.openLane(cwd, sessionId, { activate: false })
+    if (!(await this.coordinationStore(cwd).claimOpening(sessionId))) return
+    lane.requestWake(formatOpeningMessage(), { opening: true })
   }
 
   /**

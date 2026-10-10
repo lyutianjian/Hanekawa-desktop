@@ -48,6 +48,8 @@ export interface CoordinatorState {
   pendingSnapshot?: string
   autoWakeCount: number
   wakeLocked: boolean
+  /** The one-time opening turn of a coordinator created by 新建项目 was issued; set before it runs, never cleared. */
+  openingIssued?: boolean
 }
 
 export interface CoordinationFile {

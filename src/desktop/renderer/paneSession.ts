@@ -49,7 +49,7 @@ import { append, el, show } from './dom/dom.js'
 import { finishPresenceWithin } from './dom/presence.js'
 import { createRepaint } from './frame.js'
 import { createTranscriptView, type TranscriptView } from './dom/transcriptView.js'
-import { createWelcomeView } from './dom/welcomeView.js'
+import { createCoordinatorWelcome, createWelcomeView } from './dom/welcomeView.js'
 import { isTranscriptEmpty, welcomeView } from './model/welcome.js'
 import {
   branchPickerKeyToIntent,
@@ -207,6 +207,8 @@ import {
 export interface PaneSessionDeps {
   /** Whether this lane is a project coordinator (its permission pill is hidden). */
   isCoordinator?: () => boolean
+  /** The coordinator welcome's 「概览」 link: raises the overview panel. */
+  onOpenOverview?: () => void
   /** The lane key. Stable across `/clear` and `/resume`; identifies this pane. */
   lane: string
   channel: RuntimeChannel
@@ -403,6 +405,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   // Before the transcript, so the startup notices a fresh draft carries read as a
   // footnote under the Hero rather than pushing it off the top of the canvas.
   const welcomeEl = el('div', 'welcome')
+  let coordinatorWelcomeEl: HTMLElement | undefined
   const transcriptEl = el('div', 'transcript')
   transcriptEl.setAttribute('aria-live', 'polite')
   append(paneEl, [welcomeEl, transcriptEl])
@@ -746,16 +749,18 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // row counting from `undefined` would have no clock at all. Noticing the
     // turn is the honest floor for 「how long have I been waiting」.
     if (isStreaming && turnStartedAt === undefined) turnStartedAt = Date.now()
+    const coordinator = deps.isCoordinator?.() ?? false
     transcriptView.render(presented, disclosure, {
       isStreaming,
       startedAt: turnStartedAt,
       turnId: transcript.turnId,
       ...(transcript.phase ? { phase: transcript.phase } : {}),
-    }, selectedSubagent)
+    }, selectedSubagent, coordinator ? (coordinatorWelcomeEl ??= createCoordinatorWelcome(() => deps.onOpenOverview?.())) : undefined)
     subagentList = undefined
     // The one place that decides whether this pane has a conversation, so the
     // transcript and the welcome screen cannot disagree about it.
     welcome.render(welcomeView({
+      coordinator,
       transcript: shown,
       projectName,
       global: projectGlobal,
@@ -767,7 +772,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       branchPicker,
       projectPicker: projectPickerState(),
     }))
-    paneEl.classList.toggle('empty', isTranscriptEmpty(shown))
+    paneEl.classList.toggle('empty', !coordinator && isTranscriptEmpty(shown))
     // Thumbnails arrive on demand, exactly as the composer's tiles do: the
     // paint draws the boxes, then each uncached id asks once. Streaming makes
     // this run per chunk; `beginPreviewLoad` is what keeps that one request.

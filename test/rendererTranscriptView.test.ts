@@ -293,7 +293,7 @@ interface Rendered {
   readonly rewound: readonly string[]
   /** Every `Agent` row click, by id. */
   readonly openedSubagents: readonly string[]
-  render(state: TranscriptState, disclosure?: DisclosureState, activity?: WaitingInput, selectedSubagent?: string): void
+  render(state: TranscriptState, disclosure?: DisclosureState, activity?: WaitingInput, selectedSubagent?: string, header?: HTMLElement): void
   stopClock(): void
   dispose(): void
   jump(): StubView
@@ -347,7 +347,7 @@ function mount(t: { after(fn: () => void): void }): Rendered {
     copied,
     rewound,
     openedSubagents,
-    render: (state, disclosure = NO_DISCLOSURE, activity, selectedSubagent) => view.render(state, disclosure, activity, selectedSubagent),
+    render: (state, disclosure = NO_DISCLOSURE, activity, selectedSubagent, header) => view.render(state, disclosure, activity, selectedSubagent, header),
     stopClock: () => view.stopClock(),
     dispose: () => view.dispose(),
     jump,
@@ -1915,6 +1915,20 @@ test('a new question is lifted to the top of the viewport, and the pad is what l
   // than a few past it.
   // 200 of conversation plus a 472 pad, less the 600 on screen.
   assert.equal(200 + 472 - 600, view.container.scrollTop)
+})
+
+test('a header above the entries does not shift the anchor off the newest question', (t) => {
+  const view = mount(t)
+  laidOut(view)
+  const header = document.createElement('div')
+  header.className = 'coordinator-welcome'
+
+  const asked = transcript([{ id: 'a', kind: 'user', text: '你好' }])
+  view.render(asked, undefined, live(asked), undefined, header)
+
+  assert.equal(view.items()[0]!.classes.includes('coordinator-welcome'), true, 'the header leads the column')
+  // The bubble is lifted (it was measured), and not as the first thing in the session: the header sits above it.
+  assert.equal(view.container.scrollTop, 16)
 })
 
 test('a question with a turn above it keeps 64px of that turn on screen', (t) => {

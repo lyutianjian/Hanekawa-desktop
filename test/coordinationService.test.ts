@@ -12,6 +12,7 @@ import {
   type CoordinationEngineHooks,
   type CoordinationPort,
 } from '../src/runtime/coordination/service.js'
+import { OPENING_HEAD } from '../src/runtime/protocol/coordinationHost.js'
 import { SessionStore } from '../src/sessions/service.js'
 
 class FakeControl implements CoordinationLaneControl {
@@ -21,7 +22,8 @@ class FakeControl implements CoordinationLaneControl {
   stops = 0
   streaming = false
   async enqueueFromCoordinator(text: string): Promise<void> { this.enqueued.push(text) }
-  requestWake(): void {}
+  wakes: string[] = []
+  requestWake(text: string): void { this.wakes.push(text) }
   async stop(): Promise<void> { this.stops++ }
   setModel(key: string): void { this.models.push(key) }
   setEffort(level: string): void { this.efforts.push(level) }
@@ -68,10 +70,11 @@ async function setup(t: TestContext, options: { git?: boolean } = {}) {
   }
   const service = new CoordinationService(port, engine)
   const coordinatorId = await service.ensureCoordinator(cwd)
+  const openingWakes = () => [...lanes.values()].flatMap((lane) => lane.wakes)
   const caller = { sessionId: coordinatorId, projectDir: cwd }
   const store = service.coordinationStore(cwd)
   const thread = async (id: string) => (await store.read()).threads.find((th) => th.threadId === id)!
-  return { cwd, git, sessions, lanes, opened, notices, settings, calls, service, caller, store, thread, coordinatorId }
+  return { cwd, git, sessions, lanes, port, engine, openingWakes, opened, notices, settings, calls, service, caller, store, thread, coordinatorId }
 }
 
 const request = { title: 'Fix the bug', brief: 'Fix it', background: 'b'.repeat(80), writesCode: false }
@@ -348,4 +351,61 @@ test('coordinator and thread effort are applied with the model', async (t) => {
   const fresh = await s.service.ensureCoordinator(s.cwd)
   assert.notEqual(fresh, s.coordinatorId)
   assert.deepEqual(s.lanes.get(fresh)!.efforts, ['high'])
+})
+
+test('the opening turn runs once for a coordinator created with opening, uncounted, and never for an existing one', async (t) => {
+  const h = await setup(t)
+  assert.deepEqual(h.openingWakes(), [], 'a plain ensureCoordinator issues no opening')
+  assert.equal(await h.service.ensureCoordinator(h.cwd, { opening: true }), h.coordinatorId, 'an existing coordinator is reused')
+  assert.deepEqual(h.openingWakes(), [])
+
+  const fresh = await mkdtemp(path.join(tmpdir(), 'coord-svc-open-'))
+  t.after(() => rm(fresh, { recursive: true, force: true }))
+  const sessions = new SessionStore(fresh)
+  await sessions.init()
+  const lanes = new Map<string, FakeControl>()
+  const port: CoordinationPort = {
+    ...h.port,
+    storeFor: () => sessions,
+    laneControl: (id) => lanes.get(id),
+    async openLane(_cwd, id) {
+      let lane = lanes.get(id)
+      if (!lane) lanes.set(id, lane = new FakeControl())
+      return lane
+    },
+  }
+  const service = new CoordinationService(port, h.engine)
+  const id = await service.ensureCoordinator(fresh, { opening: true })
+  const wakes = lanes.get(id)!.wakes
+  assert.equal(wakes.length, 1)
+  assert.ok(wakes[0]!.startsWith(OPENING_HEAD))
+  const state = (await service.coordinationStore(fresh).read()).coordinator!
+  assert.equal(state.openingIssued, true)
+  assert.equal(state.autoWakeCount, 0, 'the opening is not an automatic wake')
+
+  // A restart: a new service over the same files finds the coordinator and the flag.
+  const restarted = new CoordinationService(port, h.engine)
+  assert.equal(await restarted.ensureCoordinator(fresh, { opening: true }), id)
+  assert.equal(lanes.get(id)!.wakes.length, 1)
+
+  // A reseed replaces the coordinator without an opening.
+  const next = await service.reseedCoordinator(fresh, id)
+  assert.notEqual(next, id)
+  assert.equal(lanes.get(next)?.wakes.length ?? 0, 0)
+  assert.equal(lanes.get(id)!.wakes.length, 1)
+})
+
+test('the opening is claimed once even if the app closed before the turn ran', async (t) => {
+  const h = await setup(t)
+  const store = h.service.coordinationStore(h.cwd)
+  assert.equal(await store.claimOpening(h.coordinatorId), true)
+  assert.equal(await store.claimOpening(h.coordinatorId), false)
+})
+
+test('a claim for a session the pointer has moved off is refused and leaves the flag unset', async (t) => {
+  const h = await setup(t)
+  const store = h.service.coordinationStore(h.cwd)
+  assert.equal(await store.claimOpening('s_old'), false)
+  assert.equal((await store.read()).coordinator!.openingIssued, undefined)
+  assert.equal(await store.claimOpening(h.coordinatorId), true)
 })

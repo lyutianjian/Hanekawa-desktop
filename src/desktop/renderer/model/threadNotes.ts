@@ -28,18 +28,24 @@ export interface ThreadNoteCard {
 }
 
 export interface ThreadNotesData {
+  /** The one-time opening instruction: drawn as a single card, no thread notes. */
+  readonly opening?: true
   readonly wake?: { readonly count: number; readonly limit: number; readonly reason: WakeReason }
   readonly cards: readonly ThreadNoteCard[]
 }
 
 export const REPORT_PREVIEW_MAX = 160
+import { OPENING_HEAD } from '../../../runtime/protocol/coordinationHost.js'
+
+export const OPENING_CARD_LABEL = '开场：查看项目上下文'
 
 const WAKE_HEAD_RE = /^This is an automatic wake \((\d+) of (\d+)\)\. (A thread is waiting for an answer\.|Your threads have finished\.)/
 const NOTE_RE = /<thread-note(?: thread="(thr_[0-9a-f]{12})")?>\n([\s\S]*?)\n<\/thread-note>/g
 const NOTE_HEAD_RE = /^\[([^\]]*)\] (.*)$/
 
-/** A wake message with at least one note, else `undefined` (not a card). */
+/** A wake message with at least one note, or the opening instruction; else `undefined` (not a card). */
 export function parseThreadNoteMessage(text: string): ThreadNotesData | undefined {
+  if (text.startsWith(OPENING_HEAD)) return { opening: true, cards: [] }
   const head = WAKE_HEAD_RE.exec(text)
   if (!head) return undefined
   const cards = parseCards(text)

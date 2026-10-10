@@ -5780,6 +5780,19 @@ body.projects-open #browser-resizer,
 .merge-bar-list { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
 .merge-bar-item { min-width: 0; }
 
+/* The coordinator's fixed welcome above the first entry. */
+.coordinator-welcome { margin-bottom: var(--space-4); color: var(--text-secondary); font-size: var(--type-meta); }
+.coordinator-welcome p { margin: 0 0 var(--space-1); }
+.coordinator-welcome-link {
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--link);
+  font: inherit;
+  cursor: pointer;
+}
+.coordinator-welcome-link:hover { text-decoration: underline; }
+
 /* Note cards in the transcript: title and status on one line, the report
    clipped to one line beneath, and 查看 at the right. */
 .thread-notes-head {

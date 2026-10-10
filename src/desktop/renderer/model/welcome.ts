@@ -102,6 +102,8 @@ export interface WelcomePill {
 }
 
 export interface WelcomeState {
+  /** A coordinator session has its own fixed welcome in the transcript instead of the Hero. */
+  readonly coordinator?: boolean
   readonly transcript: TranscriptState
   /** From `hello.projectName`; undefined until the pane has started. */
   readonly projectName: string | undefined
@@ -177,6 +179,22 @@ export function isTranscriptEmpty(state: TranscriptState): boolean {
   return !state.items.some((item) => COUNTS_AS_CONVERSATION[item.kind])
 }
 
+/** One paragraph of the coordinator welcome: plain text, or the clickable 「概览」 that opens the panel. */
+export type CoordinatorWelcomeSegment = string | { readonly link: 'overview'; readonly label: string }
+
+/**
+ * The text fixed at the top of a coordinator session's transcript, whatever the
+ * conversation holds. Pure interface: never a record, never sent to the model.
+ * Absent outside a coordinator (threads and ordinary sessions).
+ */
+export function coordinatorWelcome(coordinator: boolean): readonly (readonly CoordinatorWelcomeSegment[])[] | undefined {
+  if (!coordinator) return undefined
+  return [
+    ['我负责协调这个项目。有需求直接说，我会直接回答，或开线程并行处理。'],
+    ['线程的状态在', { link: 'overview', label: '概览' }, '里看；有任务完成或需要你处理时，我会告诉你。'],
+  ]
+}
+
 export function createWelcomeState(overrides: Partial<WelcomeState> = {}): WelcomeState {
   return {
     transcript: { items: [], generation: 0, toolProgress: undefined, isThinking: false, thinkingCount: 0 },
@@ -223,7 +241,7 @@ export function welcomeView(state: WelcomeState): WelcomeView {
     })
   }
 
-  const visible = isTranscriptEmpty(state.transcript)
+  const visible = state.coordinator !== true && isTranscriptEmpty(state.transcript)
   return {
     visible,
     global: state.global,

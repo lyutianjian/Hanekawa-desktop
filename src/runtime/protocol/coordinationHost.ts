@@ -76,6 +76,9 @@ export interface FetchedThread {
   nextOffset?: number
 }
 
+/** First line of the opening instruction; the renderer recognises the turn by it. */
+export const OPENING_HEAD = 'This is the opening of a new coordinator session (not an automatic wake).'
+
 export interface CoordinationHost {
   startThread(caller: CoordinationCaller, request: StartThreadRequest): Promise<StartedThread>
   messageThread(caller: CoordinationCaller, threadId: string, text: string): Promise<void>
@@ -92,7 +95,7 @@ export interface CoordinationLaneControl {
   /** Queue a message from the coordinator; it never interrupts a user-driven turn. */
   enqueueFromCoordinator(text: string): Promise<void>
   /** Ask the lane to start a wake turn with this text when it can. */
-  requestWake(text: string): void
+  requestWake(text: string, options?: { opening?: boolean }): void
   /** Drop queued messages, then interrupt the running turn. */
   stop(): Promise<void>
   setModel(key: string): void

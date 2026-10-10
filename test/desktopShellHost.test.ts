@@ -2884,8 +2884,8 @@ test('settings commands fail cleanly for a project that is not open', async () =
 function fakeCoordination(store: () => FakeStore, calls: string[]): ShellCoordination {
   let coordinatorId: string | undefined
   return {
-    ensureCoordinator: async (cwd) => {
-      calls.push(`ensure:${cwd}`)
+    ensureCoordinator: async (cwd, options) => {
+      calls.push(`ensure:${cwd}${options?.opening ? ':opening' : ''}`)
       if (coordinatorId !== undefined && (await store().resolve(coordinatorId))) return coordinatorId
       const meta = { ...sessionOf('coord-1', '项目调度'), coordination: { role: 'coordinator' as const, projectKey: 'k' } }
       store().sessions.set(meta.id, meta)
@@ -2993,6 +2993,7 @@ test('new-coordinator-project picks a folder, adds it and opens its coordinator;
   assert.ok('pane' in opened)
   assert.equal(opened.pane.coordinationRole, 'coordinator')
   assert.deepEqual(ensured, [fixturePath('repo', 'beta')])
+  assert.deepEqual(calls, [`ensure:${fixturePath('repo', 'beta')}:opening`, 'create'], 'only this command asks for the opening turn')
   assert.deepEqual(
     fresh!.entry.workspace.panes.map((pane) => pane.getSession().id),
     ['coord-1'],

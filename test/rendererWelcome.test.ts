@@ -9,6 +9,7 @@ import {
   WELCOME_TITLE_AFTER,
   WELCOME_TITLE_BEFORE,
   WELCOME_WORDMARK,
+  coordinatorWelcome,
   createWelcomeState,
   isTranscriptEmpty,
   welcomeRenderSignature,
@@ -253,4 +254,15 @@ test('a notice arriving while the screen is up does not move the signature', () 
     transcript: transcript({ items: [item('notice', 'n1'), item('notice', 'n2')] }),
   }))
   assert.equal(after, before)
+})
+
+test('the coordinator welcome exists only for a coordinator and links 概览', () => {
+  assert.equal(coordinatorWelcome(false), undefined)
+  const paragraphs = coordinatorWelcome(true)!
+  assert.ok(paragraphs.flat().some((segment) => typeof segment === 'object' && segment.link === 'overview' && segment.label === '概览'))
+})
+
+test('a coordinator session shows its own welcome, never the Hero, empty or not', () => {
+  assert.equal(welcomeView(stateWith({ transcript: transcript() })).visible, true)
+  assert.equal(welcomeView(stateWith({ coordinator: true, transcript: transcript() })).visible, false)
 })

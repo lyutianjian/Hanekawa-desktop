@@ -366,6 +366,7 @@ function attachPaneSession(lane: string): void {
     },
     onSubagentsChanged: () => renderSubagents(),
     isCoordinator: () => shellClient.getLanes().find((info) => info.lane === lane)?.coordinationRole === 'coordinator',
+    onOpenOverview: () => showSideTab('threads'),
     onExit: () => {
       // `/exit` closes this pane, not the window: the single window holds every
       // other lane, and `window.close()` would take them all down.

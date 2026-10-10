@@ -39,6 +39,8 @@ const ALLOWED_SHARED_IMPORTS = [
   // The pending-request ledger shared by the protocol client and the shell
   // client. Pure, no imports.
   '../../runtime/protocol/pendingRequests.js',
+  // The opening instruction's header, shared with the model-facing formatter. Types only beside it.
+  '../../../runtime/protocol/coordinationHost.js',
   '../../../runtime/permissionPresentation.js',
   '../../../runtime/planPresentation.js',
   '../../../runtime/rewindPresentation.js',

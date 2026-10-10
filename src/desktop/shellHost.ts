@@ -261,7 +261,7 @@ export interface LaneOccupant {
  */
 export interface ShellCoordination {
   /** The coordinator session id, created when the project has none. */
-  ensureCoordinator(cwd: string): Promise<string>
+  ensureCoordinator(cwd: string, options?: { opening?: boolean }): Promise<string>
   stopAll(cwd: string): Promise<void>
   pendingMerges(cwd: string): Promise<WireThreadMerge[]>
   mergeThread(cwd: string, threadId: string): Promise<WireShellThreadMergeResult>
@@ -1106,12 +1106,12 @@ export class ShellHost<
    * for it has a lane-less draft pane nobody will open, so that pane is dropped
    * (as `openProject` avoids it) and a failure shuts the project again.
    */
-  private async openCoordinator(cwd: string): Promise<WireShellOpenCoordinatorResult> {
+  private async openCoordinator(cwd: string, options: { opening?: boolean } = {}): Promise<WireShellOpenCoordinatorResult> {
     const coordination = this.requireCoordination()
     this.refuseGlobalCoordinator(cwd)
     const { entry, session } = await this.ensureFresh(cwd)
     try {
-      const sessionId = await coordination.ensureCoordinator(entry.cwd)
+      const sessionId = await coordination.ensureCoordinator(entry.cwd, options)
       const opened = await this.openLane(entry, { sessionId, activate: true })
       const draft = session === undefined ? undefined : entry.workspace.paneForSession(session.id)
       if (draft) entry.workspace.close(draft)
@@ -1330,7 +1330,7 @@ export class ShellHost<
         if (command.path === undefined && !onPickDirectory) throw new Error('The shell cannot open projects.')
         const target = command.path ?? (await onPickDirectory!({ title: '新建项目', buttonLabel: '新建' }))
         if (target === undefined) return { cancelled: true } satisfies WireShellNewCoordinatorProjectResult
-        return this.openCoordinator(target)
+        return this.openCoordinator(target, { opening: true })
       }
       case 'coordination-stop-all': {
         const coordination = this.requireCoordination()

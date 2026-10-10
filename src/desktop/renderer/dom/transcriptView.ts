@@ -46,7 +46,7 @@ import {
   type WaitingRow,
 } from '../model/waiting.js'
 import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
-import type { ThreadNoteCard } from '../model/threadNotes.js'
+import { OPENING_CARD_LABEL, type ThreadNoteCard } from '../model/threadNotes.js'
 import type { WireThreadStatus } from '../../shellProtocol.js'
 import { button } from './controls.js'
 import { diffNode } from './diffView.js'
@@ -110,9 +110,9 @@ export interface TranscriptView {
    * `activity` is what the pane knows about the turn in flight — whether one is
    * running, when it started and which turn it is — and `model/waiting.ts` turns
    * that into 「which group is live」 and 「what the tail row reads」. `undefined`
-   * is an idle session: no row is drawn.
+   * is an idle session: no row is drawn. `header` is fixed above every entry.
    */
-  render(state: TranscriptState, disclosure: DisclosureState, activity?: WaitingInput, selectedSubagent?: string): void
+  render(state: TranscriptState, disclosure: DisclosureState, activity?: WaitingInput, selectedSubagent?: string, header?: HTMLElement): void
   /**
    * Stops the live status's clock.
    *
@@ -469,7 +469,7 @@ export function createTranscriptView(
       refs.clear()
       seenDisclosures.clear()
     },
-    render(state, disclosure, activity, selectedSubagent) {
+    render(state, disclosure, activity, selectedSubagent, header) {
       if (!document.hidden && !observing) {
         resizeObserver?.observe(container)
         resizeObserver?.observe(column)
@@ -529,7 +529,7 @@ export function createTranscriptView(
       if (live.row) nodes.push(waitingNode(painter, live.row))
       else clockNode = undefined
       painter.prune()
-      reconcile(column, nodes)
+      reconcile(column, header ? [header, ...nodes] : nodes)
       for (const run of afterPaint) run()
       runClock(live.row ? activity?.startedAt : undefined)
 
@@ -567,8 +567,8 @@ export function createTranscriptView(
         column.style.setProperty(TRANSCRIPT_PAD_VARIABLE, '0px')
       } else {
         anchorNode = nodes[at]!
-        anchorFirst = at === 0
-        const lift = liftAnchor(container, column, nodes[at]!, { first: at === 0, moved, settled, pad, holdPadding: anchorHoldPadding })
+        anchorFirst = at === 0 && !header
+        const lift = liftAnchor(container, column, nodes[at]!, { first: at === 0 && !header, moved, settled, pad, holdPadding: anchorHoldPadding })
         pad = lift.pad
         lifted = lift.lifted
         // The anchor is only *spent* once it could actually be measured. A pane
@@ -1627,6 +1627,7 @@ function threadNotesNode(painter: Painter, item: TranscriptItem, classes: string
     data.wake === undefined
       ? undefined
       : el('div', 'thread-notes-head', `自动唤醒 · ${data.wake.count}/${data.wake.limit}`),
+    data.opening ? el('div', 'thread-note-card', el('span', 'thread-note-title', OPENING_CARD_LABEL)) : undefined,
     ...data.cards.map((card) => threadNoteCard(painter, card)),
   ])
 }

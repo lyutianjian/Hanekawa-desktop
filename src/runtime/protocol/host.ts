@@ -249,6 +249,8 @@ export interface PaneRegistry {
   close(pane: SessionPane): void
 }
 
+const OPENING_NO_MODEL_NOTICE = '未配置模型，未能自动开场'
+
 /**
  * The host half of the protocol: everything that must stay in the process that
  * owns the filesystem, the provider and the tools.
@@ -310,6 +312,8 @@ export class SessionHost implements CoordinationLaneControl {
   private pendingConfigScope: ProviderConfigChangeScope | undefined
   /** A wake turn's text, waiting for the pump to let it through. See `requestWake`. */
   private pendingWake: string | undefined
+  private attached = false
+  private openingNotice: string | undefined
   private readonly stateListeners = new Set<() => void>()
   /** The last lane state announced, so listeners fire on change only. */
   private lastStateKey = ''
@@ -802,6 +806,9 @@ export class SessionHost implements CoordinationLaneControl {
   private async execute(command: Exclude<HostCommand, { type: 'ui-response' }>): Promise<unknown> {
     switch (command.type) {
       case 'hello': {
+        this.attached = true
+        const openingNotice = this.openingNotice
+        this.openingNotice = undefined
         const records = [...this.ledger.list()]
         const toolDisplays = projectToolDisplays(records)
         this.postSnapshot()
@@ -820,7 +827,10 @@ export class SessionHost implements CoordinationLaneControl {
           ...(gitBranch ? { gitBranch } : {}),
           records,
           ...(toolDisplays ? { toolDisplays } : {}),
-          notices: this.startupNotices(this.scope.diagnostics),
+          notices: [
+            ...this.startupNotices(this.scope.diagnostics),
+            ...(openingNotice ? [{ level: 'warning' as const, content: openingNotice }] : []),
+          ],
           hasRecoverableInterruption: this.scope.hasRecoverableInterruption,
           ...(queued ? { initialQueuedPrompt: queued } : {}),
           queuedMessages: [...this.messages.getSnapshot()],
@@ -1244,7 +1254,13 @@ export class SessionHost implements CoordinationLaneControl {
   }
 
   /** Not gated on `hello`: a lane opened without a window still wakes. */
-  requestWake(text: string): void {
+  requestWake(text: string, options: { opening?: boolean } = {}): void {
+    if (options.opening && !this.runtimeSlot.current) {
+      // No model: the opening is dropped, not held; the notice reaches the pane at hello if it is not attached yet.
+      if (this.attached) this.postQueueNotice(OPENING_NO_MODEL_NOTICE)
+      else this.openingNotice = OPENING_NO_MODEL_NOTICE
+      return
+    }
     this.pendingWake = this.pendingWake === undefined ? text : `${this.pendingWake}\n\n${text}`
     this.pumpQueue()
   }

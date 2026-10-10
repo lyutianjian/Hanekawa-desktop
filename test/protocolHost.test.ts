@@ -104,6 +104,8 @@ interface HarnessOptions {
   existingRecords?: SessionRecord[]
   /** The scope's coordination role. */
   role?: 'coordinator' | 'thread'
+  /** The lane has no model runtime. */
+  noRuntime?: boolean
 }
 
 async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
@@ -236,7 +238,7 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
     providerName: 'anthropic',
   }
   const runtimeSlot = {
-    current: agentSession,
+    current: (options.noRuntime ? undefined : agentSession) as typeof agentSession | undefined,
     requireCurrent: () => runtimeSlot.current,
     getSnapshot: () => ({ status: 'ready', session: runtimeSlot.current, effort: 'high' }),
     subscribe: () => () => {},
@@ -2242,6 +2244,17 @@ test('requestWake before hello runs a wake turn, once, folding in background not
   await givePumpAChance()
   assert.deepEqual(harness.calls.submits, ['wake up\n\nnote'], 'one turn, not a second notification wake')
   assert.deepEqual(harness.calls.submitOrigins, ['wake'])
+  harness.dispose()
+})
+
+test('an opening wake on a lane with no model is dropped with a notice, shown at hello and not held', async () => {
+  const harness = await createHarness({ role: 'coordinator', noRuntime: true })
+  harness.host.requestWake('open', { opening: true })
+  await givePumpAChance()
+  assert.deepEqual(harness.calls.submits, [])
+  harness.send({ type: 'hello', id: 'h1' })
+  const reply = await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === 'h1'), 'hello reply')
+  assert.ok(JSON.stringify(reply).includes('未配置模型，未能自动开场'))
   harness.dispose()
 })
 
