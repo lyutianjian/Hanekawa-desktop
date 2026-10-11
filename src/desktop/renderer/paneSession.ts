@@ -20,6 +20,7 @@
  * authoritative in the composer while active and is banked on `deactivate()`.
  */
 
+import type { WireUsageDay } from '../shellProtocol.js'
 import { SessionClient } from '../../runtime/protocol/client.js'
 import type { RuntimeChannel } from '../../runtime/protocol/channel.js'
 import type {
@@ -263,6 +264,8 @@ export interface PaneSessionDeps {
    * shell command, and this pane owns only the click.
    */
   onOpenFile?: (path: string, line: number | undefined) => void
+  /** The home page's usage statistics; the host caches the scan. */
+  loadUsage: () => Promise<readonly WireUsageDay[]>
   /** `/exit` was accepted by the host — close whatever this shell calls "this pane". */
   onExit: () => void
   /** The lane died from the host side (pane closed, window closing). */
@@ -485,6 +488,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       runProjectPickerIntent(intent)
       return true
     },
+    loadUsage: deps.loadUsage,
   })
 
   // --- state -----------------------------------------------------------------

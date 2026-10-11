@@ -5,6 +5,7 @@ import test from 'node:test'
 
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
 import { createWelcomeView } from '../src/desktop/renderer/dom/welcomeView.js'
+import type { WireUsageDay } from '../src/desktop/shellProtocol.js'
 import type { WelcomeView } from '../src/desktop/renderer/model/welcome.js'
 import {
   branchPickerView,
@@ -69,16 +70,7 @@ function welcomeViewFixture(overrides: Partial<WelcomeView> = {}): WelcomeView {
     branchPicker: pickerFixture(),
     projectPicker: projectFixture(),
     visible: true,
-    global: false,
-    titleBefore: '你想让我们在 ',
-    projectLabel: 'Hanekawa-main',
-    titleAfter: ' 中构建什么？',
-    wordmark: 'hanekawa',
-    hints: [
-      { keys: ['/'], label: '命令' },
-      { keys: ['@'], label: '引用文件' },
-      { keys: ['Shift', 'Tab'], label: '切换权限模式' },
-    ],
+    title: '接下来做什么？',
     pills: [
       { kind: 'project', label: 'Hanekawa-main', icon: 'folder', interactive: false },
       { kind: 'branch', label: 'master', icon: 'branch', interactive: true },
@@ -93,6 +85,7 @@ interface Rendered {
   readonly intents: BranchPickerIntent[]
   /** The project switcher's own intents, kept apart so neither list can hide the other. */
   readonly projectIntents: ProjectPickerIntent[]
+  readonly loads: { count: number }
   view(): StubView
   rerender(next?: WelcomeView): void
 }
@@ -100,17 +93,23 @@ interface Rendered {
 function render(
   t: { after(fn: () => void): void },
   initial = welcomeViewFixture(),
+  usage: Promise<readonly WireUsageDay[]> = new Promise(() => {}),
 ): Rendered {
   const stub = installDomStub()
   t.after(() => stub.uninstall())
   const container = stub.createContainer('welcome')
   const intents: BranchPickerIntent[] = []
   const projectIntents: ProjectPickerIntent[] = []
+  const loads = { count: 0 }
   const dom = createWelcomeView(container, {
     onBranchIntent: (intent) => intents.push(intent),
     onBranchKey: () => false,
     onProjectIntent: (intent) => projectIntents.push(intent),
     onProjectKey: () => false,
+    loadUsage: () => {
+      loads.count += 1
+      return usage
+    },
   })
   dom.render(initial)
   return {
@@ -118,6 +117,7 @@ function render(
     container,
     intents,
     projectIntents,
+    loads,
     view: () => stub.inspect(container),
     rerender: (next = initial) => dom.render(next),
   }
@@ -149,60 +149,19 @@ const child = (view: StubView, className: string): StubView => {
 const buttons = (view: StubView): StubView[] =>
   view.children.flatMap((node) => (node.tagName === 'BUTTON' ? [node] : buttons(node)))
 
-test('the empty state draws a wordmark, a hero, the pills and the hint row', (t) => {
+test('the empty state draws the title, the usage card and the pills', (t) => {
   const { view } = render(t)
   const root = view()
 
   assert.equal(root.hidden, false)
-  // No graphic mark — that is the design. An icon over three centred cards is
-  // the shape every agent shell ships, so it identifies none of them.
-  assert.equal(find(root, 'welcome-mark'), undefined)
-  assert.equal(find(root, 'welcome-cards'), undefined)
-  assert.equal(child(root, 'welcome-wordmark').text, 'hanekawa')
-
   const title = child(root, 'welcome-title')
   assert.equal(title.tagName, 'H1')
-  // Text, the project name, text — the reason the model splits the sentence into
-  // three fields instead of interpolating one string.
-  assert.equal(title.nodes.length, 3)
-  assert.equal(title.nodes[0], '你想让我们在 ')
-  assert.equal(title.nodes[2], ' 中构建什么？')
-  const project = title.nodes[1]
-  assert.ok(typeof project !== 'string')
-  // A span, not a button: the workspace switcher it used to open is gone, and a
-  // control that does nothing is a worse lie than plain text.
-  assert.equal(project.tagName, 'SPAN')
-  assert.ok(project.classes.includes('welcome-project-name'))
-  assert.equal(project.text, 'Hanekawa-main')
-
-  const hints = child(root, 'welcome-hints').children
-  assert.equal(hints.length, 3)
-  assert.deepEqual(hints.map((hint) => hint.tagName), ['SPAN', 'SPAN', 'SPAN'])
-  assert.deepEqual(hints.map((hint) => hint.text), ['/命令', '@引用文件', 'ShiftTab切换权限模式'])
-  // The keys are their own nodes so the sheet can set them in the mono stack
-  // without the view parsing a sentence apart.
-  assert.deepEqual(
-    hints.map((hint) => hint.children.filter((n) => n.tagName === 'KBD').map((n) => n.text)),
-    [['/'], ['@'], ['Shift', 'Tab']],
-  )
-})
-
-test('the global workspace hero is one text node with no project segment', (t) => {
-  const { view } = render(
-    t,
-    welcomeViewFixture({
-      global: true,
-      titleBefore: '你想让我们构建什么？',
-      titleAfter: '',
-      projectLabel: '',
-      pills: [{ kind: 'project', label: '~/.myagent', icon: 'folder', interactive: false }],
-    }),
-  )
-
-  const title = child(view(), 'welcome-title')
-  assert.equal(title.nodes.length, 1)
-  assert.equal(title.nodes[0], '你想让我们构建什么？')
-  assert.equal(find(view(), 'welcome-project-name'), undefined)
+  assert.equal(title.text, '接下来做什么？')
+  assert.ok(find(root, 'welcome-mark'))
+  assert.ok(find(root, 'usage-card'))
+  assert.equal(find(root, 'welcome-wordmark'), undefined)
+  assert.equal(find(root, 'welcome-hints'), undefined)
+  assert.equal(child(root, 'welcome-pills').children.length, 2)
 })
 
 test('a pill the model calls read-only is a span, and the branch pill is a control', (t) => {
@@ -223,7 +182,7 @@ test('a pill the model calls read-only is a span, and the branch pill is a contr
   assert.equal(trigger.text, 'master')
 
   // The popover's own panel is not a Tab stop, so it is not a button either.
-  assert.deepEqual(buttons(view()).map((node) => node.text), ['master'])
+  assert.deepEqual(buttons(child(view(), 'welcome-pills')).map((node) => node.text), ['master'])
 
   stub.click(trigger.node)
   assert.deepEqual(intents, [{ kind: 'open' }])
@@ -454,9 +413,9 @@ test('the branch pill keeps its popover across an open and a close', (t) => {
 
 test('rendering the same view twice rebuilds nothing', (t) => {
   const { view, rerender } = render(t)
-  const before = child(view(), 'welcome-hints').children.map((hint) => hint.node)
+  const before = child(view(), 'welcome-pills').children.map((pill) => pill.node)
   rerender()
-  const after = child(view(), 'welcome-hints').children.map((hint) => hint.node)
+  const after = child(view(), 'welcome-pills').children.map((pill) => pill.node)
 
   // Identity, not equality: this view repaints once per streamed token, so the
   // signature guard is load-bearing rather than tidiness.
@@ -479,4 +438,65 @@ test('the stub carries every document member the dom helpers reach for', (t) => 
   for (const member of members) {
     assert.equal(stub.hasDocumentMember(member), true, `the stub is missing document.${member}`)
   }
+})
+
+// --- the usage card ------------------------------------------------------------
+
+const today = new Date()
+const key = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+const DAYS: WireUsageDay[] = [
+  { day: key, sessions: 3, turns: 12, tokens: 25_000, hours: new Array<number>(24).fill(0).map((_, h) => (h === 21 ? 12 : 0)), models: { alpha: 20_000, beta: 5_000 } },
+]
+const cellValues = (view: StubView): string[] => child(view, 'usage-cells').children.map((cell) => cell.children[0]!.text)
+const segment = (view: StubView, label: string): StubView => {
+  const found = buttons(view).find((node) => node.text === label)
+  assert.ok(found, label)
+  return found
+}
+
+test('the card shows a skeleton until the stats arrive, then the numbers', async (t) => {
+  let resolve!: (days: WireUsageDay[]) => void
+  const { view } = render(t, welcomeViewFixture(), new Promise((r) => { resolve = r }))
+
+  assert.ok(child(view(), 'usage-card').classes.includes('loading'))
+  resolve(DAYS)
+  await Promise.resolve()
+  await Promise.resolve()
+  const card = child(view(), 'usage-card')
+  assert.equal(card.classes.includes('loading'), false)
+  assert.deepEqual(cellValues(card), ['3', '12', '2.5 万', '1', '21 时', 'alpha'])
+  assert.equal(child(card, 'usage-footnote').text, '你用掉的 token 大约相当于 0.1 本《三体》')
+})
+
+test('an empty history draws zeros and dashes', async (t) => {
+  const { view } = render(t, welcomeViewFixture(), Promise.resolve([]))
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.deepEqual(cellValues(child(view(), 'usage-card')), ['0', '0', '0', '0', '—', '—'])
+})
+
+test('the segments switch the tab and the range locally', async (t) => {
+  const { view, stub, loads } = render(t, welcomeViewFixture(), Promise.resolve(DAYS))
+  await Promise.resolve()
+  await Promise.resolve()
+
+  stub.click(segment(view(), '模型').node)
+  const shares = child(view(), 'usage-shares').children
+  assert.deepEqual(shares.map((share) => share.text), ['alpha2 万 · 80%', 'beta5,000 · 20%'])
+  assert.equal(segment(view(), '模型').attributes.get('aria-pressed'), 'true')
+
+  stub.click(segment(view(), '概览').node)
+  stub.click(segment(view(), '7 天').node)
+  assert.equal(segment(view(), '7 天').attributes.get('aria-pressed'), 'true')
+  assert.equal(child(view(), 'usage-cells').children[0]!.children[0]!.text, '3')
+  assert.equal(loads.count, 1)
+})
+
+test('the stats are asked for once per showing, not per repaint', (t) => {
+  const { rerender, loads } = render(t)
+  rerender(welcomeViewFixture({ pills: [{ kind: 'project', label: 'x', icon: 'folder', interactive: false }] }))
+  assert.equal(loads.count, 1)
+  rerender(welcomeViewFixture({ visible: false }))
+  rerender(welcomeViewFixture())
+  assert.equal(loads.count, 2)
 })

@@ -331,6 +331,7 @@ function attachPaneSession(lane: string): void {
     status,
     composer,
     imageViewer,
+    loadUsage: () => shellClient.usageStats().then((result) => result.days),
     onShellChanged: () => {
       // Every pane repaints the sidebar, not just the active one: the badges are
       // per row, so a background pane starting a turn has to show up. Cached

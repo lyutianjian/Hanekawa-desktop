@@ -1,7 +1,6 @@
 import {
   coordinatorWelcome,
   welcomeRenderSignature,
-  type WelcomeHint,
   type WelcomePill,
   type WelcomeView,
 } from '../model/welcome.js'
@@ -9,6 +8,8 @@ import { BRANCH_PICKER_LABEL, type BranchPickerIntent } from '../model/branchPic
 import { PROJECT_PICKER_LABEL, type ProjectPickerIntent } from '../model/projectPicker.js'
 import { createBranchPickerView, type BranchPickerDom } from './branchPickerView.js'
 import { createProjectPickerView, type ProjectPickerDom } from './projectPickerView.js'
+import { createUsageCard } from './usageCardView.js'
+import type { WireUsageDay } from '../../shellProtocol.js'
 import { el, reconcile, replace, show } from './dom.js'
 import { button } from './controls.js'
 import { onPressOutside } from './dismiss.js'
@@ -16,27 +17,23 @@ import { icon } from './icons.js'
 import { finishPresenceWithin } from './presence.js'
 
 /**
- * The empty-state screen as DOM.
+ * The empty-state home page as DOM.
  *
  * Mounted inside the pane's own subtree rather than as a singleton panel, so it
- * is hidden with the rest of a backgrounded pane and one pane's Hero can never
- * be left painted over another's conversation.
+ * is hidden with the rest of a backgrounded pane. Every decision is
+ * `model/welcome.ts`'s, including whether this is visible at all.
  *
- * Every decision is `model/welcome.ts`'s, including whether this is visible at
- * all. Four things belong here and nowhere else: the masthead is one block —
- * wordmark over Hero — because the stylesheet hangs both off a single rule down
- * its left edge, and two blocks would need two rules; the Hero line is assembled
- * from three view fields so the project name can be its own node in the middle
- * of a sentence; the hint row is `<span>`s, and so is any pill the model says is
- * not a control — a button that does nothing when clicked is a worse lie than
- * plain text; and each switchable pill carries its popover in an anchor of its
- * own, built by `pillAnchor` below.
+ * The scaffolding — the title, the usage card, the pill row and the two pill
+ * anchors — is built **once** and only its contents are replaced. The anchors
+ * in particular have to survive: the popover inside one is the node that takes
+ * focus when it opens, and rebuilding it around that focus would blur it and
+ * fire the `focusout` that closes the popover the click just opened. The same
+ * goes for the card's segment buttons.
  *
- * The scaffolding — the masthead, the title row, the pill and hint shells, and
- * the two pill anchors — is built **once** and only its contents are replaced.
- * The anchors in particular have to survive: the popover inside one is the node
- * that takes focus when it opens, and rebuilding it around that focus would blur
- * it and fire the `focusout` that closes the popover the click just opened.
+ * The usage numbers never block the page: the card draws its skeleton at once,
+ * and each time the page goes from hidden to shown the stats are asked for in
+ * the background (the host caches the scan, so this is cheap). A repaint while
+ * shown asks for nothing.
  */
 
 export interface WelcomeDom {
@@ -54,6 +51,7 @@ export interface WelcomeHandlers {
   onProjectIntent: (intent: ProjectPickerIntent) => void
   /** Fed the raw chord; answers whether the project popover consumed it. */
   onProjectKey: (chord: { key: string; ctrlKey: boolean; metaKey: boolean }) => boolean
+  loadUsage: () => Promise<readonly WireUsageDay[]>
 }
 
 export function createWelcomeView(
@@ -62,17 +60,11 @@ export function createWelcomeView(
 ): WelcomeDom {
   // --- the scaffolding, built once ------------------------------------------
 
-  // One block, because the rule down its left edge is one border: the wordmark
-  // and the Hero are the same masthead, not two stacked things.
-  const masthead = el('div', 'welcome-masthead')
-  const eyebrow = el('div', 'welcome-wordmark')
-  const titleRow = el('div', 'welcome-title-row')
-  const titleSlot = el('div', 'welcome-title-slot')
-  titleRow.appendChild(titleSlot)
-  masthead.appendChild(eyebrow)
-  masthead.appendChild(titleRow)
+  const title = el('h1', 'welcome-title')
+  const head = el('div', 'welcome-head', icon('model', 'icon welcome-mark'), title)
+  const usage = createUsageCard()
+  const usageSlot = el('div', 'welcome-usage')
   const pills = el('div', 'welcome-pills')
-  const hints = el('div', 'welcome-hints')
 
   /**
    * One switchable pill's home: the anchor its popover is positioned against,
@@ -140,14 +132,6 @@ export function createWelcomeView(
     return node
   }
 
-  /** `Shift`+`Tab` 切换权限模式 — the keys in the mono stack, the label beside. */
-  const hintNode = (hint: WelcomeHint): HTMLElement => {
-    const node = el('span', 'welcome-hint-item')
-    for (const key of hint.keys) node.appendChild(el('kbd', 'welcome-key', key))
-    node.appendChild(el('span', 'welcome-hint-label', hint.label))
-    return node
-  }
-
   /**
    * The last drawn signature. Load-bearing: this renders from the pane's single
    * transcript paint, which runs once per streamed token.
@@ -155,12 +139,16 @@ export function createWelcomeView(
   let drawn: string | undefined
   /** Whether the scaffolding is in the container. See the `visible` branch. */
   let mounted = false
-  /**
-   * Whether the wordmark and the hint row are drawn. Both are constant; the
-   * invisible pass empties them along with everything else, so this says
-   * whether they need rebuilding rather than whether they changed.
-   */
-  let constantsBuilt = false
+  let shown = false
+  /** Only the newest request may fill the card. */
+  let request = 0
+  const refreshUsage = (): void => {
+    const mine = ++request
+    void handlers.loadUsage().then(
+      (days) => { if (mine === request) usage.setDays(days) },
+      () => { if (mine === request) usage.setDays([]) },
+    )
+  }
   return {
     focusBranchPicker() {
       branchPicker.focusPanel()
@@ -174,15 +162,13 @@ export function createWelcomeView(
       drawn = signature
       show(container, view.visible)
       if (!view.visible) {
-        // The contents go, the scaffolding stays: an invisible Hero must not
+        // The contents go, the scaffolding stays: an invisible page must not
         // keep a button Tab can walk into from the composer, but the two pill
         // anchors have to survive as nodes — they are the only things here that
         // hold focus. `model/welcome.ts` forces both popovers shut whenever the
         // screen is invisible, and a shut popover draws nothing focusable.
-        replace(titleSlot)
-        replace(eyebrow)
-        replace(hints)
-        constantsBuilt = false
+        shown = false
+        replace(usageSlot)
         branchPicker.render(view.branchPicker)
         finishPresenceWithin(branch.anchor)
         projectPicker.render(view.projectPicker)
@@ -191,33 +177,14 @@ export function createWelcomeView(
         return
       }
       if (!mounted) {
-        replace(container, masthead, pills, hints)
+        replace(container, head, usageSlot, pills)
         mounted = true
       }
-
-      const title = view.global
-        ? // The global workspace has no project to name — the whole Hero is the
-          // ask, and there is nothing in the middle of it.
-          el('h1', 'welcome-title', view.titleBefore)
-        : el(
-            'h1',
-            'welcome-title',
-            view.titleBefore,
-            // Its own node rather than part of the sentence: the project name is
-            // the one span in the Hero the stylesheet marks, and it is a `<span>`
-            // rather than a button because clicking it does nothing.
-            el('span', 'welcome-project-name', view.projectLabel),
-            view.titleAfter,
-          )
-      replace(titleSlot, title)
-
-      // The wordmark and the hints are constant, so they are built on the first
-      // visible paint and rebuilt only after an invisible pass has emptied them
-      // — the Hero between them changes with the project name; they do not.
-      if (!constantsBuilt) {
-        eyebrow.appendChild(el('span', 'welcome-wordmark-label', view.wordmark))
-        for (const hint of view.hints) hints.appendChild(hintNode(hint))
-        constantsBuilt = true
+      title.textContent = view.title
+      reconcile(usageSlot, [usage.element])
+      if (!shown) {
+        shown = true
+        refreshUsage()
       }
       // Each pill goes *into* its persistent anchor, ahead of the popover the
       // anchor already holds — a read-only pill included, so a project that

@@ -772,6 +772,12 @@ test('accents are for icons and state rules, never for fills', () => {
     { selector: '.settings-toggle.on', prop: 'background' },
     { selector: '#submit', prop: 'background' },
     { selector: '.session-row::before', prop: 'background' },
+    // The usage card's data marks: heatmap cells and share bars are the chart.
+    { selector: '.usage-heat.level-1', prop: 'background' },
+    { selector: '.usage-heat.level-2', prop: 'background' },
+    { selector: '.usage-heat.level-3', prop: 'background' },
+    { selector: '.usage-heat.level-4', prop: 'background' },
+    { selector: '.usage-share-bar::-webkit-progress-value', prop: 'background' },
   ]
 
   let seen = 0
@@ -915,7 +921,6 @@ test('the serif is display-only, and only in the whitelisted spots', () => {
   // see that in a DOM test, so the discipline lives here as a whitelist of
   // spots, spelled out, and every other selector naming `--font-serif` fails.
   const SERIF_WHITELIST = [
-    '.welcome-title', // the welcome Hero
     '.thread-panel-empty-title', // 概览's empty state, the same kind of greeting
     '#rewind-panel .title',
   ]

@@ -275,7 +275,7 @@
              system-ui, "PingFang SC", "Microsoft YaHei UI", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
                "Cascadia Mono", monospace;
-  /* Display serif, whitelisted to three kinds of spot — the welcome Hero, the
+  /* Display serif, whitelisted to two kinds of spot — the
      settings section titles, the two dialog titles (design_guidance 三.4) —
      everything else stays sans so mixed CJK never drops into a Songti. The
      family name is the one `fonts.css` registers: fontsource's variable faces
@@ -1888,7 +1888,7 @@ body.settings-open #browser-resizer { display: none; }
    otherwise be squeezed to the scroller's height, and its content would spill
    out of a box nothing scrolls. `.pane.empty` is unaffected — it takes the
    scroller out of the stretch, so there is no free space for the auto margin to
-   eat and the Hero stays centred.
+   eat.
 
    `width: 100%` is the third load-bearing part: the horizontal `auto` margins
    that centre the column also *cancel* the flex item's default cross-axis
@@ -2557,138 +2557,130 @@ body.settings-open #browser-resizer { display: none; }
 .scroll-bottom:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 /* --- welcome (empty state) ---
-   The ceremony a new conversation opens with: a masthead — a wordmark over the
-   Hero line naming the project — hung off a single brand-coloured rule, then a
-   strip of read-only context pills and one row of key hints. Only drawn while
-   the pane has no conversation; `model/welcome.ts` owns that verdict and
-   `dom/welcomeView.ts` drops the subtree when it is false.
+   The home page a new conversation opens with: a brand mark and one title line
+   at the top of the reading column, the usage card under it, and the project /
+   branch pills settled just above the composer. Only drawn while the pane has
+   no conversation; `model/welcome.ts` owns that verdict and `dom/welcomeView.ts`
+   drops the subtree when it is false.
 
-   There is no graphic mark, and that is the design rather than an omission: an
-   icon over three centred guidance cards is the shape every agent shell ships,
-   so it identifies none of them. The identity here is typographic — the
-   wordmark's tracking, the Hero's serif at display size, and the 2px rule the
-   block hangs on. The rule is the only "graphic" and it is `--accent-brand`,
-   the brand's permitted hairline weight (design_guidance 二.2), not a drawing.
-
-   The block sits low and flush left rather than centred: it shares the reading
-   axis with the composer directly beneath it, so the Hero's first character and
-   the caret the user is about to type into line up on one edge.
-
-   `.pane.empty` takes the transcript out of the flex stretch so the block
-   settles against the composer instead of sharing the canvas with an
-   almost-empty scroller. The startup notices a fresh draft carries stay visible
-   underneath — never hide output the host emitted. */
+   `.pane.empty` takes the transcript out of the flex stretch so the pills settle
+   against the composer instead of sharing the canvas with an almost-empty
+   scroller. The startup notices a fresh draft carries stay visible underneath —
+   never hide output the host emitted. */
 .pane.empty .transcript { flex: 0 0 auto; overflow: visible; }
 .welcome {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
-  justify-content: flex-end;
-  gap: var(--space-5);
-  /* The reading axis, so the Hero's left edge is the transcript's left edge. */
+  align-items: stretch;
+  gap: var(--space-4);
+  /* The reading axis, so the title's left edge is the transcript's left edge. */
   width: 100%;
   max-width: var(--reading-measure);
   margin: 0 auto;
-  padding: var(--space-6) var(--reading-gutter);
+  padding: var(--space-7) var(--reading-gutter) var(--space-3);
 }
-/* While the completion list is up it covers the lower half of the Hero, and the
+/* While the completion list is up it covers the lower half of the page, and the
    upper half peeking out above it reads as a rendering fault. The block steps
    back for as long as the list is wanted (`inert` is off exactly then). */
 .welcome { transition: opacity var(--motion-micro) var(--ease-out); }
 #canvas:has(#suggestions:not([inert])) .welcome { opacity: 0; }
-/* The masthead, and the rule it hangs on. A left border rather than a drawn
-   element: it then spans exactly the block's own height, so a Hero that wraps
-   to two lines lengthens the rule instead of leaving it short.
-   Spelled as three longhands rather than the `border-left` shorthand: the
-   accent has to land on a *colour* property or `rendererStyleTokens`'s
-   "accents are never fills" guard cannot tell a hairline from a background,
-   and this rule is exactly the hairline the guard exists to permit. */
-.welcome-masthead {
-  width: 100%;
-  padding-left: var(--space-5);
-  border-left-style: solid;
-  border-left-width: 2px;
-  border-left-color: var(--accent-brand);
-}
-/* The wordmark. Mono with wide tracking, in the metadata rung: it is a
-   signature under the rule, never a competitor to the Hero. Lower case is the
-   decision — upper case in a CJK interface reads as a system banner. */
-.welcome-wordmark {
-  margin-bottom: var(--space-3);
-  font-family: var(--font-mono);
-  font-size: var(--type-micro);
-  line-height: 1.4;
-  letter-spacing: 0.34em;
-  color: var(--text-tertiary);
-}
+.welcome-head { display: flex; align-items: center; gap: var(--space-2); }
+.welcome-mark { width: 20px; height: 20px; color: var(--accent-brand-strong); }
 .welcome-title {
   margin: 0;
-  /* Serif: the welcome Hero is one of the three display spots the design
-     whitelists for `--font-serif` (design_guidance 三.4) — short, pure, and
-     never a long mixed-CJK run.
-
-     Fluid rather than `--type-display`: this is the one line on the screen and
-     it has to carry it, so it runs well above the ladder's top rung and
-     resolves back toward it on a narrow window. The negative tracking is what
-     keeps a serif at this size from reading as loose. */
-  font-size: clamp(var(--type-display), 4.6vw, 56px);
-  font-family: var(--font-serif);
-  font-weight: 600;
-  line-height: 1.18;
-  letter-spacing: -0.02em;
+  font-family: var(--font-ui);
+  font-size: var(--type-title);
+  font-weight: 500;
+  line-height: 1.3;
   color: var(--text-primary);
-  /* Wrapping is intended at this size: the measure keeps the Hero to two or
-     three lines instead of one that runs the width of a maximised window.
-     `em`, not `ch` — `ch` is the zero's advance, which is only a character
-     width in a monospace face (and `rendererStyleTokens` enforces that), while
-     a CJK glyph is one em square, so `em` is the honest measure for this line. */
-  max-width: 15em;
-  text-wrap: pretty;
 }
-/* The project name inside the sentence. Its own node so it can carry the Hero's
-   emphasis, but no affordance: it used to be a button opening a workspace
-   picker, and both are gone — see `model/welcome.ts`. */
-.welcome-project-name { color: var(--text-primary); }
-.welcome-title-row { align-self: stretch; }
-.welcome-title-slot { display: block; }
-/* The hint row, which replaced the three guidance cards. One line of metadata,
-   indented to the masthead's text edge so the whole screen reads off two
-   verticals — the rule, and the text that starts beside it. */
-.welcome-hints {
+/* The usage card. */
+.usage-card {
   display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  flex-wrap: wrap;
-  padding-left: calc(var(--space-5) + 2px);
-  color: var(--text-tertiary);
-  font-size: var(--type-micro);
-  line-height: 1.4;
-}
-.welcome-hint-item { display: inline-flex; align-items: center; gap: 5px; }
-/* The keys. `--radius-sm` is the rung for things this small; anything larger
-   reads as swollen at an 11px glyph. */
-.welcome-key {
-  padding: 1px 5px;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4) var(--space-4);
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: var(--type-micro);
+  border-radius: var(--radius-md);
 }
-.welcome-hint-label { white-space: nowrap; }
-/* Left, not centred: the pills sit under a left-aligned masthead now, and they
-   are indented to its text edge for the same reason the hints are. */
+.usage-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.usage-segments { display: inline-flex; gap: 2px; }
+.usage-segment {
+  padding: 3px 10px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: var(--type-meta);
+  cursor: pointer;
+}
+.usage-segment:hover { color: var(--text-primary); }
+.usage-segment.active { background: var(--surface-hover); color: var(--text-primary); }
+.usage-segment:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.usage-body { display: flex; flex-direction: column; gap: var(--space-4); min-height: 196px; }
+.usage-cells { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+.usage-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--space-2) var(--space-3);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  border-radius: var(--radius-md);
+}
+.usage-label { order: -1; font-size: var(--type-micro); color: var(--text-secondary); }
+.usage-value {
+  font-size: var(--type-body);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.usage-heatmap { display: flex; justify-content: center; gap: 4px; }
+.usage-heat-col { flex: 1 1 0; max-width: 22px; display: flex; flex-direction: column; gap: 4px; }
+.usage-heat { aspect-ratio: 1; border-radius: 3px; background: color-mix(in srgb, var(--text-primary) 7%, transparent); }
+.usage-heat.future { background: transparent; }
+.usage-heat.level-1 { background: color-mix(in srgb, var(--accent-info) 45%, transparent); }
+.usage-heat.level-2 { background: color-mix(in srgb, var(--accent-info) 65%, transparent); }
+.usage-heat.level-3 { background: color-mix(in srgb, var(--accent-info) 85%, transparent); }
+.usage-heat.level-4 { background: var(--accent-info); }
+.usage-footnote { font-size: var(--type-meta); color: var(--text-tertiary); }
+.usage-empty { padding: var(--space-5) 0; font-size: var(--type-meta); color: var(--text-tertiary); text-align: center; }
+.usage-shares { display: flex; flex-direction: column; gap: var(--space-3); }
+.usage-share { display: flex; flex-direction: column; gap: 5px; }
+.usage-share-head { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--type-meta); }
+.usage-share-model { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-share-figures { color: var(--text-tertiary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-share-bar {
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  overflow: hidden;
+}
+.usage-share-bar::-webkit-progress-bar { background: transparent; }
+.usage-share-bar::-webkit-progress-value { border-radius: var(--radius-pill); background: var(--accent-info); }
+.usage-card.loading .usage-value,
+.usage-card.loading .usage-footnote,
+.usage-card.loading .usage-share-head,
+.usage-card.loading .usage-heat { color: transparent; animation: breathe var(--motion-running) var(--ease-out) infinite; }
+.usage-card.loading .usage-value,
+.usage-card.loading .usage-footnote { background: color-mix(in srgb, var(--text-primary) 8%, transparent); border-radius: var(--radius-sm); width: fit-content; min-width: 3em; }
+/* The pills sit at the foot of the page, just above the composer. */
 .welcome-pills {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  padding-left: calc(var(--space-5) + 2px);
+  margin-top: auto;
 }
-/* Spans where they report the environment and nothing more; the branch pill is
-   a `<button>` with the same shape, because it is the one that does something. */
 .welcome-pill {
   display: inline-flex;
   align-items: center;
@@ -2702,8 +2694,6 @@ body.settings-open #browser-resizer { display: none; }
 }
 .welcome-pill-label,
 .welcome-pill .btn-label { white-space: nowrap; }
-/* The branch pill as a control. `font: inherit` is not decoration — a `<button>`
-   would otherwise arrive in the UA's own stack beside two spans that are not. */
 button.welcome-pill {
   font: inherit;
   font-size: 12px;
@@ -2721,8 +2711,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 /* The two switchers. A menu, so they take the menu depth — `--radius-md` and
    `--shadow-float` — rather than inventing a third step. They open *upward*: the
    pills sit just above the composer, and a popover hanging below them would
-   unroll straight into it. Flush with the pill's left edge, which is the
-   masthead's rule — the whole screen is left-aligned. */
+   unroll straight into it. Flush with the pill's left edge. */
 .branch-picker,
 .project-picker {
   position: absolute;

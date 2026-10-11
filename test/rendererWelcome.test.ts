@@ -3,12 +3,8 @@ import test from 'node:test'
 
 import {
   WELCOME_GLOBAL_LOCATION,
-  WELCOME_GLOBAL_TITLE,
   WELCOME_PROJECT_FALLBACK,
-  WELCOME_HINTS,
-  WELCOME_TITLE_AFTER,
-  WELCOME_TITLE_BEFORE,
-  WELCOME_WORDMARK,
+  WELCOME_TITLE,
   coordinatorWelcome,
   createWelcomeState,
   isTranscriptEmpty,
@@ -57,26 +53,10 @@ function projects(overrides: Partial<ProjectPickerState> = {}): ProjectPickerSta
 // --- constants ---------------------------------------------------------------
 
 test('the constants are the agreed values', () => {
-  assert.equal(WELCOME_TITLE_BEFORE, '你想让我们在 ')
-  assert.equal(WELCOME_TITLE_AFTER, ' 中构建什么？')
-  assert.equal(WELCOME_GLOBAL_TITLE, '你想让我们构建什么？')
+  assert.equal(WELCOME_TITLE, '接下来做什么？')
   assert.equal(WELCOME_GLOBAL_LOCATION, '~/.myagent')
   assert.equal(WELCOME_PROJECT_FALLBACK, '当前项目')
-  // Lower case is the decision, not a typo: upper case in a CJK interface reads
-  // as a system banner rather than as the signature this is.
-  assert.equal(WELCOME_WORDMARK, 'hanekawa')
-})
-
-test('the hint row names the three affordances a first run cannot guess', () => {
-  // The row that replaced the three guidance cards. Restating what a coding
-  // agent is for taught nothing; these are the keys that are not discoverable.
-  assert.deepEqual(WELCOME_HINTS, [
-    { keys: ['/'], label: '命令' },
-    { keys: ['@'], label: '引用文件' },
-    { keys: ['Shift', 'Tab'], label: '切换权限模式' },
-  ])
-  assert.deepEqual(welcomeView(stateWith()).hints, WELCOME_HINTS)
-  assert.equal(welcomeView(stateWith()).wordmark, WELCOME_WORDMARK)
+  assert.equal(welcomeView(stateWith()).title, WELCOME_TITLE)
 })
 
 // --- emptiness ---------------------------------------------------------------
@@ -123,20 +103,15 @@ test('every transcript item kind is classified, and only two are not conversatio
   }
 })
 
-// --- the hero ----------------------------------------------------------------
+// --- pills: the project name ------------------------------------------------
 
-test('the hero names the project, and falls back before hello answers', () => {
-  assert.equal(welcomeView(stateWith()).projectLabel, 'Hanekawa-main')
-  assert.equal(welcomeView(stateWith({ projectName: undefined })).projectLabel, WELCOME_PROJECT_FALLBACK)
+test('the project pill names the project, and falls back before hello answers', () => {
+  assert.equal(welcomeView(stateWith()).pills[0]?.label, 'Hanekawa-main')
+  assert.equal(welcomeView(stateWith({ projectName: undefined })).pills[0]?.label, WELCOME_PROJECT_FALLBACK)
 })
 
-test('the global workspace drops the project segment from the hero', () => {
-  // No project is loaded: nothing to name, nothing to switch to — the whole
-  // hero is the ask, and the pill says where the records land instead.
+test('the global workspace names where its records land instead', () => {
   const view = welcomeView(stateWith({ global: true }))
-  assert.equal(view.titleBefore, WELCOME_GLOBAL_TITLE)
-  assert.equal(view.titleAfter, '')
-  assert.equal(view.projectLabel, '')
   assert.equal(view.pills[0]?.label, WELCOME_GLOBAL_LOCATION)
   assert.equal(view.pills[0]?.kind, 'project')
 })
@@ -207,8 +182,8 @@ test('the branch popover cannot outlive the screen it hangs off', () => {
 
 const of = (state: WelcomeState): string => welcomeRenderSignature(welcomeView(state))
 
-test('the global hero moves the signature', () => {
-  // Different text on screen; the guard must not swallow the repaint.
+test('the global workspace moves the signature', () => {
+  // Different pill text on screen; the guard must not swallow the repaint.
   assert.notEqual(of(stateWith({ global: true })), of(stateWith()))
 })
 

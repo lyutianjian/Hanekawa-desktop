@@ -1,0 +1,89 @@
+import type { WireUsageDay } from '../../shellProtocol.js'
+import { computeUsageStats, type UsageRange } from './usageStats.js'
+
+export type UsageTab = 'overview' | 'models'
+
+export const USAGE_TABS: readonly { id: UsageTab; label: string }[] = [
+  { id: 'overview', label: '概览' },
+  { id: 'models', label: '模型' },
+]
+
+export const USAGE_RANGES: readonly { id: UsageRange; label: string }[] = [
+  { id: 'all', label: '全部' },
+  { id: '30d', label: '30 天' },
+  { id: '7d', label: '7 天' },
+]
+
+export const USAGE_EMPTY = '—'
+export const USAGE_NO_MODELS = '这段时间还没有使用记录'
+
+export interface UsageCell {
+  label: string
+  value: string
+}
+
+export interface UsageHeatCellView {
+  level: 0 | 1 | 2 | 3 | 4
+  title: string
+}
+
+export interface UsageShareView {
+  model: string
+  tokens: string
+  percent: string
+  /** 0-100, for the bar's width. */
+  width: number
+}
+
+export interface UsageCardView {
+  /** No data yet: the cells draw as skeletons. */
+  loading: boolean
+  cells: UsageCell[]
+  /** Columns are weeks, rows are weekdays; `null` is a day that has not happened. */
+  heatmap: (UsageHeatCellView | null)[][]
+  shares: UsageShareView[]
+  footnote: string
+}
+
+/** 万 / 亿 with one decimal below 100 of the unit: 9,876 · 1.2 万 · 123 万 · 3.4 亿. */
+export function formatTokens(count: number): string {
+  const unit = (value: number, suffix: string): string => {
+    const text = value < 100 ? value.toFixed(1).replace(/\.0$/, '') : Math.round(value).toLocaleString('en-US')
+    return `${text} ${suffix}`
+  }
+  if (count >= 100_000_000) return unit(count / 100_000_000, '亿')
+  if (count >= 10_000) return unit(count / 10_000, '万')
+  return count.toLocaleString('en-US')
+}
+
+export function usageCardView(
+  days: readonly WireUsageDay[] | undefined,
+  tab: UsageTab,
+  range: UsageRange,
+  now: Date,
+): UsageCardView {
+  const stats = computeUsageStats(days ?? [], range, now)
+  return {
+    loading: days === undefined,
+    cells: [
+      { label: '会话数', value: String(stats.sessions) },
+      { label: '消息数', value: String(stats.messages) },
+      { label: '总 token', value: formatTokens(stats.tokens) },
+      { label: '活跃天数', value: String(stats.activeDays) },
+      { label: '高峰时段', value: stats.peakHour === null ? USAGE_EMPTY : `${stats.peakHour} 时` },
+      { label: '常用模型', value: stats.topModel ?? USAGE_EMPTY },
+    ],
+    heatmap: stats.heatmap.map((column) =>
+      column.map((cell) => (cell ? { level: cell.level, title: `${cell.day} · ${cell.turns} 条消息` } : null)),
+    ),
+    shares: tab === 'models'
+      ? stats.modelShares.map((share) => ({
+          model: share.model,
+          tokens: formatTokens(share.tokens),
+          percent: `${Math.round(share.share * 100)}%`,
+          width: Math.max(share.share * 100, 1),
+        }))
+      : [],
+    footnote: `你用掉的 token 大约相当于 ${stats.books} 本《三体》`,
+  }
+}
