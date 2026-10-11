@@ -1,6 +1,6 @@
 # Hanekawa / MyAgent
 
-Hanekawa, also called MyAgent, is a lightweight self-hosted programming agent for the terminal. It supports Anthropic and OpenAI-compatible APIs, session persistence, automatic context compaction, skills, permission-gated tools, image input, and an Ink-based TUI.
+Hanekawa, also called MyAgent, is a lightweight self-hosted programming agent with an Electron desktop app. It supports Anthropic and OpenAI-compatible APIs, session persistence, automatic context compaction, skills, permission-gated tools, image input, project coordination, and a built-in browser.
 
 ## Requirements
 
@@ -22,11 +22,10 @@ npm install
 
 ## Configure
 
-Start the desktop (`npm run build:desktop`, then `npm run start:desktop`) or the TUI
-(`npm run dev:tui`). When no usable default model is configured, the app opens its
-existing configuration screen automatically: **模型与服务商** on desktop, or
-**/provider** in the TUI. You can close it to view sessions and history, and reopen
-it from the desktop's **配置模型** control or the `/provider` command.
+Start the desktop (`npm run build:desktop`, then `npm run start:desktop`). When no usable
+default model is configured, the app opens its existing configuration screen
+automatically: **模型与服务商**. You can close it to view sessions and history, and
+reopen it from the **配置模型** control.
 
 Add an endpoint with its provider, API key and optional Base URL, then add a model
 using that endpoint and the provider's model ID. Saving the endpoint before adding
@@ -88,7 +87,7 @@ are read outermost first, so the nearest one wins, and the local file is read la
 The set is read once when a project opens and captured when a session's runtime is built, the same way
 hooks are. Editing one of these files mid-session takes effect on the next settings reload — saving
 anything on the desktop settings screen does one, and it rebuilds the runtime when the instructions
-changed. In the TUI, restart to pick up an edit.
+changed.
 
 ### Auto memory
 
@@ -245,8 +244,8 @@ zooming, and entering or leaving fullscreen. Drag its blank area to move the win
 ### Image input
 
 A model receives images only when you turn that on for it: `supportsImageInput: true` on the model in
-`config.json`, or the 「支持图像输入」 switch in a model form — the desktop settings screen and the TUI
-`/provider` dialog both have it, when creating a model and when editing one. It is off by default and
+`config.json`, or the 「支持图像输入」 switch in a model form — the desktop settings screen
+has it, when creating a model and when editing one. It is off by default and
 never inferred from the model name or endpoint; two models behind one endpoint can differ. Only the
 `anthropic` and `openai` providers carry images in this version — with any other provider the switch
 has no effect, and image sends are blocked with the same reason as a text-only model. The switch is a
@@ -265,13 +264,6 @@ message can be images alone:
 - **Desktop** — paste an image into the composer, drag and drop files, or pick 「选择图片」 from the `+`
   menu. A thumbnail appears per image; clicking it opens a preview, and 「打开原图」 opens the stored
   copy in your viewer.
-- **TUI** — `/paste-image` captures the system clipboard, as does `Ctrl+V` where the terminal passes
-  that key through. Pasting a standalone image path attaches that file. `@` mentions work for images
-  inside the project — files outside the project come in only through an explicit paste, drop, or
-  pick. `/attachments` lists the draft; `/attachments remove <n>` and `/attachments clear` manage it.
-  On Linux, clipboard capture needs `wl-paste` (Wayland) or `xclip` (X11); when a dependency is
-  missing — or under WSL/SSH, where the host clipboard is out of reach — the failure names the reason
-  and points at the path and `@` entries.
 
 Every image is stored first and sent as a normalized copy: EXIF-rotated, colors normalized, metadata
 stripped, scaled down to a 2,000 px long edge (never enlarged), then compressed — PNG first to keep
@@ -304,8 +296,7 @@ The agent reaches the same tabs through the `Browser` tool: it opens and navigat
 as a table of operable elements or as plain text, takes screenshots, and clicks, types and scrolls.
 Unlike `WebFetch`, JavaScript runs, logins persist between calls, and what the model reads is the
 rendered page rather than its HTML source. Navigation asks your permission per host, the way
-`WebFetch` does. The tool exists only in the desktop app — the TUI has no window to put a page in, and
-does not register it.
+`WebFetch` does.
 
 Pages load in their own persistent session partition, so their cookies are separate from the app's,
 and nothing of Hanekawa is reachable from a page: no preload script, no Node integration, sandboxed
@@ -320,47 +311,16 @@ no button for handing it back, because sending the agent a message is that butto
 
 ## Start
 
-Use the TUI for the interactive agent experience:
+Build the desktop app, then launch it:
 
 ```bash
-bun run dev:tui
+npm run build:desktop
+npm run start:desktop
 ```
 
-Transcript history opens with Ctrl+O in a terminal alternate screen. While that
-view is active, the app enables xterm alternate-scroll mode so mouse-wheel input
-can map to the same up/down scrolling path as the arrow keys. It also enables
-SGR mouse wheel reporting as a fallback for terminals that do not implement
-alternate-scroll mapping; the terminal's native scrollbar may still be hidden by
-the alternate screen.
-
-Tool status rows, collapsed tool-group rows, and subagent task rows render flush
-with the assistant message gutter. Nested tool output still uses the response
-prefix indentation. Successful tool and subagent `●` prefixes use
-`rgb(78,186,101)`; failed prefixes use `rgb(255,107,128)`.
-
-Agent/subagent rows use compact task summaries in the header. Completed rows
-show the routed model, tool-use count, token usage, and duration; Ctrl+O expands
-them to show only the user task as `Prompt` and the subagent output as
-`Response`, never the full internal agent system prompt.
-
-Resume a session:
-
-```bash
-bun run dev:tui resume <session-id-or-prefix>
-```
-
-Continue the most recent session:
-
-```bash
-bun run dev:tui --continue
-bun run dev:tui c
-```
-
-List sessions:
-
-```bash
-bun run dev:tui list
-```
+`build:desktop` compiles the main process with `tsc`, bundles the preload and renderer with
+esbuild, and copies the renderer assets into `dist/`. `start:desktop` runs Electron against
+that `dist/`, so rebuild after changing sources.
 
 ### Desktop motion and reading
 
@@ -535,7 +495,7 @@ Every tool call is first graded by a risk classifier (`src/harness/risk/`), then
 | risky | ask | as normal | ask | allow, with a reminder to the model |
 | critical | ask, never remembered | deny | ask, never remembered | deny for a mass delete, otherwise allow with a reminder |
 
-Shift+Tab (TUI) and the composer chip (desktop) cycle `default → plan → auto → bypass`. `readonly` is internal, used by built-in explore/plan subagents. A subagent is never looser than its parent. The old `acceptEdits` mode is now `auto`; existing settings and agent frontmatter migrate automatically.
+The composer chip cycles `default → plan → auto → bypass`. `readonly` is internal, used by built-in explore/plan subagents. A subagent is never looser than its parent. The old `acceptEdits` mode is now `auto`; existing settings and agent frontmatter migrate automatically.
 
 Rules, in order of precedence:
 
@@ -585,13 +545,13 @@ hooks:
 Skill instructions go here. Use $ARGUMENTS where slash command arguments should appear.
 ```
 
-Skills are discovered at TUI startup and made available in two ways:
+Skills are discovered at startup and made available in two ways:
 
 - the generic `Skill` tool, which lets the model load a named skill during a turn
 - slash commands named from the skill frontmatter, such as `/debugging args`
 
 Skill slash commands submit the skill body as a normal query in the background
-while the TUI shows only the slash invocation, such as `/debugging args`.
+while the transcript shows only the slash invocation, such as `/debugging args`.
 `$ARGUMENTS` in the skill body is replaced with the slash command arguments;
 when no placeholder is present, non-empty arguments are appended as
 `Arguments: ...`. Skill bodies may include inline shell snippets like
@@ -604,8 +564,7 @@ turn: `allowedTools` filters the model-visible and executable tool set, `model`
 and `effort` are temporary overrides, and hooks are merged with the session
 hooks for that turn. Attachment paths are UTF-8 text files resolved inside the
 skill directory and appended to the prompt. Built-in slash commands take
-precedence when names conflict. New or changed skill commands require restarting
-the TUI. Frontmatter `attachments` remain UTF-8 text files; image and PDF
+precedence when names conflict. Frontmatter `attachments` remain UTF-8 text files; image and PDF
 attachments are not supported there.
 
 ### Sessions

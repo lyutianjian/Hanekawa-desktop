@@ -122,23 +122,6 @@ test('every App prop has a SessionClient counterpart', () => {
   }
 })
 
-test('the coverage table lists every prop tui.tsx passes to App', async () => {
-  const source = await readFile(path.join(repoRoot, 'src/tui/entrypoints/tui.tsx'), 'utf8')
-  const jsx = source.slice(source.indexOf('<App'), source.indexOf('/>', source.indexOf('<App')))
-
-  const passed = new Set<string>()
-  for (const match of jsx.matchAll(/^\s{4,}([a-zA-Z][a-zA-Z0-9]*)=/gm)) {
-    passed.add(match[1]!)
-  }
-
-  assert.ok(passed.size > 15, `expected to find the App props, parsed ${passed.size}`)
-
-  const covered = new Set(COVERAGE.map((entry) => entry.prop))
-  const uncovered = [...passed].filter((prop) => !covered.has(prop))
-  assert.deepEqual(uncovered, [],
-    'a new App prop needs either a wire path or an explicit entry in this table')
-})
-
 test('the client half never imports the harness at runtime', async () => {
   const source = await readFile(path.join(repoRoot, 'src/runtime/protocol/client.ts'), 'utf8')
 

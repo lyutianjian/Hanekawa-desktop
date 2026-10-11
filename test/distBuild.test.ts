@@ -11,10 +11,10 @@ import { promisify } from 'node:util'
  * The build step, verified the only way that means anything: emit, then load
  * the emitted JavaScript in a plain `node` with no tsx.
  *
- * `bin/hanekawa.mjs` re-execs through `--import tsx`, and an Electron main
- * process cannot do that (tsx's load hook breaks `require()` of package.json on
- * Node 22+). So `dist/` is the only path a desktop shell has, and nothing else
- * in the suite exercises it — every other test runs through the tsx loader.
+ * An Electron main process cannot run through `--import tsx` (tsx's load hook
+ * breaks `require()` of package.json on Node 22+). So `dist/` is the only path
+ * the desktop shell has, and nothing else in the suite exercises it — every
+ * other test runs through the tsx loader.
  */
 
 const run = promisify(execFile)
@@ -41,13 +41,6 @@ test('the build emits src/ at the root of dist/, and nothing else', () => {
   assert.ok(existsSync(path.join(dist, 'runtime', 'protocol', 'host.js')), 'expected dist/runtime/protocol/host.js')
   assert.ok(!existsSync(path.join(dist, 'src')), 'dist/src/ means rootDir was lost')
   assert.ok(!existsSync(path.join(dist, 'test')), 'the build config must not pull in test/')
-})
-
-test('.tsx sources emit alongside the rest', () => {
-  // jsx: react-jsx means these compile against react/jsx-runtime rather than a
-  // global React; if that regressed the emit would still succeed and only fail
-  // at load, which the next test catches.
-  assert.ok(existsSync(path.join(dist, 'tui', 'entrypoints', 'tui.js')), 'expected dist/tui/entrypoints/tui.js')
 })
 
 test('the desktop main process lands at dist/desktop/main.js (depth pinned)', () => {

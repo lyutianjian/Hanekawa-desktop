@@ -1,15 +1,12 @@
 # AGENTS.md
 
-This file provides implementation guidance for Codex and other coding agents when changing Hanekawa.
-
-Hanekawa (package `myagent`) is a self-hosted coding agent with Ink/React TUI and Electron desktop frontends. It supports persistent sessions, permission-gated tools, subagents, skills, MCP, and context compaction. User-facing behavior belongs in `README.md`.
+This file provides implementation guidance for Codex and other coding agents when changing Hanekawa. Hanekawa (package `myagent`) is a self-hosted coding agent with an Electron desktop app. It supports persistent sessions, permission-gated tools, subagents, skills, MCP, and context compaction. User-facing behavior belongs in `README.md`.
 
 ## Commands
 
-Requires Node.js 22+. Run `npm install`; `postinstall` applies the tracked `patch-package` patches.
+Requires Node.js 22+. Run `npm install`.
 
 ```bash
-npm run dev:tui
 npm run start:desktop
 npm run typecheck
 npm run build
@@ -33,9 +30,9 @@ Use `npm test` for focused runs too: `scripts/test.mjs` gives child processes a 
 ## Architecture
 
 ```text
-tui/ or desktop/ -> runtime/ + harness/ -> config/providers/
-                         |       |
-                   sessions/  prompts/  tools/  services/
+desktop/ -> runtime/ + harness/ -> config/providers/
+                |       |
+          sessions/  prompts/  tools/  services/
 ```
 
 - `harness/`: agent loop, context, permissions, tools, hooks, compaction.
@@ -45,7 +42,7 @@ tui/ or desktop/ -> runtime/ + harness/ -> config/providers/
 - `config/`: settings, models, routing, retries, providers.
 - `tools/`: one directory per built-in (`GrepTool/`, `FileEditTool/`, ...) plus shared helpers at the root, all registered in `src/tools/index.ts`. A shell may add tools the shared registry cannot build through `BootstrapOptions.extraTools` — the desktop's `Browser`, which needs a window; such a tool reaches its host through a pure-type interface in `runtime/protocol/`, never by importing Electron.
 - `services/`: project context, file history, background tasks, skills, memory.
-- `tui/`: Ink shell; `desktop/`: Electron main, preload, shell host, renderer.
+- `desktop/`: Electron main, preload, shell host, renderer.
 
 `services/` may depend on `tools/`, not the reverse. The harness uses `RecordStream`, never `SessionStore` directly. Keep decisions in the owning runtime/model layer, not Electron entry points or views.
 
@@ -77,9 +74,9 @@ tui/ or desktop/ -> runtime/ + harness/ -> config/providers/
 - `ToolRunner` settles approval, result, and post-use records for every failure, denial, abort, or hook block. Only the loop batches contiguous safe calls.
 - Repair unmatched `tool_use`/`tool_result` pairs before provider calls. A model switch invalidates model-dependent prompt/cache state; changed compaction context needs a fresh token count.
 - Compaction retains the latest user message. Automatic failures are fail-open behind the per-session circuit breaker. Cache sources and module state never cross sessions, streams, or projects.
-- File tools read through `src/tools/textFile.ts` and write through `writeTextFile`: normalize reads to LF, preserve encoding/line endings on write, and keep `Read`’s whole-file state available to `Edit`.
+- File tools read through `src/tools/textFile.ts` and write through `writeTextFile`: normalize reads to LF, preserve encoding/line endings on write, and keep `Read`'s whole-file state available to `Edit`.
 - Every built-in tool is a `src/tools/<Name>Tool/` directory: the implementation, and a `prompt.ts` holding its description plus any tool-name constants. Descriptions name every accepted parameter and every capability the model's Claude Code prior expects but this tool lacks.
-- `src/tools/inputAliases.ts` normalizes input before permissions, hooks, display, records, or execution read it. Renaming an alias onto a real parameter beats dropping it; dropping is for keys no parameter could honour. The prompt’s shell line comes from `describeShell()` in `src/tools/BashTool/BashTool.ts`.
+- `src/tools/inputAliases.ts` normalizes input before permissions, hooks, display, records, or execution read it. Renaming an alias onto a real parameter beats dropping it; dropping is for keys no parameter could honour. The prompt's shell line comes from `describeShell()` in `src/tools/BashTool/BashTool.ts`.
 - Project instructions are `AGENTS.md`/`CLAUDE.md` and `.myagent/rules/*.md` walked upward from `cwd`, first match per directory, outermost first; local `AGENTS.local.md`/`CLAUDE.local.md` is read last.
 
 ## Permissions and configuration
@@ -93,16 +90,15 @@ tui/ or desktop/ -> runtime/ + harness/ -> config/providers/
 - Settings groups concatenate/union across layers, except `skills.disabled`, which is replaced per layer. Provider construction stays in `src/config/providers/registry.ts`.
 - Preserve provider capability checks, retry/fallback propagation, and reference repair when models/endpoints are deleted. `ModelConfig.longContext1m` and `contextWindow` are independent.
 
-## TUI, protocol, and desktop
+## Protocol and desktop
 
-- `src/tui/entrypoints/tui.tsx` is the TUI wiring point; `SessionController` owns turn lifecycle. Session switches, `/clear`, and `/resume` use the shared choreography and re-check blocking UI requests.
-- Use the shared theme and clock. `src/runtime/protocol/` is Electron-free; wire values survive `structuredClone`, commands use strict schemas, and dispatch is exhaustive with `assertNever`.
-- Renderer code must not value-import `harness/`, `services/`, `sessions/`, `commands/`, or `tui/`. Put pure decisions in `renderer/model/`, DOM/event wiring in `renderer/dom/` or the app shell, and settle every blocking request.
+- `src/runtime/protocol/` is Electron-free; wire values survive `structuredClone`, commands use strict schemas, and dispatch is exhaustive with `assertNever`.
+- Renderer code must not value-import `harness/`, `services/`, `sessions/`, or `commands/`. Put pure decisions in `renderer/model/`, DOM/event wiring in `renderer/dom/` or the app shell, and settle every blocking request.
 - One `BrowserWindow` multiplexes pane lanes over one transport; desktop `ShellHost` owns cross-project topology and all lane exits use the common detach/dispose path.
 - Settings changes follow `mutate -> save if config changed -> reload -> after-reload action -> optional refresh/rebuild`, with unique change kinds, optimistic pending state, and one wire scope per category (except renderer-local `appearance`).
 - Window views derive identity from `WireLaneInfo`. Context occupancy uses `AgentLoop.getContextBudget().usableContextWindow`, not the raw model window. `open-in-editor` resolves the real `entry.cwd`.
 - `TokenUsage`'s three input fields are disjoint: uncached input, cache writes (`cacheCreationInputTokens`, optional — absent means the provider does not report writes, never zero writes), cache reads. Add them only through `promptTokens()`, and take the hit rate only from `cacheHitRate()`, whose denominator is that same sum: a write is a miss that was paid for. Usage arithmetic preserves absence rather than materializing a zero.
-- Context occupancy is `promptTokens(usage.lastRequest)`, pushed per provider response through `RecordProxy.onRequestUsage` and seeded from the metrics sidecar for a session this process never ran — `loadLastRequestUsage` for the request, `loadSessionTotals` for the running total, which only lands while the total is still empty. A mid-turn report moves `lastRequest` only — the totals stay on the end-of-run accounting, or every request is counted twice. `SessionController.contextUsed()` adds a record-only estimate of what came after the last request; with no request yet it estimates the records kept after the last compaction plus the system prompt. It is the last resort, not a source.
+- Context occupancy is `promptTokens(usage.lastRequest)`, pushed per provider response through `RecordProxy.onRequestUsage` and seeded from the metrics sidecar for a session this process never ran — `loadLastRequestUsage` for the request, `loadSessionTotals` for the running total, which only lands while the total is still empty. A mid-turn report moves `lastRequest` only — the totals stay on the end-of-run accounting, or every request is counted twice.
 - The desktop readout pairs a cumulative count with the *last request's* hit rate; the session-cumulative rate lives in the hover. A cumulative rate can only fall — the cold first request, every compaction and every subagent prompt sit in its denominator forever — so it answers how the session went, not whether the cache is working now.
 - `scripts/smoke-browser.mjs` runs `scripts/smoke/browser.cjs` in Electron against `DesktopBrowserHost`, a loopback server and a disposable profile removed after Electron exits: the agent-browser paths only a real renderer has (beforeunload refusal, hit testing, native `<select>`, key chords). Its entry is CommonJS because an ESM Electron entry never starts in a headless Linux container.
 - `scripts/smoke-desktop.mjs` exercises real Electron behavior with scratch projects, a disposable home and a private profile. Teardown stops children before removing these and reports every cleanup failure. Real global config/settings/projects stay untouched; reports are retained only with explicit `--out` or `--keep`.
@@ -124,8 +120,4 @@ Run the narrowest relevant tests first; run `npm run typecheck` and the full sui
 
 - Use `.js` extensions for relative imports.
 - Import strict schemas from `zod/v3`.
-- Keep `ink+7.0.6.patch` and `wrap-ansi+10.0.0.patch` paired.
 - `AGENTS.md` is the only guide this repo keeps. The runtime still reads `CLAUDE.md` from *other* projects; there is no second copy here to maintain.
-## Instructions
-
-For simple or low-risk tasks, reduce writing unnecessary tests and avoid overly defensive programming.

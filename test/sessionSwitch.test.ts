@@ -280,20 +280,3 @@ test('an orphaned agent is written to the store and joins the returned records',
     'and on disk, so the next resume does not report it again',
   )
 })
-
-test('the TUI has no second copy of the switch choreography', async () => {
-  const repoRoot = path.dirname(fileURLToPath(new URL('../package.json', import.meta.url)))
-  const source = await readFile(path.join(repoRoot, 'src/tui/components/App.tsx'), 'utf8')
-
-  assert.match(source, /import \{ switchToExistingSession, switchToNewSession \} from '\.\.\/\.\.\/runtime\/sessionSwitch\.js'/,
-    'both switches go through the shared module')
-  // Each of these was a line of the copy App.tsx used to keep. `retarget`
-  // without `createRuntime` + `replace` is the specific bug: the loop keeps
-  // writing into the session it left.
-  assert.ok(!source.includes('.retarget('),
-    'a switch assembled in the view drifts from the one the host runs')
-  assert.ok(!source.includes('Background agent was not present'),
-    'orphan reconciliation belongs to reconcileOrphanedAgents, and only there')
-  assert.ok(!source.includes('restoreSession('),
-    'background tasks are reattached by the switch, not by the view')
-})

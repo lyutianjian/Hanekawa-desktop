@@ -184,8 +184,7 @@ async function startChild(): Promise<Child> {
   await writeFile(entry, childSource(), 'utf8')
 
   // Left as a file:// URL, not a path: Node reads a bare Windows path after
-  // `--import` as a URL whose scheme is the drive letter. `bin/hanekawa.mjs`
-  // resolves tsx the same way for the same reason.
+  // `--import` as a URL whose scheme is the drive letter.
   const tsx = import.meta.resolve('tsx')
   const proc = fork(entry, [], {
     execArgv: ['--import', tsx],
