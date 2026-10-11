@@ -668,6 +668,7 @@ const COMMAND_SAMPLES = {
   'open-session': { type: 'open-session', id: 'b', sessionId: 's1', title: 'T', projectRoot: 'r' },
   'open-project': { type: 'open-project', id: 'c', path: fixturePath('repo') },
   'list-sessions': { type: 'list-sessions', id: 'd' },
+  'usage-stats': { type: 'usage-stats', id: 'u' },
   'delete-session': { type: 'delete-session', id: 'e', projectRoot: 'r', sessionId: 's1' },
   'get-settings': { type: 'get-settings', id: 'f', projectRoot: 'r' },
   'settings-change': {
@@ -836,6 +837,7 @@ test('every shell command variant round-trips through its schema', () => {
       'thread-resolve',
       'thread-stop',
       'thread-transcript',
+      'usage-stats',
     ],
     'a variant added to ShellCommand must fail the satisfies table by name',
   )

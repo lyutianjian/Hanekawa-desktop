@@ -81,6 +81,8 @@ export type ShellCommand =
    * snapshot tick or need its own change detection on the store.
    */
   | { type: 'list-sessions'; id: string }
+  /** Per-day token and activity buckets over every project's metrics — the home page's statistics card. */
+  | { type: 'usage-stats'; id: string }
   /**
    * Deletes a session: its lane if one is open, its three files, and its file
    * history. `projectRoot` is required — sessions live per project, and guessing
@@ -739,6 +741,26 @@ export interface WireShellSessionsResult {
    * which is exactly the case where the user is asking for it.
    */
   globalRoot: string
+}
+
+/** One local calendar day of turns, across every project. */
+export interface WireUsageDay {
+  /** Local date, `YYYY-MM-DD`. */
+  day: string
+  /** Sessions whose first turn fell on this day. */
+  sessions: number
+  turns: number
+  /** Prompt (uncached + cache writes + cache reads) plus output tokens. */
+  tokens: number
+  /** Turns per local hour, 24 entries. */
+  hours: number[]
+  /** Tokens per model. */
+  models: Record<string, number>
+}
+
+export interface WireShellUsageStatsResult {
+  /** Ascending by day; days without a turn are absent. */
+  days: WireUsageDay[]
 }
 
 export interface WireShellDeleteSessionResult {

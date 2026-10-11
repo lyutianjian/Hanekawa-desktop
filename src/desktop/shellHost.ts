@@ -38,6 +38,7 @@ import { DEFAULT_AUTO_RESOLVE_DAYS, DEFAULT_QUIET_DAYS } from '../services/coord
 import { importSkill } from '../services/skills/importSkill.js'
 import { readUserInstructions, writeUserInstructions } from '../services/context/projectContext.js'
 import { peekSessions } from './recentProjects.js'
+import { UsageScanner } from './usageStats.js'
 import { getProjectDataDir, getSkillsDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
 import type {
   DirectoryProject,
@@ -74,6 +75,7 @@ import {
   type WireShellPanesResult,
   type WireSessionSummary,
   type WireShellSessionsResult,
+  type WireShellUsageStatsResult,
   type WireShellRenameSessionResult,
   type WireShellSettingsChangeResult,
   type WireShellSettingsResult,
@@ -680,6 +682,7 @@ const SHELL_COMMAND_SCHEMAS = {
     .object({ type: z.literal('remove-project'), id: commandId, projectRoot: z.string() })
     .strict(),
   'list-sessions': z.object({ type: z.literal('list-sessions'), id: commandId }).strict(),
+  'usage-stats': z.object({ type: z.literal('usage-stats'), id: commandId }).strict(),
   'delete-session': z
     .object({
       type: z.literal('delete-session'),
@@ -935,6 +938,7 @@ export class ShellHost<
   /** Project root -> the pending `coordination-threads` push for it. */
   private readonly threadBroadcasts = new Map<string, ReturnType<typeof setTimeout>>()
   private disposed = false
+  private readonly usageScanner = new UsageScanner()
 
   constructor(private readonly deps: ShellHostDeps<P, PaneT, W>) {
     this.channel = deps.mux.lane(SHELL_LANE)
@@ -1257,6 +1261,8 @@ export class ShellHost<
         return this.removeProject(command.projectRoot)
       case 'list-sessions':
         return this.listSessions()
+      case 'usage-stats':
+        return this.usageStats()
       case 'delete-session':
         return this.deleteSession(command.projectRoot, command.sessionId)
       case 'get-settings':
@@ -1452,7 +1458,7 @@ export class ShellHost<
    * The sessions are projected field by field: `SessionMeta` carries an
    * unbounded array (`checkpoints`) that no row reads.
    */
-  private async listSessions(): Promise<WireShellSessionsResult> {
+  private async knownRoots(): Promise<string[]> {
     const roots: string[] = []
     const addRoot = (cwd: string): void => {
       const key = projectRootKey(cwd)
@@ -1466,7 +1472,15 @@ export class ShellHost<
     // project is where work belongs; the fallback is where it lands when
     // nothing is opened.
     addRoot(homedir())
+    return roots
+  }
 
+  private usageStats(): Promise<WireShellUsageStatsResult> {
+    return this.knownRoots().then((roots) => this.usageScanner.scan(roots))
+  }
+
+  private async listSessions(): Promise<WireShellSessionsResult> {
+    const roots = await this.knownRoots()
     const projects = await Promise.all(
       roots.map(async (cwd) => {
         const entry = this.deps.directory.get(cwd)

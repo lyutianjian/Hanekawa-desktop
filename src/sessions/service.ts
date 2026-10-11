@@ -1252,7 +1252,7 @@ export function deriveSessionTitle(record: SessionRecord): string | undefined {
 /** How much of the first message names the session. */
 const SESSION_TITLE_LENGTH = 60
 
-function inferTurnInputTokens(turn: Extract<SessionMetric, { event: 'turn' }>): number {
+export function inferTurnInputTokens(turn: Extract<SessionMetric, { event: 'turn' }>): number {
   if (typeof turn.input_tokens === 'number' && Number.isFinite(turn.input_tokens)) {
     return Math.max(0, turn.input_tokens)
   }
