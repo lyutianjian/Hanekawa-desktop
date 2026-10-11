@@ -183,3 +183,10 @@ test('the counter stays empty until the wait is worth timing', () => {
   assert.equal(waitingElapsedLabel(WAITING_CLOCK_AFTER_MS), '5s')
   assert.equal(waitingElapsedLabel(63_000), '1m 3s')
 })
+
+test('a pending question names itself on the last line', () => {
+  const entries = groupTranscript([USER])
+  const row = turnActivity(entries, { isStreaming: true, startedAt: STARTED_AT, turnId: 't1', asking: '数据库' }).row
+  assert.equal(row?.label, '正在提问 · 数据库')
+  assert.equal(turnActivity(entries, { isStreaming: false, startedAt: STARTED_AT, turnId: 't1', asking: '数据库' }).row, undefined)
+})

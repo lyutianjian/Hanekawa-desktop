@@ -41,6 +41,7 @@ import type { StatusView } from './dom/statusView.js'
 import type { SuggestionsView } from './dom/suggestionsView.js'
 import type { OverlayView } from './dom/overlayView.js'
 import type { PermissionRequestView } from './dom/permissionRequestView.js'
+import type { QuestionCardView } from './dom/questionCardView.js'
 import type { RewindPanel } from './dom/rewindView.js'
 import type { SurfacePanel } from './dom/surfaceView.js'
 import type { ProcessStripView } from './dom/processStripView.js'
@@ -228,6 +229,8 @@ export interface PaneSessionDeps {
    * a request must never leave one of them behind — see `renderOverlay`.
    */
   permissionRequest: PermissionRequestView
+  /** The AskUserQuestion card; shares the composer dock with `permissionRequest`. */
+  questionCard: QuestionCardView
   rewindPanel: RewindPanel
   surface: SurfacePanel
   suggestions: SuggestionsView
@@ -339,6 +342,8 @@ export interface PaneSession {
   setSelectedSubagent(id: string | undefined): void
   // --- keyboard entry points (routed here by the app's global handler) ---
   handleOverlayKey(event: KeyboardEvent): void
+  /** What a click in the question card means; the keyboard's twin is `handleOverlayKey`. */
+  handleAskIntent(intent: AskIntent): void
   handleRewindIntent(intent: RewindIntent): void
   acceptCompletion(mode: 'accept' | 'submit'): Promise<void>
   moveCompletion(direction: 'up' | 'down'): void
@@ -554,6 +559,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   const resolvers = new Map<string, (response: unknown) => void>()
   let permissionIndex = 0
   let askState: AskState | undefined
+  let askingHeader: string | undefined
   let enterPlanIndex = 0
   let exitPlan: ExitPlanState | undefined
   let preparedId: string | undefined
@@ -774,10 +780,12 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       threadChipKey = stripKey
       threadChipEl = strip ? threadChip(strip, (target) => deps.onOpenThreads?.(target)) : undefined
     }
+    const asking = askState ? askViewModel(askState)?.header : undefined
     transcriptView.render(presented, disclosure, {
       isStreaming,
       startedAt: turnStartedAt,
       turnId: transcript.turnId,
+      ...(asking === undefined ? {} : { asking }),
       ...(transcript.phase ? { phase: transcript.phase } : {}),
     }, selectedSubagent, coordinator ? coordinatorWelcomeEl : undefined, threadChipEl)
     subagentList = undefined
@@ -1274,6 +1282,11 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   }
 
   function renderOverlay(): void {
+    const header = askState ? askViewModel(askState)?.header : undefined
+    if (header !== askingHeader) {
+      askingHeader = header
+      renderTranscript()
+    }
     const current = activeRequest(queue)
     if (!current) {
       if (active) {
@@ -1294,8 +1307,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         return
       }
       if (active) {
-        deps.permissionRequest.hide()
-        deps.overlay.ask(view)
+        deps.overlay.hide()
+        deps.questionCard.show(view)
       }
       return
     }
@@ -1336,6 +1349,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   function handleOverlayKey(event: KeyboardEvent): void {
     const current = activeRequest(queue)
     if (!current) return
+    if (current.kind !== 'ask-user-question') event.preventDefault()
     const chord = {
       key: event.key,
       shiftKey: event.shiftKey,
@@ -1355,7 +1369,10 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
       case 'ask-user-question': {
         if (!askState) return
-        applyAsk(current.requestId, askKeyToIntent(chord, askState))
+        const intent = askKeyToIntent(chord, askState)
+        // Typing in the 「其他」 input is the browser's, not ours.
+        if (intent.kind !== 'none' || !askState.otherMode) event.preventDefault()
+        applyAsk(current.requestId, intent)
         return
       }
 
@@ -1379,10 +1396,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    * cannot answer anything the keyboard would not, and a dialog that is drawn but
    * not focused (a background pane never paints) has nothing to click.
    *
-   * `primary`/`secondary` exist only where an option is *not* an action: the ask
-   * dialog (whose multi-select answer had no submit affordance at all before) and
-   * the exit-plan dialog. The permission and enter-plan bars are made of slots,
-   * so those two cases cannot arrive there.
+   * `primary`/`secondary` exist only on the exit-plan dialog, where an option is
+   * *not* an action. The permission and enter-plan bars are made of slots, so
+   * those two cases cannot arrive there.
    */
   function handleOverlayAction(action: OverlayAction): void {
     const current = activeRequest(queue)
@@ -1393,20 +1409,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         if (action.kind !== 'slot') return
         const view = permissionViewModel({ request: current.payload, selectedIndex: permissionIndex })
         applyPermissionIntent(current.requestId, permissionIndexToIntent(action.index, view.options))
-        return
-      }
-
-      case 'ask-user-question': {
-        if (!askState) return
-        applyAsk(
-          current.requestId,
-          action.kind === 'slot'
-            ? { kind: 'select', index: action.index }
-            // Enter and Escape, by their buttons.
-            : action.kind === 'primary'
-              ? { kind: 'commit' }
-              : { kind: 'cancel' },
-        )
         return
       }
 
@@ -1449,6 +1451,11 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       return
     }
     if (intent.kind === 'answer') settle(requestId, permissionResponseFor(intent.action))
+  }
+
+  function handleAskIntent(intent: AskIntent): void {
+    const current = activeRequest(queue)
+    if (current?.kind === 'ask-user-question') applyAsk(current.requestId, intent)
   }
 
   function applyAsk(requestId: string, intent: AskIntent): void {
@@ -2223,6 +2230,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       void refreshCommands()
     },
     handleOverlayKey,
+    handleAskIntent,
     handleRewindIntent,
     acceptCompletion,
     moveCompletion,

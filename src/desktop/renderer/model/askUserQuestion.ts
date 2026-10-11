@@ -5,7 +5,6 @@ import type {
   AskUserQuestionRequest,
   AskUserQuestionResult,
 } from '../../../harness/types.js'
-import type { DialogAction } from './dialogActions.js'
 
 /**
  * The AskUserQuestion dialog as a state machine.
@@ -28,10 +27,14 @@ export interface AskState {
   readonly request: AskUserQuestionRequest
   readonly questionIndex: number
   readonly selectedIndex: number
+  /** False until the user has picked or moved; nothing is selected before that. */
+  readonly touched: boolean
   /** Indices of toggled options; only meaningful for a multi-select question. */
   readonly toggled: readonly number[]
   readonly otherMode: boolean
   readonly otherText: string
+  /** The card folded to its title row so the transcript can be read. */
+  readonly collapsed: boolean
   readonly answers: AskUserQuestionAnswers
   readonly annotations: AskUserQuestionAnnotations
 }
@@ -54,39 +57,43 @@ export interface AskViewModel {
   readonly rows: readonly AskOptionRow[]
   readonly otherMode: boolean
   readonly otherText: string
-  /** The focused option's preview, for the side-by-side layout. */
+  readonly collapsed: boolean
+  /** The selected option's preview, shown under the rows. */
   readonly preview: string | undefined
-  /** Dialog-level buttons; the options themselves stay a row list. */
-  readonly actions: readonly DialogAction[]
+  readonly canSubmit: boolean
+  readonly canGoBack: boolean
+  /** Whether committing answers the request, rather than moving to the next question. */
+  readonly isLast: boolean
 }
 
 export function createAskState(request: AskUserQuestionRequest): AskState {
-  return {
-    request,
-    questionIndex: 0,
-    selectedIndex: 0,
-    toggled: [],
-    otherMode: false,
-    otherText: '',
-    answers: {},
-    annotations: {},
-  }
+  return { ...questionReset(), request, questionIndex: 0, answers: {}, annotations: {} }
+}
+
+function questionReset() {
+  return { selectedIndex: 0, touched: false, toggled: [], otherMode: false, otherText: '', collapsed: false } as const
 }
 
 export type AskIntent =
   | { kind: 'move'; direction: 'up' | 'down' }
-  /** A row was picked outright — the mouse's only intent. See `applyAskIntent`. */
+  /** A row was picked outright — a digit key or a click. See `applyAskIntent`. */
   | { kind: 'select'; index: number }
   | { kind: 'toggle' }
   | { kind: 'commit' }
-  | { kind: 'other-type'; text: string }
-  | { kind: 'other-backspace' }
+  | { kind: 'back' }
+  | { kind: 'other-set'; text: string }
+  | { kind: 'toggle-collapse' }
+  /** Esc: backs out of the free-text field first, else skips. */
   | { kind: 'cancel' }
+  /** The ✕ and 跳过 buttons: rejects the request from anywhere. */
+  | { kind: 'skip' }
   | { kind: 'none' }
 
 /**
  * Structural key shape rather than `KeyboardEvent` — this module is imported by
  * a test, which compiles it without the DOM lib.
+ *
+ * `none` in the free-text field means "let the input type it".
  */
 export function askKeyToIntent(
   event: { key: string; ctrlKey?: boolean; metaKey?: boolean },
@@ -94,12 +101,15 @@ export function askKeyToIntent(
 ): AskIntent {
   if (event.ctrlKey === true || event.metaKey === true) return { kind: 'none' }
 
+  if (state.collapsed) {
+    if (event.key === 'Escape') return { kind: 'cancel' }
+    return event.key === 'Enter' || event.key === ' ' ? { kind: 'toggle-collapse' } : { kind: 'none' }
+  }
+
   if (state.otherMode) {
     if (event.key === 'Escape') return { kind: 'cancel' }
     if (event.key === 'Enter') return { kind: 'commit' }
-    if (event.key === 'Backspace') return { kind: 'other-backspace' }
-    // A printable character; anything longer is a named key we do not handle.
-    if (event.key.length === 1) return { kind: 'other-type', text: event.key }
+    if (event.key === 'ArrowUp') return { kind: 'move', direction: 'up' }
     return { kind: 'none' }
   }
 
@@ -115,7 +125,7 @@ export function askKeyToIntent(
     case ' ':
       return currentQuestion(state)?.multiSelect === true ? { kind: 'toggle' } : { kind: 'none' }
     default:
-      return { kind: 'none' }
+      return /^[1-9]$/.test(event.key) ? { kind: 'select', index: Number(event.key) - 1 } : { kind: 'none' }
   }
 }
 
@@ -123,12 +133,7 @@ export type AskOutcome =
   | { readonly state: AskState }
   | { readonly state: AskState; readonly result: AskUserQuestionResult }
 
-/**
- * Applies an intent, answering the request once the last question is committed.
- *
- * In `otherMode`, Escape backs out of the text field rather than rejecting the
- * request — the same two-level Escape the terminal dialog has.
- */
+/** Applies an intent, answering the request once the last question is committed. */
 export function applyAskIntent(state: AskState, intent: AskIntent): AskOutcome {
   const question = currentQuestion(state)
   if (!question) {
@@ -140,29 +145,20 @@ export function applyAskIntent(state: AskState, intent: AskIntent): AskOutcome {
   switch (intent.kind) {
     case 'move': {
       const delta = intent.direction === 'up' ? -1 : 1
-      const next = clamp(state.selectedIndex + delta, 0, labels.length - 1)
-      return { state: { ...state, selectedIndex: next } }
+      return { state: focusRow(state, clamp(state.selectedIndex + delta, 0, labels.length - 1), labels) }
     }
 
-    // A click on a row: focus it, then do to it what the keyboard would.
-    //
-    // Which key that is depends on the row: Space on a multi-select option (so a
-    // click ticks the box and the question stays open — the submit affordance is
-    // still Enter until the dialog grows buttons), Enter on anything else, which
-    // is what routes 「其他」 into `otherMode` rather than answering with its label.
-    // While the free-text field is open the list is not the target at all.
+    // A digit or a click: focus the row, then pick it — tick it on a multi-select
+    // question, open the free-text field for 「其他」. Answering stays with commit.
     case 'select': {
-      if (state.otherMode) return { state }
       if (intent.index < 0 || intent.index >= labels.length) return { state }
-      const focused: AskState = { ...state, selectedIndex: intent.index }
+      const focused = focusRow(state, intent.index, labels)
       return question.multiSelect === true && !isOtherIndex(intent.index, labels)
         ? applyAskIntent(focused, { kind: 'toggle' })
-        : commit(focused, question, labels)
+        : { state: focused }
     }
 
     case 'toggle': {
-      // "Other" is not toggleable: it needs text, so Enter routes there instead
-      // and whatever is typed is merged with the toggled options.
       if (isOtherIndex(state.selectedIndex, labels)) return { state }
       const toggled = state.toggled.includes(state.selectedIndex)
         ? state.toggled.filter((index) => index !== state.selectedIndex)
@@ -170,15 +166,26 @@ export function applyAskIntent(state: AskState, intent: AskIntent): AskOutcome {
       return { state: { ...state, toggled } }
     }
 
-    case 'other-type':
-      return { state: { ...state, otherText: state.otherText + intent.text } }
+    case 'other-set':
+      return { state: { ...state, otherText: intent.text } }
 
-    case 'other-backspace':
-      return { state: { ...state, otherText: state.otherText.slice(0, -1) } }
+    case 'toggle-collapse':
+      return { state: { ...state, collapsed: !state.collapsed } }
 
     case 'cancel':
-      if (state.otherMode) return { state: { ...state, otherMode: false, otherText: '' } }
+      if (state.otherMode) return { state: { ...state, ...questionResetKeepingToggles(state) } }
       return { state, result: { kind: 'rejected' } }
+
+    case 'skip':
+      return { state, result: { kind: 'rejected' } }
+
+    case 'back': {
+      const previous = state.request.questions[state.questionIndex - 1]
+      if (!previous) return { state }
+      const { [previous.question]: _answer, ...answers } = state.answers
+      const { [previous.question]: _annotation, ...annotations } = state.annotations
+      return { state: { ...state, ...questionReset(), questionIndex: state.questionIndex - 1, answers, annotations } }
+    }
 
     case 'commit':
       return commit(state, question, labels)
@@ -190,29 +197,35 @@ export function applyAskIntent(state: AskState, intent: AskIntent): AskOutcome {
   return assertNever(intent)
 }
 
+/** Leaving the free-text field keeps ticked boxes but drops the text and the cursor. */
+function questionResetKeepingToggles(state: AskState) {
+  return { ...questionReset(), toggled: state.toggled }
+}
+
+/** Moves the cursor; landing on 「其他」 opens its field, leaving it closes it. */
+function focusRow(state: AskState, index: number, labels: readonly string[]): AskState {
+  return { ...state, selectedIndex: index, touched: true, otherMode: isOtherIndex(index, labels) }
+}
+
+export function canSubmit(state: AskState): boolean {
+  const question = currentQuestion(state)
+  if (!question) return false
+  if (state.otherMode) return state.otherText.trim().length > 0
+  return question.multiSelect === true ? state.toggled.length > 0 : state.touched
+}
+
 function commit(state: AskState, question: AskUserQuestionItem, labels: string[]): AskOutcome {
+  if (!canSubmit(state)) return { state }
+
   if (state.otherMode) {
     const trimmed = state.otherText.trim()
-    // An empty free-text answer is not an answer; stay in the field.
-    if (trimmed.length === 0) return { state }
     const merged = question.multiSelect && state.toggled.length > 0
       ? [...selectedLabels(state.toggled, labels), trimmed].join(', ')
       : trimmed
     return answer(state, question, merged)
   }
 
-  if (isOtherIndex(state.selectedIndex, labels)) {
-    return { state: { ...state, otherMode: true, otherText: '' } }
-  }
-
-  if (question.multiSelect) {
-    // Enter with nothing toggled is a single pick, so a plain multi-select
-    // question still works without discovering Space.
-    const indices = state.toggled.length > 0 ? state.toggled : [state.selectedIndex]
-    const picked = selectedLabels(indices, labels)
-    if (picked.length === 0) return { state }
-    return answer(state, question, picked.join(', '))
-  }
+  if (question.multiSelect) return answer(state, question, selectedLabels(state.toggled, labels).join(', '))
 
   const label = labels[state.selectedIndex]
   if (label === undefined) return { state }
@@ -233,17 +246,7 @@ function answer(
     : state.annotations
 
   const nextIndex = state.questionIndex + 1
-  const next: AskState = {
-    ...state,
-    answers,
-    annotations,
-    questionIndex: nextIndex,
-    // Per-question state resets, exactly as the terminal dialog's effect does.
-    selectedIndex: 0,
-    toggled: [],
-    otherMode: false,
-    otherText: '',
-  }
+  const next: AskState = { ...state, ...questionReset(), answers, annotations, questionIndex: nextIndex }
 
   if (nextIndex < state.request.questions.length) return { state: next }
 
@@ -272,31 +275,19 @@ export function askViewModel(state: AskState): AskViewModel | undefined {
       label,
       description: question.options[index]?.description ?? '',
       isOther: isOtherIndex(index, labels),
-      selected: index === state.selectedIndex,
+      selected: state.touched && index === state.selectedIndex,
       toggled: state.toggled.includes(index),
       preview: question.options[index]?.preview,
     })),
     otherMode: state.otherMode,
     otherText: state.otherText,
-    preview: question.multiSelect === true
+    collapsed: state.collapsed,
+    preview: question.multiSelect === true || !state.touched
       ? undefined
       : question.options[state.selectedIndex]?.preview,
-    // The submit button is the multi-select answer: ticking boxes with the mouse
-    // was reachable before it, but committing them was not (Enter only).
-    // Escape's two levels are preserved — in the free-text field it backs out,
-    // in the list it rejects the request.
-    actions: [
-      {
-        label: state.otherMode ? '返回' : '取消',
-        shortcut: 'Esc',
-        role: 'secondary',
-      },
-      {
-        label: state.otherMode || question.multiSelect === true ? '提交' : '选择',
-        shortcut: 'Enter',
-        role: 'primary',
-      },
-    ],
+    canSubmit: canSubmit(state),
+    canGoBack: state.questionIndex > 0,
+    isLast: state.questionIndex === state.request.questions.length - 1,
   }
 }
 

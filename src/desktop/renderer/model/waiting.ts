@@ -32,6 +32,8 @@ import { batchPhrase, callPhrase, type CallStep } from './toolPhrases.js'
 /** 「正在思考」 — the label for 「the model is deciding」, wherever it is shown. */
 export const WAITING_LABEL = '正在思考'
 
+const ASKING_LABEL = '正在提问'
+
 export interface WaitingInput {
   /** The session snapshot's own flag: a turn is in flight. */
   readonly isStreaming: boolean
@@ -41,6 +43,8 @@ export interface WaitingInput {
   readonly turnId: string | undefined
   /** A wait no record shows (`TranscriptState.phase`); outranks what the steps say. */
   readonly phase?: TurnPhase
+  /** The `header` of the question the user is being asked, while one is pending. */
+  readonly asking?: string
 }
 
 export interface WaitingRow {
@@ -85,12 +89,13 @@ export function waitingElapsedLabel(elapsedMs: number): string {
 export function turnActivity(entries: readonly TranscriptEntry[], input: WaitingInput): TurnActivity {
   if (!input.isStreaming) return IDLE
   if (input.phase) return { live: undefined, row: { label: phaseLabel(input.phase), startedAt: input.startedAt } }
+  const asking = input.asking === undefined ? undefined : `${ASKING_LABEL} · ${input.asking}`
   const last = entries[entries.length - 1]
   if (last?.kind === 'run' && last.run.status !== 'aborted' && input.turnId !== undefined && last.run.turnId === input.turnId) {
-    return { live: { runId: last.run.id, label: runActivity(last.run), startedAt: input.startedAt }, row: undefined }
+    return { live: { runId: last.run.id, label: asking ?? runActivity(last.run), startedAt: input.startedAt }, row: undefined }
   }
   if (last?.kind === 'item' && isArriving(last.item)) return IDLE
-  return { live: undefined, row: { label: WAITING_LABEL, startedAt: input.startedAt } }
+  return { live: undefined, row: { label: asking ?? WAITING_LABEL, startedAt: input.startedAt } }
 }
 
 const RETRY_REASONS: Record<Extract<TurnPhase, { kind: 'retrying' }>['reason'], string> = {

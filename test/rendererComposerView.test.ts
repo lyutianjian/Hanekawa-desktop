@@ -6,6 +6,10 @@ import { fileURLToPath } from 'node:url'
 
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
 import { createComposerView, type ComposerView } from '../src/desktop/renderer/dom/composerView.js'
+import { createDockedCard } from '../src/desktop/renderer/dom/dockedCard.js'
+import { createQuestionCardView } from '../src/desktop/renderer/dom/questionCardView.js'
+import { askViewModel, createAskState } from '../src/desktop/renderer/model/askUserQuestion.js'
+import type { AskIntent, AskViewModel } from '../src/desktop/renderer/model/askUserQuestion.js'
 import {
   createPermissionRequestView,
   permissionGlyphFor,
@@ -656,7 +660,7 @@ function card(t: { after(fn: () => void): void }): Card {
   const composer = stub.createContainer('composer')
   const container = stub.createContainer('composer-request')
   const picked: OverlayAction[] = []
-  const view = createPermissionRequestView(composer, container, (action) => picked.push(action))
+  const view = createPermissionRequestView(createDockedCard(composer, container), container, (action) => picked.push(action))
   const buttons = () => {
     const bar = stub.inspect(container).children.find((child) =>
       child.classes.includes('dialog-actions'))
@@ -701,11 +705,12 @@ test('M16 permission replies precede exit and typing during the handoff stays in
   capsule.appendChild(r.els.input)
   let layouts = 0
   const replies: OverlayAction[] = []
-  const card = createPermissionRequestView(capsule, request, (action) => {
+  const dock = createDockedCard(capsule, request, { onLayoutChange: () => { layouts += 1 }, onReturnFocus: () => r.composer.focus() })
+  const card = createPermissionRequestView(dock, request, (action) => {
     assert.equal(request.classList.contains('presence-closing'), false, 'business receives the intent before exit')
     replies.push(action)
     card.hide()
-  }, { onLayoutChange: () => { layouts += 1 }, onReturnFocus: () => r.composer.focus() })
+  })
   r.stub.onLayout((node) => node.node === capsule
     ? { top: 0, bottom: capsule.classList.contains('request-open') ? 220 : 90 } : undefined)
   card.show(permissionFixture({ selectedIndex: 1 }))
@@ -1087,4 +1092,97 @@ test('a thumbnail arriving later repaints the tile once; an unchanged grid does 
     r.attachmentRows()[0]!.children.find((child) => child.classes.includes('attachment-thumb'))?.attributes.get('src'),
     'data:image/png;base64,BB',
   )
+})
+
+// --- the docked question card ---------------------------------------------------
+
+function askModel(overrides: Partial<{ multiSelect: boolean; questions: number }> = {}): AskViewModel {
+  const question = (index: number) => ({
+    question: `问题 ${index}？`,
+    header: `头${index}`,
+    multiSelect: overrides.multiSelect ?? false,
+    options: [{ label: '甲', description: '第一个' }, { label: '乙', description: '第二个' }],
+  })
+  const view = askViewModel(createAskState({
+    questions: Array.from({ length: overrides.questions ?? 1 }, (_, index) => question(index + 1)),
+  }))
+  assert.ok(view)
+  return view
+}
+
+function questionCard(t: { after(fn: () => void): void }) {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const composer = stub.createContainer('composer')
+  const container = stub.createContainer('composer-request')
+  const intents: AskIntent[] = []
+  const view = createQuestionCardView(createDockedCard(composer, container), container, (intent) => intents.push(intent))
+  const card = () => stub.inspect(container).children[0]!
+  const find = (cls: string) => stub.inspect(container).children[0]!.children.find((child) => child.classes.includes(cls))!
+  return { stub, composer, container, view, intents, card, find }
+}
+
+test('the question card docks in the composer with rows, digit hints and an Other input', (t) => {
+  const q = questionCard(t)
+  q.view.show(askModel())
+
+  assert.ok(q.stub.inspect(q.composer).classes.includes('request-open'))
+  const rows = q.find('ask-options').children
+  assert.equal(rows.length, 3)
+  assert.deepEqual(rows.map((row) => row.children.find((c) => c.classes.includes('kbd'))?.text), ['1', '2', '3'])
+  const input = rows[2]!.children[0]!.children.find((c) => c.classes.includes('ask-other-input'))
+  assert.equal(input?.attributes.get('placeholder'), '输入你自己的答案')
+
+  const footer = q.find('ask-footer')
+  const submit = footer.children.find((c) => c.text === '提交')!
+  assert.equal(submit.disabled, true, 'nothing selected yet')
+  assert.equal(footer.children.some((c) => c.classes.includes('ask-progress')), false, 'one question has no progress')
+
+  q.stub.click(rows[1]!.node)
+  assert.deepEqual(q.intents, [{ kind: 'select', index: 1 }])
+})
+
+test('the card reports skip from the close button and the footer, and submit from the bar', (t) => {
+  const q = questionCard(t)
+  const model = askModel({ questions: 2 })
+  q.view.show({ ...model, canSubmit: true })
+
+  const head = q.find('ask-head')
+  q.stub.click(head.children.find((c) => c.attributes.get('aria-label') === '跳过')!.node)
+  q.stub.click(head.children.find((c) => c.attributes.get('aria-label') === '收起')!.node)
+  const footer = q.find('ask-footer')
+  assert.equal(footer.children.find((c) => c.classes.includes('ask-progress'))?.text, '1/2')
+  q.stub.click(footer.children.find((c) => c.text === '跳过')!.node)
+  q.stub.click(footer.children.find((c) => c.text === '下一个')!.node)
+
+  assert.deepEqual(q.intents, [{ kind: 'skip' }, { kind: 'toggle-collapse' }, { kind: 'skip' }, { kind: 'commit' }])
+})
+
+test('collapsed, the card is just its title row', (t) => {
+  const q = questionCard(t)
+  q.view.show({ ...askModel(), collapsed: true })
+
+  assert.ok(q.card().classes.includes('collapsed'))
+  assert.deepEqual(q.card().children.map((c) => c.classes[0]), ['ask-head'])
+})
+
+test('typing in Other only updates the submit button; the input is never rebuilt', (t) => {
+  const q = questionCard(t)
+  const model = { ...askModel(), otherMode: true }
+  q.view.show(model)
+  const card = q.card().node
+  const input = q.stub.inspect(q.container).children[0]!
+    .children.find((c) => c.classes.includes('ask-options'))!.children[2]!.children[0]!.children
+    .find((c) => c.classes.includes('ask-other-input'))!
+  assert.equal(q.stub.activeElement(), input.node, 'moving onto Other focuses the field')
+
+  ;(input.node as unknown as { value: string }).value = '自己的'
+  q.stub.dispatch(input.node, 'input')
+  assert.deepEqual(q.intents.at(-1), { kind: 'other-set', text: '自己的' })
+
+  q.view.show({ ...model, otherText: '自己的', canSubmit: true })
+  assert.equal(q.card().node, card, 'only the text changed, so nothing is rebuilt')
+  const submit = q.find('ask-footer').children.find((c) => c.text === '提交')!
+  assert.equal(submit.disabled, false)
+  assert.equal(q.stub.activeElement(), input.node)
 })

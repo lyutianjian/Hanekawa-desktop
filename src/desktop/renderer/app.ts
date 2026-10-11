@@ -94,7 +94,9 @@ import { createSettingsView } from './dom/settingsView.js'
 import { createProjectsPageView } from './dom/projectsPageView.js'
 import { projectCards } from './model/projectsPage.js'
 import { createOverlayView } from './dom/overlayView.js'
+import { createDockedCard } from './dom/dockedCard.js'
 import { createPermissionRequestView } from './dom/permissionRequestView.js'
+import { createQuestionCardView } from './dom/questionCardView.js'
 import { createRewindView } from './dom/rewindView.js'
 import { createSurfacePanel } from './dom/surfaceView.js'
 import { createTaskPanelView } from './dom/taskPanelView.js'
@@ -216,20 +218,18 @@ applySidebarWidth(sidebarWidth)
 const overlay = createOverlayView(required('overlay'), required('overlay-panel'), (action) => {
   activePane()?.handleOverlayAction(action)
 })
-// The fourth blocking request, and the only one that is not modal: it transforms
-// the composer. Same routing and the same handler as the panel above, so a click
-// there answers exactly what a click in the modal used to.
-const permissionRequest = createPermissionRequestView(
-  required('composer'),
-  required('composer-request'),
-  (action) => {
-    activePane()?.handleOverlayAction(action)
-  },
-  {
-    onLayoutChange: () => activePane()?.beginLayoutChange(),
-    onReturnFocus: () => composer.focus(),
-  },
-)
+// The permission and question cards are not modal: they share one dock that
+// transforms the composer, and route clicks to the active pane like the panel above.
+const composerDock = createDockedCard(required('composer'), required('composer-request'), {
+  onLayoutChange: () => activePane()?.beginLayoutChange(),
+  onReturnFocus: () => composer.focus(),
+})
+const permissionRequest = createPermissionRequestView(composerDock, required('composer-request'), (action) => {
+  activePane()?.handleOverlayAction(action)
+})
+const questionCard = createQuestionCardView(composerDock, required('composer-request'), (intent) => {
+  activePane()?.handleAskIntent(intent)
+})
 const surface = createSurfacePanel(required('surface'), (action) => {
   void activePane()?.runSurfaceAction(action)
 })
@@ -319,6 +319,7 @@ function attachPaneSession(lane: string): void {
     mount: transcriptArea,
     overlay,
     permissionRequest,
+    questionCard,
     rewindPanel,
     surface,
     suggestions,
@@ -2085,7 +2086,6 @@ document.addEventListener('keydown', (event) => {
   if (action !== 'overlay' && action !== 'rewind' && ownedByTarget(event)) return
   switch (action) {
     case 'overlay':
-      event.preventDefault()
       pane?.handleOverlayKey(event)
       return
     case 'rewind':

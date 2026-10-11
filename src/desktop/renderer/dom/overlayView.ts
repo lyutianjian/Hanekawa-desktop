@@ -1,4 +1,3 @@
-import type { AskViewModel } from '../model/askUserQuestion.js'
 import type { DialogAction, OverlayAction } from '../model/dialogActions.js'
 import type { EnterPlanViewModel, ExitPlanViewModel } from '../model/planDialogs.js'
 import type { PermissionViewModel } from '../model/permissionDialog.js'
@@ -9,7 +8,7 @@ import { createModalPresence } from './presence.js'
 import { markdownNode } from './markdownView.js'
 
 /**
- * The four blocking requests, drawn into one modal panel.
+ * The modal blocking requests, drawn into one panel.
  *
  * Every decision — which options exist, which is focused, what the tone is —
  * arrives already made in the view model. This file only turns that into nodes,
@@ -17,17 +16,15 @@ import { markdownNode } from './markdownView.js'
  *
  * Two shapes, decided in `model/`: an option that *is* an action (allow, deny,
  * enter plan mode) is drawn as a button in the bar at the bottom, and an option
- * that is content (an answer with a description, a plan decision that grows a
- * feedback field) stays a row above it. Both hand back an `OverlayAction`, which
+ * that is content (a plan decision that grows a feedback field) stays a row above it. Both hand back an `OverlayAction`, which
  * each dialog's model turns into the same intent its key produces.
  *
- * The backdrop is deliberately **not** clickable: every one of these four
+ * The backdrop is deliberately **not** clickable: every one of these
  * requests is holding the agent loop, so there is no dismissing them — see
  * `paneSession.ts`'s `enqueue`.
  */
 export interface OverlayView {
   permission(view: PermissionViewModel): void
-  ask(view: AskViewModel): void
   enterPlan(view: EnterPlanViewModel): void
   exitPlan(view: ExitPlanViewModel): void
   hide(): void
@@ -74,34 +71,6 @@ export function createOverlayView(
       )
     },
 
-    ask(view) {
-      open(
-        'normal',
-        // The header is a chip, not `[bracketed]`: it is a category label the
-        // tool supplies, and the brackets were the terminal's way of saying so.
-        el('div', 'title', el('span', 'dialog-chip', view.header), el('span', undefined, view.question)),
-        view.questionTotal > 1
-          && el('div', 'subtitle', `第 ${view.questionNumber}/${view.questionTotal} 个问题`),
-        optionList(view.rows.map((row) => ({
-          label: row.label,
-          description: row.description,
-          selected: row.selected,
-          // A multi-select row carries a tick box; "Other" never toggles. No
-          // number badge: `askKeyToIntent` does not read digits, and a badge for
-          // a key that does nothing is worse than none.
-          ...(view.multiSelect && !row.isOther ? { toggled: row.toggled } : {}),
-        }))),
-        view.otherMode && el(
-          'div',
-          undefined,
-          el('div', 'block-label', 'Other'),
-          el('div', 'feedback focused', view.otherText),
-        ),
-        view.preview !== undefined && el('div', 'block', view.preview),
-        actions(view.actions),
-      )
-    },
-
     enterPlan(view) {
       open(
         'caution',
@@ -124,7 +93,6 @@ export function createOverlayView(
         el('div', 'subtitle', view.planFilePath),
         optionList(view.options.map((option, index) => ({
           label: option.label,
-          // The digits do work here, unlike the ask dialog's.
           hotkey: String(index + 1),
           selected: index === view.selectedIndex,
           // The reject slot grows a feedback field once it is focused.
@@ -147,11 +115,7 @@ export function createOverlayView(
 interface OptionRow {
   label: string
   selected: boolean
-  /** Only when the digit actually answers; the ask dialog's did not. */
   hotkey?: string
-  description?: string
-  /** Present on a multi-select row, and only there: the tick box's state. */
-  toggled?: boolean
   extra?: HTMLElement | undefined
 }
 
@@ -162,14 +126,7 @@ function optionListNode(rows: OptionRow[], onSelect: OverlaySelect): HTMLElement
     const line = el('div', `option${row.selected ? ' selected' : ''}`)
     line.setAttribute('role', 'option')
     line.setAttribute('aria-selected', String(row.selected))
-    if (row.toggled !== undefined) {
-      // A box rather than a `[x]`, so the state is a shape and not a character
-      // the user has to read. `aria-checked` is what says it out loud.
-      line.appendChild(el('span', `option-tick${row.toggled ? ' on' : ''}`))
-      line.setAttribute('aria-checked', String(row.toggled))
-    }
     line.appendChild(el('span', 'option-label', row.label))
-    if (row.description) line.appendChild(el('span', 'option-desc', row.description))
     if (row.hotkey) line.appendChild(el('span', 'kbd', row.hotkey))
     line.addEventListener('click', () => onSelect({ kind: 'slot', index }))
     list.appendChild(line)

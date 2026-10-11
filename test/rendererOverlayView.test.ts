@@ -9,7 +9,6 @@ import { createOverlayView } from '../src/desktop/renderer/dom/overlayView.js'
 import { createRewindView } from '../src/desktop/renderer/dom/rewindView.js'
 import { createSuggestionsView } from '../src/desktop/renderer/dom/suggestionsView.js'
 import { createSurfacePanel } from '../src/desktop/renderer/dom/surfaceView.js'
-import type { AskViewModel } from '../src/desktop/renderer/model/askUserQuestion.js'
 import type { CompletionState } from '../src/desktop/renderer/model/completion.js'
 import type { OverlayAction } from '../src/desktop/renderer/model/dialogActions.js'
 import type { PermissionViewModel } from '../src/desktop/renderer/model/permissionDialog.js'
@@ -93,29 +92,6 @@ function permissionFixture(overrides: Partial<PermissionViewModel> = {}): Permis
   }
 }
 
-function askFixture(overrides: Partial<AskViewModel> = {}): AskViewModel {
-  return {
-    header: '数据库',
-    question: '用哪一个？',
-    questionNumber: 1,
-    questionTotal: 1,
-    multiSelect: false,
-    rows: [
-      { label: 'Postgres', description: '关系型', isOther: false, selected: true, toggled: false, preview: undefined },
-      { label: 'SQLite', description: '单文件', isOther: false, selected: false, toggled: false, preview: undefined },
-      { label: '其他', description: '', isOther: true, selected: false, toggled: false, preview: undefined },
-    ],
-    otherMode: false,
-    otherText: '',
-    preview: undefined,
-    actions: [
-      { label: '取消', shortcut: 'Esc', role: 'secondary' },
-      { label: '提交', shortcut: 'Enter', role: 'primary' },
-    ],
-    ...overrides,
-  }
-}
-
 function exitPlanFixture(overrides: Partial<ExitPlanViewModel> = {}): ExitPlanViewModel {
   return {
     title: '可以开始写代码了吗？',
@@ -137,7 +113,7 @@ function exitPlanFixture(overrides: Partial<ExitPlanViewModel> = {}): ExitPlanVi
   }
 }
 
-test('the dialogs whose options are content draw them as a listbox', (t) => {
+test('the exit-plan dialog draws its options as a listbox', (t) => {
   const dialog = overlay(t)
 
   const check = (label: string, expected: number) => {
@@ -153,13 +129,10 @@ test('the dialogs whose options are content draw them as a listbox', (t) => {
     assert.ok(selected[0]!.classes.includes('selected'), `${label} marks the same row visually`)
   }
 
-  dialog.view.ask(askFixture())
-  check('ask', 3)
-
   dialog.view.exitPlan(exitPlanFixture())
   check('exit-plan', 2)
 
-  // The other two have no list at all: for them an option *is* an action, so it
+  // The others have no list at all: for them an option *is* an action, so it
   // is a button in the bar. A list here would be a second way to answer.
   dialog.view.permission(permissionFixture())
   assert.equal(dialog.panelView().children.some((child) => child.classes.includes('options')), false)
@@ -170,13 +143,10 @@ test('the dialogs whose options are content draw them as a listbox', (t) => {
 test('clicking a row reports its slot', (t) => {
   const dialog = overlay(t)
 
-  dialog.view.ask(askFixture())
-  dialog.stub.click(dialog.options()[2]!.node)
-
   dialog.view.exitPlan(exitPlanFixture())
   dialog.stub.click(dialog.options()[1]!.node)
 
-  assert.deepEqual(dialog.picked, [{ kind: 'slot', index: 2 }, { kind: 'slot', index: 1 }])
+  assert.deepEqual(dialog.picked, [{ kind: 'slot', index: 1 }])
 })
 
 test('a button carrying a slot answers that slot; one without answers by role', (t) => {
@@ -188,18 +158,12 @@ test('a button carrying a slot answers that slot; one without answers by role', 
   dialog.view.enterPlan(enterPlanViewModel(0))
   dialog.stub.click(dialog.buttons()[0]!.node)
 
-  dialog.view.ask(askFixture())
-  dialog.stub.click(dialog.buttons()[1]!.node)
-  dialog.stub.click(dialog.buttons()[0]!.node)
-
   dialog.view.exitPlan(exitPlanFixture())
   dialog.stub.click(dialog.buttons()[1]!.node)
 
   assert.deepEqual(dialog.picked, [
     { kind: 'slot', index: 1 },
     { kind: 'slot', index: 0 },
-    { kind: 'primary' },
-    { kind: 'secondary' },
     { kind: 'primary' },
   ])
 })
@@ -241,38 +205,10 @@ test('nothing in a dialog is written in terminal notation any more', (t) => {
 
   dialog.view.permission(permissionFixture())
   scan('permission')
-  dialog.view.ask(askFixture({ multiSelect: true }))
-  scan('ask')
   dialog.view.enterPlan(enterPlanViewModel(0))
   scan('enter-plan')
   dialog.view.exitPlan(exitPlanFixture())
   scan('exit-plan')
-})
-
-test('a multi-select row carries a tick box rather than a [x]', (t) => {
-  const dialog = overlay(t)
-  dialog.view.ask(askFixture({
-    multiSelect: true,
-    rows: [
-      { label: 'Postgres', description: '', isOther: false, selected: true, toggled: true, preview: undefined },
-      { label: 'SQLite', description: '', isOther: false, selected: false, toggled: false, preview: undefined },
-      { label: '其他', description: '', isOther: true, selected: false, toggled: false, preview: undefined },
-    ],
-  }))
-
-  const [ticked, unticked, other] = dialog.options()
-  const tick = (row: StubView) => row.children.find((child) => child.classes.includes('option-tick'))
-  assert.ok(tick(ticked!)?.classes.includes('on'))
-  assert.equal(tick(unticked!)?.classes.includes('on'), false)
-  assert.equal(ticked!.attributes.get('aria-checked'), 'true')
-  assert.equal(unticked!.attributes.get('aria-checked'), 'false')
-  // "Other" never toggles, so it gets no box and no `aria-checked` to contradict.
-  assert.equal(tick(other!), undefined)
-  assert.equal(other!.attributes.has('aria-checked'), false)
-
-  // A single-select question has no boxes at all.
-  dialog.view.ask(askFixture())
-  for (const row of dialog.options()) assert.equal(tick(row), undefined)
 })
 
 test('the panel itself is not a target: only rows answer', (t) => {

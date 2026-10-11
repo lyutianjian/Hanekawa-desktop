@@ -15,7 +15,8 @@ import type { AskUserQuestionRequest, AskUserQuestionResult } from '../src/harne
  *
  * These pin the contract the terminal dialog established: answers keyed by
  * question text, multi-select joined with ", ", an automatic "Other" row that
- * merges with the toggled options, and a two-level Escape.
+ * merges with the toggled options, and a two-level Escape. A selection is explicit: nothing is picked until the user
+ * moves, presses a digit or clicks, and 提交 stays disabled until then.
  */
 
 function request(overrides: Partial<AskUserQuestionRequest['questions'][number]>[] = []): AskUserQuestionRequest {
@@ -57,10 +58,27 @@ test('the option list is the declared options plus an automatic Other row', () =
   assert.equal(view.questionTotal, 1)
 })
 
-test('a single-select answer resolves with the label, keyed by the question text', () => {
-  const { result } = press(createAskState(request([{ question: 'Which one?' }])), ['ArrowDown', 'Enter'])
+test('a single-select answer needs a pick, then resolves with the label keyed by the question text', () => {
+  const state = createAskState(request([{ question: 'Which one?' }]))
+  assert.equal(askViewModel(state)?.canSubmit, false)
+  assert.equal(press(state, ['Enter']).result, undefined, 'Enter with nothing picked is the disabled button')
 
+  const { result } = press(state, ['ArrowDown', 'Enter'])
   assert.deepEqual(result, { kind: 'answers', answers: { 'Which one?': 'Second' } })
+})
+
+test('a digit key picks that row without answering', () => {
+  const state = createAskState(request([{ question: 'Which one?' }]))
+  const picked = press(state, ['2'])
+
+  assert.equal(picked.result, undefined)
+  const view = askViewModel(picked.state)
+  assert.deepEqual(view?.rows.map((row) => row.selected), [false, true, false])
+  assert.equal(view?.canSubmit, true)
+  assert.deepEqual(press(picked.state, ['Enter']).result, { kind: 'answers', answers: { 'Which one?': 'Second' } })
+
+  assert.deepEqual(askKeyToIntent({ key: '9' }, state), { kind: 'select', index: 8 })
+  assert.deepEqual(press(state, ['9']).state, state, 'a digit past the last row does nothing')
 })
 
 test('an option preview becomes an annotation, and only when one existed', () => {
@@ -72,19 +90,19 @@ test('an option preview becomes an annotation, and only when one existed', () =>
     ],
   }])
 
-  const picked = press(createAskState(withPreview), ['Enter'])
+  const picked = press(createAskState(withPreview), ['1', 'Enter'])
   assert.deepEqual(picked.result, {
     kind: 'answers',
     answers: { 'Layout?': 'A' },
     annotations: { 'Layout?': { preview: '+---+' } },
   })
 
-  const plain = press(createAskState(withPreview), ['ArrowDown', 'Enter'])
+  const plain = press(createAskState(withPreview), ['2', 'Enter'])
   assert.deepEqual(plain.result, { kind: 'answers', answers: { 'Layout?': 'B' } })
   assert.equal('annotations' in (plain.result ?? {}), false)
 })
 
-test('multi-select toggles with Space and joins the labels', () => {
+test('multi-select toggles with Space or a digit and joins the labels', () => {
   const multi = request([{
     question: 'Which features?',
     multiSelect: true,
@@ -95,50 +113,64 @@ test('multi-select toggles with Space and joins the labels', () => {
     ],
   }])
 
-  const { result } = press(createAskState(multi), [' ', 'ArrowDown', 'ArrowDown', ' ', 'Enter'])
-
-  assert.deepEqual(result, { kind: 'answers', answers: { 'Which features?': 'Alpha, Gamma' } })
+  assert.deepEqual(
+    press(createAskState(multi), [' ', 'ArrowDown', 'ArrowDown', ' ', 'Enter']).result,
+    { kind: 'answers', answers: { 'Which features?': 'Alpha, Gamma' } },
+  )
+  assert.deepEqual(
+    press(createAskState(multi), ['3', '1', 'Enter']).result,
+    { kind: 'answers', answers: { 'Which features?': 'Alpha, Gamma' } },
+  )
 })
 
-test('multi-select Enter with nothing toggled is a single pick', () => {
-  const multi = request([{ question: 'Pick?', multiSelect: true }])
-  const { result } = press(createAskState(multi), ['ArrowDown', 'Enter'])
+test('multi-select cannot submit with nothing ticked', () => {
+  const multi = createAskState(request([{ question: 'Pick?', multiSelect: true }]))
+  const moved = press(multi, ['ArrowDown', 'Enter'])
 
-  assert.deepEqual(result, { kind: 'answers', answers: { 'Pick?': 'Second' } })
+  assert.equal(moved.result, undefined)
+  assert.equal(askViewModel(moved.state)?.canSubmit, false)
+})
+
+test('moving onto Other opens its field and moving off closes it', () => {
+  const state = createAskState(request([{}]))
+  const onOther = press(state, ['ArrowDown', 'ArrowDown']).state
+  assert.equal(onOther.otherMode, true)
+
+  const off = press(onOther, ['ArrowUp']).state
+  assert.equal(off.otherMode, false)
+  assert.equal(off.selectedIndex, 1)
 })
 
 test('Other collects free text, and merges it with prior multi-select toggles', () => {
   const multi = request([{ question: 'Which?', multiSelect: true }])
-  const toggled = press(createAskState(multi), [' ', 'ArrowDown', 'ArrowDown', 'Enter'])
-
-  const view = askViewModel(toggled.state)
-  assert.equal(view?.otherMode, true, 'Enter on Other opens the text field rather than answering')
+  const toggled = press(createAskState(multi), [' ', '3'])
+  assert.equal(askViewModel(toggled.state)?.otherMode, true, 'picking Other opens the text field rather than answering')
   assert.equal(toggled.result, undefined)
 
-  const typed = press(toggled.state, ['m', 'i', 'n', 'e', 'Enter'])
-  assert.deepEqual(typed.result, { kind: 'answers', answers: { 'Which?': 'First, mine' } })
+  const typing = applyAskIntent(toggled.state, { kind: 'other-set', text: ' mine ' }).state
+  assert.deepEqual(press(typing, ['Enter']).result, { kind: 'answers', answers: { 'Which?': 'First, mine' } })
 })
 
 test('Other on a single-select question answers with just the typed text', () => {
-  const single = press(createAskState(request([{ question: 'Which?' }])), ['ArrowDown', 'ArrowDown', 'Enter'])
-  const typed = press(single.state, ['x', 'y', 'Enter'])
+  const opened = press(createAskState(request([{ question: 'Which?' }])), ['3']).state
+  const typed = applyAskIntent(opened, { kind: 'other-set', text: 'xy' }).state
 
-  assert.deepEqual(typed.result, { kind: 'answers', answers: { 'Which?': 'xy' } })
+  assert.deepEqual(press(typed, ['Enter']).result, { kind: 'answers', answers: { 'Which?': 'xy' } })
 })
 
-test('empty free text is not an answer, and Backspace edits it', () => {
-  const opened = press(createAskState(request([{}])), ['ArrowDown', 'ArrowDown', 'Enter'])
+test('empty free text is not an answer; typed keys are left to the input', () => {
+  const opened = press(createAskState(request([{}])), ['3']).state
 
-  const empty = press(opened.state, ['Enter'])
-  assert.equal(empty.result, undefined, 'an empty Other must not resolve')
-
-  const edited = press(opened.state, ['a', 'b', 'Backspace'])
-  assert.equal(askViewModel(edited.state)?.otherText, 'a')
+  assert.equal(press(opened, ['Enter']).result, undefined, 'an empty Other must not resolve')
+  assert.equal(askViewModel(opened)?.canSubmit, false)
+  assert.deepEqual(askKeyToIntent({ key: 'a' }, opened), { kind: 'none' })
+  assert.deepEqual(askKeyToIntent({ key: '2' }, opened), { kind: 'none' }, 'digits are text inside the field')
+  assert.equal(askViewModel(applyAskIntent(opened, { kind: 'other-set', text: 'a' }).state)?.canSubmit, true)
 })
 
-test('Escape in the text field goes back; Escape in the list rejects', () => {
-  const opened = press(createAskState(request([{}])), ['ArrowDown', 'ArrowDown', 'Enter'])
-  const backedOut = press(opened.state, ['Escape'])
+test('Escape in the text field goes back; Escape in the list skips', () => {
+  const opened = press(createAskState(request([{}])), ['3']).state
+  const backedOut = press(opened, ['Escape'])
 
   assert.equal(backedOut.result, undefined)
   assert.equal(askViewModel(backedOut.state)?.otherMode, false)
@@ -147,34 +179,57 @@ test('Escape in the text field goes back; Escape in the list rejects', () => {
   assert.deepEqual(rejected.result, { kind: 'rejected' })
 })
 
-test('several questions are asked in order and answered together at the end', () => {
+test('skip rejects the request from anywhere, even inside the field', () => {
+  const opened = press(createAskState(request([{}])), ['3']).state
+  const outcome = applyAskIntent(opened, { kind: 'skip' })
+  assert.ok('result' in outcome)
+  assert.deepEqual(outcome.result, { kind: 'rejected' })
+})
+
+test('several questions are asked in order, can step back, and answer together at the end', () => {
   const two = request([
     { question: 'First question?' },
     { question: 'Second question?', options: [{ label: 'Yes', description: 'y' }, { label: 'No', description: 'n' }] },
   ])
 
-  const first = press(createAskState(two), ['Enter'])
+  const first = press(createAskState(two), ['1', 'Enter'])
   assert.equal(first.result, undefined, 'the request resolves only once')
   const view = askViewModel(first.state)
   assert.equal(view?.question, 'Second question?')
   assert.equal(view?.questionNumber, 2)
-  assert.equal(view?.rows[0]?.selected, true, 'per-question state resets')
+  assert.equal(view?.isLast, true)
+  assert.equal(view?.canGoBack, true)
+  assert.equal(view?.rows.some((row) => row.selected), false, 'per-question state resets')
 
-  const second = press(first.state, ['ArrowDown', 'Enter'])
+  const back = applyAskIntent(first.state, { kind: 'back' }).state
+  assert.equal(askViewModel(back)?.question, 'First question?')
+  assert.deepEqual(back.answers, {}, 'going back withdraws that answer')
+  assert.equal(askViewModel(back)?.isLast, false)
+
+  const second = press(first.state, ['2', 'Enter'])
   assert.deepEqual(second.result, {
     kind: 'answers',
     answers: { 'First question?': 'First', 'Second question?': 'No' },
   })
 })
 
+test('collapsing is state, and a collapsed card answers only to expand or skip', () => {
+  const state = createAskState(request([{}]))
+  const collapsed = applyAskIntent(state, { kind: 'toggle-collapse' }).state
+  assert.equal(askViewModel(collapsed)?.collapsed, true)
+
+  assert.deepEqual(askKeyToIntent({ key: '1' }, collapsed), { kind: 'none' })
+  assert.deepEqual(askKeyToIntent({ key: 'Enter' }, collapsed), { kind: 'toggle-collapse' })
+  assert.deepEqual(askKeyToIntent({ key: 'Escape' }, collapsed), { kind: 'cancel' })
+  assert.equal(askViewModel(press(collapsed, ['Enter']).state)?.collapsed, false)
+})
+
 test('Space is inert on a single-select question and on the Other row', () => {
   const single = createAskState(request([{}]))
   assert.deepEqual(askKeyToIntent({ key: ' ' }, single), { kind: 'none' })
 
-  const multi = createAskState(request([{ multiSelect: true }]))
-  const onOther = applyAskIntent(multi, { kind: 'move', direction: 'down' }).state
-  const onOther2 = applyAskIntent(onOther, { kind: 'move', direction: 'down' }).state
-  const toggled = applyAskIntent(onOther2, { kind: 'toggle' })
+  const onOther = press(createAskState(request([{ multiSelect: true }])), ['ArrowDown', 'ArrowDown']).state
+  const toggled = applyAskIntent(onOther, { kind: 'toggle' })
   assert.deepEqual(toggled.state.toggled, [], 'Other needs text; it cannot be toggled')
 })
 
@@ -193,73 +248,43 @@ test('modifier combinations are left to the browser', () => {
 
 // --- the mouse ---------------------------------------------------------------
 
-test('clicking a single-select row answers with that row', () => {
+test('clicking a single-select row picks it; 提交 answers', () => {
   const state = createAskState(request([{}]))
-  const outcome = applyAskIntent(state, { kind: 'select', index: 1 })
+  const picked = applyAskIntent(state, { kind: 'select', index: 1 })
 
+  assert.ok(!('result' in picked))
+  const outcome = applyAskIntent(picked.state, { kind: 'commit' })
   assert.ok('result' in outcome)
   assert.deepEqual(outcome.result, { kind: 'answers', answers: { 'Question 1?': 'Second' } })
 })
 
-test('the 提交 button submits a multi-select answer, the way Enter does', () => {
-  // The gap S4 left: ticking boxes was reachable with the mouse, committing them
-  // was not. The button is a dialog-level action, so it goes through `commit` —
-  // the same intent Enter produces, and nothing the keyboard cannot do.
-  const state = createAskState(request([{ question: 'Which?', multiSelect: true }]))
-  const view = askViewModel(state)
-  assert.deepEqual(view?.actions.map((action) => action.role), ['secondary', 'primary'])
-  assert.deepEqual(view?.actions.map((action) => action.shortcut), ['Esc', 'Enter'])
-  assert.equal(view?.actions[1]?.label, '提交')
-
-  const ticked = applyAskIntent(state, { kind: 'select', index: 1 }).state
-  const outcome = applyAskIntent(ticked, { kind: 'commit' })
-  assert.ok('result' in outcome)
-  assert.deepEqual(outcome.result, { kind: 'answers', answers: { 'Which?': 'Second' } })
-
-  // And the secondary is Escape: it rejects the request rather than the question.
-  const cancelled = applyAskIntent(ticked, { kind: 'cancel' })
-  assert.ok('result' in cancelled)
-  assert.deepEqual(cancelled.result, { kind: 'rejected' })
-})
-
-test('the free-text field relabels the buttons rather than growing new ones', () => {
-  const state = applyAskIntent(createAskState(request([{ multiSelect: true }])), {
-    kind: 'select',
-    index: 2,
-  }).state
-  const view = askViewModel(state)
-  // Escape has two levels here, so the secondary says 返回, not 取消.
-  assert.deepEqual(view?.actions.map((action) => action.label), ['返回', '提交'])
-})
-
-test('clicking a multi-select row ticks it instead of submitting', () => {
+test('clicking a multi-select row ticks it instead of submitting, and again unticks it', () => {
   const state = createAskState(request([{ multiSelect: true }]))
   const first = applyAskIntent(state, { kind: 'select', index: 1 })
 
   assert.ok(!('result' in first), 'the question stays open — the answer is 提交')
   assert.deepEqual(first.state.toggled, [1])
-  assert.equal(first.state.selectedIndex, 1, 'and the row is focused, so Enter lands on it')
+  assert.equal(first.state.selectedIndex, 1)
+  assert.equal(askViewModel(first.state)?.canSubmit, true)
 
-  // A second click unticks it, exactly as Space does.
   const second = applyAskIntent(first.state, { kind: 'select', index: 1 })
   assert.deepEqual(second.state.toggled, [])
 })
 
 test('clicking the Other row opens the text field rather than answering with its label', () => {
-  const state = createAskState(request([{ multiSelect: true }]))
-  const other = applyAskIntent(state, { kind: 'select', index: 2 })
+  const other = applyAskIntent(createAskState(request([{ multiSelect: true }])), { kind: 'select', index: 2 })
 
   assert.ok(!('result' in other))
   assert.equal(other.state.otherMode, true)
   assert.equal(other.state.otherText, '')
-  assert.notEqual(OTHER_LABEL, '', 'the row clicked is the automatic one')
 })
 
-test('a click is inert while the free-text field is open, and out of range', () => {
+test('clicking a row while the field is open leaves the field; out-of-range clicks are inert', () => {
   const typing = applyAskIntent(createAskState(request([{}])), { kind: 'select', index: 2 })
   assert.equal(typing.state.otherMode, true)
-  const again = applyAskIntent(typing.state, { kind: 'select', index: 0 })
-  assert.deepEqual(again.state, typing.state, 'the list is not the target while typing')
+  const left = applyAskIntent(typing.state, { kind: 'select', index: 0 })
+  assert.equal(left.state.otherMode, false)
+  assert.equal(left.state.selectedIndex, 0)
 
   const state = createAskState(request([{}]))
   assert.deepEqual(applyAskIntent(state, { kind: 'select', index: 9 }).state, state)
