@@ -16,15 +16,14 @@ import { createModalPresence, type Presence } from './presence.js'
 /**
  * The fullscreen image viewer (the lightbox).
  *
- * A window-level singleton, like `#overlay` and `#rewind`, driven by whichever
+ * A window-level singleton, like `#rewind`, driven by whichever
  * pane is active. Unlike those two it is **fixed** rather than absolute inside
  * `#canvas`: an image opened at full size covers the sidebar as well, which is
  * what makes it a viewer rather than a large popover.
  *
  * It is not a blocking request. Nothing here is holding the agent loop, so all
  * three of the usual dismissals apply — ✕, Escape, and a press on the scrim —
- * and the backdrop *is* clickable, which is the one place this diverges from
- * `overlayView.ts`.
+ * and the backdrop *is* clickable.
  *
  * The picture's geometry goes through three custom properties rather than
  * inline `transform`: zoom is measured against the viewport and pan against the

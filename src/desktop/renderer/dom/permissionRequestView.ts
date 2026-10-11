@@ -3,7 +3,7 @@ import type { PermissionViewModel } from '../model/permissionDialog.js'
 import { previewNode } from './diffView.js'
 import { el, replace } from './dom.js'
 import { icon, type IconName } from './icons.js'
-import { actionBar } from './overlayView.js'
+import { actionBar } from './actionBar.js'
 import type { DockedCard } from './dockedCard.js'
 
 /**
@@ -12,7 +12,7 @@ import type { DockedCard } from './dockedCard.js'
  * turn, where a scrim would be the interruption the user is being asked about.
  *
  * What it draws comes from the same {@link PermissionViewModel} the modal used,
- * and the button bar is literally `overlayView.ts`'s `actionBar`. The keyboard
+ * and the button bar is literally `actionBar.ts`'s `actionBar`. The keyboard
  * path goes through `hasOverlay` → `'overlay'` in `model/keymap.ts`.
  */
 export interface PermissionRequestView {

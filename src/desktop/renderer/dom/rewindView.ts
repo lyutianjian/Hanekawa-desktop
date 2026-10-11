@@ -2,14 +2,14 @@ import { rewindActionToIntent } from '../model/rewindPanel.js'
 import type { RewindIntent, RewindViewModel } from '../model/rewindPanel.js'
 import { el, replace } from './dom.js'
 import { createModalPresence } from './presence.js'
-import { actionBar } from './overlayView.js'
+import { actionBar } from './actionBar.js'
 
 /**
  * The `/rewind` panel: a checkpoint list, then a confirm screen.
  *
- * Modal like `overlayView.ts`, but drawn into its own container and stacked
- * *below* it — a permission prompt that arrives while this is open has to be
- * answered first, because that one is holding the agent loop.
+ * Modal, drawn into its own container over the lane's canvas. A blocking
+ * request that arrives while this is open is a card in the composer, which
+ * stays above it.
  *
  * Every decision is already made in the view model. Rows and options are
  * clickable and hand back a `RewindIntent`, the same shape the key map produces,
@@ -43,9 +43,6 @@ export function createRewindView(
   // Same verdict as Escape, including its guard — `rewindKeyToIntent` refuses
   // everything while a decision is in flight, and a backdrop that closed anyway
   // would abandon a running restore.
-  //
-  // `#overlay` deliberately does *not* get this: those dialogs hold the agent
-  // loop, and a stray click must not answer a permission request.
   container.addEventListener('pointerdown', (event) => {
     if (event.target !== container) return
     if (!open || busy) return

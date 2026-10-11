@@ -1,23 +1,17 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  PLAN_PREVIEW_LINES,
   applyExitPlanIntent,
   createExitPlanState,
-  enterPlanIndexToIntent,
   enterPlanKeyToIntent,
   enterPlanViewModel,
-  exitPlanIndexToIntent,
   exitPlanKeyToIntent,
   exitPlanViewModel,
 } from '../src/desktop/renderer/model/planDialogs.js'
-import type { ExitPlanState } from '../src/desktop/renderer/model/planDialogs.js'
+import type { ExitPlanIntent, ExitPlanState } from '../src/desktop/renderer/model/planDialogs.js'
 import type { ExitDialogInput, ExitPlanDecision } from '../src/harness/planModeManager.js'
 
-/**
- * The desktop plan dialogs, which used to auto-approve entry and auto-reject exit
- * while discarding the plan text entirely.
- */
+/** The desktop plan cards as data: button layout, the 修改… state, and the keys. */
 
 function input(overrides: Partial<ExitDialogInput> = {}): ExitDialogInput {
   return {
@@ -27,202 +21,136 @@ function input(overrides: Partial<ExitDialogInput> = {}): ExitDialogInput {
   }
 }
 
-function press(state: ExitPlanState, keys: string[]): {
-  state: ExitPlanState
-  decision: ExitPlanDecision | undefined
-} {
+function run(state: ExitPlanState, intents: ExitPlanIntent[]): { state: ExitPlanState; decision: ExitPlanDecision | undefined } {
   let current = state
   let decision: ExitPlanDecision | undefined
-  for (const key of keys) {
-    const outcome = applyExitPlanIntent(current, exitPlanKeyToIntent({ key }, exitPlanViewModel(current)))
+  for (const intent of intents) {
+    const outcome = applyExitPlanIntent(current, intent)
     current = outcome.state
     if ('decision' in outcome) decision = outcome.decision
   }
   return { state: current, decision }
 }
 
-test('entering plan mode offers two options and explains what will happen', () => {
+const labels = (state: ExitPlanState) => exitPlanViewModel(state).buttons.map((button) => button.label)
+
+test('entering plan mode is a compact question with 拒绝 and a primary 允许', () => {
   const view = enterPlanViewModel()
-
-  assert.equal(view.title, '进入计划模式？')
-  assert.deepEqual(view.options.map((option) => option.value), ['yes', 'no'])
-  assert.equal(view.selectedIndex, 0)
-  assert.ok(view.bullets.length > 0)
-  assert.match(view.reassurance, /不会修改任何代码/)
-})
-
-test('entry keys move, pick by number, and decline on Escape', () => {
-  assert.deepEqual(enterPlanKeyToIntent({ key: 'ArrowDown' }, { selectedIndex: 0 }), { kind: 'move', selectedIndex: 1 })
-  assert.deepEqual(enterPlanKeyToIntent({ key: 'ArrowUp' }, { selectedIndex: 1 }), { kind: 'move', selectedIndex: 0 })
-  assert.deepEqual(enterPlanKeyToIntent({ key: '1' }, { selectedIndex: 1 }), { kind: 'answer', approved: true })
-  assert.deepEqual(enterPlanKeyToIntent({ key: '2' }, { selectedIndex: 0 }), { kind: 'answer', approved: false })
-  assert.deepEqual(enterPlanKeyToIntent({ key: 'Enter' }, { selectedIndex: 0 }), { kind: 'answer', approved: true })
-  assert.deepEqual(enterPlanKeyToIntent({ key: 'Enter' }, { selectedIndex: 1 }), { kind: 'answer', approved: false })
-  assert.deepEqual(enterPlanKeyToIntent({ key: 'Escape' }, { selectedIndex: 0 }), { kind: 'answer', approved: false })
-  assert.deepEqual(enterPlanKeyToIntent({ key: 'x' }, { selectedIndex: 0 }), { kind: 'none' })
-})
-
-test('exiting shows the plan, its file path and three options', () => {
-  const view = exitPlanViewModel(createExitPlanState(input()))
-
-  assert.equal(view.title, '可以开始写代码了吗？')
-  assert.match(view.planPreview, /do the thing/)
-  assert.equal(view.planFilePath, '.myagent/plans/plan.md')
-  assert.deepEqual(view.options.map((option) => option.kind), [
-    'approve_auto_keep',
-    'approve_restore_keep',
-    'reject',
+  assert.equal(view.title, '助手想先进入计划模式')
+  assert.match(view.body, /你确认前不会修改文件/)
+  assert.deepEqual(view.buttons.map((button) => button.label), ['拒绝', '允许'])
+  assert.deepEqual(view.buttons.map((button) => button.primary), [false, true])
+  assert.deepEqual(view.buttons.map((button) => button.intent), [
+    { kind: 'answer', approved: false },
+    { kind: 'answer', approved: true },
   ])
-  assert.equal(view.isEmptyPlan, false)
-  assert.equal(view.feedbackFocused, false)
 })
 
-test('bypass replaces the elevated slot when the user opted in', () => {
-  const view = exitPlanViewModel(createExitPlanState(input({ isBypassAvailable: true })))
-  assert.equal(view.options[0]?.kind, 'approve_bypass_keep')
+test('entry keys: Enter and 1 allow, Escape and 2 decline, modified keys do nothing', () => {
+  assert.deepEqual(enterPlanKeyToIntent({ key: 'Enter' }), { kind: 'answer', approved: true })
+  assert.deepEqual(enterPlanKeyToIntent({ key: '1' }), { kind: 'answer', approved: true })
+  assert.deepEqual(enterPlanKeyToIntent({ key: 'Escape' }), { kind: 'answer', approved: false })
+  assert.deepEqual(enterPlanKeyToIntent({ key: '2' }), { kind: 'answer', approved: false })
+  assert.deepEqual(enterPlanKeyToIntent({ key: 'Enter', metaKey: true }), { kind: 'none' })
+  assert.deepEqual(enterPlanKeyToIntent({ key: 'x' }), { kind: 'none' })
 })
 
-test('an approval carries the plan text', () => {
-  const { decision } = press(createExitPlanState(input()), ['ArrowDown', 'Enter'])
+test('a proposed plan lays out 拒绝 / 修改… on the left and 接受 / 接受并自动执行 on the right', () => {
+  const view = exitPlanViewModel(createExitPlanState(input()))
+  assert.equal(view.title, '助手提出了一个计划')
+  assert.equal(view.planFilePath, '.myagent/plans/plan.md')
+  assert.deepEqual(view.buttons.map((button) => [button.label, button.side, button.shortcut]), [
+    ['拒绝', 'start', undefined],
+    ['修改…', 'start', 'Esc'],
+    ['接受', 'end', '⌘⇧⏎'],
+    ['接受并自动执行', 'end', '⌘⏎'],
+  ])
+  assert.deepEqual(view.buttons.filter((button) => button.primary).map((button) => button.label), ['接受并自动执行'])
+})
 
-  assert.deepEqual(decision, {
+test('bypass turns the primary into 接受并绕过权限', () => {
+  const state = createExitPlanState(input({ isBypassAvailable: true }))
+  assert.deepEqual(labels(state), ['拒绝', '修改…', '接受', '接受并绕过权限'])
+  assert.equal(run(state, [{ kind: 'approve', slot: 0 }]).decision?.kind, 'approve_bypass_keep')
+})
+
+test('接受 keeps manual edit approval, the primary asks only when needed; both carry the plan text', () => {
+  const state = createExitPlanState(input())
+  assert.deepEqual(run(state, [{ kind: 'approve', slot: 1 }]).decision, {
     kind: 'approve_restore_keep',
+    planContent: '# Plan\n- do the thing',
+  })
+  assert.deepEqual(run(state, [{ kind: 'approve', slot: 0 }]).decision, {
+    kind: 'approve_auto_keep',
     planContent: '# Plan\n- do the thing',
   })
 })
 
-test('rejecting carries whatever feedback was typed', () => {
-  // The reject slot is last; moving there turns typing into feedback.
-  const moved = press(createExitPlanState(input()), ['3'])
-  assert.equal(exitPlanViewModel(moved.state).feedbackFocused, true)
-  assert.equal(moved.decision, undefined, 'a numeric hotkey on reject moves rather than rejecting')
-
-  const typed = press(moved.state, ['n', 'o', 't', ' ', 'y', 'e', 't', 'Enter'])
-  assert.deepEqual(typed.decision, { kind: 'reject', feedback: 'not yet' })
+test('拒绝 rejects with no feedback', () => {
+  assert.deepEqual(run(createExitPlanState(input()), [{ kind: 'reject' }]).decision, { kind: 'reject', feedback: '' })
 })
 
-test('Backspace edits feedback only while the reject slot is focused', () => {
-  const focused = press(createExitPlanState(input()), ['3', 'a', 'b', 'Backspace'])
-  assert.equal(exitPlanViewModel(focused.state).feedback, 'a')
+test('修改… opens the field; sending rejects with the trimmed feedback, and empty feedback cannot send', () => {
+  const opened = run(createExitPlanState(input()), [{ kind: 'modify' }]).state
+  assert.equal(opened.modifying, true)
+  const view = exitPlanViewModel(opened)
+  assert.deepEqual(view.buttons.map((button) => button.label), ['取消', '发送'])
+  assert.equal(view.buttons[1]!.enabled, false)
+  assert.equal(run(opened, [{ kind: 'send-feedback' }]).decision, undefined)
+  assert.equal(run(opened, [{ kind: 'feedback-set', text: '  \n' }, { kind: 'send-feedback' }]).decision, undefined)
 
-  const onApproval = createExitPlanState(input())
-  assert.deepEqual(exitPlanKeyToIntent({ key: 'Backspace' }, exitPlanViewModel(onApproval)), { kind: 'none' })
-  // A plain letter on an approval slot is not feedback either.
-  assert.deepEqual(exitPlanKeyToIntent({ key: 'z' }, exitPlanViewModel(onApproval)), { kind: 'none' })
+  const typed = run(opened, [{ kind: 'feedback-set', text: ' 先补测试 ' }])
+  assert.equal(exitPlanViewModel(typed.state).buttons[1]!.enabled, true)
+  assert.deepEqual(run(typed.state, [{ kind: 'send-feedback' }]).decision, { kind: 'reject', feedback: '先补测试' })
 })
 
-test('a numeric hotkey on an approval slot resolves immediately', () => {
-  const { decision } = press(createExitPlanState(input({ isBypassAvailable: true })), ['1'])
-  assert.deepEqual(decision, { kind: 'approve_bypass_keep', planContent: '# Plan\n- do the thing' })
+test('cancelling 修改… closes the field and drops what was typed', () => {
+  const typed = run(createExitPlanState(input()), [{ kind: 'modify' }, { kind: 'feedback-set', text: 'wip' }]).state
+  const back = run(typed, [{ kind: 'cancel-modify' }]).state
+  assert.equal(back.modifying, false)
+  assert.equal(back.feedback, '')
 })
 
-test('Escape keeps planning with empty feedback, even mid-typing', () => {
-  const { decision } = press(createExitPlanState(input()), ['3', 'w', 'i', 'p', 'Escape'])
-  assert.deepEqual(decision, { kind: 'reject', feedback: '' })
-})
-
-test('an empty plan gets two options and a different title', () => {
-  const view = exitPlanViewModel(createExitPlanState(input({ planContent: '   \n ' })))
-
-  assert.equal(view.title, '退出计划模式？')
-  assert.equal(view.isEmptyPlan, true)
-  assert.deepEqual(view.options.map((option) => option.kind), ['approve_restore_keep', 'reject'])
-
-  const approved = press(createExitPlanState(input({ planContent: '' })), ['1'])
-  assert.equal(approved.decision?.kind, 'approve_restore_keep')
-})
-
-test('entering plan mode offers its two options as buttons', () => {
-  const view = enterPlanViewModel(0)
-  // Slots, so a click resolves through `enterPlanIndexToIntent` — the same
-  // function the digits use, reading the same `ENTER_OPTIONS` array.
-  assert.deepEqual(view.actions.map((action) => action.slot), [0, 1])
-  assert.deepEqual(view.actions.map((action) => action.shortcut), ['1', '2'])
-  assert.deepEqual(view.actions.map((action) => action.role), ['primary', 'secondary'])
-  assert.deepEqual(view.actions.map((action) => action.label), view.options.map((o) => o.label))
-})
-
-test('the exit dialog offers 确认 and 继续规划, and 继续规划 is exactly Escape', () => {
+test('keys: Enter and ⌘⏎ take the primary, ⌘⇧⏎ the manual accept, Escape opens 修改…', () => {
   const state = createExitPlanState(input())
+  assert.deepEqual(exitPlanKeyToIntent({ key: 'Enter' }, state), { kind: 'approve', slot: 0 })
+  assert.deepEqual(exitPlanKeyToIntent({ key: 'Enter', metaKey: true }, state), { kind: 'approve', slot: 0 })
+  assert.deepEqual(exitPlanKeyToIntent({ key: 'Enter', metaKey: true, shiftKey: true }, state), { kind: 'approve', slot: 1 })
+  assert.deepEqual(exitPlanKeyToIntent({ key: 'Escape' }, state), { kind: 'modify' })
+  assert.deepEqual(exitPlanKeyToIntent({ key: 'z' }, state), { kind: 'none' })
+})
+
+test('digits count the buttons in reading order', () => {
+  const state = createExitPlanState(input())
+  assert.deepEqual(['1', '2', '3', '4', '5'].map((key) => exitPlanKeyToIntent({ key }, state)), [
+    { kind: 'approve', slot: 0 },
+    { kind: 'approve', slot: 1 },
+    { kind: 'modify' },
+    { kind: 'reject' },
+    { kind: 'none' },
+  ])
+})
+
+test('while the field is open only Enter and Escape are ours; the rest is typing', () => {
+  const state = run(createExitPlanState(input()), [{ kind: 'modify' }]).state
+  assert.deepEqual(exitPlanKeyToIntent({ key: 'Enter' }, state), { kind: 'send-feedback' })
+  assert.deepEqual(exitPlanKeyToIntent({ key: 'Escape' }, state), { kind: 'cancel-modify' })
+  for (const key of ['1', '3', 'a', ' ', 'Backspace']) assert.deepEqual(exitPlanKeyToIntent({ key }, state), { kind: 'none' })
+})
+
+test('an empty plan offers only 接受 and 拒绝', () => {
+  const state = createExitPlanState(input({ planContent: '   \n ' }))
   const view = exitPlanViewModel(state)
-
-  // Dialog-level buttons, not slots: the options stay a row list because the
-  // reject slot grows a feedback field.
-  assert.deepEqual(view.actions.map((action) => action.slot), [undefined, undefined])
-  assert.deepEqual(view.actions.map((action) => action.role), ['secondary', 'primary'])
-  assert.deepEqual(view.actions.map((action) => action.shortcut), ['Esc', 'Enter'])
-
-  // The secondary answers what its badge says, discarding a typed feedback the
-  // same way Escape does. That equality is the claim; it is the one button in
-  // the app that can throw away typing, and `planDialogs.ts` says why.
-  const typed = press(state, ['3', 'w', 'i', 'p']).state
-  const byButton = applyExitPlanIntent(typed, { kind: 'reject' })
-  const byEscape = applyExitPlanIntent(typed, exitPlanKeyToIntent({ key: 'Escape' }, exitPlanViewModel(typed)))
-  assert.deepEqual(
-    'decision' in byButton ? byButton.decision : undefined,
-    'decision' in byEscape ? byEscape.decision : undefined,
-  )
-
-  // 确认 is Enter, which *does* carry the feedback.
-  const byPrimary = applyExitPlanIntent(typed, { kind: 'commit' })
-  assert.deepEqual(
-    'decision' in byPrimary ? byPrimary.decision : undefined,
-    { kind: 'reject', feedback: 'wip' },
-  )
+  assert.equal(view.title, '助手希望退出计划模式')
+  assert.equal(view.isEmptyPlan, true)
+  assert.deepEqual(labels(state), ['拒绝', '接受'])
+  assert.deepEqual(exitPlanKeyToIntent({ key: 'Enter' }, state), { kind: 'approve', slot: 0 })
+  assert.deepEqual(exitPlanKeyToIntent({ key: 'Escape' }, state), { kind: 'reject' })
+  assert.deepEqual(exitPlanKeyToIntent({ key: '2' }, state), { kind: 'reject' })
+  assert.equal(run(state, [{ kind: 'approve', slot: 0 }]).decision?.kind, 'approve_restore_keep')
 })
 
-test('a long plan is previewed with the middle collapsed', () => {
-  const long = Array.from({ length: PLAN_PREVIEW_LINES + 30 }, (_, i) => `step ${i + 1}`).join('\n')
-  const view = exitPlanViewModel(createExitPlanState(input({ planContent: long })))
-
-  assert.equal(view.planPreview.split('\n').length, PLAN_PREVIEW_LINES)
-  assert.match(view.planPreview, /预览中省略/)
-  assert.match(view.planPreview, /step 1/)
-  assert.match(view.planPreview, new RegExp(`step ${PLAN_PREVIEW_LINES + 30}`))
-})
-
-test('movement is bounded, not wrapping', () => {
-  const state = createExitPlanState(input())
-  assert.deepEqual(exitPlanKeyToIntent({ key: 'ArrowUp' }, exitPlanViewModel(state)), { kind: 'move', selectedIndex: 0 })
-
-  const atEnd = press(state, ['ArrowDown', 'ArrowDown', 'ArrowDown', 'ArrowDown'])
-  assert.equal(exitPlanViewModel(atEnd.state).selectedIndex, 2)
-})
-
-// --- the mouse ---------------------------------------------------------------
-
-test('clicking an entry option answers what its number key answers', () => {
-  const view = enterPlanViewModel(0)
-  view.options.forEach((option, index) => {
-    const clicked = enterPlanIndexToIntent(index)
-    const typed = enterPlanKeyToIntent({ key: option.hotkey }, { selectedIndex: 0 })
-    assert.deepEqual(clicked, typed, `slot ${index} agrees between mouse and keyboard`)
-    assert.deepEqual(clicked, { kind: 'answer', approved: option.value === 'yes' })
-  })
-  assert.deepEqual(enterPlanIndexToIntent(9), { kind: 'none' })
-})
-
-test('clicking the reject slot moves to it, so the feedback field can be typed into', () => {
-  const view = exitPlanViewModel(createExitPlanState(input()))
-  const rejectIndex = view.options.findIndex((option) => option.kind === 'reject')
-  assert.ok(rejectIndex >= 0)
-
-  const intent = exitPlanIndexToIntent(rejectIndex, view)
-  assert.deepEqual(intent, { kind: 'move', selectedIndex: rejectIndex })
-  const outcome = applyExitPlanIntent(createExitPlanState(input()), intent)
-  assert.ok(!('decision' in outcome), 'a click there does not reject outright')
-  assert.equal(exitPlanViewModel(outcome.state).feedbackFocused, true)
-})
-
-test('clicking any other exit option decides, and matches its number key', () => {
-  const view = exitPlanViewModel(createExitPlanState(input({ isBypassAvailable: true })))
-  view.options.forEach((option, index) => {
-    const clicked = exitPlanIndexToIntent(index, view)
-    const typed = exitPlanKeyToIntent({ key: String(index + 1) }, view)
-    assert.deepEqual(clicked, typed, `slot ${index + 1} agrees between mouse and keyboard`)
-    if (option.kind === 'reject') return
-    const outcome = applyExitPlanIntent(createExitPlanState(input({ isBypassAvailable: true })), clicked)
-    assert.ok('decision' in outcome && outcome.decision.kind === option.kind)
-  })
-  assert.deepEqual(exitPlanIndexToIntent(view.options.length, view), { kind: 'none' })
+test('an approve intent that lands on no accepting option decides nothing', () => {
+  const state = createExitPlanState(input({ planContent: '' }))
+  assert.equal(run(state, [{ kind: 'approve', slot: 1 }]).decision, undefined)
 })

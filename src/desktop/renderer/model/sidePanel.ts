@@ -11,8 +11,8 @@
 import type { WireCoordinationThreads } from '../../shellProtocol.js'
 import { coordinationCounts, threadBlocked } from './coordinationStatus.js'
 
-export type SideTab = 'browser' | 'subagents' | 'threads'
-export type ExtraTab = 'browser' | 'subagents'
+export type SideTab = 'browser' | 'plan' | 'subagents' | 'threads'
+export type ExtraTab = 'browser' | 'plan' | 'subagents'
 
 export const OVERVIEW_CLOSED_STORAGE_KEY = 'hanekawa.overviewClosed.v1'
 
@@ -51,15 +51,20 @@ export interface SideTabEntry {
   readonly closable: boolean
 }
 
-/** The tab strip, in order. `hasCoordination` is whether the project has a coordinator or threads. */
-export function sideTabEntries(input: SidePanelInput, tab: SideTab, hasCoordination: boolean, hasSubagents: boolean): SideTabEntry[] {
+/** The tab strip, in order. `has.coordination` is whether the project has a coordinator or threads. */
+export function sideTabEntries(
+  input: SidePanelInput,
+  tab: SideTab,
+  has: { readonly coordination: boolean; readonly subagents: boolean; readonly plan: boolean },
+): SideTabEntry[] {
   if (input.coordinated) {
-    const extras = (['browser', 'subagents'] as const).filter((tab) => input.extras.has(tab))
+    const extras = (['browser', 'plan', 'subagents'] as const).filter((tab) => input.extras.has(tab))
     return [{ tab: 'threads', closable: false }, ...extras.map((tab) => ({ tab, closable: true }))]
   }
   const entries: SideTabEntry[] = [{ tab: 'browser', closable: false }]
-  if (hasSubagents || tab === 'subagents') entries.push({ tab: 'subagents', closable: false })
-  if (hasCoordination || tab === 'threads') entries.push({ tab: 'threads', closable: false })
+  if (has.plan || tab === 'plan') entries.push({ tab: 'plan', closable: false })
+  if (has.subagents || tab === 'subagents') entries.push({ tab: 'subagents', closable: false })
+  if (has.coordination || tab === 'threads') entries.push({ tab: 'threads', closable: false })
   return entries.length === 1 ? [] : entries
 }
 
@@ -103,11 +108,12 @@ export function threadStripText(view: ThreadStripView): { total: string; running
 /** Extra tabs that still have something behind them on the session now on screen. */
 export function pruneExtras(
   extras: ReadonlySet<ExtraTab>,
-  has: { readonly browserTabs: boolean; readonly subagents: boolean },
+  has: { readonly browserTabs: boolean; readonly subagents: boolean; readonly plan: boolean },
 ): Set<ExtraTab> {
   const kept = new Set(extras)
   if (!has.browserTabs) kept.delete('browser')
   if (!has.subagents) kept.delete('subagents')
+  if (!has.plan) kept.delete('plan')
   return kept
 }
 

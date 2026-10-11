@@ -358,7 +358,6 @@ test('the palette is the one that was agreed, value for value', () => {
       '--border-subtle': '#2f2f2e',
       '--border-strong': '#414140',
       '--focus-ring': 'var(--accent-brand)',
-      '--caret': '#ebebea',
       '--shadow-float': '0 6px 20px rgba(0, 0, 0, 0.45)',
       '--shadow-modal': '0 16px 48px rgba(0, 0, 0, 0.6)',
       '--space-1': '4px',
@@ -476,7 +475,6 @@ test('the palette is the one that was agreed, value for value', () => {
       '--border-subtle': '#e5e5e4',
       '--border-strong': '#d3d3d2',
       '--focus-ring': 'var(--accent-brand)',
-      '--caret': '#1a1a1a',
       '--shadow-float': '0 6px 20px rgba(26, 26, 26, 0.08), 0 1px 2px rgba(26, 26, 26, 0.06)',
       '--shadow-modal': '0 16px 48px rgba(26, 26, 26, 0.16)',
       '--space-1': '4px',
@@ -688,7 +686,7 @@ test('surfaces and text stay neutral; accents and links do not, in both themes',
   // colour that sits on a brand fill, white on clay in light and the canvas's
   // near-black in dark. It must not fall into the chromatic group just because
   // it is declared beside the brand accents.
-  const NEUTRAL_PREFIXES = ['--surface-', '--text-', '--border-', '--caret', '--on-brand']
+  const NEUTRAL_PREFIXES = ['--surface-', '--text-', '--border-', '--on-brand']
   const CHROMATIC = ['--accent-', '--link', '--focus-ring']
 
   for (const { name: themeName, tokens: palette } of THEMES) {
@@ -840,9 +838,6 @@ const MONOSPACED = [
   '.step-terminal',
   '.step-search',
   '.step-code',
-  '#overlay-panel .block',
-  '#overlay-panel .plan',
-  '#overlay-panel .feedback',
   '.transcript .item.tool',
   '.file-chip-label',
 ]
@@ -922,7 +917,6 @@ test('the serif is display-only, and only in the whitelisted spots', () => {
   const SERIF_WHITELIST = [
     '.welcome-title', // the welcome Hero
     '.thread-panel-empty-title', // 概览's empty state, the same kind of greeting
-    '#overlay-panel .title', // the two dialog titles, which are one object
     '#rewind-panel .title',
   ]
 
@@ -1714,7 +1708,7 @@ test('depth is two steps: menus float, modals sit deeper, and the composer joins
       `${selector} is a menu card and takes the menu radius`,
     )
   }
-  for (const selector of ['#overlay-panel', '#rewind-panel']) {
+  for (const selector of ['#rewind-panel']) {
     const panel = blockFor(selector)
     assert.ok(
       declares(panel, 'border-radius', 'var(--radius-lg)'),
@@ -1743,8 +1737,7 @@ test('depth is two steps: menus float, modals sit deeper, and the composer joins
   )
 
   // The layering the popovers were built against: composer stack under every
-  // menu, menus under both modal layers, rewind under overlay (a permission
-  // prompt has to beat the rewind sheet).
+  // menu, menus under the modal layer.
   for (const [selector, z] of [
     ['#composer-popovers', '4'],
     ['.composer-menu', '5'],
@@ -1754,7 +1747,6 @@ test('depth is two steps: menus float, modals sit deeper, and the composer joins
     ['.canvas-menu', '5'],
     ['.chip-flyout', '6'],
     ['#rewind', '9'],
-    ['#overlay', '10'],
   ] as const) {
     assert.ok(declares(blockFor(selector), 'z-index', z), `${selector} belongs on layer ${z}`)
   }
@@ -1828,7 +1820,7 @@ test('motion comes from the tokens, and the things that rebuild themselves have 
     )
     if (!animated) continue
     assert.ok(
-      !/^(\.transcript \.item|#overlay-panel|#rewind-panel)\b/.test(block.selector),
+      !/^(\.transcript \.item|#rewind-panel)\b/.test(block.selector),
       `${block.selector} is rebuilt on every render; an entrance animation there replays forever`,
     )
   }
@@ -1970,15 +1962,15 @@ test('the 5e chrome controls carry a rule of their own, not only a contextual on
 
 test('the dialog action buttons carry a rule of their own, not only a contextual one', () => {
   // The fourth named list, and the same hole as the two above: the general scan
-  // sees `button('dialog-btn primary', …)` in `overlayView.ts` and would be
+  // sees `button('dialog-btn primary', …)` in `actionBar.ts` and would be
   // satisfied by `.dialog-btn.primary` alone — a control whose only rule is one
   // of its variants, which at rest is still the user agent's grey box. The bar
   // and the key badge are not `button()` call sites at all, so nothing else
   // covers them.
   // Verified by mutation: deleting any one of these three rules reds this test.
   //
-  // These live under `#overlay-panel` / `#rewind-panel` (the bar is shared by the
-  // two modals and belongs to neither), so the shape required is "the selector
+  // These live under `#rewind-panel` / `#composer-request` (the bar is shared by the
+  // modal and the docked cards and belongs to neither), so the shape required is "the selector
   // *ends* in exactly `.name`" — an ancestor is fine, a trailing `.primary`,
   // `.danger` or `:hover` is not.
   const restingRule = (name: string): boolean =>

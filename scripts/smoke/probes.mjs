@@ -171,6 +171,7 @@ export const paneByMarker = (marker) => `(() => {
 export const overlay = () => `(() => {
   const container = document.getElementById('overlay')
   const panel = document.getElementById('overlay-panel')
+  if (!container || !panel) return { open: false, title: '', subtitle: '', reason: '', block: '', hotkeys: [], options: [], actions: [] }
   const pick = (selector) => (panel.querySelector(selector) || {}).textContent || ''
   return {
     open: !container.hidden && container.getClientRects().length > 0,

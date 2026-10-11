@@ -186,22 +186,17 @@
         <!-- The projects page fills the canvas but, unlike settings, leaves the sidebar up. -->
         <section id="projects" hidden aria-label="项目"></section>
         <!--
-          The two modal layers live *inside* the canvas (S6): a blocking request
-          belongs to one lane and parks that lane's agent loop, so it covers that
-          lane's canvas rather than the window. The sidebar stays fully usable
-          beneath them — switching to another session while one is parked is a
-          supported move, not something to dim out. Last two children, so DOM
-          order and stacking order say the same thing.
+          The modal layer lives *inside* the canvas (S6): rewind belongs to one
+          lane, so it covers that lane's canvas rather than the window. The sidebar
+          stays fully usable beneath it. Last child, so DOM order and stacking
+          order say the same thing.
 
-          Which is also why neither carries `aria-modal="true"` any more: that
-          attribute tells a screen reader everything outside the dialog is inert,
-          and the sidebar is not.
+          Which is also why it carries no `aria-modal="true"`: that attribute tells
+          a screen reader everything outside the dialog is inert, and the sidebar
+          is not.
         -->
         <div id="rewind" hidden role="dialog" aria-label="回退">
           <div id="rewind-panel"></div>
-        </div>
-        <div id="overlay" hidden role="dialog">
-          <div id="overlay-panel"></div>
         </div>
       </main>
       <!--
@@ -237,6 +232,7 @@
           <div id="browser-banner" role="status" hidden></div>
           <div id="browser-hole"></div>
         </div>
+        <div id="plan-view" hidden></div>
         <div id="subagent-view" hidden></div>
         <!-- The 「线程」 tab: the active project's coordination threads. -->
         <div id="thread-view" hidden></div>

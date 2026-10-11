@@ -7,6 +7,10 @@ import { fileURLToPath } from 'node:url'
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
 import { createComposerView, type ComposerView } from '../src/desktop/renderer/dom/composerView.js'
 import { createDockedCard } from '../src/desktop/renderer/dom/dockedCard.js'
+import { createPlanCardView } from '../src/desktop/renderer/dom/planCardView.js'
+import { createPlanPanelView } from '../src/desktop/renderer/dom/planPanelView.js'
+import { createExitPlanState, enterPlanViewModel, exitPlanViewModel } from '../src/desktop/renderer/model/planDialogs.js'
+import type { EnterPlanIntent, ExitPlanIntent } from '../src/desktop/renderer/model/planDialogs.js'
 import { createQuestionCardView } from '../src/desktop/renderer/dom/questionCardView.js'
 import { askViewModel, createAskState } from '../src/desktop/renderer/model/askUserQuestion.js'
 import type { AskIntent, AskViewModel } from '../src/desktop/renderer/model/askUserQuestion.js'
@@ -610,8 +614,8 @@ test('the stub carries every document member the dom helpers reach for', (t) => 
 
 /**
  * The permission request moved out of the modal layer and into the capsule
- * (`dom/permissionRequestView.ts`): three of the four blocking requests are
- * still `#overlay`'s, but this one transforms the composer instead.
+ * (`dom/permissionRequestView.ts`) and, with the question and plan cards, shares
+ * one dock that transforms the composer.
  *
  * What it *says* is still `model/permissionDialog.ts`'s view model, so nothing
  * about the options is asserted here — only that the card hands back the same
@@ -1185,4 +1189,112 @@ test('typing in Other only updates the submit button; the input is never rebuilt
   const submit = q.find('ask-footer').children.find((c) => c.text === '提交')!
   assert.equal(submit.disabled, false)
   assert.equal(q.stub.activeElement(), input.node)
+})
+
+// --- the docked plan card and the plan panel -----------------------------------
+
+function planCard(t: { after(fn: () => void): void }) {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const composer = stub.createContainer('composer')
+  const container = stub.createContainer('composer-request')
+  const enter: EnterPlanIntent[] = []
+  const exit: ExitPlanIntent[] = []
+  let opened = 0
+  const view = createPlanCardView(createDockedCard(composer, container), container, {
+    onEnterIntent: (intent) => enter.push(intent),
+    onExitIntent: (intent) => exit.push(intent),
+    onOpenPlan: () => { opened += 1 },
+  })
+  const find = (cls: string) => {
+    const found = stub.inspect(container).children[0]!.children.find((c) => c.classes.includes(cls))
+    assert.ok(found, `the card has .${cls}`)
+    return found
+  }
+  const buttons = () => find('dialog-actions').children.flatMap((group) => group.children)
+  return { stub, composer, container, view, enter, exit, opened: () => opened, find, buttons }
+}
+
+const planState = () => createExitPlanState({ planContent: '# 计划\n- 做事', planFilePath: '/tmp/plan.md' })
+
+test('the enter-plan card is one question with 拒绝 and 允许', (t) => {
+  const p = planCard(t)
+  p.view.showEnter(enterPlanViewModel())
+
+  assert.ok(p.stub.inspect(p.composer).classes.includes('request-open'))
+  assert.equal(p.find('request-question').text, '先读代码、出方案，你确认前不会修改文件')
+  assert.deepEqual(p.buttons().map((b) => b.text), ['拒绝Esc', '允许⏎'])
+  assert.equal(p.stub.activeElement(), p.buttons()[1]!.node, 'the primary takes focus on open')
+  p.stub.click(p.buttons()[0]!.node)
+  p.stub.click(p.buttons()[1]!.node)
+  assert.deepEqual(p.enter, [{ kind: 'answer', approved: false }, { kind: 'answer', approved: true }])
+})
+
+test('the exit-plan card reports every button as the intent its key produces', (t) => {
+  const p = planCard(t)
+  p.view.showExit(exitPlanViewModel(planState()))
+
+  const head = p.find('request-head')
+  assert.equal(head.children.find((c) => c.classes.includes('request-title'))?.text, '助手提出了一个计划')
+  p.stub.click(head.children.find((c) => c.text === '打开计划')!.node)
+  assert.equal(p.opened(), 1)
+
+  assert.deepEqual(p.buttons().map((b) => b.text), ['拒绝', '修改…Esc', '接受⌘⇧⏎', '接受并自动执行⌘⏎'])
+  for (const button of p.buttons()) p.stub.click(button.node)
+  assert.deepEqual(p.exit, [
+    { kind: 'reject' },
+    { kind: 'modify' },
+    { kind: 'approve', slot: 1 },
+    { kind: 'approve', slot: 0 },
+  ])
+})
+
+test('修改… swaps the buttons, focuses the field, and typing only touches 发送', (t) => {
+  const p = planCard(t)
+  p.view.showExit(exitPlanViewModel(planState()))
+  const modifying = { ...planState(), modifying: true }
+  p.view.showExit(exitPlanViewModel(modifying))
+
+  const input = p.stub.inspect(p.container).children[0]!.children.find((c) => c.classes.includes('plan-feedback-input'))!
+  assert.equal(input.attributes.get('placeholder'), '告诉助手要怎么改')
+  assert.equal(p.stub.activeElement(), input.node)
+  const card = p.stub.inspect(p.container).children[0]!.node
+  assert.equal(p.buttons().find((b) => b.text.startsWith('发送'))!.disabled, true)
+
+  ;(input.node as unknown as { value: string }).value = '先补测试'
+  p.stub.dispatch(input.node, 'input')
+  assert.deepEqual(p.exit.at(-1), { kind: 'feedback-set', text: '先补测试' })
+
+  p.view.showExit(exitPlanViewModel({ ...modifying, feedback: '先补测试' }))
+  assert.equal(p.stub.inspect(p.container).children[0]!.node, card, 'nothing is rebuilt while typing')
+  assert.equal(p.buttons().find((b) => b.text.startsWith('发送'))!.disabled, false)
+  assert.equal(p.stub.activeElement(), input.node)
+})
+
+test('an empty plan card has only 拒绝 and 接受', (t) => {
+  const p = planCard(t)
+  p.view.showExit(exitPlanViewModel(createExitPlanState({ planContent: ' ', planFilePath: '/tmp/plan.md' })))
+  assert.deepEqual(p.buttons().map((b) => b.text), ['拒绝Esc', '接受⏎'])
+})
+
+test('the plan panel draws the whole plan with its path, and only when it changed', (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('plan-view')
+  const view = createPlanPanelView(container)
+  const long = Array.from({ length: 80 }, (_, i) => `- 步骤 ${i + 1}`).join('\n')
+
+  view.render({ planContent: long, planFilePath: '/tmp/plan.md' })
+  const [body, foot] = stub.inspect(container).children
+  assert.ok(body!.classes.includes('plan-panel-body'))
+  assert.ok(body!.text.includes('步骤 80'), 'not the truncated preview')
+  assert.equal(foot!.children[0]!.text, '/tmp/plan.md')
+  assert.equal(foot!.children[1]!.text, '复制')
+
+  const first = body!.node
+  view.render({ planContent: long, planFilePath: '/tmp/plan.md' })
+  assert.equal(stub.inspect(container).children[0]!.node, first, 'an unchanged plan is not rebuilt')
+
+  view.render(undefined)
+  assert.equal(stub.inspect(container).text, '还没有计划')
 })

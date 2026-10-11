@@ -46,17 +46,22 @@ test('a coordination session follows the overview switch, whatever the browser s
 })
 
 test('tabs: 概览 first and permanent, extras closable; ordinary sessions keep the old strip', () => {
-  const extras = new Set<ExtraTab>(['subagents', 'browser'])
-  assert.deepEqual(sideTabEntries(input({ coordinated: true }), 'threads', true, false), [{ tab: 'threads', closable: false }])
-  assert.deepEqual(sideTabEntries(input({ coordinated: true, extras }), 'threads', true, true), [
+  const extras = new Set<ExtraTab>(['subagents', 'plan', 'browser'])
+  const has = (overrides: Partial<{ coordination: boolean; subagents: boolean; plan: boolean }> = {}) =>
+    ({ coordination: false, subagents: false, plan: false, ...overrides })
+  assert.deepEqual(sideTabEntries(input({ coordinated: true }), 'threads', has({ coordination: true })), [{ tab: 'threads', closable: false }])
+  assert.deepEqual(sideTabEntries(input({ coordinated: true, extras }), 'threads', has({ coordination: true, subagents: true })), [
     { tab: 'threads', closable: false },
     { tab: 'browser', closable: true },
+    { tab: 'plan', closable: true },
     { tab: 'subagents', closable: true },
   ])
-  assert.deepEqual(sideTabEntries(input({ browserOpen: true }), 'browser', false, false), [])
-  assert.deepEqual(sideTabEntries(input({ browserOpen: true }), 'browser', true, false).map((e) => e.tab), ['browser', 'threads'])
-  assert.deepEqual(sideTabEntries(input({ browserOpen: true }), 'browser', false, true).map((e) => e.tab), ['browser', 'subagents'])
-  assert.deepEqual(sideTabEntries(input({ browserOpen: true, sideTab: 'subagents' }), 'subagents', false, false).map((e) => e.tab), ['browser', 'subagents'])
+  assert.deepEqual(sideTabEntries(input({ browserOpen: true }), 'browser', has()), [])
+  assert.deepEqual(sideTabEntries(input({ browserOpen: true }), 'browser', has({ coordination: true })).map((e) => e.tab), ['browser', 'threads'])
+  assert.deepEqual(sideTabEntries(input({ browserOpen: true }), 'browser', has({ subagents: true })).map((e) => e.tab), ['browser', 'subagents'])
+  assert.deepEqual(sideTabEntries(input({ browserOpen: true }), 'browser', has({ plan: true, subagents: true })).map((e) => e.tab), ['browser', 'plan', 'subagents'])
+  assert.deepEqual(sideTabEntries(input({ browserOpen: true, sideTab: 'subagents' }), 'subagents', has()).map((e) => e.tab), ['browser', 'subagents'])
+  assert.deepEqual(sideTabEntries(input({ browserOpen: true, sideTab: 'plan' }), 'plan', has()).map((e) => e.tab), ['browser', 'plan'])
 })
 
 test('a new thread raises the overview only when the user has not closed it', () => {
@@ -103,12 +108,12 @@ test('the chip leaves out the counts that are zero', () => {
 })
 
 test('switching sessions prunes extras and selections with nothing behind them', () => {
-  const both = new Set<ExtraTab>(['browser', 'subagents'])
-  const cases: Array<[{ browserTabs: boolean; subagents: boolean }, ExtraTab[]]> = [
-    [{ browserTabs: true, subagents: true }, ['browser', 'subagents']],
-    [{ browserTabs: false, subagents: true }, ['subagents']],
-    [{ browserTabs: true, subagents: false }, ['browser']],
-    [{ browserTabs: false, subagents: false }, []],
+  const both = new Set<ExtraTab>(['browser', 'subagents', 'plan'])
+  const cases: Array<[{ browserTabs: boolean; subagents: boolean; plan: boolean }, ExtraTab[]]> = [
+    [{ browserTabs: true, subagents: true, plan: true }, ['browser', 'subagents', 'plan']],
+    [{ browserTabs: false, subagents: true, plan: false }, ['subagents']],
+    [{ browserTabs: true, subagents: false, plan: true }, ['browser', 'plan']],
+    [{ browserTabs: false, subagents: false, plan: false }, []],
   ]
   for (const [has, expected] of cases) assert.deepEqual([...pruneExtras(both, has)], expected)
   assert.equal(keepSelectedSubagent('a', ['a', 'b']), 'a')

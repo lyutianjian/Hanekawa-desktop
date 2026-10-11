@@ -43,9 +43,8 @@
      in both themes, so `--text-primary` would turn it near-black in light mode.
      White in both. */
   --surface-knob: #ffffff;
-  /* What a modal dims the app with. A token because both #overlay and #rewind
-     draw it, and they must dim by the same amount or stacking them reads as a
-     bug. Follows the theme: dark dims harder with plain black, light dims less
+  /* What a modal dims the app with. A token because #rewind and the lightbox
+     draw it. Follows the theme: dark dims harder with plain black, light dims less
      and with the graphite's own cast. */
   --surface-scrim: rgba(0, 0, 0, 0.55);
   /* The image viewer's own, and the reason it is a second token: the two modal
@@ -105,7 +104,6 @@
      — the brand's one permitted appearance at hairline weight. An alias for
      the same reason `--link` is: the decision is the equality itself. */
   --focus-ring: var(--accent-brand);
-  --caret: #ebebea;
 
   /* --- elevation ---
      Two depths, and shadows for nothing else: only things that float over
@@ -356,7 +354,6 @@
 
   --border-subtle: #e5e5e4;
   --border-strong: #d3d3d2;
-  --caret: #1a1a1a;
 
   --shadow-float: 0 6px 20px rgba(26, 26, 26, 0.08), 0 1px 2px rgba(26, 26, 26, 0.06);
   --shadow-modal: 0 16px 48px rgba(26, 26, 26, 0.16);
@@ -746,7 +743,7 @@ body.settings-open .titlebar-lead::after { display: none; }
    corners, which is why neither of them carries a `border-radius`.
 
    `position: relative` is load-bearing (S6): it is the containing block for
-   `#overlay` and `#rewind`, which cover this panel rather than the window.
+   `#rewind`, which covers this panel rather than the window.
    Deliberately **no** `z-index` here: leaving it `auto` keeps the canvas out of
    its own stacking context, so the two modal layers still compare against every
    other layer in the sheet (the sidebar's menus among them) instead of being
@@ -777,7 +774,7 @@ body.settings-open .titlebar-lead::after { display: none; }
      margin, so its hover line lands on the canvas edge. */
   /* Flush, not a floating card: no margin, no radius. A 1px outer shadow on the
      left edge is the divider to the sidebar; unlike a border it takes no layout,
-     so `#overlay`/`#rewind` still match the canvas edge for edge. */
+     so `#rewind` still matches the canvas edge for edge. */
   margin: 0;
   background: var(--surface-canvas);
   overflow: hidden;
@@ -2881,7 +2878,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 
   `z-index: 4` — over the transcript and `.scroll-bottom` (neither declares
   one), under every real menu in the sheet (5–6) and therefore under the two
-  modal layers (`#rewind` 9, `#overlay` 10).
+  modal layer (`#rewind` 9).
 
   `pointer-events: none` is load-bearing: the shell stays in the box tree while
   all three children are hidden, and the `gap` between two open ones is its own
@@ -3542,7 +3539,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 #chip-runtime:disabled { opacity: 0.5; cursor: default; }
 /* The popover, and the flyout hanging off one of its rows. The same card as
    `.composer-menu` on the same layer (5): over `#composer-popovers` (4), under
-   `#rewind` (9) and `#overlay` (10). It opens upward and right-aligned, because
+   `#rewind` (9). It opens upward and right-aligned, because
    the chip sits at the bottom right of a composer anchored to the bottom of the
    canvas. */
 .chip-menu {
@@ -3659,16 +3656,13 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 
 /* --- the fullscreen image viewer ---
    The one layer that is *fixed* over the whole window rather than absolute
-   inside `#canvas`. The two layers below are blocking requests: each belongs to
-   one lane, parks that lane's agent loop, and leaves the sidebar live so
-   switching away is still possible. This one is neither — it holds nothing, it
+   inside `#canvas`. The rewind layer belongs to one lane and leaves the sidebar
+   live. This one does not — it holds nothing, it
    belongs to no lane, and an image cropped to the canvas with the sidebar lit
    beside it is a large popover, not a viewer.
 
-   z-index 11, one step above `#overlay` (10). It is opened by a deliberate act
-   and closed by three of them, so it never *traps* anyone behind a decision the
-   way a permission prompt would — and a prompt arriving underneath is still
-   there when the picture is shut. */
+   z-index 11, one step above `#rewind` (9). It is opened by a deliberate act and
+   closed by three of them, so it never *traps* anyone. */
 #lightbox {
   position: fixed;
   inset: 0;
@@ -3802,127 +3796,16 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 .lightbox-close:hover { background: var(--surface-hover); color: var(--text-primary); }
 
-/* --- overlay: the four blocking requests ---
-   Absolute, not fixed: the request belongs to one lane, so it covers that
-   lane's canvas and leaves the sidebar live (S6). `#canvas` is the containing
-   block, and the corners come from its `overflow: hidden`. */
-#overlay {
-  position: absolute;
-  inset: 0;
-  background: var(--surface-scrim);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-5);
-  z-index: 10;
-}
-#overlay-panel {
-  background: var(--surface-card);
-  border: 1px solid var(--border-strong);
-  border-top-width: 3px;
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-modal);
-  max-width: 44rem;
-  width: 100%;
-  max-height: 100%;
-  overflow-y: auto;
-  padding: 16px 20px;
-  font-size: 13px;
-}
-#overlay-panel.tone-danger { border-top-color: var(--accent-danger); }
-#overlay-panel.tone-caution { border-top-color: var(--accent-warn); }
-#overlay-panel.tone-normal { border-top-color: var(--accent-info); }
-/* The third serif spot (design_guidance 三.4). The chip beside it keeps its own
-   size, so raising the title to the title rung does not drag the label with it. */
-#overlay-panel .title {
-  display: flex;
-  align-items: baseline;
-  gap: var(--space-2);
-  font-family: var(--font-serif);
-  font-size: var(--type-title);
-  font-weight: 600;
-  margin-bottom: 2px;
-}
-#overlay-panel.tone-danger .title { color: var(--text-danger); }
-#overlay-panel.tone-caution .title { color: var(--text-warn); }
-#overlay-panel.tone-normal .title { color: var(--accent-info); }
-#overlay-panel .subtitle,
-#overlay-panel .also-waiting { color: var(--text-secondary); font-size: 12px; }
-#overlay-panel .reason { margin: 8px 0; }
-#overlay-panel .warning { color: var(--text-danger); }
-#overlay-panel .streak { color: var(--text-warn); font-size: 12px; }
-/* The command, the plan and the feedback field are inset wells inside the card,
-   and every one of them is read character by character — hence both the darker
-   surface and the monospace. */
-#overlay-panel .block {
-  background: var(--surface-canvas);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 8px 10px;
-  margin: 8px 0;
-  font-family: var(--font-mono);
-  white-space: pre-wrap;
-  word-break: break-all;
-}
-#overlay-panel .block-label,
-#composer-request .block-label { color: var(--text-tertiary); font-size: 11px; }
-#overlay-panel .options { margin: 10px 0 6px; }
-/* The negative margin is what makes the whole row a target rather than just its
-   text: the panel's own padding is the only thing to the left of the glyphs.
-   Hover marks the row as clickable and nothing else — moving `selected` with the
-   pointer would slide the permission dialog's safe default (deny) out from under
-   whatever Enter is about to hit. */
-#overlay-panel .option {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 8px;
-  padding: 5px 8px;
-  margin: 0 -8px;
-  border-radius: var(--radius-md);
-  cursor: pointer;
-}
-#overlay-panel .option:hover { background: var(--surface-hover); }
-#overlay-panel .option.selected { background: var(--surface-active); }
-#overlay-panel .option.selected .option-label { color: var(--text-primary); font-weight: 600; }
-#overlay-panel .option-label { flex: 0 1 auto; }
-#overlay-panel .plan {
-  background: var(--surface-canvas);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 10px;
-  margin: 8px 0;
-  max-height: 40vh;
-  overflow-y: auto;
-  font-family: var(--font-mono);
-  white-space: pre-wrap;
-}
-#overlay-panel .bullets { color: var(--text-secondary); margin: 6px 0; }
-#overlay-panel .feedback {
-  background: var(--surface-canvas);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  padding: 6px 8px;
-  margin: 4px 0 0;
-  min-height: 1.5em;
-  font-family: var(--font-mono);
-  white-space: pre-wrap;
-}
-#overlay-panel .feedback.focused { border-color: var(--focus-ring); }
-#overlay-panel .feedback::after { content: "▌"; color: var(--caret); }
-
 /*
   --- the dialog button bar ---
-  Shared by #overlay-panel, #rewind-panel and the composer's inline permission
-  request. The first two are the same object at two z-indexes; the third is not
-  modal at all, but it asks the same question with the same two buttons, and one
-  bar is what keeps「拒绝 / 允许一次」looking and behaving identically wherever it
-  is drawn. The primary is a *raised neutral surface*, not a fill: the one
+  Shared by #rewind-panel and the composer's docked cards. The card is not modal
+  at all, but it asks the same question with the same buttons, and one bar is
+  what keeps「拒绝 / 允许一次」looking and behaving identically wherever it is
+  drawn. The primary is a *raised neutral surface*, not a fill: the one
   brand solid in this interface is `#submit` (design_guidance 六.4), and a
   dialog that shouts louder than the send button is the wrong hierarchy.
   A danger action is an outline and a text colour only (六.6).
 */
-#overlay-panel .dialog-actions,
 #rewind-panel .dialog-actions,
 #composer-request .dialog-actions {
   display: flex;
@@ -3931,7 +3814,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   gap: 8px;
   margin-top: 14px;
 }
-#overlay-panel .dialog-btn,
 #rewind-panel .dialog-btn,
 #composer-request .dialog-btn {
   display: inline-flex;
@@ -3946,33 +3828,27 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font-size: 12px;
   cursor: pointer;
 }
-#overlay-panel .dialog-btn.primary,
 #rewind-panel .dialog-btn.primary,
 #composer-request .dialog-btn.primary {
   background: var(--surface-active);
   border-color: var(--border-strong);
   color: var(--text-primary);
 }
-#overlay-panel .dialog-btn.danger,
 #rewind-panel .dialog-btn.danger,
 #composer-request .dialog-btn.danger {
   border-color: var(--accent-danger);
   color: var(--text-danger);
 }
-#overlay-panel .dialog-btn:hover,
 #rewind-panel .dialog-btn:hover,
 #composer-request .dialog-btn:hover { background: var(--surface-hover); }
 /* Where Enter is aimed. On a destructive permission request that is *deny*, so
    this is not decoration — it is the answer about to be given. */
-#overlay-panel .dialog-btn.selected,
 #rewind-panel .dialog-btn.selected,
 #composer-request .dialog-btn.selected { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-#overlay-panel .dialog-btn:focus-visible,
 #rewind-panel .dialog-btn:focus-visible,
 #composer-request .dialog-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* The key badge. Monospaced because a key name is read character by character,
    and it is the only place a shortcut is printed now that the hint line is gone. */
-#overlay-panel .kbd,
 #rewind-panel .kbd,
 #composer-request .kbd {
   padding: 0 5px;
@@ -4070,13 +3946,98 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .ask-footer { display: flex; align-items: center; gap: 8px; margin-top: var(--space-3); }
 .ask-spacer { flex: 1 1 auto; }
 .ask-progress { color: var(--text-tertiary); font-size: 12px; }
+/* --- the docked plan card and the plan panel ---
+   The card is the question card's sibling: a head, an optional field and the
+   shared button bar, split so the declining pair sits left and the accepting
+   pair right. The full plan is read in the side panel, never in the card. */
+.plan-card { font-size: 13px; }
+.plan-head-spacer { flex: 1 1 auto; }
+.plan-open-link {
+  flex: 0 0 auto;
+  padding: 0 var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-meta);
+  cursor: pointer;
+  transition: color var(--motion-micro) var(--ease-out);
+}
+.plan-open-link:hover { color: var(--text-primary); text-decoration: underline; }
+.plan-open-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.plan-feedback-input {
+  box-sizing: border-box;
+  width: 100%;
+  margin-top: var(--space-2);
+  padding: 6px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  font: inherit;
+  outline: none;
+}
+.plan-feedback-input::placeholder { color: var(--text-tertiary); }
+.plan-feedback-input:focus { border-color: var(--focus-ring); }
+#composer-request .plan-actions { justify-content: space-between; }
+.plan-actions-group { display: flex; flex-wrap: wrap; gap: 8px; }
+#plan-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#plan-view[hidden] { display: none; }
+.plan-panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+  font-size: 13px;
+}
+.plan-panel-empty { padding: var(--space-4); color: var(--text-tertiary); font-size: 13px; }
+.plan-panel-foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+.plan-panel-path {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--type-meta);
+}
+.plan-panel-copy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color var(--motion-micro) var(--ease-out), color var(--motion-micro) var(--ease-out);
+}
+.plan-panel-copy:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
+.plan-panel-copy:disabled { opacity: 0.45; cursor: default; }
+.plan-panel-copy:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 #composer-request .dialog-btn:disabled { opacity: 0.45; cursor: default; background: var(--surface-card); }
 
 /*
   --- the rewind panel ---
-  Its own layer, stacked *below* #overlay (z-index 10): a permission prompt
-  that arrives while this is open is holding the agent loop and has to be
-  answered first, so it draws on top.
+  Its own modal layer (z-index 9).
 
   Both numbers are above 5–6, which is where every popover in the app sits (the
   title bar's and canvas header's menus, the permission pill's, the settings
@@ -4108,8 +4069,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   padding: 16px 20px;
   font-size: 13px;
 }
-/* The same dialog title as `#overlay-panel .title` — the two panels are one
-   object at two sizes, so they carry one treatment. */
 #rewind-panel .title {
   font-family: var(--font-serif);
   font-size: var(--type-title);
@@ -4244,9 +4203,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font-size: 0.92em;
   color: var(--text-secondary);
 }
-/* The plan body keeps its own panel chrome; markdown only replaces the text. */
-#overlay-panel .plan.md { white-space: normal; }
-
 /* --- diff ---
    The **one** block allowed a horizontal scrollbar of its own. Everywhere else
    in a turn (the terminal block, the read block, the search list, a fenced code
@@ -5149,8 +5105,6 @@ body.projects-open #browser-resizer,
 .mcp-form-add-btn,
 #surface .row,
 #suggestions .suggestion,
-#overlay-panel .option,
-#overlay-panel .dialog-btn,
 #rewind-panel .row,
 #rewind-panel .dialog-btn {
   transition: background-color var(--motion-micro) var(--ease-out),
@@ -5194,7 +5148,6 @@ body.projects-open #browser-resizer,
 .presence[data-presence="panel"] { --presence-scale: 1; transition-duration: var(--motion-panel-in); transition-timing-function: var(--ease-snap); }
 
 /* The modal panel owns settlement; the scrim is a separate, shorter track. */
-#overlay.modal-layer,
 #rewind.modal-layer,
 #lightbox.modal-layer { animation: none; background: transparent; }
 .modal-layer::before {

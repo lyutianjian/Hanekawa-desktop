@@ -39,8 +39,8 @@ import type {
 import type { ComposerView } from './dom/composerView.js'
 import type { StatusView } from './dom/statusView.js'
 import type { SuggestionsView } from './dom/suggestionsView.js'
-import type { OverlayView } from './dom/overlayView.js'
 import type { PermissionRequestView } from './dom/permissionRequestView.js'
+import type { PlanCardView } from './dom/planCardView.js'
 import type { QuestionCardView } from './dom/questionCardView.js'
 import type { RewindPanel } from './dom/rewindView.js'
 import type { SurfacePanel } from './dom/surfaceView.js'
@@ -130,10 +130,8 @@ import {
 import {
   applyExitPlanIntent,
   createExitPlanState,
-  enterPlanIndexToIntent,
   enterPlanKeyToIntent,
   enterPlanViewModel,
-  exitPlanIndexToIntent,
   exitPlanKeyToIntent,
   exitPlanViewModel,
   type EnterPlanIntent,
@@ -222,7 +220,6 @@ export interface PaneSessionDeps {
   channel: RuntimeChannel
   /** `#transcript-area`; this pane's subtree is appended here. */
   mount: HTMLElement
-  overlay: OverlayView
   /**
    * The permission request's home: the composer, not the modal layer. Held
    * separately from `overlay` because the two are painted on different nodes and
@@ -231,6 +228,10 @@ export interface PaneSessionDeps {
   permissionRequest: PermissionRequestView
   /** The AskUserQuestion card; shares the composer dock with `permissionRequest`. */
   questionCard: QuestionCardView
+  /** The enter/exit plan card; shares the composer dock too. */
+  planCard: PlanCardView
+  /** A proposed plan has just been put in front of the user on the pane on screen. */
+  onPlanProposed?: () => void
   rewindPanel: RewindPanel
   surface: SurfacePanel
   suggestions: SuggestionsView
@@ -344,6 +345,10 @@ export interface PaneSession {
   handleOverlayKey(event: KeyboardEvent): void
   /** What a click in the question card means; the keyboard's twin is `handleOverlayKey`. */
   handleAskIntent(intent: AskIntent): void
+  handleEnterPlanIntent(intent: EnterPlanIntent): void
+  handleExitPlanIntent(intent: ExitPlanIntent): void
+  /** The last plan the assistant proposed here; stays after the card is settled. */
+  plan(): ExitDialogInput | undefined
   handleRewindIntent(intent: RewindIntent): void
   acceptCompletion(mode: 'accept' | 'submit'): Promise<void>
   moveCompletion(direction: 'up' | 'down'): void
@@ -560,8 +565,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   let permissionIndex = 0
   let askState: AskState | undefined
   let askingHeader: string | undefined
-  let enterPlanIndex = 0
   let exitPlan: ExitPlanState | undefined
+  let proposedPlan: ExitDialogInput | undefined
+  let planShownFor: string | undefined
   let preparedId: string | undefined
   /** The composer text while this pane is not active; the composer owns it while it is. */
   let draftText = ''
@@ -1273,12 +1279,14 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
     askState = undefined
     exitPlan = undefined
-    enterPlanIndex = 0
     if (!activeRequestNow) return
 
     if (activeRequestNow.kind === 'permission') permissionIndex = initialPermissionIndex(activeRequestNow.payload)
     if (activeRequestNow.kind === 'ask-user-question') askState = createAskState(activeRequestNow.payload)
-    if (activeRequestNow.kind === 'exit-plan') exitPlan = createExitPlanState(activeRequestNow.payload)
+    if (activeRequestNow.kind === 'exit-plan') {
+      exitPlan = createExitPlanState(activeRequestNow.payload)
+      proposedPlan = activeRequestNow.payload
+    }
   }
 
   function renderOverlay(): void {
@@ -1290,7 +1298,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     const current = activeRequest(queue)
     if (!current) {
       if (active) {
-        deps.overlay.hide()
         // The composer is only worth focusing once it is a composer again.
         deps.permissionRequest.hide()
         deps.composer.focus()
@@ -1306,10 +1313,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         settle(current.requestId, { kind: 'rejected', feedback: 'No questions were asked.' })
         return
       }
-      if (active) {
-        deps.overlay.hide()
-        deps.questionCard.show(view)
-      }
+      if (active) deps.questionCard.show(view)
       return
     }
     if (!active) return
@@ -1319,10 +1323,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         const others = permissionRequests(queue)
           .filter((entry) => entry.requestId !== current.requestId)
           .map((entry) => entry.payload)
-        // The one request that is not modal: it transforms the composer instead.
-        // The modal layer is closed first, because a permission request can
-        // arrive on top of a plan decision that was drawn there.
-        deps.overlay.hide()
         deps.permissionRequest.show(permissionViewModel({
           request: current.payload,
           selectedIndex: permissionIndex,
@@ -1333,13 +1333,15 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         return
       }
       case 'enter-plan':
-        deps.permissionRequest.hide()
-        deps.overlay.enterPlan(enterPlanViewModel(enterPlanIndex))
+        deps.planCard.showEnter(enterPlanViewModel())
         return
       case 'exit-plan':
         if (exitPlan) {
-          deps.permissionRequest.hide()
-          deps.overlay.exitPlan(exitPlanViewModel(exitPlan))
+          deps.planCard.showExit(exitPlanViewModel(exitPlan))
+          if (planShownFor !== current.requestId) {
+            planShownFor = current.requestId
+            deps.onPlanProposed?.()
+          }
         }
         return
     }
@@ -1349,7 +1351,11 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   function handleOverlayKey(event: KeyboardEvent): void {
     const current = activeRequest(queue)
     if (!current) return
-    if (current.kind !== 'ask-user-question') event.preventDefault()
+    // A focused button keeps Enter and Space: pressing it is its own click.
+    const onButton = event.target instanceof HTMLButtonElement && (event.key === 'Enter' || event.key === ' ')
+    if (onButton && (current.kind === 'enter-plan' || current.kind === 'exit-plan')) return
+    const typing = current.kind === 'ask-user-question' || (current.kind === 'exit-plan' && exitPlan?.modifying === true)
+    if (!typing) event.preventDefault()
     const chord = {
       key: event.key,
       shiftKey: event.shiftKey,
@@ -1377,28 +1383,23 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       }
 
       case 'enter-plan':
-        applyEnterPlanIntent(current.requestId, enterPlanKeyToIntent(chord, { selectedIndex: enterPlanIndex }))
+        applyEnterPlanIntent(current.requestId, enterPlanKeyToIntent(chord))
         return
 
       case 'exit-plan': {
         if (!exitPlan) return
-        applyExitPlan(current.requestId, exitPlanKeyToIntent(chord, exitPlanViewModel(exitPlan)))
+        const intent = exitPlanKeyToIntent(chord, exitPlan)
+        if (typing && intent.kind !== 'none') event.preventDefault()
+        applyExitPlan(current.requestId, intent)
         return
       }
     }
   }
 
   /**
-   * Routes a click in the dialog: an option slot, or the button bar.
-   *
-   * A slot goes through the same `*IndexToIntent` its number key uses, and the
-   * four `apply*` helpers below are shared with `handleOverlayKey` — so the mouse
-   * cannot answer anything the keyboard would not, and a dialog that is drawn but
-   * not focused (a background pane never paints) has nothing to click.
-   *
-   * `primary`/`secondary` exist only on the exit-plan dialog, where an option is
-   * *not* an action. The permission and enter-plan bars are made of slots, so
-   * those two cases cannot arrive there.
+   * Routes a click in the permission card's button bar. It goes through the same
+   * `*IndexToIntent` its key uses, so the mouse cannot answer anything the
+   * keyboard would not.
    */
   function handleOverlayAction(action: OverlayAction): void {
     const current = activeRequest(queue)
@@ -1411,31 +1412,10 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         applyPermissionIntent(current.requestId, permissionIndexToIntent(action.index, view.options))
         return
       }
-
-      case 'enter-plan':
-        if (action.kind !== 'slot') return
-        applyEnterPlanIntent(current.requestId, enterPlanIndexToIntent(action.index))
-        return
-
-      case 'exit-plan': {
-        if (!exitPlan) return
-        const view = exitPlanViewModel(exitPlan)
-        applyExitPlan(
-          current.requestId,
-          action.kind === 'slot'
-            ? exitPlanIndexToIntent(action.index, view)
-            // 继续规划 is Escape: it rejects with no feedback, which is why the
-            // model comments that it is the one button that can discard typing.
-            : action.kind === 'primary'
-              ? { kind: 'commit' }
-              : { kind: 'reject' },
-        )
-        return
-      }
     }
   }
 
-  // The four intents, applied. Each one is reached from both the keyboard and the
+  // The intents, applied. Each one is reached from both the keyboard and the
   // mouse, so cursor state, `settle` and the repaint stay in one place per dialog.
 
   function applyPermissionIntent(requestId: string, intent: PermissionIntent): void {
@@ -1467,12 +1447,17 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   }
 
   function applyEnterPlanIntent(requestId: string, intent: EnterPlanIntent): void {
-    if (intent.kind === 'move') {
-      enterPlanIndex = intent.selectedIndex
-      renderOverlay()
-      return
-    }
     if (intent.kind === 'answer') settle(requestId, intent.approved)
+  }
+
+  function handleEnterPlanIntent(intent: EnterPlanIntent): void {
+    const current = activeRequest(queue)
+    if (current?.kind === 'enter-plan') applyEnterPlanIntent(current.requestId, intent)
+  }
+
+  function handleExitPlanIntent(intent: ExitPlanIntent): void {
+    const current = activeRequest(queue)
+    if (current?.kind === 'exit-plan') applyExitPlan(current.requestId, intent)
   }
 
   function applyExitPlan(requestId: string, intent: ExitPlanIntent): void {
@@ -1993,7 +1978,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // becomes active, and `activate()` repaints from this pane's state when it
     // comes back. Keys never reach a background pane (the app routes to the
     // active one), so a painted-but-inert dialog would be a trap.
-    deps.overlay.hide()
     // The composer is a singleton too, so a background pane's request would
     // otherwise sit in the next pane's capsule and answer *its* gate.
     deps.permissionRequest.hide(true)
@@ -2231,6 +2215,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     },
     handleOverlayKey,
     handleAskIntent,
+    handleEnterPlanIntent,
+    handleExitPlanIntent,
+    plan: () => proposedPlan,
     handleRewindIntent,
     acceptCompletion,
     moveCompletion,

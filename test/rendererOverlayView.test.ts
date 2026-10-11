@@ -5,15 +5,12 @@ import test from 'node:test'
 
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
 import { cssBlocks } from './helpers/rendererCss.js'
-import { createOverlayView } from '../src/desktop/renderer/dom/overlayView.js'
+import { actionBar } from '../src/desktop/renderer/dom/actionBar.js'
 import { createRewindView } from '../src/desktop/renderer/dom/rewindView.js'
 import { createSuggestionsView } from '../src/desktop/renderer/dom/suggestionsView.js'
 import { createSurfacePanel } from '../src/desktop/renderer/dom/surfaceView.js'
 import type { CompletionState } from '../src/desktop/renderer/model/completion.js'
 import type { OverlayAction } from '../src/desktop/renderer/model/dialogActions.js'
-import type { PermissionViewModel } from '../src/desktop/renderer/model/permissionDialog.js'
-import { enterPlanViewModel } from '../src/desktop/renderer/model/planDialogs.js'
-import type { ExitPlanViewModel } from '../src/desktop/renderer/model/planDialogs.js'
 import { beginRewindRun, createRewindState, rewindViewModel } from '../src/desktop/renderer/model/rewindPanel.js'
 
 /**
@@ -34,145 +31,16 @@ import { beginRewindRun, createRewindState, rewindViewModel } from '../src/deskt
 
 const RENDERER = path.join(import.meta.dirname, '..', 'src', 'desktop', 'renderer')
 
-interface Overlay {
-  readonly stub: DomStub
-  readonly container: HTMLElement
-  readonly panel: HTMLElement
-  readonly view: ReturnType<typeof createOverlayView>
-  readonly picked: OverlayAction[]
-  /** The option rows, in slot order. */
-  options(): StubView[]
-  /** The buttons in the bar at the bottom, in order. */
-  buttons(): StubView[]
-  panelView(): StubView
-}
-
-function overlay(t: { after(fn: () => void): void }): Overlay {
+test('the button bar carries the keys, and the focused slot is marked', (t) => {
   const stub = installDomStub()
   t.after(() => stub.uninstall())
-  const container = stub.createContainer('overlay')
-  const panel = stub.createContainer('panel')
   const picked: OverlayAction[] = []
-  const view = createOverlayView(container, panel, (action) => picked.push(action))
-  const panelView = () => stub.inspect(panel)
-  const options = () => {
-    const list = panelView().children.find((child) => child.classes.includes('options'))
-    assert.ok(list, 'the panel has an options list')
-    return [...list.children].filter((child) => child.classes.includes('option'))
-  }
-  const buttons = () => {
-    const bar = panelView().children.find((child) => child.classes.includes('dialog-actions'))
-    assert.ok(bar, 'the panel ends with a button bar')
-    return [...bar.children]
-  }
-  return { stub, container, panel, view, picked, options, buttons, panelView }
-}
-
-function permissionFixture(overrides: Partial<PermissionViewModel> = {}): PermissionViewModel {
-  return {
-    title: '写入文件',
-    subtitle: 'smoke-write-target.txt',
-    reason: '工具请求写入',
-    tone: 'normal',
-    inputBlock: { kind: 'none', label: '', content: '' },
-    warnings: [],
-    denialStreakNote: undefined,
-    options: [
-      { label: '允许一次', hotkey: 'y', action: 'allow' },
-      { label: '拒绝', hotkey: 'n', action: 'deny' },
-    ],
-    selectedIndex: 0,
-    preview: undefined,
-    alsoWaiting: [],
-    actions: [
-      { label: '允许一次', shortcut: 'Y', role: 'primary', slot: 0 },
-      { label: '拒绝', shortcut: 'N', role: 'secondary', slot: 1 },
-    ],
-    ...overrides,
-  }
-}
-
-function exitPlanFixture(overrides: Partial<ExitPlanViewModel> = {}): ExitPlanViewModel {
-  return {
-    title: '可以开始写代码了吗？',
-    planPreview: '# 计划\n\n先读代码。',
-    planFilePath: '/tmp/plan.md',
-    isEmptyPlan: false,
-    options: [
-      { label: '开始实现', kind: 'approve_restore_keep' },
-      { label: '继续规划', kind: 'reject' },
-    ],
-    selectedIndex: 0,
-    feedbackFocused: false,
-    feedback: '',
-    actions: [
-      { label: '继续规划', shortcut: 'Esc', role: 'secondary' },
-      { label: '确认', shortcut: 'Enter', role: 'primary' },
-    ],
-    ...overrides,
-  }
-}
-
-test('the exit-plan dialog draws its options as a listbox', (t) => {
-  const dialog = overlay(t)
-
-  const check = (label: string, expected: number) => {
-    const list = dialog.panelView().children.find((child) => child.classes.includes('options'))
-    assert.equal(list?.attributes.get('role'), 'listbox', `${label} has a listbox`)
-    const rows = dialog.options()
-    assert.equal(rows.length, expected, `${label} has ${expected} rows`)
-    for (const row of rows) assert.equal(row.attributes.get('role'), 'option', `${label} row is an option`)
-    // Exactly one row reports itself as the focused one, and it is the one the
-    // view model named — a screen reader and the eye must agree.
-    const selected = rows.filter((row) => row.attributes.get('aria-selected') === 'true')
-    assert.equal(selected.length, 1, `${label} marks exactly one row selected`)
-    assert.ok(selected[0]!.classes.includes('selected'), `${label} marks the same row visually`)
-  }
-
-  dialog.view.exitPlan(exitPlanFixture())
-  check('exit-plan', 2)
-
-  // The others have no list at all: for them an option *is* an action, so it
-  // is a button in the bar. A list here would be a second way to answer.
-  dialog.view.permission(permissionFixture())
-  assert.equal(dialog.panelView().children.some((child) => child.classes.includes('options')), false)
-  dialog.view.enterPlan(enterPlanViewModel(0))
-  assert.equal(dialog.panelView().children.some((child) => child.classes.includes('options')), false)
-})
-
-test('clicking a row reports its slot', (t) => {
-  const dialog = overlay(t)
-
-  dialog.view.exitPlan(exitPlanFixture())
-  dialog.stub.click(dialog.options()[1]!.node)
-
-  assert.deepEqual(dialog.picked, [{ kind: 'slot', index: 1 }])
-})
-
-test('a button carrying a slot answers that slot; one without answers by role', (t) => {
-  const dialog = overlay(t)
-
-  dialog.view.permission(permissionFixture())
-  dialog.stub.click(dialog.buttons()[1]!.node)
-
-  dialog.view.enterPlan(enterPlanViewModel(0))
-  dialog.stub.click(dialog.buttons()[0]!.node)
-
-  dialog.view.exitPlan(exitPlanFixture())
-  dialog.stub.click(dialog.buttons()[1]!.node)
-
-  assert.deepEqual(dialog.picked, [
-    { kind: 'slot', index: 1 },
-    { kind: 'slot', index: 0 },
-    { kind: 'primary' },
-  ])
-})
-
-test('the button bar carries the keys, and the focused slot is marked', (t) => {
-  const dialog = overlay(t)
-  dialog.view.permission(permissionFixture({ selectedIndex: 1 }))
-
-  const [allow, deny] = dialog.buttons()
+  const actions = [
+    { label: '允许一次', shortcut: 'Y', role: 'primary', slot: 0 },
+    { label: '拒绝', shortcut: 'N', role: 'secondary', slot: 1 },
+  ] as const
+  const bar = actionBar(actions, (action) => picked.push(action), 1)
+  const [allow, deny] = stub.inspect(bar).children
   assert.equal(allow!.tagName, 'BUTTON')
   assert.equal(allow!.text, '允许一次Y', 'the label carries its key as a badge')
   assert.ok(allow!.classes.includes('primary'))
@@ -183,99 +51,17 @@ test('the button bar carries the keys, and the focused slot is marked', (t) => {
   assert.equal(allow!.classes.includes('selected'), false)
   assert.ok(deny!.classes.includes('selected'))
 
+  // A button carrying a slot answers that slot; one without answers by role.
+  stub.click(deny!.node)
+  stub.click(stub.inspect(actionBar([{ label: '关闭', role: 'primary' }], (action) => picked.push(action))).children[0]!.node)
+  assert.deepEqual(picked, [{ kind: 'slot', index: 1 }, { kind: 'primary' }])
+
   // Danger is a class the stylesheet turns into an outline, never a fill.
-  dialog.view.permission(permissionFixture({
-    tone: 'danger',
-    actions: [
-      { label: '允许一次', shortcut: 'Y', role: 'primary', tone: 'danger', slot: 0 },
-      { label: '拒绝', shortcut: 'N', role: 'secondary', slot: 1 },
-    ],
-  }))
-  assert.ok(dialog.buttons()[0]!.classes.includes('danger'))
-})
-
-test('nothing in a dialog is written in terminal notation any more', (t) => {
-  const dialog = overlay(t)
-
-  const scan = (label: string) => {
-    const text = dialog.panelView().text
-    assert.equal(/[>[\]]/.test(text), false, `${label} still prints a terminal prefix: ${text}`)
-    assert.equal(text.includes('↑↓'), false, `${label} still prints a navigation hint`)
-  }
-
-  dialog.view.permission(permissionFixture())
-  scan('permission')
-  dialog.view.enterPlan(enterPlanViewModel(0))
-  scan('enter-plan')
-  dialog.view.exitPlan(exitPlanFixture())
-  scan('exit-plan')
-})
-
-test('the panel itself is not a target: only rows answer', (t) => {
-  const dialog = overlay(t)
-  dialog.view.permission(permissionFixture({
-    inputBlock: { kind: 'bash', label: '命令', content: 'ls -la' },
-  }))
-
-  // A blocking request parks the agent loop until it is answered, so there is no
-  // dismissing one by clicking beside it. Every non-row node in the panel is
-  // clicked here, and none of them may report a slot.
-  for (const child of dialog.panelView().children) {
-    if (child.classes.includes('options') || child.classes.includes('dialog-actions')) continue
-    dialog.stub.click(child.node)
-  }
-  dialog.stub.click(dialog.panel)
-  dialog.stub.click(dialog.container)
-  assert.deepEqual(dialog.picked, [])
-})
-
-test("the exit-plan feedback field is not part of the row above it", (t) => {
-  const dialog = overlay(t)
-  dialog.view.exitPlan(exitPlanFixture({ selectedIndex: 1, feedbackFocused: true }))
-
-  const list = dialog.panelView().children.find((child) => child.classes.includes('options'))
-  const feedback = list!.children.find((child) => child.classes.includes('feedback'))
-  assert.ok(feedback, 'the focused reject slot grows a feedback field')
-  dialog.stub.click(feedback.node)
-  assert.deepEqual(dialog.picked, [])
-})
-
-test('hiding immediately disables actions and empties the panel only after exit', (t) => {
-  const dialog = overlay(t)
-  dialog.view.permission(permissionFixture())
-  const stale = dialog.buttons()[0]!.node
-
-  dialog.view.hide()
-  assert.equal(dialog.stub.inspect(dialog.container).hidden, false)
-  assert.equal(dialog.stub.inspect(dialog.container).attributes.has('inert'), true)
-  assert.equal(dialog.panelView().classes.includes('presence-closing'), true)
-  assert.ok(dialog.panelView().children.length > 0)
-  dialog.stub.dispatch(dialog.panel, 'transitionend', { propertyName: 'opacity' })
-  assert.equal(dialog.stub.inspect(dialog.container).hidden, true)
-  assert.equal(dialog.panelView().children.length, 0)
-  // The detached node keeps its listener — what matters is that nothing on
-  // screen still points at it, which the empty panel above is the evidence for.
-  assert.equal(dialog.stub.inspect(stale).node !== undefined, true)
+  const danger = actionBar([{ label: '允许一次', role: 'primary', tone: 'danger', slot: 0 }], () => {})
+  assert.ok(stub.inspect(danger).children[0]!.classes.includes('danger'))
 })
 
 // --- the rewind panel --------------------------------------------------------
-
-test('modal content updates and reversals keep one lifecycle and its scrim', (t) => {
-  const dialog = overlay(t)
-  dialog.view.permission(permissionFixture())
-  dialog.stub.dispatch(dialog.panel, 'transitionend', { propertyName: 'opacity' })
-  dialog.view.permission(permissionFixture({ selectedIndex: 1 }))
-  assert.equal(dialog.panelView().classes.includes('presence-open'), true)
-  dialog.view.hide()
-  dialog.stub.dispatch(dialog.container, 'transitionend', { propertyName: 'opacity' })
-  assert.equal(dialog.stub.inspect(dialog.container).hidden, false, 'a scrim event cannot finish the panel')
-  dialog.view.permission(permissionFixture())
-  assert.equal(dialog.panelView().classes.includes('presence-entering'), true)
-  assert.equal(dialog.stub.inspect(dialog.container).attributes.has('inert'), false)
-  dialog.view.hide()
-  dialog.stub.dispatch(dialog.panel, 'transitionend', { propertyName: 'opacity' })
-  assert.equal(dialog.panelView().children.length, 0)
-})
 
 test('the rewind panel ends with the same bar, and its decisions are its buttons', (t) => {
   const stub = installDomStub()
@@ -308,8 +94,7 @@ test('the rewind panel ends with the same bar, and its decisions are its buttons
 })
 
 test('a press on the rewind scrim closes it, unless a decision is running', (t) => {
-  // Escape with a mouse. `#overlay` deliberately has no equivalent: those
-  // dialogs hold the agent loop, and a stray click must not answer one.
+  // Escape with a mouse.
   const stub = installDomStub()
   t.after(() => stub.uninstall())
   const container = stub.createContainer('rewind')
@@ -471,23 +256,21 @@ function canvasMarkup(): string {
   return html.slice(start, end)
 }
 
-test('both modal layers are children of the canvas, not of the body', () => {
+test('the modal layer is a child of the canvas, not of the body', () => {
   const canvas = canvasMarkup()
 
-  assert.ok(canvas.includes('id="overlay"'), '#overlay left the canvas')
   assert.ok(canvas.includes('id="rewind"'), '#rewind left the canvas')
   // The scrim is what dims; the panel must travel with it.
-  assert.ok(canvas.includes('id="overlay-panel"') && canvas.includes('id="rewind-panel"'))
+  assert.ok(canvas.includes('id="rewind-panel"'))
   // A slice that accidentally matched the whole document would pass all of the
   // above: the sidebar is the canvas's *sibling* and must not be in here.
   assert.equal(canvas.includes('id="sidebar"'), false, 'the slice is not the whole page')
   // Last, so DOM order and stacking order say the same thing.
   assert.ok(canvas.indexOf('id="settings"') < canvas.indexOf('id="rewind"'))
-  assert.ok(canvas.indexOf('id="rewind"') < canvas.indexOf('id="overlay"'))
 })
 
 test('the three composer panels hang off the composer, not off the canvas', () => {
-  // todo V3 / S9. Asserted against the page for the same reason the two scrims
+  // todo V3 / S9. Asserted against the page for the same reason the scrim
   // above are: `domStub.ts` computes no layout, and `app.ts` finds all three by
   // `getElementById`, so nothing in the renderer would notice them drifting back
   // out to the canvas — only the shape on screen would.
@@ -519,10 +302,8 @@ test('the scrims are positioned against the canvas and stack above every popover
 
   // `fixed` would resolve against the viewport again, whatever the markup says.
   assert.equal(decl('#canvas', 'position'), 'relative', '#canvas is the containing block')
-  for (const id of ['#overlay', '#rewind']) {
-    assert.equal(decl(id, 'position'), 'absolute', `${id} is not absolute`)
-    assert.equal(decl(id, 'inset'), '0', `${id} does not fill the canvas`)
-  }
+  assert.equal(decl('#rewind', 'position'), 'absolute', '#rewind is not absolute')
+  assert.equal(decl('#rewind', 'inset'), '0', '#rewind does not fill the canvas')
   const fixed = blocks.filter((block) => block.decls.some((d) => d.prop === 'position' && d.value === 'fixed'))
   // The two that resolve against the viewport, and the reason each does: the
   // settings page replaces the window's work area, and the image viewer covers
@@ -542,25 +323,19 @@ test('the scrims are positioned against the canvas and stack above every popover
   )
   assert.ok(layers.length >= 3, `the sheet still declares layers: ${layers.length}`)
   const at = (selector: string) => layers.find((layer) => layer.selector === selector)?.value
-  const overlay = at('#overlay')
   const rewind = at('#rewind')
-  assert.ok(overlay !== undefined && rewind !== undefined, JSON.stringify(layers))
-  // A permission prompt that arrives over an open rewind panel is holding the
-  // loop and has to be answered first.
-  assert.ok(overlay > rewind, `#overlay ${overlay} must outrank #rewind ${rewind}`)
-  // The image viewer is the one thing above both, and the exception is a
+  assert.ok(rewind !== undefined, JSON.stringify(layers))
+  // The image viewer is the one thing above it, and the exception is a
   // decision: it holds nothing, it is opened by a deliberate act and closed by
-  // three of them, so it cannot trap anyone behind a question the way the two
-  // blocking layers can — and a prompt arriving underneath is still there when
-  // the picture is shut.
+  // three of them, so it cannot trap anyone.
   const lightbox = at('#lightbox')
-  assert.ok(lightbox !== undefined && lightbox > overlay, `#lightbox ${lightbox} must sit over #overlay ${overlay}`)
+  assert.ok(lightbox !== undefined && lightbox > rewind, `#lightbox ${lightbox} must sit over #rewind ${rewind}`)
   for (const layer of layers) {
-    if (layer.selector === '#overlay' || layer.selector === '#rewind' || layer.selector === '#lightbox') continue
+    if (layer.selector === '#rewind' || layer.selector === '#lightbox') continue
     assert.ok(layer.value < rewind, `${layer.selector} (${layer.value}) would draw over a modal`)
   }
   // `#canvas` deliberately declares no z-index: that would make it a stacking
-  // context and trap both scrims under the sidebar's own popovers.
+  // context and trap the scrim under the sidebar's own popovers.
   assert.equal(at('#canvas'), undefined)
 })
 
@@ -571,7 +346,7 @@ test('the stub carries every document member these views reach for', (t) => {
   // `document.createTextNode` directly rather than going through `dom.ts`, which
   // is exactly the kind of thing this scan exists to catch — see
   // `rendererWelcomeView.test.ts`, which scans the three helpers.
-  const sources = ['overlayView.ts', 'rewindView.ts', 'suggestionsView.ts', 'surfaceView.ts', 'diffView.ts', 'markdownView.ts'].map((name) =>
+  const sources = ['actionBar.ts', 'rewindView.ts', 'suggestionsView.ts', 'surfaceView.ts', 'diffView.ts', 'markdownView.ts'].map((name) =>
     readFileSync(path.join(RENDERER, 'dom', name), 'utf8'),
   )
   const members = new Set<string>()

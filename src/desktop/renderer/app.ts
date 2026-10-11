@@ -93,9 +93,10 @@ import { createCanvasHeaderView } from './dom/canvasHeaderView.js'
 import { createSettingsView } from './dom/settingsView.js'
 import { createProjectsPageView } from './dom/projectsPageView.js'
 import { projectCards } from './model/projectsPage.js'
-import { createOverlayView } from './dom/overlayView.js'
 import { createDockedCard } from './dom/dockedCard.js'
 import { createPermissionRequestView } from './dom/permissionRequestView.js'
+import { createPlanCardView } from './dom/planCardView.js'
+import { createPlanPanelView } from './dom/planPanelView.js'
 import { createQuestionCardView } from './dom/questionCardView.js'
 import { createRewindView } from './dom/rewindView.js'
 import { createSurfacePanel } from './dom/surfaceView.js'
@@ -212,14 +213,9 @@ applySidebarWidth(sidebarWidth)
 
 // --- the singleton views ------------------------------------------------------
 
-// The two window-level singletons only ever paint for the active pane, so a click
-// in either belongs to `activePane()` — the same routing `surface` and
-// `rewindPanel` below already use.
-const overlay = createOverlayView(required('overlay'), required('overlay-panel'), (action) => {
-  activePane()?.handleOverlayAction(action)
-})
-// The permission and question cards are not modal: they share one dock that
-// transforms the composer, and route clicks to the active pane like the panel above.
+// The blocking requests are cards in one dock that transforms the composer. The
+// window-level singletons only ever paint for the active pane, so a click belongs
+// to `activePane()` — the same routing `surface` and `rewindPanel` below use.
 const composerDock = createDockedCard(required('composer'), required('composer-request'), {
   onLayoutChange: () => activePane()?.beginLayoutChange(),
   onReturnFocus: () => composer.focus(),
@@ -229,6 +225,11 @@ const permissionRequest = createPermissionRequestView(composerDock, required('co
 })
 const questionCard = createQuestionCardView(composerDock, required('composer-request'), (intent) => {
   activePane()?.handleAskIntent(intent)
+})
+const planCard = createPlanCardView(composerDock, required('composer-request'), {
+  onEnterIntent: (intent) => activePane()?.handleEnterPlanIntent(intent),
+  onExitIntent: (intent) => activePane()?.handleExitPlanIntent(intent),
+  onOpenPlan: () => showSideTab('plan'),
 })
 const surface = createSurfacePanel(required('surface'), (action) => {
   void activePane()?.runSurfaceAction(action)
@@ -317,9 +318,10 @@ function attachPaneSession(lane: string): void {
     lane,
     channel: mux.lane(lane),
     mount: transcriptArea,
-    overlay,
     permissionRequest,
     questionCard,
+    planCard,
+    onPlanProposed: () => showSideTab('plan'),
     rewindPanel,
     surface,
     suggestions,
@@ -1533,6 +1535,7 @@ function pruneSidePanel(): void {
   extraTabs = pruneExtras(extraTabs, {
     browserTabs: mintingTabs > 0 || (lane !== undefined && tabsForLane(shellClient.getBrowserTabs(), lane).length > 0),
     subagents: entries.length > 0,
+    plan: activePane()?.plan() !== undefined,
   })
   selectedSubagent = keepSelectedSubagent(selectedSubagent, entries.map((entry) => entry.id))
 }
@@ -1628,6 +1631,7 @@ const subagentPanel = createSubagentPanelView(required('subagent-view'), {
     if (task) void client!.killTask(task.id).catch(() => {})
   },
 })
+const planPanel = createPlanPanelView(required('plan-view'))
 const threadView = required('thread-view')
 const threadPanel = createThreadPanelView(threadView, (intent) => runThreadPanelIntent(intent))
 const threadDetailHost = required('thread-detail-view')
@@ -1668,11 +1672,15 @@ function renderSubagents(): void {
   const onSubagents = visible && tab === 'subagents'
   const onThreads = visible && tab === 'threads'
   const coordination = activeCoordination()
-  const tabEntries = visible ? sideTabEntries(input, tab, hasCoordination(coordination), entries.length > 0) : []
+  const plan = visible ? pane?.plan() : undefined
+  const tabEntries = visible
+    ? sideTabEntries(input, tab, { coordination: hasCoordination(coordination), subagents: entries.length > 0, plan: plan !== undefined })
+    : []
   show(sideTabs, tabEntries.length > 0)
   const running = entries.filter((entry) => entry.status === 'running' || entry.status === 'awaiting-approval').length
   const labels: Record<SideTab, string> = {
     browser: '浏览器',
+    plan: '计划',
     subagents: running > 0 ? `子代理 · ${running} 运行中` : '子代理',
     threads: hasCoordination(coordination)
       ? `概览 · ${coordinationCounts(coordination!.threads).running} 运行中`
@@ -1701,6 +1709,8 @@ function renderSubagents(): void {
       }),
     )
   }
+  show(required('plan-view'), visible && tab === 'plan')
+  if (visible && tab === 'plan') planPanel.render(plan)
   show(required('subagent-view'), onSubagents)
   if (onSubagents) subagentPanel.render({ entries, selected: selectedSubagent })
   const page = onThreads ? threadPage(viewedThread, coordination, pendingThreads) : undefined
