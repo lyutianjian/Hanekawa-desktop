@@ -408,6 +408,7 @@ export class PlanModeManager {
         kind: 'exit_rejected',
         requestId: req.id,
         detail: decision.feedback,
+        ...exitOutcomeFields(req, planContent),
         createdAt: new Date().toISOString(),
       })
       if (this.deps.emitChatMessage) {
@@ -457,8 +458,19 @@ export class PlanModeManager {
       kind: 'exit_approved',
       requestId: req.id,
       detail: decision.kind,
+      ...exitOutcomeFields(req, approvedPlanContent),
       createdAt: new Date().toISOString(),
     })
+  }
+}
+
+function exitOutcomeFields(
+  req: Extract<SessionRecord, { type: 'plan_mode_request' }>,
+  planContent: string,
+): { toolUseId?: string; planContent?: string } {
+  return {
+    ...(req.toolUseId ? { toolUseId: req.toolUseId } : {}),
+    ...(planContent.trim().length > 0 ? { planContent } : {}),
   }
 }
 

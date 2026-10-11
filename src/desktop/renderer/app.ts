@@ -322,6 +322,7 @@ function attachPaneSession(lane: string): void {
     questionCard,
     planCard,
     onPlanProposed: () => showSideTab('plan'),
+    onOpenPlan: () => showSideTab('plan'),
     rewindPanel,
     surface,
     suggestions,

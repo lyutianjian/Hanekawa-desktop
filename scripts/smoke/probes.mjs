@@ -168,51 +168,42 @@ export const paneByMarker = (marker) => `(() => {
   return { found: false }
 })()`
 
-export const overlay = () => `(() => {
-  const container = document.getElementById('overlay')
-  const panel = document.getElementById('overlay-panel')
-  if (!container || !panel) return { open: false, title: '', subtitle: '', reason: '', block: '', hotkeys: [], options: [], actions: [] }
-  const pick = (selector) => (panel.querySelector(selector) || {}).textContent || ''
+/**
+ * The question card docked in the composer (`dom/questionCardView.ts`): the same
+ * `#composer-request` the permission request uses, with its own rows and buttons.
+ * Centres are returned so a step can aim a real mouse event at a row or a button.
+ * No backticks in here: this whole probe is a template literal.
+ */
+export const questionCard = () => `(() => {
+  const card = document.getElementById('composer-request')
+  const pick = (selector) => (card.querySelector(selector) || {}).textContent || ''
+  const centre = (node) => {
+    const rect = node.getBoundingClientRect()
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 }
+  }
   return {
-    open: !container.hidden && container.getClientRects().length > 0,
-    title: pick('.title'),
-    subtitle: pick('.subtitle'),
-    reason: pick('.reason'),
-    block: pick('.block'),
-    // The hint line is gone as of S5: a key is printed on the button it belongs
-    // to, as a .kbd badge, and a key with no button is not printed at all.
-    // (No backticks in here either — see the note below.)
-    hotkeys: [...panel.querySelectorAll('.kbd')].map((node) => node.textContent),
-    // Centres, so a step can aim a real mouse event at a row or a button. A rect
-    // alone proves nothing about hit-testing (getBoundingClientRect answers in
-    // full for a clipped or covered node), so the evidence is what the click does.
-    // No backticks in here: this whole probe is a template literal.
-    options: [...panel.querySelectorAll('.option')].map((node) => {
-      const rect = node.getBoundingClientRect()
-      return {
-        label: node.textContent,
-        selected: node.classList.contains('selected'),
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
-      }
-    }),
-    actions: [...panel.querySelectorAll('.dialog-btn')].map((node) => {
-      const rect = node.getBoundingClientRect()
-      return {
-        label: node.textContent,
-        primary: node.classList.contains('primary'),
-        danger: node.classList.contains('danger'),
-        selected: node.classList.contains('selected'),
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2,
-      }
-    }),
+    open: !card.hidden && !card.inert && card.getClientRects().length > 0 && Boolean(card.querySelector('.ask-card')),
+    settled: card.classList.contains('presence-open'),
+    header: pick('.ask-chip'),
+    title: pick('.ask-title'),
+    progress: pick('.ask-progress'),
+    options: [...card.querySelectorAll('.ask-option')].map((node) => ({
+      label: (node.querySelector('.ask-option-label') || {}).textContent || '',
+      selected: node.classList.contains('selected'),
+      ...centre(node),
+    })),
+    actions: [...card.querySelectorAll('.dialog-btn')].map((node) => ({
+      label: node.textContent,
+      primary: node.classList.contains('primary'),
+      disabled: node.disabled,
+      ...centre(node),
+    })),
   }
 })()`
 
 /**
- * The permission request, which is **not** in the overlay: it transforms the
- * composer (`dom/permissionRequestView.ts`).
+ * The permission request, which transforms the composer
+ * (`dom/permissionRequestView.ts`).
  *
  * Three things are read rather than one, because "drawn" is not the claim: the
  * card has to be on screen *and* the textarea it replaced has to be gone, or the
@@ -266,36 +257,36 @@ export const permissionRequest = () => `(() => {
 })()`
 
 /**
- * Where the open dialog's scrim actually is (S6).
+ * Where the docked card is, and what the mouse reaches around it.
  *
- * Two questions, and only the second one is evidence: `getBoundingClientRect`
- * answers in full for a node that is covered or clipped, so matching rectangles
- * would still pass if the scrim were painted over the sidebar. `elementFromPoint`
- * is the hit test — what the mouse would reach at a point in the sidebar, and
- * what it would reach in the middle of the canvas.
+ * `getBoundingClientRect` answers in full for a node that is covered or clipped,
+ * so matching rectangles prove nothing; `elementFromPoint` is the hit test — what
+ * a click in the sidebar and in the middle of the transcript would reach. Neither
+ * may land in the dock: a blocking request must not make the rest of the window
+ * unreachable.
  */
-export const modalScope = () => `(() => {
+export const dockScope = () => `(() => {
   const rect = (id) => {
     const node = document.getElementById(id)
     if (!node) return null
     const box = node.getBoundingClientRect()
     return { left: Math.round(box.left), top: Math.round(box.top), right: Math.round(box.right), bottom: Math.round(box.bottom) }
   }
-  const overlay = document.getElementById('overlay')
+  const dock = document.getElementById('composer-request')
   const sidebar = document.getElementById('sidebar')
   const canvasBox = rect('canvas')
   const describe = (x, y) => {
     const hit = document.elementFromPoint(x, y)
-    if (!hit) return { id: 'none', inSidebar: false, inOverlay: false }
+    if (!hit) return { id: 'none', inSidebar: false, inDock: false }
     return {
       id: hit.id || hit.className || hit.tagName,
       inSidebar: sidebar ? sidebar.contains(hit) : false,
-      inOverlay: overlay ? overlay.contains(hit) || hit === overlay : false,
+      inDock: dock ? dock.contains(hit) || hit === dock : false,
     }
   }
   const sidebarBox = sidebar ? sidebar.getBoundingClientRect() : null
   return {
-    overlay: rect('overlay'),
+    dock: rect('composer-request'),
     canvas: canvasBox,
     sidebar: sidebarBox ? { left: Math.round(sidebarBox.left), right: Math.round(sidebarBox.right) } : null,
     atSidebar: sidebarBox ? describe(sidebarBox.left + sidebarBox.width / 2, sidebarBox.top + 120) : null,

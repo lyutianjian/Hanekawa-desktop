@@ -71,6 +71,7 @@ export const exitPlanModeTool: Tool = {
       kind: 'exit',
       submittedFromSessionId: context.sessionId,
       ...(inlinePlan ? { planContent: inlinePlan } : {}),
+      ...(context.currentToolUseId ? { toolUseId: context.currentToolUseId } : {}),
       createdAt: new Date().toISOString(),
       ...(context.currentTurnId ? { turnId: context.currentTurnId } : {}),
     })

@@ -39,6 +39,8 @@ test('AskUserQuestion includes selected preview annotations in the model-facing 
   assert.match(result.content, /"Which layout\?"="Dense"/)
   assert.match(result.content, /selected preview:\nDense table preview/)
   assert.match(result.content, /user notes: Prefer scanability/)
+  // The answers ride the persisted display so a replayed transcript can show them.
+  assert.deepEqual(result.metadata?.display, { summary: 'Answered 1 question', answers: { 'Which layout?': 'Dense' } })
 })
 
 test('AskUserQuestion rejects previews on multi-select questions', async () => {

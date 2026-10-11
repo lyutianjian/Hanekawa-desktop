@@ -22,6 +22,7 @@ import {
   toolStatusLabel,
   type ActivityRun,
   type ActivityStep,
+  type Receipt,
   type SubagentLive,
   type SubagentRun,
   type TranscriptEntry,
@@ -112,6 +113,11 @@ export interface TranscriptHandlers {
    * above the composer — so the row's whole job is to point at it (§7.3).
    */
   onTaskStep(): void
+  /**
+   * A plan receipt was clicked. `planContent` is the plan it was decided on, when
+   * the record kept it; the pane opens the plan tab on it.
+   */
+  onOpenPlan(planContent: string | undefined): void
   /** An `Agent` row was clicked: its run opens in the side panel, not in place. */
   onOpenSubagent(id: string): void
   /**
@@ -709,6 +715,7 @@ function createPainter(
     afterPaint: paint.afterPaint,
     onToggle: handlers.onToggle,
     onTaskStep: handlers.onTaskStep,
+    onOpenPlan: handlers.onOpenPlan,
     onOpenSubagent: handlers.onOpenSubagent,
     onOpenPath: handlers.onOpenPath,
     onViewImage: handlers.onViewImage,
@@ -1463,6 +1470,33 @@ function itemKey(item: TranscriptItem): string {
   return `${item.kind === 'assistant' ? 'text' : 'item'}:${item.id}`
 }
 
+/**
+ * What a settled question or plan leaves behind: a thin-bordered card. A question
+ * lists what was asked in quiet type and the answer under it; a plan is one line
+ * that opens the plan tab.
+ */
+function receiptNode(painter: Painter, receipt: Receipt, classes: string[], key: string): HTMLElement {
+  if (receipt.kind === 'plan') {
+    const { text, planContent } = receipt
+    return painter.node(key, `${classes.join(' ')} plan ${receipt.accepted ? 'accepted' : 'rejected'}`, [text, planContent], () => {
+      const head = button('receipt-head', '', `${text} · 打开计划`, () => painter.onOpenPlan(planContent))
+      append(head, [el('span', 'receipt-text', text), icon('chevron-right')])
+      return [head]
+    })
+  }
+  const { rows } = receipt
+  return painter.node(key, `${classes.join(' ')} question`, [rows.map((row) => `${row.question}\n${row.answer ?? ''}`).join('\n\n')], () => (
+    rows.length === 0
+      ? [el('div', 'receipt-row', el('span', 'receipt-answer none', '未回答'))]
+      : rows.map((row) => el(
+        'div',
+        'receipt-row',
+        el('span', 'receipt-question', row.question),
+        el('span', row.answer === undefined ? 'receipt-answer none' : 'receipt-answer', row.answer ?? '未回答'),
+      ))
+  ))
+}
+
 function itemNode(painter: Painter, item: TranscriptItem): HTMLElement {
   const classes = ['item', item.kind]
   if (item.pending) classes.push('pending')
@@ -1482,6 +1516,7 @@ function itemNode(painter: Painter, item: TranscriptItem): HTMLElement {
     ])
   }
   if (item.kind === 'thread-notes' && item.threadNotes) return threadNotesNode(painter, item, classes, key)
+  if (item.kind === 'receipt' && item.receipt) return receiptNode(painter, item.receipt, classes, key)
   if (item.kind === 'user') {
     // The item is the *column* here, not the bubble: the bubble is its own node,
     // so the meta row sits under it rather than inside it — a control tucked in

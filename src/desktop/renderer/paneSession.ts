@@ -232,6 +232,8 @@ export interface PaneSessionDeps {
   planCard: PlanCardView
   /** A proposed plan has just been put in front of the user on the pane on screen. */
   onPlanProposed?: () => void
+  /** A plan receipt in the transcript was clicked, and the pane's plan is what to show. */
+  onOpenPlan?: () => void
   rewindPanel: RewindPanel
   surface: SurfacePanel
   suggestions: SuggestionsView
@@ -441,6 +443,15 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // cannot reach it — and cannot be clicked either, since it does not paint.
     onTaskStep: () => {
       if (active) deps.taskPanel.flash()
+    },
+    // A receipt can name a plan the pane no longer holds (a reopened session), so
+    // the plan it was decided on becomes the one the tab shows.
+    onOpenPlan: (planContent) => {
+      if (!active) return
+      if (planContent !== undefined && planContent !== proposedPlan?.planContent) {
+        proposedPlan = { planContent, planFilePath: proposedPlan?.planFilePath ?? '' }
+      }
+      deps.onOpenPlan?.()
     },
     // A search hit's path, clicked: the pane hands over exactly what the tool
     // printed (a cwd-relative path, and the hit's line) — resolving it to a

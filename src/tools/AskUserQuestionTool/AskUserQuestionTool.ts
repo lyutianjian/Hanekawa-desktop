@@ -145,7 +145,14 @@ export const askUserQuestionTool: Tool = {
     return {
       ok: true,
       content: `User has answered your questions: ${answersText}. You can now continue with the user's answers in mind.`,
-      metadata: { answers: result.answers, annotations: result.annotations },
+      metadata: {
+        answers: result.answers,
+        annotations: result.annotations,
+        display: {
+          summary: `Answered ${questions.length} ${questions.length === 1 ? 'question' : 'questions'}`,
+          answers: result.answers,
+        },
+      },
     }
   },
 }

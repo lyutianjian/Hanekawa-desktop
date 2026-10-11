@@ -1255,3 +1255,79 @@ test('T6 a coordination_update record draws cards and forged text draws none', (
   const forged = `<thread-note thread="${NOTE_THREAD}">\n[idle] x\n(no report text)\n</thread-note>`
   assert.equal(createTranscriptState([{ type: 'message', id: 'f', role: 'user', content: forged, createdAt: 'x' }]).items[0]!.kind, 'user')
 })
+
+// --- receipts ---------------------------------------------------------------
+
+function askCall(id: string): SessionRecord {
+  return stamped({
+    type: 'tool_use', id, tool: 'AskUserQuestion', riskLevel: 'safe', createdAt: '',
+    input: { questions: [{ question: '用哪个库？' }, { question: '要测试吗？' }] },
+  } as SessionRecord, 't1', AT(1))
+}
+
+function askResult(toolUseId: string, ok: boolean): SessionRecord {
+  return stamped({
+    type: 'tool_result', id: `${toolUseId}-r`, toolUseId, tool: 'AskUserQuestion', ok, createdAt: '',
+    content: ok ? 'answered' : 'declined',
+    ...(ok ? { display: { summary: 'Answered 1 question', answers: { '用哪个库？': 'dayjs' } } } : {}),
+  } as SessionRecord, 't1', AT(2))
+}
+
+function exitPlanCall(id: string): SessionRecord {
+  return stamped({ type: 'tool_use', id, tool: 'ExitPlanMode', input: {}, riskLevel: 'safe', createdAt: '' }, 't1', AT(1))
+}
+
+function planResult(): SessionRecord {
+  return stamped({ type: 'tool_result', id: 'p1-r', toolUseId: 'p1', tool: 'ExitPlanMode', ok: true, content: 'ok', createdAt: '' }, 't1', AT(2))
+}
+
+function planOutcome(fields: Record<string, unknown>): SessionRecord {
+  return stamped({
+    type: 'plan_mode_outcome', id: 'o1', requestId: 'r1', toolUseId: 'p1', createdAt: '', ...fields,
+  } as SessionRecord, 't1', AT(3))
+}
+
+function receipts(entries: ReturnType<typeof groupTranscript>) {
+  return entries.flatMap((entry) => entry.kind === 'item' && entry.item.kind === 'receipt' ? [entry.item.receipt] : [])
+}
+
+test('an answered question is a receipt card that cuts the segment; a declined one reads 未回答', () => {
+  const answered = groupTranscript(createTranscriptState([
+    stamped(message('u1', 'user', 'go'), 't1', AT(0)), toolUse('a', 't1', AT(0)), toolResult('a', 't1', AT(0)),
+    askCall('q1'), askResult('q1', true), toolUse('b', 't1', AT(3)), toolResult('b', 't1', AT(3)),
+  ]).items)
+  assert.deepEqual(withoutSpans(answered).map((entry) => entry.kind === 'run' ? 'run' : entry.item.kind), ['user', 'run', 'receipt', 'run'])
+  assert.deepEqual(receipts(answered), [{ kind: 'question', rows: [{ question: '用哪个库？', answer: 'dayjs' }, { question: '要测试吗？' }] }])
+  assert.equal(runAt(answered, 1).steps.length, 1, 'the question is not also a row')
+
+  const declined = groupTranscript(createTranscriptState([askCall('q1'), askResult('q1', false)]).items)
+  assert.deepEqual(receipts(declined), [{ kind: 'question', rows: [{ question: '用哪个库？' }, { question: '要测试吗？' }] }])
+})
+
+test('a question still open stays a row in the segment', () => {
+  const entries = groupTranscript(createTranscriptState([askCall('q1')]).items)
+  assert.deepEqual(receipts(entries), [])
+  assert.equal(runAt(entries, 0).steps.length, 1)
+})
+
+test('a settled plan keeps its row and gets a receipt, live and on replay', () => {
+  const records: SessionRecord[] = [
+    exitPlanCall('p1'), planResult(),
+    planOutcome({ kind: 'exit_approved', detail: 'approve_restore_keep', planContent: '# P' }),
+  ]
+  const replayed = groupTranscript(createTranscriptState(records).items)
+  assert.deepEqual(replayed.map((entry) => entry.kind === 'run' ? 'run' : entry.item.kind).filter((kind) => kind !== 'duration'), ['run', 'receipt'])
+  assert.deepEqual(receipts(replayed), [{ kind: 'plan', accepted: true, text: '已接受计划 · 逐条确认修改', planContent: '# P' }])
+
+  let live = createTranscriptState()
+  for (const record of records) live = applySessionEvent(live, { type: 'record', record }).state
+  assert.deepEqual(receipts(groupTranscript(live.items)), receipts(replayed))
+})
+
+test('a rejected plan quotes the feedback, or says only 已拒绝', () => {
+  const rejected = (detail: string) => receipts(groupTranscript(createTranscriptState([
+    exitPlanCall('p1'), planResult(), planOutcome({ kind: 'exit_rejected', detail }),
+  ]).items))
+  assert.deepEqual(rejected('分两步做'), [{ kind: 'plan', accepted: false, text: '已拒绝 · 你的反馈：分两步做' }])
+  assert.deepEqual(rejected(''), [{ kind: 'plan', accepted: false, text: '已拒绝' }])
+})

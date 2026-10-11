@@ -346,11 +346,13 @@ function normalizeToolResultDisplay(display: ToolResultDisplay | undefined): Too
   const headerSuffix = display.headerSuffix?.trim()
   const detail = display.detail?.trim()
   const taskSnapshot = normalizeTaskDisplaySnapshot(display.taskSnapshot)
+  const { answers } = display
   return {
     summary,
     ...(headerSuffix ? { headerSuffix } : {}),
     ...(detail ? { detail } : {}),
     ...(taskSnapshot ? { taskSnapshot } : {}),
+    ...(answers ? { answers } : {}),
   }
 }
 

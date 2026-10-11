@@ -344,24 +344,20 @@ async function step2(ctx) {
       && dialog.box.left >= dialog.composerBox.left,
     JSON.stringify({ card: dialog.box, composer: dialog.composerBox }),
   )
-  // The modal layer stays shut: three blocking requests still live there, and a
-  // scrim raised beside the card would dim the transcript the question is about.
-  // The hit test is the evidence — `getBoundingClientRect` answers in full for a
-  // node that is covered, so "the overlay reports hidden" alone would still pass
-  // over a scrim that had painted.
-  const overlayNow = await read(ctx, probes.overlay())
-  ctx.ok('no scrim is raised for a permission request', overlayNow.open === false, `open=${overlayNow.open}`)
-  const scope = await read(ctx, probes.modalScope())
+  // Nothing is dimmed or covered: the transcript the question is about stays
+  // reachable. The hit test is the evidence — `getBoundingClientRect` answers in
+  // full for a node that is covered.
+  const scope = await read(ctx, probes.dockScope())
   ctx.ok(
     'the transcript the question is about is still reachable',
-    scope.atCanvas?.inOverlay === false,
+    scope.atCanvas?.inDock === false,
     JSON.stringify(scope.atCanvas),
   )
   // And the sidebar, so switching away from a parked pane stays a supported move
   // — which is the whole reason the badge below has to be visible.
   ctx.ok(
     'the sidebar is live while a request is parked',
-    scope.atSidebar?.inSidebar === true && scope.atSidebar?.inOverlay === false,
+    scope.atSidebar?.inSidebar === true && scope.atSidebar?.inDock === false,
     JSON.stringify(scope.atSidebar),
   )
   await ctx.shot('02a-permission-request', 'the permission request drawn inside the composer capsule — no scrim, the transcript still readable — with its title, question, command block and button bar')
@@ -861,7 +857,7 @@ async function step8(ctx) {
   ctx.note(`focus after opening: ${open.focus} (inside the screen: ${open.focusInside})`)
 
   // 8a2 — todo V1. The other half of S2's "the scrim covers exactly the canvas":
-  // a border here would inset `#overlay`'s `inset: 0` by 1px on every side.
+  // a border here would inset the full-window layers by 1px on every side.
   ctx.ok(
     'the canvas floats on an outline, not on a border',
     open.canvasHairline?.outlineWidth === '1px' && open.canvasHairline?.borderTopWidth === '0px',

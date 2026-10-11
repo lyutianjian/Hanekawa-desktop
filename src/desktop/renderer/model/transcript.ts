@@ -77,6 +77,7 @@ export type TranscriptItemKind =
   | 'subagent'
   | 'duration'
   | 'thread-notes'
+  | 'receipt'
 
 /**
  * How the host captions a `tool_use` record, by record id.
@@ -159,6 +160,12 @@ export interface ToolStepDetail {
   readonly live?: SubagentLive
   /** `TodoWrite` only: the `3/6` the head shows (§4.4). */
   readonly progress?: { readonly completed: number; readonly total: number }
+  /** `AskUserQuestion`: the questions asked (`input.questions[].question`), in order. */
+  readonly questions?: readonly string[]
+  /** `AskUserQuestion`: what the user answered, by question text (`display.answers`). */
+  readonly answers?: Readonly<Record<string, string>>
+  /** `ExitPlanMode`: how the user settled the plan, from its `plan_mode_outcome` record. */
+  readonly plan?: PlanOutcome
   /**
    * The caption came from the host DTO rather than from guessing at `input`.
    *
@@ -168,6 +175,20 @@ export interface ToolStepDetail {
    */
   readonly captioned?: boolean
 }
+
+export type PlanDecision = 'approve_restore_keep' | 'approve_auto_keep' | 'approve_bypass_keep' | 'reject'
+
+export interface PlanOutcome {
+  readonly decision: PlanDecision
+  /** A rejection's feedback; absent when the user declined without a word. */
+  readonly feedback?: string
+  readonly planContent?: string
+}
+
+/** What a settled AskUserQuestion or ExitPlanMode leaves in the conversation. */
+export type Receipt =
+  | { readonly kind: 'question'; readonly rows: readonly { readonly question: string; readonly answer?: string }[] }
+  | { readonly kind: 'plan'; readonly accepted: boolean; readonly text: string; readonly planContent?: string }
 
 export interface TranscriptItem {
   /** Stable within a state: a record id, or a synthetic key for live items. */
@@ -214,6 +235,8 @@ export interface TranscriptItem {
   readonly queuedMessageId?: string
   /** On a `thread-notes` item: the wake message's / update's notes, drawn as cards. */
   readonly threadNotes?: ThreadNotesData
+  /** On a `receipt` item, which `groupTranscript` derives from a settled tool step. */
+  readonly receipt?: Receipt
 }
 
 /** One step inside an activity run. `text` is the body; heads are the view's job. */
@@ -785,7 +808,9 @@ function applyRecord(
     ? record.toolUseId
     : record.type === 'subagent_transcript'
       ? record.parentToolUseId
-      : undefined
+      : record.type === 'plan_mode_outcome'
+        ? record.toolUseId
+        : undefined
   if (mergeKey !== undefined) {
     const answered = next.findIndex((item) => item.id === mergeKey)
     if (answered !== -1) {
@@ -893,6 +918,7 @@ function recordItems(record: SessionRecord, context: ItemContext = {}): Transcri
         ...(dto ? { captioned: true } : {}),
         ...(record.tool === AGENT_TOOL ? agentTask(record.input) : {}),
         ...(record.tool === 'Bash' ? bashDescription(record.input) : {}),
+        ...(record.tool === ASK_TOOL ? askedQuestions(record.input) : {}),
       }
       return [{
         id: record.id,
@@ -969,6 +995,30 @@ function recordItems(record: SessionRecord, context: ItemContext = {}): Transcri
       }]
     }
 
+    case 'plan_mode_outcome': {
+      // Only an exit the host could name a call for: the outcome belongs to that
+      // call's step and merges into it, as a sub-agent's transcript does.
+      if (record.toolUseId === undefined || (record.kind !== 'exit_approved' && record.kind !== 'exit_rejected')) return []
+      const decision = record.kind === 'exit_rejected' ? 'reject' : record.detail as PlanDecision
+      const feedback = record.kind === 'exit_rejected' ? record.detail?.trim() : undefined
+      return [{
+        id: record.toolUseId,
+        kind: 'tool',
+        text: '',
+        toolName: EXIT_PLAN_TOOL,
+        tool: {
+          displayName: EXIT_PLAN_TOOL,
+          useSummary: '',
+          plan: {
+            decision,
+            ...(feedback ? { feedback } : {}),
+            ...(record.planContent === undefined ? {} : { planContent: record.planContent }),
+          },
+        },
+        ...stamp,
+      }]
+    }
+
     case 'coordination_update': {
       const threadNotes = parseCoordinationUpdate(record.content)
       return threadNotes ? [{ id: record.id, kind: 'thread-notes', text: record.content, threadNotes, ...stamp }] : []
@@ -1022,6 +1072,7 @@ function resultDetail(
         total: display.taskSnapshot.counts.total,
       },
     }),
+    ...(display?.answers === undefined ? {} : { answers: display.answers }),
   }
 }
 
@@ -1043,6 +1094,9 @@ function mergeToolItems(call: TranscriptItem, result: TranscriptItem): Transcrip
   // over the run's own facts.
   if (resultTool.subagent !== undefined) {
     return { ...call, tool: { ...callTool, subagent: resultTool.subagent } }
+  }
+  if (resultTool.plan !== undefined) {
+    return { ...call, tool: { ...callTool, plan: resultTool.plan } }
   }
   const { awaitingApproval: _awaiting, ...settled } = callTool
   const tool: ToolStepDetail = {
@@ -1344,8 +1398,21 @@ function buildTranscriptEntries(input: readonly TranscriptItem[]): TranscriptEnt
     // An empty assistant record is the shape of a tool-only request: no bubble,
     // and no reason to end the run around it.
     if (item.kind === 'assistant' && item.text.trim().length === 0) continue
+    // A settled question is its own card, not a row: it cuts the segment like prose.
+    const asked = item.toolName === ASK_TOOL ? receiptOf(item) : undefined
+    if (asked) {
+      flush(false)
+      entries.push({ kind: 'item', item: receiptItem(item.id, item, asked) })
+      continue
+    }
     if (isRunItem(item)) {
       segment.push(item)
+      // The plan's row stays in the segment; its decision follows as a card.
+      const decided = item.toolName === EXIT_PLAN_TOOL ? receiptOf(item) : undefined
+      if (decided) {
+        flush(false)
+        entries.push({ kind: 'item', item: receiptItem(`receipt:${item.id}`, item, decided) })
+      }
       continue
     }
     flush(item.interrupt === true)
@@ -1405,6 +1472,8 @@ function hoistDurations(items: readonly TranscriptItem[]): readonly TranscriptIt
 }
 
 const TASK_TOOL = 'TodoWrite'
+const ASK_TOOL = 'AskUserQuestion'
+const EXIT_PLAN_TOOL = 'ExitPlanMode'
 const AGENT_TOOL = 'Agent'
 const AGENT_LABEL = '子代理'
 
@@ -1421,6 +1490,56 @@ const SUBAGENT_STATUS_LABELS: Readonly<Record<SubagentTaskStatus, string>> = {
  * Agent calls only: another tool whose input happens to carry a `task` key
  * must not pose as one.
  */
+function askedQuestions(input: unknown): { questions?: readonly string[] } {
+  const asked = typeof input === 'object' && input !== null ? (input as { questions?: unknown }).questions : undefined
+  if (!Array.isArray(asked)) return {}
+  const questions = asked
+    .map((one) => (typeof one === 'object' && one !== null ? (one as { question?: unknown }).question : undefined))
+    .filter((question): question is string => typeof question === 'string')
+  return questions.length > 0 ? { questions } : {}
+}
+
+const PLAN_MODE_LABELS: Readonly<Record<Exclude<PlanDecision, 'reject'>, string>> = {
+  approve_restore_keep: '逐条确认修改',
+  approve_auto_keep: '自动执行',
+  approve_bypass_keep: '绕过权限',
+}
+
+/**
+ * The receipt a settled step leaves behind, or nothing when it has none yet (a
+ * question still open, a plan not decided, a question answered before the host
+ * recorded the answers).
+ */
+function receiptOf(item: TranscriptItem): Receipt | undefined {
+  const tool = item.tool
+  if (tool === undefined || item.pending === true) return undefined
+  if (item.toolName === ASK_TOOL) {
+    if (tool.answers === undefined && item.failed !== true) return undefined
+    const questions = tool.questions ?? Object.keys(tool.answers ?? {})
+    return { kind: 'question', rows: questions.map((question) => {
+      const answer = tool.answers?.[question]
+      return answer === undefined || answer.trim().length === 0 ? { question } : { question, answer }
+    }) }
+  }
+  const plan = tool.plan
+  if (item.toolName !== EXIT_PLAN_TOOL || plan === undefined) return undefined
+  const text = plan.decision === 'reject'
+    ? plan.feedback ? `已拒绝 · 你的反馈：${plan.feedback}` : '已拒绝'
+    : `已接受计划 · ${PLAN_MODE_LABELS[plan.decision]}`
+  return { kind: 'plan', accepted: plan.decision !== 'reject', text, ...(plan.planContent === undefined ? {} : { planContent: plan.planContent }) }
+}
+
+function receiptItem(id: string, item: TranscriptItem, receipt: Receipt): TranscriptItem {
+  return {
+    id,
+    kind: 'receipt',
+    text: receipt.kind === 'plan' ? receipt.text : receipt.rows.map((row) => `${row.question} ${row.answer ?? '未回答'}`).join('\n'),
+    receipt,
+    ...(item.turnId === undefined ? {} : { turnId: item.turnId }),
+    ...(item.createdAt === undefined ? {} : { createdAt: item.createdAt }),
+  }
+}
+
 function agentTask(input: unknown): { task?: string; agentType?: string } {
   if (typeof input !== 'object' || input === null) return {}
   const { task, subagent_type: agentType } = input as { task?: unknown; subagent_type?: unknown }

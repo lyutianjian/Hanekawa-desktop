@@ -323,6 +323,8 @@ export interface PlanModeRequestRecord {
   kind: 'enter' | 'exit' | 'subagent_exit'
   submittedFromSessionId: string
   planContent?: string
+  /** The `ExitPlanMode` call that raised it, so the outcome can be shown on that call. */
+  toolUseId?: string
   createdAt: string
   turnId?: string
 }
@@ -333,6 +335,9 @@ export interface PlanModeOutcomeRecord {
   kind: 'enter_approved' | 'enter_rejected' | 'exit_approved' | 'exit_rejected'
   requestId: string
   detail?: string
+  /** Exit outcomes: the call that raised the request, and the plan the decision was made on. */
+  toolUseId?: string
+  planContent?: string
   createdAt: string
   turnId?: string
 }
@@ -634,6 +639,8 @@ export interface ToolResultDisplay {
   headerSuffix?: string
   detail?: string
   taskSnapshot?: TaskDisplaySnapshot
+  /** `AskUserQuestion`: the user's answers, keyed by question text. */
+  answers?: Record<string, string>
 }
 
 export interface TaskDisplaySnapshot {

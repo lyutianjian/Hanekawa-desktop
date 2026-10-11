@@ -33,7 +33,7 @@ const PHRASES: Record<string, { readonly verb: string; readonly target?: 'file' 
   TaskList: { verb: '查看任务' },
   TaskGet: { verb: '查看任务' },
   EnterPlanMode: { verb: '进入计划模式' },
-  ExitPlanMode: { verb: '提交计划' },
+  ExitPlanMode: { verb: '提出计划' },
   Config: { verb: '修改设置' },
 }
 

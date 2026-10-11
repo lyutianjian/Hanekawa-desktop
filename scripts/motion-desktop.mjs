@@ -358,11 +358,11 @@ async function permissionScene(project, lane) {
   }
 }
 
-async function modalScene(lane) {
-  await begin('modal')
-  await watch('panel', '#overlay-panel', 'document')
-  await watch('scrim', '#overlay', 'document')
-  await mark('modal-enter')
+async function questionScene(lane) {
+  await begin('question')
+  await watch('composer', '#composer', 'document')
+  await watch('card', '#composer-request', 'document')
+  await mark('question-enter')
   const id = await app.post(handle, lane, { type: 'run-tool', name: 'AskUserQuestion', input: {
     questions: ['第一项：选择验收记录？', '第二项：确认继续验收？'].map((question) => ({
       question, header: '动效验收', options: [
@@ -370,29 +370,28 @@ async function modalScene(lane) {
       ],
     })),
   } })
-  await present('#overlay-panel')
+  await present('#composer-request')
   await sleep(450)
-  await mark('modal-content')
+  await mark('question-content')
+  await key(handle.cdp, '1')
   await key(handle.cdp, 'Enter')
   await sleep(150)
-  check('modal content updates on the same panel', await read("window.__motion.node('panel') === document.querySelector('#overlay-panel') && document.querySelector('#overlay-panel').textContent.includes('第二项')"))
-  await mark('modal-exit')
+  check('question content updates in the same dock', await read("window.__motion.node('card') === document.querySelector('#composer-request') && document.querySelector('#composer-request').textContent.includes('第二项')"))
+  await mark('question-exit')
+  await key(handle.cdp, '1')
   await key(handle.cdp, 'Enter')
-  check('modal settles business and focus before exit', await read("document.querySelector('#overlay').inert && !document.querySelector('#overlay').hidden && document.activeElement === document.querySelector('#input')"))
+  check('question settles business and focus before exit', await read("document.querySelector('#composer-request').inert && !document.querySelector('#composer-request').hidden && document.activeElement === document.querySelector('#input')"))
   await key(handle.cdp, 'y')
-  check('modal exit does not intercept typing', await read("document.querySelector('#input').value === 'y'"))
-  await waitFor('modal tool reply', () => app.hasReply(handle, id), { interval: 10 })
-  check('modal bridge reply precedes visual removal', await read("!document.querySelector('#overlay').hidden"))
+  check('question exit does not intercept typing', await read("document.querySelector('#input').value === 'y'"))
+  await waitFor('question tool reply', () => app.hasReply(handle, id), { interval: 10 })
+  check('question bridge reply precedes visual removal', await read("!document.querySelector('#composer-request').hidden"))
   await app.reply(handle, id)
   await sleep(350)
   await read("document.querySelector('#input').value = ''; document.querySelector('#input').dispatchEvent(new Event('input',{bubbles:true}))")
-  const record = await finish()
-  const exit = record.frames.filter((frame) => frame.label === 'modal-exit' && frame.nodes.panel?.visible && frame.nodes.panel.opacity > 0.01)
-  check('scrim covers every sampled visible exit frame', exit.length > 0 && exit.every((frame) => frame.nodes.scrim.scrimOpacity > 0), { samples: exit.length })
-  check('modal text is never scaled', record.frames.every((frame) => {
-    const transform = frame.nodes.panel?.transform
-    return !transform || transform === 'none' || /^matrix\(1, 0, 0, 1,/.test(transform)
-  }))
+  await finish()
+  check('question card interpolates the composer height', report.scenes.question.summaries['question-enter']?.targets.composer?.distinctHeights >= 6, {
+    heights: report.scenes.question.summaries['question-enter']?.targets.composer?.distinctHeights,
+  })
 }
 
 async function settingsScene() {
@@ -475,7 +474,7 @@ try {
   await disclosureScene()
   await layoutScene()
   await permissionScene(project, lane)
-  await modalScene(lane)
+  await questionScene(lane)
   await settingsScene()
   await reducedScene()
   await shot(handle.cdp, join(out, theme + '-' + scale + '.png'))

@@ -108,7 +108,7 @@ export interface RunSummary {
   readonly aborted: boolean
 }
 
-type Category = 'cmd' | 'read' | 'edit' | 'search' | 'web' | 'agent' | 'todo' | 'other'
+type Category = 'cmd' | 'read' | 'edit' | 'search' | 'web' | 'agent' | 'todo' | 'plan' | 'other'
 
 const CATEGORY_OF: Readonly<Record<string, Category>> = {
   Bash: 'cmd', BashOutput: 'cmd', KillShell: 'cmd',
@@ -117,6 +117,7 @@ const CATEGORY_OF: Readonly<Record<string, Category>> = {
   Grep: 'search', Glob: 'search',
   WebFetch: 'web', WebSearch: 'web',
   Agent: 'agent',
+  ExitPlanMode: 'plan',
   TodoWrite: 'todo', TaskCreate: 'todo', TaskUpdate: 'todo', TaskList: 'todo', TaskGet: 'todo',
 }
 
@@ -127,6 +128,7 @@ const CATEGORY_TEXT: Readonly<Record<Exclude<Category, 'todo'>, (count: number) 
   search: (count) => `搜索 ${count} 次`,
   web: (count) => `浏览 ${count} 个网页`,
   agent: (count) => `运行 ${count} 个子代理`,
+  plan: () => '提出计划',
   other: (count) => `已使用 ${count} 个工具`,
 }
 

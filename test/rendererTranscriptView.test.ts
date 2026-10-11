@@ -251,6 +251,8 @@ interface Rendered {
   readonly rewound: readonly string[]
   /** Every `Agent` row click, by id. */
   readonly openedSubagents: readonly string[]
+  /** The plan text each plan-receipt click handed the pane. */
+  readonly openedPlans: ReadonlyArray<string | undefined>
   render(state: TranscriptState, disclosure?: DisclosureState, activity?: WaitingInput, selectedSubagent?: string, header?: HTMLElement): void
   stopClock(): void
   dispose(): void
@@ -271,10 +273,12 @@ function mount(t: { after(fn: () => void): void }): Rendered {
   const viewedImages: Array<readonly [string, string]> = []
   const thumbs = new Map<string, string>()
   const openedSubagents: string[] = []
+  const openedPlans: Array<string | undefined> = []
   let taskClicks = 0
   const view = createTranscriptView(container, host, {
     onToggle: (id, expanded) => toggled.push([id, expanded]),
     onTaskStep: () => { taskClicks += 1 },
+    onOpenPlan: (content) => openedPlans.push(content),
     onOpenPath: (path, line) => opened.push([path, line]),
     onViewImage: (image) => viewedImages.push([image.id, image.name]),
     imageThumbUrl: (imageId) => thumbs.get(imageId),
@@ -305,6 +309,7 @@ function mount(t: { after(fn: () => void): void }): Rendered {
     copied,
     rewound,
     openedSubagents,
+    openedPlans,
     render: (state, disclosure = NO_DISCLOSURE, activity, selectedSubagent, header) => view.render(state, disclosure, activity, selectedSubagent, header),
     stopClock: () => view.stopClock(),
     dispose: () => view.dispose(),
@@ -2168,7 +2173,7 @@ test('T6 thread note cards: head, status label, and 查看 only with a thread id
   const container = stub.createContainer('transcript')
   const host = stub.createContainer('pane')
   const real = createTranscriptView(container, host, {
-    onToggle: () => {}, onTaskStep: () => {}, onOpenSubagent: () => {}, onOpenPath: () => {},
+    onToggle: () => {}, onTaskStep: () => {}, onOpenPlan: () => {}, onOpenSubagent: () => {}, onOpenPath: () => {},
     onViewImage: () => {}, imageThumbUrl: () => undefined, onCopy: () => {},
     onOpenThread: (id) => opened.push(id),
   })
@@ -2193,4 +2198,27 @@ test('T6 thread note cards: head, status label, and 查看 only with a thread id
   assert.deepEqual(opened, ['thr_0123456789ab'])
   assert.equal(buttons[1]!.disabled, true)
   real.dispose()
+})
+
+test('receipts: a question card lists asks and answers, a plan card opens the plan', (t) => {
+  const view = mount(t)
+  const ask: TranscriptItem = {
+    id: 'q1', kind: 'tool', text: '', toolName: 'AskUserQuestion', turnId: 't1',
+    tool: { displayName: 'Ask', useSummary: '', questions: ['用哪个库？', '要测试吗？'], answers: { '用哪个库？': 'dayjs' } },
+  }
+  const plan: TranscriptItem = {
+    id: 'p1', kind: 'tool', text: '', toolName: 'ExitPlanMode', turnId: 't1',
+    tool: { displayName: 'Plan', useSummary: '', plan: { decision: 'approve_auto_keep', planContent: '# 计划' } },
+  }
+  view.render(transcript([ask, plan]))
+  const cards = view.items().filter((node) => node.classes.includes('receipt'))
+  assert.equal(cards.length, 2)
+  const [question, planCard] = cards as [StubView, StubView]
+  assert.deepEqual(question.children.map((row) => row.children.map((cell) => cell.text)), [
+    ['用哪个库？', 'dayjs'],
+    ['要测试吗？', '未回答'],
+  ])
+  assert.equal(planCard.text, '已接受计划 · 自动执行')
+  view.stub.click(planCard.children[0]?.node)
+  assert.deepEqual(view.openedPlans, ['# 计划'])
 })

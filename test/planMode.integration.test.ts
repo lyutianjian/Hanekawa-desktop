@@ -87,7 +87,7 @@ function emitEnterRequest(records: SessionRecord[], sessionId: string): string {
 function emitExitRequest(
   records: SessionRecord[],
   sessionId: string,
-  options: { kind?: 'exit' | 'subagent_exit'; planContent?: string } = {},
+  options: { kind?: 'exit' | 'subagent_exit'; planContent?: string; toolUseId?: string } = {},
 ): string {
   const id = randomUUID()
   records.push({
@@ -96,6 +96,7 @@ function emitExitRequest(
     kind: options.kind ?? 'exit',
     submittedFromSessionId: sessionId,
     ...(options.planContent !== undefined ? { planContent: options.planContent } : {}),
+    ...(options.toolUseId !== undefined ? { toolUseId: options.toolUseId } : {}),
     createdAt: new Date().toISOString(),
   })
   return id
@@ -116,7 +117,7 @@ test('Integration A: enter approved → write plan → exit (disk fallback) → 
     const planPath = h.manager.resolvePlanFilePathLazy()
     await writePlan(planPath, '# Plan A\n')
 
-    emitExitRequest(h.records, h.meta.id) // no inline plan -> disk fallback
+    emitExitRequest(h.records, h.meta.id, { toolUseId: 'call-1' }) // no inline plan -> disk fallback
     await h.manager.beforeTurn()
 
     assert.equal(h.dialogInputs.length, 1)
@@ -124,6 +125,9 @@ test('Integration A: enter approved → write plan → exit (disk fallback) → 
     assert.equal(h.manager.isActive(), false)
     const approved = h.records.find((r) => r.type === 'plan_mode_outcome' && r.kind === 'exit_approved')
     assert.ok(approved)
+    // The outcome names the call and carries the plan, so a replayed transcript can show it.
+    assert.equal((approved as { toolUseId?: string }).toolUseId, 'call-1')
+    assert.equal((approved as { planContent?: string }).planContent, '# Plan A\n')
   })
 })
 
