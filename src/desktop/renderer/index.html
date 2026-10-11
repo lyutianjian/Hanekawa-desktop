@@ -207,16 +207,15 @@
         hidden
       ></div>
       <!--
-        The browser panel. Its last child is a *hole*: an empty element whose
+        The side panel. Its browser view ends in a *hole*: an empty element whose
         only job is to be measured, because the page itself is a native
         `WebContentsView` the main process positions over that rect — a native
         view cannot be a node in this document.
 
         Which is why the hole must stay geometrically honest: no `transform` on
         it or any ancestor (that would change the containing block its rect is
-        reported against), and the panel's frame is an `outline` rather than a
-        `border`, the same discipline `#canvas` follows and for the same reason —
-        an outline never enters `getBoundingClientRect()`.
+        reported against), and the hole carries no border or padding of its own;
+        the card's frame belongs to the panel around it.
       -->
       <aside id="browser-panel" hidden aria-label="侧栏">
         <div id="side-tabs" role="tablist" aria-label="侧栏视图" hidden></div>
@@ -226,11 +225,24 @@
           <div id="browser-banner" role="status" hidden></div>
           <div id="browser-hole"></div>
         </div>
-        <div id="plan-view" hidden></div>
-        <div id="subagent-view" hidden></div>
-        <!-- The 「线程」 tab: the active project's coordination threads. -->
-        <div id="thread-view" hidden></div>
-        <div id="thread-detail-view" hidden></div>
+        <!-- The overview: collapsible sections, each shown only while it has content. -->
+        <div id="side-sections" hidden>
+          <section class="side-section" id="side-section-plan" hidden>
+            <button type="button" id="side-section-plan-head" class="side-section-head" aria-expanded="true"></button>
+            <div id="side-section-plan-body" class="side-section-body"><div id="plan-view"></div></div>
+          </section>
+          <section class="side-section" id="side-section-subagents" hidden>
+            <button type="button" id="side-section-subagents-head" class="side-section-head" aria-expanded="true"></button>
+            <div id="side-section-subagents-body" class="side-section-body"><div id="subagent-view"></div></div>
+          </section>
+          <section class="side-section" id="side-section-threads" hidden>
+            <button type="button" id="side-section-threads-head" class="side-section-head" aria-expanded="true"></button>
+            <div id="side-section-threads-body" class="side-section-body">
+              <div id="thread-view" hidden></div>
+              <div id="thread-detail-view" hidden></div>
+            </div>
+          </section>
+        </div>
       </aside>
     </div>
     <!--

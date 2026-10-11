@@ -887,24 +887,24 @@ body.settings-open #sidebar-resizer { display: none; }
 body.resizing #sidebar { transition: none; }
 
 /* --- browser panel --- */
-/* The third column. Square at the bottom and flush to the window's edge,
-   deliberately: everything below the address row is covered by a native
-   `WebContentsView`, which is not clipped by this element's `overflow` or its
-   `border-radius` — a rounded bottom corner here would simply have a square
-   page corner painted over it. The top two corners are above the hole, in the
-   panel's own chrome, so they round like every other surface. */
+/* The third column, a card floating 8px off the window's edge: lighter than the
+   canvas, hairline border, rounded. Everything below the address row is covered
+   by a native `WebContentsView`, which is not clipped by this element's
+   `overflow` or `border-radius` — so the hole keeps an 8px margin inside the
+   card (a margin never enters `getBoundingClientRect()`), and the page's square
+   corners sit within the card's own rounded ones instead of poking out. */
 #browser-panel {
+  position: relative;
   flex: 0 0 var(--browser-panel-width);
   min-width: 0;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  margin: 0;
-  /* Same tone as the sidebar (the frame), so both columns read as chrome
-     around the lighter canvas, with a stronger hairline on its edge. */
-  background: var(--surface-base);
+  margin: var(--space-2);
+  background: var(--surface-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
   overflow: hidden;
-  box-shadow: -1px 0 0 var(--border-strong);
 }
 #browser-panel[hidden] { display: none; }
 /* The hole. No padding, no border, no transform — it is a measurement, and
@@ -912,6 +912,7 @@ body.resizing #sidebar { transition: none; }
 #browser-hole {
   flex: 1 1 auto;
   min-height: 0;
+  margin: 0 var(--space-2) var(--space-2);
   background: var(--surface-base);
   /* The panel's own two pages (below) are positioned against this. `relative`
      is the one thing that can be done to the hole safely: it establishes a
@@ -1091,12 +1092,12 @@ body.resizing #sidebar { transition: none; }
   font-size: var(--type-meta);
 }
 #browser-url:focus { outline: none; box-shadow: 0 0 0 1px var(--focus-ring); }
-/* Mirrors `#sidebar-resizer`, reflected: the sash hugs the canvas edge, so the
-   hairline goes on this handle's *left*. */
+/* Sits in the 8px gap between the canvas and the floating card, taking no
+   width of its own; the hairline runs down the middle of the gap. */
 #browser-resizer {
   position: relative;
   flex: 0 0 var(--space-2);
-  margin-left: calc(-1 * var(--space-2));
+  margin-right: calc(-1 * var(--space-2));
   align-self: stretch;
   cursor: col-resize;
   background: transparent;
@@ -1107,7 +1108,7 @@ body.resizing #sidebar { transition: none; }
   position: absolute;
   top: var(--space-5);
   bottom: var(--space-5);
-  left: 0;
+  left: calc(50% - 0.5px);
   width: 1px;
   background: var(--border-strong);
   opacity: 0;
@@ -1119,7 +1120,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
    beside it would be the one thing on screen it does not cover. */
 body.settings-open #browser-panel,
 body.settings-open #browser-resizer { display: none; }
-/* The panel's two views take turns in it: the browser, and the sub-agents. */
+/* The panel's two modes take turns in it: the browser, and the overview. */
 #browser-view {
   flex: 1 1 auto;
   min-height: 0;
@@ -1127,7 +1128,10 @@ body.settings-open #browser-resizer { display: none; }
   flex-direction: column;
 }
 #browser-view[hidden] { display: none; }
-/* Shown only once the session has a sub-agent: the browser alone needs no switch. */
+/* Section heads and the solo close button share one 36px row, so the × sits on the first title's midline.
+   The mode switch (浏览器 / 概览) and the close button. Drawn when both modes
+   exist; alone in the overview it shrinks to the close button, laid over the
+   first section's head so no row is spent on it. */
 #side-tabs {
   flex: 0 0 auto;
   display: flex;
@@ -1137,6 +1141,15 @@ body.settings-open #browser-resizer { display: none; }
   border-bottom: 1px solid var(--border-subtle);
 }
 #side-tabs[hidden] { display: none; }
+#side-tabs.solo {
+  position: absolute;
+  top: 0;
+  right: var(--space-1);
+  z-index: 1;
+  height: 36px;
+  padding: 0;
+  border-bottom: 0;
+}
 .side-tab {
   border: 0;
   border-radius: var(--radius-sm);
@@ -1148,7 +1161,7 @@ body.settings-open #browser-resizer { display: none; }
   cursor: default;
 }
 .side-tab:hover { background: var(--surface-hover); }
-.side-tab.active { background: var(--surface-card); color: var(--text-primary); }
+.side-tab.active { background: var(--surface-active); color: var(--text-primary); }
 .side-tab-close {
   margin-left: auto;
   border: 0;
@@ -1157,22 +1170,55 @@ body.settings-open #browser-resizer { display: none; }
   color: var(--text-tertiary);
   font: inherit;
   font-size: var(--type-meta);
-  padding: 0 var(--space-2);
+  padding: var(--space-1) var(--space-2);
   cursor: default;
 }
-.side-tab-x {
-  margin-left: calc(-1 * var(--space-1));
+.side-tab-close:hover { background: var(--surface-active); color: var(--text-primary); }
+/* The overview: sections stacked in one scroller, hairlines between them. A
+   section holding a page (a sub-agent's or thread's transcript) stands alone
+   and takes the column's height. */
+#side-sections {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+#side-sections[hidden] { display: none; }
+.side-section { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; }
+.side-section[hidden] { display: none; }
+.side-section + .side-section:not([hidden]) { border-top: 1px solid var(--border-subtle); }
+.side-section-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--space-3);
   border: 0;
-  border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-tertiary);
+  color: var(--text-primary);
   font: inherit;
-  font-size: var(--type-meta);
-  padding: 0 var(--space-1);
+  font-size: var(--type-ui);
+  font-weight: 500;
+  text-align: left;
   cursor: default;
 }
-.side-tab-close:hover,
-.side-tab-x:hover { background: var(--surface-active); color: var(--text-primary); }
+#side-sections > .side-section:not([hidden]):first-child .side-section-head { padding-right: 40px; }
+.side-section-head .icon { width: 14px; height: 14px; color: var(--text-tertiary); transition: transform var(--motion-micro) var(--ease-out); }
+.side-section-head[aria-expanded="false"] .icon { transform: rotate(-90deg); }
+.side-section-head:hover .icon { color: var(--text-primary); }
+.side-section-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-sm); }
+.side-section-count { color: var(--text-tertiary); font-weight: 400; font-size: var(--type-meta); }
+.side-section-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  max-height: 40vh;
+}
+.side-section-body[hidden] { display: none; }
+.side-section.focus { flex: 1 1 auto; }
+.side-section.focus .side-section-body { flex: 1 1 auto; max-height: none; }
 #subagent-view {
   flex: 1 1 auto;
   min-height: 0;
@@ -1181,7 +1227,7 @@ body.settings-open #browser-resizer { display: none; }
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  padding: var(--space-2);
+  padding: 0 var(--space-2) var(--space-2);
 }
 #subagent-view[hidden] { display: none; }
 #thread-detail-view {

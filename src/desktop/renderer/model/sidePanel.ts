@@ -1,20 +1,26 @@
 /**
  * The right-hand panel's decisions, as data: which switch governs it for the
- * session on screen, which tab it shows, and what the thread tag above the
- * composer says. Pure, from wire types only.
+ * session on screen, which of its two modes it shows, which sections the
+ * overview stacks, and what the thread tag above the composer says. Pure, from
+ * wire types only.
  *
- * A coordinator or thread session has its own 概览 switch, remembered per
- * project; the browser and sub-agent views become extra tabs beside 概览 there.
- * An ordinary session keeps the browser switch and shows one view at a time.
+ * The panel has two modes. The browser is a native view that needs one steady
+ * rectangle, so it never joins a stack; the overview is a column of collapsible
+ * sections (plan, sub-agents, threads), each present only while it has something
+ * to show. A coordinator or thread session has its own 概览 switch, remembered per
+ * project; an ordinary session keeps the browser switch.
  */
 
 import type { WireCoordinationThreads } from '../../shellProtocol.js'
 import { coordinationCounts, threadBlocked } from './coordinationStatus.js'
 
-export type SideTab = 'browser' | 'plan' | 'subagents' | 'threads'
-export type ExtraTab = 'browser' | 'plan' | 'subagents'
+export type SideMode = 'browser' | 'overview'
+export type SideSection = 'plan' | 'subagents' | 'threads'
+
+export const SIDE_SECTIONS: readonly SideSection[] = ['plan', 'subagents', 'threads']
 
 export const OVERVIEW_CLOSED_STORAGE_KEY = 'hanekawa.overviewClosed.v1'
+export const SECTIONS_COLLAPSED_STORAGE_KEY = 'hanekawa.sideSections.v1'
 
 /** The projects whose overview the user closed. Takes the raw `localStorage` string. */
 export function parseOverviewClosed(raw: string | null): ReadonlySet<string> {
@@ -30,42 +36,89 @@ export function serializeOverviewClosed(closed: ReadonlySet<string>): string {
   return JSON.stringify([...closed])
 }
 
+/** The sections each project's user folded; everything else is open. */
+export type SectionsCollapsed = ReadonlyMap<string, ReadonlySet<SideSection>>
+
+export function parseSectionsCollapsed(raw: string | null): SectionsCollapsed {
+  const result = new Map<string, Set<SideSection>>()
+  try {
+    const parsed: unknown = raw === null ? {} : JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return result
+    for (const [root, value] of Object.entries(parsed)) {
+      if (!Array.isArray(value)) continue
+      const folded = value.filter((section): section is SideSection => SIDE_SECTIONS.includes(section))
+      if (folded.length > 0) result.set(root, new Set(folded))
+    }
+  } catch {
+    // Bad storage reads as nothing folded.
+  }
+  return result
+}
+
+export function serializeSectionsCollapsed(collapsed: SectionsCollapsed): string {
+  return JSON.stringify(Object.fromEntries([...collapsed].map(([root, folded]) => [root, [...folded]])))
+}
+
+export function isSectionCollapsed(collapsed: SectionsCollapsed, root: string | undefined, section: SideSection): boolean {
+  return root !== undefined && collapsed.get(root)?.has(section) === true
+}
+
+/** The map with one section of one project folded or opened; the input is left alone. */
+export function withSectionCollapsed(collapsed: SectionsCollapsed, root: string, section: SideSection, fold: boolean): SectionsCollapsed {
+  const next = new Map(collapsed)
+  const folded = new Set(collapsed.get(root))
+  if (fold) folded.add(section)
+  else folded.delete(section)
+  if (folded.size > 0) next.set(root, folded)
+  else next.delete(root)
+  return next
+}
+
 export interface SidePanelInput {
   /** The session on screen is a coordinator or a thread. */
   readonly coordinated: boolean
   readonly browserOpen: boolean
-  readonly sideTab: SideTab
-  readonly extras: ReadonlySet<ExtraTab>
+  /** The mode the user last chose for this kind of session. */
+  readonly mode: SideMode
   readonly overviewClosed: boolean
+  /**
+   * What each part has behind it. `browser` is always true for an ordinary
+   * session; a coordination session has it only once the browser was raised
+   * there and its lane still has a tab.
+   */
+  readonly has: { readonly browser: boolean; readonly plan: boolean; readonly subagents: boolean; readonly threads: boolean }
 }
 
-export function sidePanelView(input: SidePanelInput): { open: boolean; tab: SideTab } {
-  if (!input.coordinated) return { open: input.browserOpen, tab: input.sideTab }
-  const tab = input.sideTab !== 'threads' && input.extras.has(input.sideTab) ? input.sideTab : 'threads'
-  return { open: !input.overviewClosed, tab }
+export interface SidePanelView {
+  readonly open: boolean
+  readonly mode: SideMode
+  /** Modes the strip offers; it is drawn only when there are two. */
+  readonly modes: readonly SideMode[]
+  /** The overview's sections that have content, in stacking order. */
+  readonly sections: readonly SideSection[]
 }
 
-export interface SideTabEntry {
-  readonly tab: SideTab
-  /** An extra tab beside 概览 can be closed back to it. */
-  readonly closable: boolean
+export function sidePanelView(input: SidePanelInput): SidePanelView {
+  const sections = SIDE_SECTIONS.filter((section) => input.has[section])
+  const modes: SideMode[] = []
+  if (input.has.browser) modes.push('browser')
+  if (sections.length > 0) modes.push('overview')
+  const mode = modes.includes(input.mode) ? input.mode : modes[0] ?? 'browser'
+  return { open: input.coordinated ? !input.overviewClosed : input.browserOpen, mode, modes, sections }
 }
 
-/** The tab strip, in order. `has.coordination` is whether the project has a coordinator or threads. */
-export function sideTabEntries(
-  input: SidePanelInput,
-  tab: SideTab,
-  has: { readonly coordination: boolean; readonly subagents: boolean; readonly plan: boolean },
-): SideTabEntry[] {
-  if (input.coordinated) {
-    const extras = (['browser', 'plan', 'subagents'] as const).filter((tab) => input.extras.has(tab))
-    return [{ tab: 'threads', closable: false }, ...extras.map((tab) => ({ tab, closable: true }))]
-  }
-  const entries: SideTabEntry[] = [{ tab: 'browser', closable: false }]
-  if (has.plan || tab === 'plan') entries.push({ tab: 'plan', closable: false })
-  if (has.subagents || tab === 'subagents') entries.push({ tab: 'subagents', closable: false })
-  if (has.coordination || tab === 'threads') entries.push({ tab: 'threads', closable: false })
-  return entries.length === 1 ? [] : entries
+/**
+ * The sections to draw. A page opened inside a section (a sub-agent's or a
+ * thread's transcript) needs the column's height, so it stands alone while it
+ * is open and unfolded; the others come back on its back button.
+ */
+export function visibleSections(
+  sections: readonly SideSection[],
+  collapsed: ReadonlySet<SideSection>,
+  page: SideSection | undefined,
+): { readonly sections: readonly SideSection[]; readonly focus: SideSection | undefined } {
+  const focus = page !== undefined && sections.includes(page) && !collapsed.has(page) ? page : undefined
+  return { sections: focus === undefined ? sections : [focus], focus }
 }
 
 /** A new thread raises the panel only for a user who has not closed it for that project. */
@@ -103,18 +156,6 @@ export function threadStripText(view: ThreadStripView): { total: string; running
     running: view.running > 0 ? `· ${view.running} 个运行中` : undefined,
     blocked: view.blocked > 0 ? `· ${view.blocked} 个需要你` : undefined,
   }
-}
-
-/** Extra tabs that still have something behind them on the session now on screen. */
-export function pruneExtras(
-  extras: ReadonlySet<ExtraTab>,
-  has: { readonly browserTabs: boolean; readonly subagents: boolean; readonly plan: boolean },
-): Set<ExtraTab> {
-  const kept = new Set(extras)
-  if (!has.browserTabs) kept.delete('browser')
-  if (!has.subagents) kept.delete('subagents')
-  if (!has.plan) kept.delete('plan')
-  return kept
 }
 
 export function keepSelectedSubagent(selected: string | undefined, ids: readonly string[]): string | undefined {

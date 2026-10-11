@@ -2043,6 +2043,56 @@ async function step27(ctx) {
   }
 }
 
+/**
+ * The browser panel is a floating card, and its page is a native view laid over
+ * the hole: the hole's rect must sit inside the card's frame (clear of the
+ * rounded corners and the border) — at rest and after the panel is dragged wider. (The blank native
+ * page does not answer a second CDP client, so its size is not read back; the
+ * host sets its bounds to this rect, rounded.)
+ */
+async function step28(ctx) {
+  const geometry = () => read(ctx, `(() => {
+    const box = (node) => { const r = node.getBoundingClientRect(); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom, width: r.width, height: r.height } }
+    const panel = document.getElementById('browser-panel')
+    const hole = document.getElementById('browser-hole')
+    if (!panel || !hole || panel.hidden) return null
+    const style = getComputedStyle(panel)
+    return { panel: box(panel), hole: box(hole), border: parseFloat(style.borderTopWidth), radius: parseFloat(style.borderTopLeftRadius),
+      shadow: style.boxShadow, win: { width: innerWidth, height: innerHeight } }
+  })()`)
+  const rail = await waitFor('the browser rail button', async () => read(ctx, probes.centreOf('.titlebar-rail-end')))
+  await mouseClick(ctx.cdp, rail.x, rail.y)
+  const first = await waitFor('the browser panel with a measured hole', async () => {
+    const view = await geometry()
+    return view && view.hole.width > 50 && view.hole.height > 50 ? view : undefined
+  })
+  const check = async (label, view) => {
+    const { panel, hole, border, radius } = view
+    ctx.ok(`${label}: the card floats 8px off the window's right and bottom`,
+      Math.abs(view.win.width - panel.right - 8) < 0.5 && Math.abs(view.win.height - panel.bottom - 8) < 0.5,
+      JSON.stringify(panel))
+    ctx.ok(`${label}: the card has a border, a radius and no left shadow line`, border >= 1 && radius >= 8 && view.shadow === 'none', `border=${border} radius=${radius} shadow=${view.shadow}`)
+    ctx.ok(`${label}: the hole is inside the card, clear of border and rounded corners`,
+      hole.left >= panel.left + border && hole.right <= panel.right - border && hole.bottom <= panel.bottom - border - 4 && hole.top > panel.top,
+      JSON.stringify({ panel, hole }))
+  }
+  await check('at rest', first)
+  await ctx.shot('28-browser-mode', 'the floating card with the browser view in its hole (native view is not in a renderer capture)')
+  const sash = await read(ctx, probes.centreOf('#browser-resizer'))
+  await ctx.cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: sash.x, y: sash.y, button: 'none', buttons: 0 })
+  await ctx.cdp.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: sash.x, y: sash.y, button: 'left', buttons: 1, clickCount: 1 })
+  await ctx.cdp.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: sash.x - 80, y: sash.y, button: 'left', buttons: 1 })
+  await ctx.cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: sash.x - 80, y: sash.y, button: 'left', buttons: 0, clickCount: 1 })
+  const wider = await waitFor('the panel to widen', async () => {
+    const view = await geometry()
+    return view && view.panel.width > first.panel.width + 40 ? view : undefined
+  })
+  ctx.ok('dragging the sash widened the card', wider.panel.width > first.panel.width + 40, `${first.panel.width} -> ${wider.panel.width}`)
+  await check('after a drag', wider)
+  await ctx.shot('28-browser-wider', 'the card after being dragged wider')
+  await mouseClick(ctx.cdp, rail.x, rail.y)
+}
+
 export const STEPS = [
   { id: 'S7', item: 7, name: 'Ctrl+B collapses and restores the sidebar', timeout: 30000, run: step7 },
   { id: 'S27', item: 8, name: 'native title bar space and platform shortcuts work together', timeout: 60000, run: step27 },
@@ -2052,6 +2102,7 @@ export const STEPS = [
   { id: 'S4', item: 4, name: 'deleting the open session closes its lane and leaves no ghost', timeout: 60000, run: step4 },
   { id: 'S5', item: 5, name: 'a second project opens, shuts down, and re-bootstraps', timeout: 150000, run: step5 },
   { id: 'S8', item: 8, name: 'settings edit, fan out, and lay out inside the window', timeout: 180000, run: step8 },
+  { id: 'S28', item: 8, name: 'the floating browser card and its native view sits inside the card, dragged or not', timeout: 90000, run: step28 },
   { id: 'S9', item: 9, name: 'the composer chip changes effort without persisting it', timeout: 45000, run: step9 },
   { id: 'S26', item: 2, name: 'image attachments import, strip, preview, gate, and isolate end to end', timeout: 240000, run: step26 },
   { id: 'S11', item: 8, name: 'the light theme paints, floats, and is given back', timeout: 90000, run: step11 },

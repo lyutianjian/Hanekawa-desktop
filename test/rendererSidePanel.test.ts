@@ -3,65 +3,98 @@ import test from 'node:test'
 
 import {
   autoOpensOverview,
+  isSectionCollapsed,
   keepSelectedSubagent,
-  pruneExtras,
-  threadStripText,
   parseOverviewClosed,
+  parseSectionsCollapsed,
   serializeOverviewClosed,
+  serializeSectionsCollapsed,
   sidePanelView,
-  sideTabEntries,
+  threadStripText,
   threadStripView,
-  type ExtraTab,
+  visibleSections,
+  withSectionCollapsed,
   type SidePanelInput,
+  type SideSection,
 } from '../src/desktop/renderer/model/sidePanel.js'
 import type { WireCoordinationThreads, WireThreadInfo, WireThreadStatus } from '../src/desktop/shellProtocol.js'
 
-function input(overrides: Partial<SidePanelInput> = {}): SidePanelInput {
-  return { coordinated: false, browserOpen: false, sideTab: 'browser', extras: new Set<ExtraTab>(), overviewClosed: false, ...overrides }
+type Has = SidePanelInput['has']
+type Overrides = Partial<Omit<SidePanelInput, 'has'>> & { has?: Partial<Has> }
+
+function input(overrides: Overrides = {}): SidePanelInput {
+  const { has, ...rest } = overrides
+  return {
+    coordinated: false,
+    browserOpen: false,
+    mode: 'browser',
+    overviewClosed: false,
+    ...rest,
+    has: { browser: true, plan: false, subagents: false, threads: false, ...has },
+  }
 }
 
-test('an ordinary session follows the browser switch and the stored tab', () => {
-  const cases: Array<[Partial<SidePanelInput>, { open: boolean; tab: string }]> = [
-    [{}, { open: false, tab: 'browser' }],
-    [{ browserOpen: true, sideTab: 'subagents' }, { open: true, tab: 'subagents' }],
-    [{ browserOpen: true, overviewClosed: true }, { open: true, tab: 'browser' }],
-    [{ overviewClosed: false }, { open: false, tab: 'browser' }],
+test('an ordinary session follows the browser switch and offers the overview only with sections', () => {
+  const cases: Array<[Overrides, unknown]> = [
+    [{}, { open: false, mode: 'browser', modes: ['browser'], sections: [] }],
+    [{ browserOpen: true, mode: 'overview', has: { subagents: true } }, { open: true, mode: 'overview', modes: ['browser', 'overview'], sections: ['subagents'] }],
+    [{ browserOpen: true, mode: 'browser', has: { plan: true, subagents: true, threads: true } }, { open: true, mode: 'browser', modes: ['browser', 'overview'], sections: ['plan', 'subagents', 'threads'] }],
+    // The overview chosen, then its last section went away: back to the browser.
+    [{ browserOpen: true, mode: 'overview' }, { open: true, mode: 'browser', modes: ['browser'], sections: [] }],
+    [{ overviewClosed: true, has: { plan: true } }, { open: false, mode: 'browser', modes: ['browser', 'overview'], sections: ['plan'] }],
   ]
   for (const [overrides, expected] of cases) assert.deepEqual(sidePanelView(input(overrides)), expected)
 })
 
 test('a coordination session follows the overview switch, whatever the browser switch says', () => {
-  const cases: Array<[Partial<SidePanelInput>, { open: boolean; tab: string }]> = [
-    [{}, { open: true, tab: 'threads' }],
-    [{ overviewClosed: true }, { open: false, tab: 'threads' }],
-    [{ browserOpen: true, overviewClosed: true }, { open: false, tab: 'threads' }],
-    [{ sideTab: 'browser', extras: new Set<ExtraTab>(['browser']) }, { open: true, tab: 'browser' }],
-    [{ sideTab: 'subagents', extras: new Set<ExtraTab>(['browser']) }, { open: true, tab: 'threads' }],
-    [{ sideTab: 'threads', extras: new Set<ExtraTab>(['browser']) }, { open: true, tab: 'threads' }],
-    [{ sideTab: 'browser', extras: new Set<ExtraTab>(['browser']), overviewClosed: true }, { open: false, tab: 'browser' }],
+  const cases: Array<[Overrides, unknown]> = [
+    [{ mode: 'overview' }, { open: true, mode: 'overview', modes: ['overview'], sections: ['threads'] }],
+    [{ mode: 'overview', overviewClosed: true }, { open: false, mode: 'overview', modes: ['overview'], sections: ['threads'] }],
+    [{ mode: 'overview', browserOpen: true, overviewClosed: true }, { open: false, mode: 'overview', modes: ['overview'], sections: ['threads'] }],
+    [{ mode: 'browser', has: { browser: true } }, { open: true, mode: 'browser', modes: ['browser', 'overview'], sections: ['threads'] }],
+    // The browser asked for but not raised here: the overview it is.
+    [{ mode: 'browser', has: { browser: false, plan: true, subagents: true } }, { open: true, mode: 'overview', modes: ['overview'], sections: ['plan', 'subagents', 'threads'] }],
   ]
   for (const [overrides, expected] of cases) {
-    assert.deepEqual(sidePanelView(input({ coordinated: true, ...overrides })), expected)
+    const base = { coordinated: true, has: { browser: false, threads: true, ...overrides.has } }
+    assert.deepEqual(sidePanelView(input({ ...overrides, ...base })), expected)
   }
 })
 
-test('tabs: 概览 first and permanent, extras closable; ordinary sessions keep the old strip', () => {
-  const extras = new Set<ExtraTab>(['subagents', 'plan', 'browser'])
-  const has = (overrides: Partial<{ coordination: boolean; subagents: boolean; plan: boolean }> = {}) =>
-    ({ coordination: false, subagents: false, plan: false, ...overrides })
-  assert.deepEqual(sideTabEntries(input({ coordinated: true }), 'threads', has({ coordination: true })), [{ tab: 'threads', closable: false }])
-  assert.deepEqual(sideTabEntries(input({ coordinated: true, extras }), 'threads', has({ coordination: true, subagents: true })), [
-    { tab: 'threads', closable: false },
-    { tab: 'browser', closable: true },
-    { tab: 'plan', closable: true },
-    { tab: 'subagents', closable: true },
-  ])
-  assert.deepEqual(sideTabEntries(input({ browserOpen: true }), 'browser', has()), [])
-  assert.deepEqual(sideTabEntries(input({ browserOpen: true }), 'browser', has({ coordination: true })).map((e) => e.tab), ['browser', 'threads'])
-  assert.deepEqual(sideTabEntries(input({ browserOpen: true }), 'browser', has({ subagents: true })).map((e) => e.tab), ['browser', 'subagents'])
-  assert.deepEqual(sideTabEntries(input({ browserOpen: true }), 'browser', has({ plan: true, subagents: true })).map((e) => e.tab), ['browser', 'plan', 'subagents'])
-  assert.deepEqual(sideTabEntries(input({ browserOpen: true, sideTab: 'subagents' }), 'subagents', has()).map((e) => e.tab), ['browser', 'subagents'])
-  assert.deepEqual(sideTabEntries(input({ browserOpen: true, sideTab: 'plan' }), 'plan', has()).map((e) => e.tab), ['browser', 'plan'])
+test('the browser mode keeps the other sections and their order', () => {
+  const has = { plan: true, subagents: true, threads: true }
+  const inBrowser = sidePanelView(input({ browserOpen: true, mode: 'browser', has }))
+  const inOverview = sidePanelView(input({ browserOpen: true, mode: 'overview', has }))
+  assert.deepEqual(inBrowser.sections, inOverview.sections)
+})
+
+test('folds are remembered per project and survive bad storage', () => {
+  let folded = parseSectionsCollapsed(null)
+  assert.equal(isSectionCollapsed(folded, '/a', 'plan'), false)
+  folded = withSectionCollapsed(folded, '/a', 'plan', true)
+  folded = withSectionCollapsed(folded, '/b', 'threads', true)
+  assert.equal(isSectionCollapsed(folded, '/a', 'plan'), true)
+  assert.equal(isSectionCollapsed(folded, '/a', 'threads'), false)
+  assert.equal(isSectionCollapsed(folded, undefined, 'plan'), false)
+  const again = parseSectionsCollapsed(serializeSectionsCollapsed(folded))
+  assert.deepEqual([...again.get('/a')!], ['plan'])
+  assert.deepEqual([...again.get('/b')!], ['threads'])
+  // Opening the last folded section drops the project's entry; the input is untouched.
+  const opened = withSectionCollapsed(folded, '/a', 'plan', false)
+  assert.equal(opened.has('/a'), false)
+  assert.equal(isSectionCollapsed(folded, '/a', 'plan'), true)
+  for (const raw of [null, '', 'nope', '[]', '{"/a":"plan"}', '{"/a":["bogus"]}', '{"/a":["plan",3]}']) {
+    const parsed = parseSectionsCollapsed(raw)
+    assert.deepEqual([...(parsed.get('/a') ?? [])], raw === '{"/a":["plan",3]}' ? ['plan'] : [])
+  }
+})
+
+test('a page inside a section stands alone only while that section is open', () => {
+  const all: SideSection[] = ['plan', 'subagents', 'threads']
+  assert.deepEqual(visibleSections(all, new Set(), undefined), { sections: all, focus: undefined })
+  assert.deepEqual(visibleSections(all, new Set(), 'subagents'), { sections: ['subagents'], focus: 'subagents' })
+  assert.deepEqual(visibleSections(all, new Set<SideSection>(['subagents']), 'subagents'), { sections: all, focus: undefined })
+  assert.deepEqual(visibleSections(['plan'], new Set(), 'threads'), { sections: ['plan'], focus: undefined })
 })
 
 test('a new thread raises the overview only when the user has not closed it', () => {
@@ -107,15 +140,7 @@ test('the chip leaves out the counts that are zero', () => {
   assert.deepEqual(threadStripText({ total: 3, running: 0, blocked: 0, target: overview }), { total: '3 个线程', running: undefined, blocked: undefined })
 })
 
-test('switching sessions prunes extras and selections with nothing behind them', () => {
-  const both = new Set<ExtraTab>(['browser', 'subagents', 'plan'])
-  const cases: Array<[{ browserTabs: boolean; subagents: boolean; plan: boolean }, ExtraTab[]]> = [
-    [{ browserTabs: true, subagents: true, plan: true }, ['browser', 'subagents', 'plan']],
-    [{ browserTabs: false, subagents: true, plan: false }, ['subagents']],
-    [{ browserTabs: true, subagents: false, plan: true }, ['browser', 'plan']],
-    [{ browserTabs: false, subagents: false, plan: false }, []],
-  ]
-  for (const [has, expected] of cases) assert.deepEqual([...pruneExtras(both, has)], expected)
+test('switching sessions drops a sub-agent selection with nothing behind it', () => {
   assert.equal(keepSelectedSubagent('a', ['a', 'b']), 'a')
   assert.equal(keepSelectedSubagent('c', ['a', 'b']), undefined)
   assert.equal(keepSelectedSubagent(undefined, ['a']), undefined)
