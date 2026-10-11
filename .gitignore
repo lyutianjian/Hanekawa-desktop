@@ -1,11 +1,9 @@
 # Dependencies
 node_modules/
 
-cc's_harness-engineering/
 # Build output
 dist/
-plans/
-docs/
+
 # Environment files
 .env
 .env.local
@@ -20,43 +18,27 @@ docs/
 
 # Debug logs
 *.log
-.kiro/
-# IDE
+
+# IDE and tool settings
 .vscode/
 .idea/
-
-# Claude Code local settings
+.kiro/
 .claude/
 .firecrawl/
-# Reference docs (not part of project)
-capability-gap-reference.md
 
 # OS
 .DS_Store
 Thumbs.db
 
-design_implementation.md
-design_guidance.md
-INTERVIEW_PREP.md
-prototype/
-
-# Local plan / design / acceptance write-ups (not part of the published project)
-todo.md
-DESKTOP_MOTION_ACCEPTANCE.md
-DESKTOP_MOTION_DESIGN.md
-DESKTOP_MOTION_IMPLEMENTATION.md
-FILE_HISTORY_PLAN.md
-COORDINATOR_UI_PLAN.md
-TRANSCRIPT_UI_PLAN.md
-WORKING_MARK_PLAN.md
-TRANSCRIPT_UI_MOCKUP.html
-MULTIMODAL_INPUT_DESIGN.md
-MULTIMODAL_INPUT_IMPLEMENTATION.md
-motion-evidence/
-
-# Interview-prep measurement scripts (chapter 14) — local only, and
-# measure-api.ts spends real money against the configured provider.
-scripts/measure-perf.ts
-scripts/measure-api.ts
-
+# Local plans, specs, mockups and their evidence (never published).
+# Closed ones move to archive/.
 archive/
+*_PLAN.md
+*_SPEC.md
+*_DESIGN.md
+*_IMPLEMENTATION.md
+*_ACCEPTANCE.md
+*_MOCKUP.html
+todo.md
+prototype/
+motion-evidence/
