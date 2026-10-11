@@ -154,7 +154,6 @@
   --motion-scrim-in: 200ms;
   --motion-scrim-out: 120ms;
   --motion-running: 2000ms;
-  --motion-spark: 1200ms;
   --motion-locate: 600ms;
   --motion-hover-delay: 500ms;
   --presence-x: 0px;
@@ -230,6 +229,13 @@
      view — it is a constant both sides need, and `MARQUEE_GAP` is the other
      half of it. */
   --marquee-gap: 48px;
+  /* The working mark's square, and the strip it shows: sheet, frame count and
+     frame, written by `dom/workingMarkView.ts` per layer. Declared so a layer the
+     view has not written yet resolves to an empty, valid strip. */
+  --mark-size: 20px;
+  --mark-sheet: none;
+  --mark-frames: 1;
+  --mark-frame: 0;
   /* The context indicator's ring, written per paint by `dom/composerView.ts`
      from `model/usage.ts`. A fraction of the *usable* window (the autocompact
      threshold), so no token can hold it; declared here for the same reason as
@@ -2118,21 +2124,31 @@ body.settings-open #browser-resizer { display: none; }
 }
 .run.open > .run-line .icon,
 .thinking.open > .run-line .icon { transform: rotate(90deg); }
-/* The running mark: three dots in the brand colour, taking turns. */
-.line-spark { position: relative; flex: none; width: 14px; height: 14px; margin-right: 3px; }
-.line-spark i {
+/* The working mark: one frame of a vertical sprite strip. `dom/workingMarkView.ts`
+   names the sheet, its frame count and the frame through custom properties; a
+   running animation writes `transform` over the held frame. Layers other than the
+   current one stay composited at a near-zero opacity, so a switch never waits on
+   a paint. Until the sheets decode the mark is a dot. */
+.line-mark { position: relative; flex: none; width: var(--mark-size); height: var(--mark-size); }
+.mark, .mark-layer { position: absolute; inset: 0; }
+.mark-layer { overflow: clip; }
+.mark-layer.is-warm { opacity: 0.001; }
+.mark-strip {
+  display: block;
+  width: 100%;
+  height: calc(var(--mark-frames) * 100%);
+  background: var(--mark-sheet) 0 0 / 100% 100% no-repeat;
+  transform: translateY(calc(var(--mark-frame) / var(--mark-frames) * -100%));
+  will-change: transform;
+}
+.mark.is-dot::after {
+  content: '';
   position: absolute;
-  width: 4px;
-  height: 4px;
+  inset: calc(var(--mark-size) * 0.325);
   border-radius: var(--radius-pill);
   color: var(--accent-brand-strong);
   background: currentColor;
-  animation: spark var(--motion-spark) linear infinite;
 }
-.line-spark i:nth-child(1) { left: 5px; top: 1px; }
-.line-spark i:nth-child(2) { left: 9px; top: 8px; animation-delay: calc(var(--motion-spark) / -3); }
-.line-spark i:nth-child(3) { left: 1px; top: 8px; animation-delay: calc(var(--motion-spark) / -1.5); }
-@keyframes spark { 0%, 100% { opacity: 0.25; transform: scale(0.7); } 33% { opacity: 1; transform: scale(1); } }
 /* --- the run card ---
    A card, not a list: the border is the grouping, and each row inside is one tool.
    Depth stays at the sheet's two steps — a row opens into its output, never into a
@@ -5257,7 +5273,6 @@ body.projects-open #browser-resizer,
   .presence[data-presence], #submit:active, #stop:active {
     transform: none !important;
   }
-  .line-spark i,
   .step-bead,
   .task-bead,
   .task-panel,

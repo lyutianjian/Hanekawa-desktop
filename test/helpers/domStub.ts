@@ -22,6 +22,9 @@
  * `insertBefore()`/`parentElement`.
  * Add to that list rather than starting a second one.
  *
+ * Beside `document` it installs a minimal `Image` for the working mark's sheet
+ * store: `src` and `decode()`, which resolves unless `breakImages` names the URL.
+ *
  * Installation writes `globalThis.document` and `uninstall()` deletes it again.
  * Contamination is bounded even so: `node --test` runs one process per file, and
  * all three helpers read `document` inside function bodies rather than capturing
@@ -532,6 +535,8 @@ export interface DomStub {
   setMedia(query: string, matches: boolean): void
   setHidden(hidden: boolean): void
   setSelection(anchor: unknown, focus?: unknown): void
+  /** `Image.decode()` rejects for every `src` the predicate accepts, as a missing file would. */
+  breakImages(broken: (src: string) => boolean): void
   uninstall(): void
 }
 
@@ -668,6 +673,13 @@ export function installDomStub(): DomStub {
   // distinction the browser draws between the two is not one any view reads.
   Reflect.set(globalThis, 'Element', StubElement)
   Reflect.set(globalThis, 'HTMLElement', StubElement)
+  let broken = (_src: string) => false
+  Reflect.set(globalThis, 'Image', class {
+    src = ''
+    decode(): Promise<void> {
+      return broken(this.src) ? Promise.reject(new Error(`cannot decode ${this.src}`)) : Promise.resolve()
+    }
+  })
 
   return {
     observeMotion(listener) {
@@ -729,6 +741,9 @@ export function installDomStub(): DomStub {
     body(): unknown {
       return body
     },
+    breakImages(predicate): void {
+      broken = predicate
+    },
     hasDocumentMember(name: string): boolean {
       return Object.hasOwn(document, name)
     },
@@ -743,6 +758,7 @@ export function installDomStub(): DomStub {
       Reflect.deleteProperty(globalThis, 'Node')
       Reflect.deleteProperty(globalThis, 'Element')
       Reflect.deleteProperty(globalThis, 'HTMLElement')
+      Reflect.deleteProperty(globalThis, 'Image')
     },
   }
 }

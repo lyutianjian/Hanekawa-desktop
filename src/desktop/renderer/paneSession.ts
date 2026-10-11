@@ -1967,6 +1967,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // is the source of truth again from here until the next deactivation.
     deps.composer.setValue(draftText, draftText.length)
     deps.composer.autosize()
+    transcriptView.syncMotion(document.hidden)
     renderTranscript()
     renderAttachments()
     renderOverlay()
@@ -2019,9 +2020,10 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     deps.composer.renderAttachments(
       attachmentStripView(Object.freeze([]), client.getRuntimeSnapshot(), (imageId) => previewDataUrl(previewCache, imageId)))
     // Nothing repaints a hidden pane, so the waiting row's clock would tick on
-    // against a node nobody can see. `activate()`'s `renderTranscript()` starts
-    // it again from the same `turnStartedAt`, so no time is lost.
-    transcriptView.stopClock()
+    // against a node nobody can see, and the working mark would play to nobody.
+    // `activate()` resumes the mark where it stopped, and its `renderTranscript()`
+    // restarts the clock from the same `turnStartedAt`, so no time is lost.
+    transcriptView.syncMotion(true)
     // A frame owed to a pane nobody can see: the render functions would return
     // at their `if (!active)` guard anyway, but the sidebar half of
     // `statusRepaint` would not, and `activate()` repaints all of it.
@@ -2215,6 +2217,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     beginLayoutChange: () => transcriptView.beginLayoutChange(),
     syncMotion() {
       transcriptView.stopClock()
+      transcriptView.syncMotion(document.hidden || !active)
       if (!document.hidden) renderTranscript()
     },
     dispose,

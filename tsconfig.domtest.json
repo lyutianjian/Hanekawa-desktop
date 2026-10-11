@@ -36,6 +36,7 @@
     "test/rendererTitleBarView.test.ts",
     "test/rendererTranscriptView.test.ts",
     "test/rendererWelcomeView.test.ts",
+    "test/rendererWorkingMark.test.ts",
     "test/helpers/**/*.ts",
     "src/types/picomatch.d.ts"
   ],

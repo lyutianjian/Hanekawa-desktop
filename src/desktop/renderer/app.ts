@@ -147,6 +147,7 @@ import { threadPage, type ThreadSelection } from './model/threadDetail.js'
 import { createThreadPanelView } from './dom/threadPanelView.js'
 import { createThreadDetailView } from './dom/threadDetailView.js'
 import { createMergeBarView } from './dom/mergeBarView.js'
+import { sheetStore } from './dom/workingMarkView.js'
 
 const bridge = window.hanekawa
 if (!bridge) {
@@ -1890,6 +1891,8 @@ function syncMotion(): void {
 }
 motionQuery.addEventListener('change', syncMotion)
 document.addEventListener('visibilitychange', syncMotion)
+// Decoded once the window is idle, so the first turn's mark grows in rather than starting as a dot.
+sheetStore.prefetch()
 window.addEventListener('pagehide', () => {
   motionQuery.removeEventListener('change', syncMotion)
   document.removeEventListener('visibilitychange', syncMotion)

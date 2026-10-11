@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Copy non-TypeScript assets (the renderer's `index.html`, `styles.css`,
- * `fonts.css`, and the `fonts/` webfont directory) into the build output after
- * `tsc` and `esbuild` finish. Two prior stages of `npm run build:desktop`
+ * `fonts.css`, the `fonts/` webfont directory and the working mark's
+ * `sprites/`) into the build output after `tsc` and `esbuild` finish. Two prior stages of `npm run build:desktop`
  * already wrote the compiled `.js` files; this script makes the corresponding
  * `.html` available where `desktop/main.ts` reads it
  * (`<dest>/desktop/renderer/index.html`), and everything the HTML links beside
@@ -45,7 +45,10 @@ const sources = [
   ['src/desktop/renderer/fonts.css', 'desktop/renderer/fonts.css'],
 ]
 
-const directories = [['src/desktop/renderer/fonts', 'desktop/renderer/fonts']]
+const directories = [
+  ['src/desktop/renderer/fonts', 'desktop/renderer/fonts'],
+  ['src/desktop/renderer/sprites', 'desktop/renderer/sprites'],
+]
 
 for (const [from, to] of sources) {
   const absoluteFrom = join(repoRoot, from)

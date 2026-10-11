@@ -53,6 +53,7 @@ import { icon } from './icons.js'
 import { markdownChildren } from './markdownView.js'
 import { createPresence, finishPresenceWithin, type Presence } from './presence.js'
 import { motionDelay, motionPolicy } from './motion.js'
+import { createWorkingMark, type WorkingMark } from './workingMarkView.js'
 
 /**
  * Paints the transcript: loose items interleaved with activity runs.
@@ -100,6 +101,12 @@ export interface TranscriptView {
    * The next `render` starts it again from the same `startedAt`.
    */
   stopClock(): void
+  /**
+   * `true` while the pane or the window is out of sight: the live mark stops
+   * where it is (and the clock with it). `false` resumes the mark from that
+   * frame, re-reading reduced motion; the next `render` restarts the clock.
+   */
+  syncMotion(hidden: boolean): void
   dispose(): void
   /** Capture the reading position before the composer or another region resizes. */
   beginLayoutChange(): void
@@ -308,6 +315,11 @@ export function createTranscriptView(
   let clockNode: HTMLElement | undefined
   let clock: ReturnType<typeof setInterval> | undefined
   let clockFrom: number | undefined
+  // The live mark's carrier, kept the way `clockNode` is: handed over by the fill
+  // that built it, and still the node on screen for as long as that fill is not
+  // re-run. One controller serves every carrier, created at the first live line.
+  let markHost: HTMLElement | undefined
+  let mark: WorkingMark | undefined
 
   function stopClock(): void {
     if (clock === undefined) return
@@ -438,8 +450,13 @@ export function createTranscriptView(
   return {
     beginLayoutChange: () => beginLayoutChange(),
     stopClock: stopMotion,
+    syncMotion(hidden) {
+      if (hidden) stopMotion()
+      mark?.syncMotion(hidden)
+    },
     dispose() {
       stopMotion()
+      mark?.dispose()
       window.removeEventListener('pointerup', endDrag)
       window.removeEventListener('pointercancel', endDrag)
       for (const entry of disclosures.values()) entry.presence.dispose()
@@ -463,6 +480,7 @@ export function createTranscriptView(
         cache.clear()
         refs.clear()
         clockNode = undefined
+        markHost = undefined
         anchorId = undefined
         generation = state.generation
       }
@@ -503,17 +521,22 @@ export function createTranscriptView(
         live: live.live,
         selectedSubagent,
         keepClock: (span) => { clockNode = span },
+        keepMark: (host) => { markHost = host },
         afterPaint: (run) => afterPaint.push(run),
       })
       const nodes = entries.map((entry) => entryNode(painter, entry))
       // Built before `prune`, or its key would count as dead on the very paint
       // that asked for it. A kept line keeps the span its fill handed over.
       if (live.row) nodes.push(waitingNode(painter, live.row))
-      else if (!live.live) clockNode = undefined
+      else if (!live.live) clockNode = markHost = undefined
       painter.prune()
       reconcile(column, [...(header ? [header] : []), ...nodes, ...(trailer ? [trailer] : [])])
       for (const run of afterPaint) run()
       runClock(live.row || live.live ? activity?.startedAt : undefined)
+      // After the reconcile, so the carrier is in the document when the mark moves in.
+      if (live.mark && markHost) (mark ??= createWorkingMark()).attach(markHost, live.mark)
+      else if (activity?.isStreaming === true) mark?.hide()
+      else mark?.end()
 
       // The turn the reader is looking at: the newest user message. Read off the
       // *entries* rather than off `state.items`, because what the lift needs is
@@ -590,7 +613,7 @@ const IDLE: WaitingInput = { isStreaming: false, startedAt: undefined, turnId: u
  */
 function waitingNode(painter: Painter, row: WaitingRow): HTMLElement {
   return painter.node('waiting', 'waiting', [row.label, row.startedAt], () => [
-    sparkNode(painter, 'waiting'),
+    markNode(painter, 'waiting'),
     lineText(painter, 'waiting', row.label, false),
     elapsedNode(painter, 'waiting'),
   ])
@@ -598,16 +621,21 @@ function waitingNode(painter: Painter, row: WaitingRow): HTMLElement {
 
 /*
  * The three pieces of a live line are nodes of their own, kept across the label
- * changing: the dots keep turning without restarting their animation at every tool,
- * and the clock keeps the span it is writing into.
+ * changing: the mark keeps playing without restarting at every tool, and the
+ * clock keeps the span it is writing into.
  */
 
-/** The running mark: three dots in the brand colour, turning. Decoration, so hidden from readers. */
-function sparkNode(painter: Painter, key: string): HTMLElement {
-  return painter.node(`${key}:spark`, 'line-spark', [], (node) => {
-    node.setAttribute('aria-hidden', 'true')
-    return [el('i'), el('i'), el('i')]
+/**
+ * The working mark's carrier, empty as painted: the view moves its one live mark
+ * in after the paint (`dom/workingMarkView.ts`). Decoration, so hidden from readers.
+ */
+function markNode(painter: Painter, key: string): HTMLElement {
+  const node = painter.node(`${key}:mark`, 'line-mark', [], (span) => {
+    span.setAttribute('aria-hidden', 'true')
+    return []
   }, () => el('span'))
+  painter.keepMark(node)
+  return node
 }
 
 /** The elapsed span, empty until the wait is worth a number; hidden, or a reader would hear it ten times a second. */
@@ -659,6 +687,8 @@ interface LivePaint {
   readonly selectedSubagent: string | undefined
   /** Handed the elapsed span whichever carrier built it, so the clock can fill it. */
   keepClock(span: HTMLElement): void
+  /** Likewise the mark's carrier, so the view can move its mark in. */
+  keepMark(host: HTMLElement): void
   afterPaint(run: () => void): void
 }
 
@@ -712,6 +742,7 @@ function createPainter(
     live: paint.live,
     selectedSubagent: paint.selectedSubagent,
     keepClock: paint.keepClock,
+    keepMark: paint.keepMark,
     afterPaint: paint.afterPaint,
     onToggle: handlers.onToggle,
     onTaskStep: handlers.onTaskStep,
@@ -884,7 +915,7 @@ function runLine(
       node.setAttribute('aria-label', name)
       node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
       return [
-        live ? sparkNode(painter, headKey) : undefined,
+        live ? markNode(painter, headKey) : undefined,
         lineText(painter, headKey, text, true),
         diff === undefined ? undefined : el('span', 'line-meta', ...diffStat(diff.added, diff.deleted)),
         failed === undefined || live ? undefined : quiet('line-fail', `· ${failed}`),
@@ -930,7 +961,7 @@ function thinkingLine(
         node.setAttribute('aria-label', live ? '正在思考' : label)
         node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
         return [
-          live ? sparkNode(painter, headKey) : undefined,
+          live ? markNode(painter, headKey) : undefined,
           lineText(painter, headKey, label, true),
           duration === undefined ? undefined : quiet('line-meta', duration),
           live ? elapsedNode(painter, headKey) : undefined,

@@ -7,6 +7,7 @@ import {
 } from './transcript.js'
 import { thoughtLiveLabel } from './thinking.js'
 import { batchPhrase, callPhrase, type CallStep } from './toolPhrases.js'
+import { markSpecFor, type MarkSpec } from './workingMark.js'
 
 /**
  * What the turn is doing **right now**, and where that is said.
@@ -57,9 +58,11 @@ export interface TurnActivity {
   readonly live: { readonly runId: string; readonly label: string; readonly startedAt: number | undefined } | undefined
   /** The status line of its own, when no run can carry it. */
   readonly row: WaitingRow | undefined
+  /** What the working mark beside the status shows; `undefined` exactly when there is no status. */
+  readonly mark: MarkSpec | undefined
 }
 
-const IDLE: TurnActivity = { live: undefined, row: undefined }
+const IDLE: TurnActivity = { live: undefined, row: undefined, mark: undefined }
 
 /**
  * How long the wait has to last before the counter is worth showing: a turn that
@@ -88,14 +91,19 @@ export function waitingElapsedLabel(elapsedMs: number): string {
  */
 export function turnActivity(entries: readonly TranscriptEntry[], input: WaitingInput): TurnActivity {
   if (!input.isStreaming) return IDLE
-  if (input.phase) return { live: undefined, row: { label: phaseLabel(input.phase), startedAt: input.startedAt } }
+  const plain = markSpecFor(undefined)
+  if (input.phase) return { live: undefined, row: { label: phaseLabel(input.phase), startedAt: input.startedAt }, mark: plain }
   const asking = input.asking === undefined ? undefined : `${ASKING_LABEL} · ${input.asking}`
   const last = entries[entries.length - 1]
   if (last?.kind === 'run' && last.run.status !== 'aborted' && input.turnId !== undefined && last.run.turnId === input.turnId) {
-    return { live: { runId: last.run.id, label: asking ?? runActivity(last.run), startedAt: input.startedAt }, row: undefined }
+    return {
+      live: { runId: last.run.id, label: asking ?? runActivity(last.run), startedAt: input.startedAt },
+      row: undefined,
+      mark: asking === undefined ? markSpecFor(last.run) : plain,
+    }
   }
   if (last?.kind === 'item' && isArriving(last.item)) return IDLE
-  return { live: undefined, row: { label: asking ?? WAITING_LABEL, startedAt: input.startedAt } }
+  return { live: undefined, row: { label: asking ?? WAITING_LABEL, startedAt: input.startedAt }, mark: plain }
 }
 
 const RETRY_REASONS: Record<Extract<TurnPhase, { kind: 'retrying' }>['reason'], string> = {

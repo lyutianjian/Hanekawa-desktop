@@ -34,6 +34,7 @@
     "test/rendererTitleBarView.test.ts",
     "test/rendererTranscriptView.test.ts",
     "test/rendererWelcomeView.test.ts",
+    "test/rendererWorkingMark.test.ts",
     "test/helpers/**",
     "node_modules",
     "dist"

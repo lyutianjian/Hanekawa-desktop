@@ -73,7 +73,7 @@ test('after a paragraph the model is deciding what next: the status gets its own
 
 test('a draft that is actually arriving withdraws the status; an empty one does not', () => {
   const draft = (text: string): TranscriptItem => ({ id: '__draft__', kind: 'assistant', text, pending: true })
-  const none = { live: undefined, row: undefined }
+  const none = { live: undefined, row: undefined, mark: undefined }
   assert.deepEqual(activity([USER, draft('好的')], true, undefined), none)
   // `text_delta` can open the draft with an empty string, and an empty bubble is
   // exactly the blank page the status exists for.
@@ -189,4 +189,24 @@ test('a pending question names itself on the last line', () => {
   const row = turnActivity(entries, { isStreaming: true, startedAt: STARTED_AT, turnId: 't1', asking: '数据库' }).row
   assert.equal(row?.label, '正在提问 · 数据库')
   assert.equal(turnActivity(entries, { isStreaming: false, startedAt: STARTED_AT, turnId: 't1', asking: '数据库' }).row, undefined)
+})
+
+test('the working mark follows where the status is, and what it says', () => {
+  const plain = { body: 'default', state: 'working' }
+  // No status, no mark: an idle session, and a draft that is the status itself.
+  assert.equal(activity([USER, DONE_BASH], false).mark, undefined)
+  assert.equal(activity([USER, { id: '__draft__', kind: 'assistant', text: '好的', pending: true }], true, undefined).mark, undefined)
+  // A line of its own, and a run between steps, are plain.
+  assert.deepEqual(activity([USER], true, undefined).mark, plain)
+  assert.deepEqual(activity(turn([DONE_BASH])).mark, plain)
+  // A run reads its running call, or its pending thought.
+  assert.deepEqual(activity(turn([THINKING])).mark, { body: 'think', state: 'working' })
+  assert.deepEqual(activity(turn([THINKING, RUNNING_BASH])).mark, { body: 'code', state: 'working' })
+  const asking: TranscriptItem = { ...RUNNING_BASH, id: 'w', toolName: 'Write', tool: { displayName: 'Write', useSummary: 'src/a.ts', awaitingApproval: true } }
+  assert.deepEqual(activity(turn([asking, RUNNING_BASH])).mark, { body: 'write', state: 'blocked' })
+  // A compaction and a pending question outrank what the run is doing.
+  const entries = groupTranscript(turn([RUNNING_BASH]))
+  const input = { isStreaming: true, startedAt: STARTED_AT, turnId: TURN }
+  assert.deepEqual(turnActivity(entries, { ...input, phase: { kind: 'compacting' } }).mark, plain)
+  assert.deepEqual(turnActivity(entries, { ...input, asking: '数据库' }).mark, plain)
 })

@@ -16,6 +16,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { build } from 'esbuild'
 
+import { SHEETS } from '../src/desktop/renderer/model/workingMark.js'
+
 /**
  * Smoke for the desktop shell build pipeline. Seven artifacts must land at the
  * right depths of the output directory:
@@ -165,6 +167,7 @@ test('copy-desktop-assets mirrors the renderer assets next to the bundle', async
   const copied = ['index.html', 'styles.css', 'fonts.css']
   for (const name of copied) rmSync(join(rendererDir, name), { force: true })
   rmSync(join(rendererDir, 'fonts'), { recursive: true, force: true })
+  rmSync(join(rendererDir, 'sprites'), { recursive: true, force: true })
 
   await run(process.execPath, ['scripts/copy-desktop-assets.mjs', buildRoot], { cwd: repoRoot })
 
@@ -185,6 +188,12 @@ test('copy-desktop-assets mirrors the renderer assets next to the bundle', async
   assert.ok(woff2.length > 0, 'expected at least one woff2 under desktop/renderer/fonts/')
   for (const name of woff2) {
     assert.ok(statSync(join(fontsDir, name)).size > 0, `copy of fonts/${name} must be non-empty`)
+  }
+
+  // Every sheet the working mark can ask for, by the name it asks for.
+  for (const clip of Object.keys(SHEETS)) {
+    const sheet = join(rendererDir, 'sprites', `${clip}.png`)
+    assert.ok(existsSync(sheet) && statSync(sheet).size > 0, `expected sprites/${clip}.png to be copied`)
   }
 
   // The generalisation that keeps `sources` honest as the page grows: an asset

@@ -55,7 +55,7 @@ test('M03 keeps the run mounted between short tools', (t) => {
 test('M04 keeps the thinking line through an unchanged streaming snapshot', (t) => {
   const view = mount(t)
   const identity = trackIdentity(view.column, '.run-line')
-  const starts = trackAnimationStarts(view.column, '.line-spark', view.stub.observeMotion)
+  const starts = trackAnimationStarts(view.column, '.line-mark', view.stub.observeMotion)
   t.after(starts.dispose)
   let head: unknown
   for (const text of ['A', 'AB', 'AB', 'ABC']) {
@@ -195,7 +195,7 @@ test('a live thought reads as its newest sentence with the spark, and opens to t
   assert.deepEqual(head.classes, ['run-line', 'live'])
   assert.deepEqual(
     head.children.map((part) => [part.classes.join(' '), part.text]),
-    [['line-spark', ''], ['line-text', '正在思考 · 第三行。'], ['line-meta line-elapsed', '7s'], ['icon', '']],
+    [['line-mark', ''], ['line-text', '正在思考 · 第三行。'], ['line-meta line-elapsed', '7s'], ['icon', '']],
   )
   assert.equal(head.attributes.get('aria-label'), '正在思考')
   assert.equal(head.attributes.get('aria-expanded'), 'false')
@@ -263,7 +263,6 @@ interface Rendered {
 
 function mount(t: { after(fn: () => void): void }): Rendered {
   const stub = installDomStub()
-  t.after(() => stub.uninstall())
   const container = stub.createContainer('transcript')
   const host = stub.createContainer('pane')
   const toggled: Array<readonly [string, boolean]> = []
@@ -285,6 +284,11 @@ function mount(t: { after(fn: () => void): void }): Rendered {
     onCopy: (text) => copied.push(text),
     onRewind: (id) => rewound.push(id),
     onOpenSubagent: (id) => openedSubagents.push(id),
+  })
+  // Disposed before the stub goes: a live mark's frame timers outlive the test otherwise.
+  t.after(() => {
+    view.dispose()
+    stub.uninstall()
   })
   const jump = (): StubView => {
     const found = stub.inspect(host).children.find((child) => child.classes.includes('scroll-bottom'))
@@ -637,7 +641,7 @@ test('a running run’s line is the live status: spark, what it does, elapsed ti
   assert.deepEqual(head.classes, ['run-line', 'live'])
   assert.deepEqual(
     head.children.map((child) => [child.classes.join(' '), child.text]),
-    [['line-spark', ''], ['line-text', '读取 a.ts'], ['line-meta line-elapsed', '6s'], ['icon', '']],
+    [['line-mark', ''], ['line-text', '读取 a.ts'], ['line-meta line-elapsed', '6s'], ['icon', '']],
   )
   // Read out: 「工作中」 alone — the words change with every tool, and the region is live.
   assert.equal(head.attributes.get('aria-label'), '工作中')
@@ -1618,7 +1622,7 @@ test('before the first step the status is a line of its own, at the tail', (t) =
   assert.deepEqual(row.classes, ['waiting'], 'the line is the last thing in the column')
   assert.deepEqual(
     row.children.map((child) => [child.classes.join(' '), child.text]),
-    [['line-spark', ''], ['line-text', '正在思考'], ['line-meta line-elapsed', '5s']],
+    [['line-mark', ''], ['line-text', '正在思考'], ['line-meta line-elapsed', '5s']],
     'spark, words, elapsed — and the clock is painted on the first frame',
   )
   // `.transcript` is `aria-live="polite"`: the words may be announced, the
@@ -1641,7 +1645,7 @@ test('once the turn opens a run, the run’s own line carries the status', (t) =
   const head = runOf(view).children[0]!
   assert.deepEqual(
     head.children.map((child) => [child.classes.join(' '), child.text]),
-    [['line-spark', ''], ['line-text', '读取 a.ts'], ['line-meta line-elapsed', '6s'], ['icon', '']],
+    [['line-mark', ''], ['line-text', '读取 a.ts'], ['line-meta line-elapsed', '6s'], ['icon', '']],
   )
 
   // The tool settles and the turn keeps running: the words fall back to
@@ -1676,7 +1680,7 @@ test('after a paragraph the model is deciding what next: the status gets its own
 test('M18 keeps the spark and clock mounted across tool handoffs and unchanged paints', (t) => {
   const view = mount(t)
   const activity = { ...RUNNING_T1, startedAt: Date.now() - 6000 }
-  const starts = trackAnimationStarts(view.column, '.line-spark', view.stub.observeMotion)
+  const starts = trackAnimationStarts(view.column, '.line-mark', view.stub.observeMotion)
   t.after(starts.dispose)
   let pieces: readonly StubView[] | undefined
   const labels: Record<string, string> = { Read: '读取 a.ts', Grep: '搜索 a.ts', Edit: '编辑 a.ts' }
@@ -1692,6 +1696,36 @@ test('M18 keeps the spark and clock mounted across tool handoffs and unchanged p
     assert.equal(head.children[2]!.text, '6s')
   }
   assert.equal(starts.starts, 0, 'label updates never detach or restart the spark')
+})
+
+test('one working mark moves between the carriers, and leaves with the turn', (t) => {
+  const view = mount(t)
+  const markIn = (carrier: StubView | undefined) => carrier?.children.find((child) => child.classes.includes('line-mark'))?.children[0]
+  const marks = (): number => {
+    const count = (node: StubView): number => (node.classes.includes('mark') ? 1 : 0) + node.children.reduce((n, child) => n + count(child), 0)
+    return view.items().reduce((n, item) => n + count(item), 0)
+  }
+  const user: TranscriptItem = { id: 'u1', kind: 'user', text: 'go', turnId: 't1' }
+  const tool: TranscriptItem = { id: 'call', kind: 'tool', text: '', toolName: 'Read', turnId: 't1', pending: true,
+    tool: { displayName: 'Read', useSummary: 'a.ts' } }
+
+  view.render(transcript([user]), NO_DISCLOSURE, RUNNING_T1)
+  const mark = markIn(view.items().at(-1))
+  assert.ok(mark && mark.classes.includes('mark'), 'the waiting row carries it')
+  assert.equal(mark.attributes.get('aria-hidden'), 'true')
+
+  view.render(transcript([user, tool]), NO_DISCLOSURE, RUNNING_T1)
+  assert.equal(markIn(runOf(view).children[0])?.node, mark.node, 'the run head carries the same mark')
+
+  // A draft arriving is the status itself: the mark goes, and comes back the same node.
+  const draft: TranscriptItem = { id: '__draft__', kind: 'assistant', text: '好', pending: true }
+  view.render(transcript([user, { ...tool, pending: undefined }, draft]), NO_DISCLOSURE, RUNNING_T1)
+  assert.equal(marks(), 0)
+  view.render(transcript([user, { ...tool, pending: undefined }, { ...draft, pending: undefined, id: 'a1' }]), NO_DISCLOSURE, RUNNING_T1)
+  assert.equal(markIn(view.items().at(-1))?.node, mark.node)
+
+  view.render(transcript([user, { ...tool, pending: undefined }]), NO_DISCLOSURE, { isStreaming: false, turnId: undefined, startedAt: undefined })
+  assert.equal(marks(), 0, 'an idle session shows none')
 })
 
 test('the status line keeps its node while it waits, and leaves when the answer starts', (t) => {

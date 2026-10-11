@@ -39,7 +39,6 @@ const MOTION_TOKENS = {
   "--motion-scrim-in": "200ms",
   "--motion-scrim-out": "120ms",
   "--motion-running": "2000ms",
-  "--motion-spark": "1200ms",
   "--motion-locate": "600ms",
   "--motion-hover-delay": "500ms"
 }
@@ -407,6 +406,10 @@ test('the palette is the one that was agreed, value for value', () => {
       '--marquee-shift': '0px',
       '--marquee-duration': '0s',
       '--marquee-gap': '48px',
+      '--mark-size': '20px',
+      '--mark-sheet': 'none',
+      '--mark-frames': '1',
+      '--mark-frame': '0',
       // The context indicator's ring, fourth of the same kind: a fraction of
       // the usable window written per paint by `dom/composerView.ts`.
       '--context-ratio': '0',
@@ -524,6 +527,10 @@ test('the palette is the one that was agreed, value for value', () => {
       '--marquee-shift': '0px',
       '--marquee-duration': '0s',
       '--marquee-gap': '48px',
+      '--mark-size': '20px',
+      '--mark-sheet': 'none',
+      '--mark-frames': '1',
+      '--mark-frame': '0',
       // The context indicator's ring, fourth of the same kind: a fraction of
       // the usable window written per paint by `dom/composerView.ts`.
       '--context-ratio': '0',
@@ -1563,14 +1570,19 @@ test('the composer raises its panels, and they no longer span the canvas', () =>
 })
 
 test('activity lines carry one running mark, which moves and stays readable', () => {
-  // The spark is the only motion in the transcript: three dots in the brand colour
-  // taking turns, on a semantic duration, drawn with opacity and scale only.
-  const dot = blockFor('.line-spark i')
-  assert.match(dot.decls.find((decl) => decl.prop === 'animation')!.value, /^spark var\(--motion-spark\) linear infinite$/)
-  assert.ok(declares(dot, 'color', 'var(--accent-brand-strong)'))
-  const frames = stripComments(css).match(/@keyframes spark \{([^@]*?\})\s*\}/)?.[1] ?? ''
-  assert.match(frames, /opacity/)
-  assert.doesNotMatch(frames, /background|left|top/)
+  // The working mark is a fixed square showing one frame of its sprite strip;
+  // the view only names the sheet and the frame. Until the sheets decode it is a
+  // dot in the brand colour.
+  const carrier = blockFor('.line-mark')
+  assert.ok(declares(carrier, 'flex', 'none'))
+  assert.ok(declares(carrier, 'width', 'var(--mark-size)'))
+  assert.ok(declares(carrier, 'height', 'var(--mark-size)'))
+  assert.ok(declares(blockFor('.mark-layer'), 'overflow', 'clip'))
+  assert.ok(declares(blockFor('.mark-layer.is-warm'), 'opacity', '0.001'), 'warm layers stay composited, so not 0')
+  const strip = blockFor('.mark-strip')
+  assert.match(strip.decls.find((decl) => decl.prop === 'transform')!.value, /var\(--mark-frame\) \/ var\(--mark-frames\)/)
+  assert.match(strip.decls.find((decl) => decl.prop === 'background')!.value, /^var\(--mark-sheet\)/)
+  assert.ok(declares(blockFor('.mark.is-dot::after'), 'color', 'var(--accent-brand-strong)'))
   // A card is a card and its rows are not: no row carries a shadow.
   for (const block of blocks) {
     if (!/^\.step\b|^\.run\b|^\.run-card\b/.test(block.selector.trim())) continue
