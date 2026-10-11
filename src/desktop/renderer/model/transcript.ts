@@ -241,7 +241,7 @@ export interface TranscriptItem {
 
 /** One step inside an activity run. `text` is the body; heads are the view's job. */
 export type ActivityStep =
-  | { readonly kind: 'thinking'; readonly id: string; readonly text: string; readonly pending?: boolean; readonly durationMs?: number }
+  | { readonly kind: 'thinking'; readonly id: string; readonly text: string; readonly pending?: boolean; readonly durationMs?: number; readonly startedAt?: number }
   | {
       readonly kind: 'tool'
       readonly id: string
@@ -1617,6 +1617,7 @@ function toStep(item: TranscriptItem): ActivityStep {
         text: item.text,
         ...(item.pending === true ? { pending: true } : {}),
         ...(item.durationMs === undefined ? {} : { durationMs: item.durationMs }),
+        ...(item.startedAt === undefined ? {} : { startedAt: item.startedAt }),
       }
     case 'tool': {
       const tool = item.tool ?? { displayName: item.toolName ?? '', useSummary: '' }

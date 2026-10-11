@@ -5,35 +5,25 @@ import {
   type TranscriptItem,
   type TurnPhase,
 } from './transcript.js'
-import { thoughtLiveLabel } from './thinking.js'
 import { batchPhrase, callPhrase, type CallStep } from './toolPhrases.js'
 import { markSpecFor, type MarkSpec } from './workingMark.js'
 
 /**
- * What the turn is doing **right now**, and where that is said.
+ * What the turn is doing **right now**: one status line, the transcript's last,
+ * for the whole turn — whatever the steps above it are.
  *
- * The live status is the transcript's **last line**, for the whole turn, because
- * that is where the reader is looking. It is carried by whatever is last:
+ * Its words, by priority: a wait no record shows (compaction, retry backoff) >
+ * a pending question > a call awaiting approval > the running calls > the thought
+ * in progress > a draft arriving (「正在输出」) > 「正在思考」, the gap between steps.
  *
- * - an activity run — its summary line turns into the status (`live`): what the
- *   running calls do, the latest sentence of the thought in progress, or 「正在思考」
- *   in the gap between two tools;
- * - otherwise a line of its own (`row`) reading 「正在思考」 — the gap before the first
- *   step, or after the model finished a paragraph and is deciding what next.
- *
- * A wait no record shows — an automatic compaction, a retry backoff — outranks
- * both (`phaseLabel`) and always gets the line of its own. And never a second
- * voice beside a growing draft: if the last loose item is visibly arriving, the
- * text itself is the status.
- *
- * DOM-free, like every other `model/` unit: the clock lives in the view, and
- * `startedAt` is only carried through so a test can pin the contents without one.
+ * DOM-free, like every other `model/` unit: the clock and the timers live in the view.
  */
 
 /** 「正在思考」 — the label for 「the model is deciding」, wherever it is shown. */
 export const WAITING_LABEL = '正在思考'
 
 const ASKING_LABEL = '正在提问'
+const WRITING_LABEL = '正在输出'
 
 export interface WaitingInput {
   /** The session snapshot's own flag: a turn is in flight. */
@@ -53,37 +43,57 @@ export interface WaitingInput {
 export interface WaitingRow {
   readonly label: string
   readonly startedAt: number | undefined
+  /** Set while the model is thinking: when that began, for `thinkingPhaseLabel` to escalate from. */
+  readonly thinkingSince?: number
 }
 
 export interface TurnActivity {
-  /** The run whose summary line carries the live status, and what it reads. */
-  readonly live: { readonly runId: string; readonly label: string; readonly startedAt: number | undefined } | undefined
-  /** The status line of its own, when no run can carry it. */
+  /** The status line; `undefined` exactly when the turn is not running. */
   readonly row: WaitingRow | undefined
   /** What the working mark beside the status shows; `undefined` exactly when there is no status. */
   readonly mark: MarkSpec | undefined
 }
 
-const IDLE: TurnActivity = { live: undefined, row: undefined, mark: undefined }
+const IDLE: TurnActivity = { row: undefined, mark: undefined }
 
-/**
- * How long the wait has to last before the counter is worth showing: a turn that
- * answers in two seconds does not need to be timed, and a number that appears and
- * is gone again before it can be read is noise next to the label.
- */
-export const WAITING_CLOCK_AFTER_MS = 5_000
+/** How long the wait has to last before the counter is worth showing. */
+export const WAITING_CLOCK_AFTER_MS = 2_000
 
-/**
- * What the counter reads at `elapsedMs` — the empty string while the wait is
- * still short, which is how the view says 「no counter yet」 without a second
- * piece of state.
- */
+/** What the counter reads at `elapsedMs`; empty while the wait is still short. */
 export function waitingElapsedLabel(elapsedMs: number): string {
   return elapsedMs < WAITING_CLOCK_AFTER_MS ? '' : formatWorkedDuration(elapsedMs)
 }
 
+/** `['14s', '396 tokens']`: the seconds once they are worth showing, the tokens only beside them. */
+export function statusMeta(elapsedMs: number, tokens: number | undefined): string[] {
+  const seconds = waitingElapsedLabel(elapsedMs)
+  if (seconds === '') return []
+  return tokens !== undefined && tokens > 0 ? [seconds, `${formatTokens(tokens)} tokens`] : [seconds]
+}
+
+function formatTokens(tokens: number): string {
+  return tokens < 1000 ? String(tokens) : `${(tokens / 1000).toFixed(1).replace(/\.0$/, '')}k`
+}
+
+const THINKING_PHASES: readonly (readonly [number, string])[] = [
+  [60_000, '快想好了'],
+  [45_000, '再想一会'],
+  [30_000, '还在想'],
+  [15_000, '仍在思考'],
+]
+
+/** 「正在思考」, worded up the longer the thought runs. */
+export function thinkingPhaseLabel(elapsedMs: number): string {
+  return THINKING_PHASES.find(([from]) => elapsedMs >= from)?.[1] ?? WAITING_LABEL
+}
+
+/** The words the row shows at `now`: the escalating thought, else its fixed label. */
+export function rowLabel(row: WaitingRow, now: number): string {
+  return row.thinkingSince === undefined ? row.label : thinkingPhaseLabel(now - row.thinkingSince)
+}
+
 /**
- * Which run is live, and what the status reads, for this paint.
+ * The status for this paint.
  *
  * `ActivityRun.status` is deliberately not consulted for liveness: it reads
  * 「done」 the moment the last tool result merges in, which happens several times
@@ -94,18 +104,27 @@ export function waitingElapsedLabel(elapsedMs: number): string {
 export function turnActivity(entries: readonly TranscriptEntry[], input: WaitingInput): TurnActivity {
   if (!input.isStreaming) return IDLE
   const plain = markSpecFor(undefined)
-  if (input.phase) return { live: undefined, row: { label: phaseLabel(input.phase), startedAt: input.startedAt }, mark: plain }
+  const row = (label: string, extra?: Partial<WaitingRow>): WaitingRow => ({ label, startedAt: input.startedAt, ...extra })
+  if (input.phase) return { row: row(phaseLabel(input.phase)), mark: plain }
   const asking = input.asking === undefined ? undefined : `${ASKING_LABEL} · ${input.asking}`
   const last = entries[entries.length - 1]
-  if (last?.kind === 'run' && last.run.status !== 'aborted' && input.turnId !== undefined && last.run.turnId === input.turnId) {
-    return {
-      live: { runId: last.run.id, label: asking ?? runActivity(last.run), startedAt: input.startedAt },
-      row: undefined,
-      mark: asking === undefined ? markSpecFor(last.run) : plain,
+  const run = last?.kind === 'run' && last.run.status !== 'aborted' && input.turnId !== undefined && last.run.turnId === input.turnId
+    ? last.run
+    : undefined
+  if (asking !== undefined) return { row: row(asking), mark: plain }
+  if (run) {
+    const calls = run.steps.filter(isRunningCall)
+    const waiting = calls.filter((step) => step.tool.awaitingApproval === true).at(-1)
+    if (waiting) return { row: row(`等待确认 · ${callPhrase(waiting)}`), mark: markSpecFor(run) }
+    if (calls.length > 0) return { row: row(batchPhrase(calls)), mark: markSpecFor(run) }
+    const thought = run.steps[run.steps.length - 1]
+    if (thought?.kind === 'thinking' && thought.pending === true) {
+      return { row: row(WAITING_LABEL, { thinkingSince: thought.startedAt ?? input.startedAt }), mark: markSpecFor(run) }
     }
+    return { row: row(WAITING_LABEL), mark: plain }
   }
-  if (last?.kind === 'item' && isArriving(last.item)) return IDLE
-  return { live: undefined, row: { label: asking ?? WAITING_LABEL, startedAt: input.startedAt }, mark: plain }
+  if (last?.kind === 'item' && isArriving(last.item)) return { row: row(WRITING_LABEL), mark: plain }
+  return { row: row(WAITING_LABEL), mark: plain }
 }
 
 const RETRY_REASONS: Record<Extract<TurnPhase, { kind: 'retrying' }>['reason'], string> = {
@@ -125,23 +144,6 @@ export function phaseLabel(phase: TurnPhase): string {
   return phase.kind === 'compacting' ? '正在压缩上下文' : `${RETRY_REASONS[phase.reason]} · 第 ${phase.attempt} 次重试`
 }
 
-/**
- * The live run's label: what the running calls do, in words — 「读取 waiting.ts」,
- * 「运行 npm test」 — else the thought in progress, else 「正在思考」.
- *
- * A call the user still has to allow outranks all of them: the turn is waiting
- * on the reader, not on the tool.
- */
-export function runActivity(run: ActivityRun): string {
-  const running = run.steps.filter(isRunningCall)
-  const waiting = running.filter((step) => step.tool.awaitingApproval === true).at(-1)
-  if (waiting) return `等待确认 · ${callPhrase(waiting)}`
-  if (running.length > 0) return batchPhrase(running)
-  const last = run.steps[run.steps.length - 1]
-  if (last?.kind === 'thinking' && last.pending === true) return thoughtLiveLabel(last.text)
-  return WAITING_LABEL
-}
-
 function isRunningCall(step: ActivityRun['steps'][number]): step is CallStep {
   return (step.kind === 'tool' || step.kind === 'task') && step.pending === true
 }
@@ -155,4 +157,36 @@ function isRunningCall(step: ActivityRun['steps'][number]): step is CallStep {
  */
 function isArriving(item: TranscriptItem): boolean {
   return item.pending === true && item.text.trim().length > 0
+}
+
+/** A new label shows once it has held this long... */
+export const LABEL_DEBOUNCE_MS = 150
+/** ...and the one it replaces has been up at least this long. */
+export const LABEL_MIN_SHOWN_MS = 650
+
+export interface LabelGate {
+  readonly shown: string
+  readonly shownAt: number
+  /** A restart of the turn (its start time): the old words say nothing about the new one. */
+  readonly epoch: number | undefined
+  readonly pending?: { readonly label: string; readonly since: number }
+}
+
+/**
+ * Keeps the words from flickering: `want` is what the status says now; the result
+ * is what to show, the gate to carry to the next call, and when to call again
+ * (`recheckAt`, epoch ms) if a switch is still waiting out its delay.
+ */
+export function settleLabel(
+  gate: LabelGate | undefined,
+  want: string,
+  epoch: number | undefined,
+  now: number,
+): { readonly gate: LabelGate; readonly label: string; readonly recheckAt?: number } {
+  if (!gate || gate.epoch !== epoch) return { gate: { shown: want, shownAt: now, epoch }, label: want }
+  if (want === gate.shown) return { gate: { ...gate, pending: undefined }, label: gate.shown }
+  const pending = gate.pending?.label === want ? gate.pending : { label: want, since: now }
+  const at = Math.max(pending.since + LABEL_DEBOUNCE_MS, gate.shownAt + LABEL_MIN_SHOWN_MS)
+  if (now >= at) return { gate: { shown: want, shownAt: now, epoch }, label: want }
+  return { gate: { ...gate, pending }, label: gate.shown, recheckAt: at }
 }

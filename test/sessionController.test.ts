@@ -417,6 +417,20 @@ test('token usage accumulates across turns and resets when the session is retarg
   assert.equal(harness.controller.getSessionId(), 'other-session')
 })
 
+test('the turn’s output tokens do not follow a retarget into another session', async () => {
+  const harness = await createHarness({
+    run: async () => {
+      harness?.proxy.onRequestUsage(usage(100, 7))
+      return okResult({ usage: usage(100, 7), statusUsage: usage(100, 7) })
+    },
+  })
+  await harness.controller.submit({ text: 'one' })
+  assert.equal(harness.controller.getSnapshot().turnOutputTokens, 7, 'kept after the turn, for its footer')
+
+  harness.controller.retarget({ ...harness.session, id: 'other-session' }, [])
+  assert.equal(harness.controller.getSnapshot().turnOutputTokens, undefined)
+})
+
 test('a request that lands mid-turn moves both lastRequest and the running total', async () => {
   let harness: Harness | undefined
   const seenMidTurn: Array<{ inputTokens: number; outputTokens: number } | null> = []

@@ -10,7 +10,6 @@ import {
   pruneDisclosure,
   runHasTools,
   summarizeRun,
-  thinkingDurationLabel,
   thoughtFirstSentence,
   thoughtLabel,
   thoughtLiveLabel,
@@ -38,13 +37,6 @@ test('a thought reads as its first sentence, and as its newest one while it arri
   // Nothing said yet.
   assert.equal(thoughtLabel(''), THINKING_DONE_FALLBACK)
   assert.equal(thoughtLiveLabel('  \n'), THINKING_LIVE_LABEL)
-})
-
-test('the time sits beside a sealed thought only once it is measured', () => {
-  assert.equal(thinkingDurationLabel({ durationMs: 458_000 }), '7m 38s')
-  // A replayed block was never timed, and a live one has no total yet.
-  assert.equal(thinkingDurationLabel({}), undefined)
-  assert.equal(thinkingDurationLabel({ pending: true, durationMs: 900 }), undefined)
 })
 
 const tool = (id: string, toolName: string, extra: Partial<Extract<ActivityStep, { kind: 'tool' }>> & { useSummary?: string; detail?: string } = {}): ActivityStep => {

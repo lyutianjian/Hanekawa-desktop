@@ -1,5 +1,4 @@
 import { parseUnifiedPatch } from './diffRows.js'
-import { formatWorkedDuration } from './transcript.js'
 import type { ActivityRun, ActivityStep, TranscriptEntry } from './transcript.js'
 
 /**
@@ -85,16 +84,6 @@ export function thoughtLabel(text: string): string {
 export function thoughtLiveLabel(text: string): string {
   const latest = sentences(text).at(-1)
   return latest === undefined ? THINKING_LIVE_LABEL : `${THINKING_LIVE_LABEL} · ${latest}`
-}
-
-/**
- * 「12s」 beside a sealed thought, or nothing: one still arriving has no total
- * yet, and a replayed one was never timed, so a guess would be a number nobody
- * measured.
- */
-export function thinkingDurationLabel(block: { readonly pending?: boolean; readonly durationMs?: number }): string | undefined {
-  if (block.pending === true || block.durationMs === undefined) return undefined
-  return formatWorkedDuration(block.durationMs)
 }
 
 // --- run summary -------------------------------------------------------------

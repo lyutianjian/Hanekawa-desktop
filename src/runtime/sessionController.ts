@@ -465,6 +465,7 @@ export class SessionController {
     this.seedUsageFromMetrics(session.id)
     this.taskSnapshot = findLatestTaskSnapshot(records)
     this.spinnerSubText = undefined
+    this.turnOutputTokens = undefined
     this.fileHistoryReady = false
     // The outgoing service may still have backups in flight.
     this.fileHistory.dispose()

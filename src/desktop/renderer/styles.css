@@ -2021,6 +2021,24 @@ body.settings-open #browser-resizer { display: none; }
 }
 .transcript .item:hover .item-meta,
 .transcript .item .item-meta:focus-within { opacity: 1; }
+/* The tail under a turn that did not end in an answer: it has no message to hang on, so it follows the entry and shows with it. */
+.transcript .turn-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: calc(-1 * var(--space-1)) 0 var(--space-4);
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+  opacity: 0;
+  transition: opacity var(--motion-micro) var(--ease-out);
+}
+.transcript .turn-foot:hover,
+.transcript-column > :hover + .turn-foot { opacity: 1; }
+.item-meta .item-fact::before,
+.item-meta .item-model + .item-time::before { content: '·'; margin-right: var(--space-2); }
+.item-meta > :first-child.item-fact::before { content: none; }
 /* Under the bubble, not inside it, and at its bottom-left corner: the row is
    chrome, and hanging it off the bubble's outer edge keeps the bubble itself the
    plain surface it was. Order is the same on both sides — the DOM order is the
@@ -2070,8 +2088,8 @@ body.settings-open #browser-resizer { display: none; }
    A run of work folds to one quiet line — 「已运行 2 个命令，读取 2 个文件」 — and
    opens into a bordered card with a row per step. A thought outside a run is the
    same line with its first sentence on it. While the turn works, the last line of
-   the transcript is its live status: the same line with the spark in front and
-   the elapsed time behind. `model/waiting.ts` decides which one carries it. */
+   the transcript is its status: mark, elapsed time, tokens, then the words.
+   `model/waiting.ts` decides what it says. */
 .run {
   min-width: 0;
   margin-bottom: var(--space-3);
@@ -2098,9 +2116,11 @@ body.settings-open #browser-resizer { display: none; }
 }
 .run-line:hover { color: var(--text-secondary); }
 .run-line:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; border-radius: var(--radius-sm); }
-.run-line.live,
-.waiting { color: var(--text-secondary); }
-.waiting { user-select: none; }
+.waiting {
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+  user-select: none;
+}
 .thinking { min-width: 0; margin-bottom: var(--space-3); }
 .thinking-run > .thinking:last-child { margin-bottom: 0; }
 .line-text {
@@ -2110,6 +2130,8 @@ body.settings-open #browser-resizer { display: none; }
   text-overflow: ellipsis;
 }
 .line-meta { flex: none; color: var(--text-tertiary); }
+.waiting .line-meta { display: flex; gap: 6px; color: inherit; }
+.line-sep { color: var(--text-tertiary); }
 .line-fail { flex: none; color: var(--text-danger); }
 /* The counter stays out of the line until the wait is worth a number. */
 .line-elapsed:empty { display: none; }
@@ -2522,9 +2544,7 @@ body.settings-open #browser-resizer { display: none; }
 .receipt.plan.accepted .receipt-text { color: var(--text-primary); }
 .receipt-head .icon { flex: none; color: var(--text-tertiary); }
 .transcript .item.subagent { color: var(--accent-tool); }
-/* The turn's total, in small type under its answer — and 「已中断」 where a turn was
-   stopped, in the same place and the same voice. */
-.transcript .item.duration,
+/* 「已中断」 where a turn was stopped, in small type under its answer. */
 .transcript .item.notice.interrupt {
   margin: calc(-1 * var(--space-1)) 0 var(--space-5);
   color: var(--text-tertiary);
