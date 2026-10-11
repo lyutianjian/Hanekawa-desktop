@@ -73,7 +73,7 @@ export function createCanvasHeaderView(
   const openLocation = button('canvas-open-location', '', '', actions.onOpenLocation, { icon: 'external' })
   openLocation.appendChild(locationLabel)
   const threadsLabel = el('span', 'btn-label', '概览')
-  const threadsButton = button('canvas-threads-open', '', '显示 / 隐藏概览', () => actions.onOpenThreads?.())
+  const threadsButton = button('canvas-threads-open', '', '显示 / 隐藏概览', () => actions.onOpenThreads?.(), { icon: 'overview' })
   threadsButton.appendChild(threadsLabel)
   // The thread crumb is persistent for the same reason the title input is: it
   // repaints with every snapshot. Its parts are built once and only updated.

@@ -3,7 +3,7 @@
 
 import { formatReportNote } from '../../utils/reportSanitizer.js'
 import type { ThreadRecord, ThreadStatus } from '../../services/coordination/types.js'
-import { OPENING_HEAD } from '../protocol/coordinationHost.js'
+import type { StartThreadRequest } from '../protocol/coordinationHost.js'
 import { AUTO_WAKE_LIMIT } from './wakeDecision.js'
 
 const SLUG_MAX = 32
@@ -113,14 +113,16 @@ export function formatWakeMessage(input: WakeMessageInput): string {
   ].join('\n')
 }
 
-/** The app-written instruction for the one opening turn of a coordinator created by 新建项目. */
-export function formatOpeningMessage(): string {
-  return [
-    OPENING_HEAD,
-    'Read the project README, AGENTS.md and CLAUDE.md if they exist, the recent git commits and the directory structure.',
-    'Then briefly summarise the current state of the project and give 2 to 4 concrete suggestions that could each be done as a thread.',
-    'Do not start, message or stop any thread in this turn. Wait for the user to confirm what to do.',
-  ].join('\n')
+/** The survey the app starts as a thread for a coordinator created by 新建项目. */
+export const OPENING_THREAD: StartThreadRequest = {
+  title: '了解项目',
+  brief: [
+    'Survey this project without changing anything.',
+    'Read the README, AGENTS.md and CLAUDE.md if they exist, the recent git commits and the directory structure.',
+    'Report a short summary of the project\'s current state, then 2 to 4 concrete next tasks, each small enough for one thread.',
+  ].join('\n'),
+  background: 'The project was just added to the coordinator and the user has not asked for anything yet. The coordinator will turn your report into suggestions for the user.',
+  writesCode: false,
 }
 
 export interface TurnOutcome {

@@ -268,7 +268,7 @@ export interface ShellCoordination {
   dismissMerge(cwd: string, threadId: string): Promise<void>
   resolveConflictViaThread(cwd: string, threadId: string): Promise<void>
   /** The thread table, lifecycle applied and text sanitized; no coordinator check. */
-  threadInfos(cwd: string): Promise<{ coordinatorSessionId?: string; started?: boolean; threads: readonly ShellThreadInfo[] }>
+  threadInfos(cwd: string): Promise<{ coordinatorSessionId?: string; openingThreadId?: string; started?: boolean; threads: readonly ShellThreadInfo[] }>
   /** The user's stop of one thread. */
   stopThreadById(cwd: string, threadId: string): Promise<void>
   /** The user's 结案 of one thread. */
@@ -1405,6 +1405,7 @@ export class ShellHost<
     const table = await coordination.threadInfos(cwd)
     const state: WireCoordinationThreads = { projectRoot, threads: [] }
     if (table.coordinatorSessionId !== undefined) state.coordinatorSessionId = table.coordinatorSessionId
+    if (table.openingThreadId !== undefined) state.openingThreadId = table.openingThreadId
     if (table.started === true) state.started = true
     for (const thread of table.threads) {
       const wire = toWireThreadInfo(thread)

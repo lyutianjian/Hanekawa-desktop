@@ -79,28 +79,27 @@ function state(...threads: WireThreadInfo[]): WireCoordinationThreads {
   return { projectRoot: '/repo', coordinatorSessionId: 'coord', threads }
 }
 
-test('the thread strip counts like the sidebar and picks its click target', () => {
+test('the thread strip counts every live thread, finished or not, and picks its click target', () => {
   const overview = { kind: 'overview' }
   const cases: Array<[boolean, WireCoordinationThreads | undefined, unknown]> = [
     [false, state(thread('a', 'running')), undefined],
     [true, undefined, undefined],
     [true, state(), undefined],
-    [true, state(thread('a', 'idle'), thread('b', 'resolved')), undefined],
-    [true, state(thread('a', 'running'), thread('b', 'running')), { running: 2, blocked: 0, target: overview }],
-    [true, state(thread('a', 'needs-you')), { running: 0, blocked: 1, target: { kind: 'thread', sessionId: 's-a' } }],
-    [true, state(thread('a', 'running'), thread('b', 'awaiting-coordinator')), { running: 1, blocked: 1, target: overview }],
-    [true, state(thread('a', 'awaiting-coordinator')), { running: 0, blocked: 1, target: overview }],
-    [true, state(thread('a', 'awaiting-coordinator'), thread('b', 'needs-you')), { running: 0, blocked: 2, target: { kind: 'thread', sessionId: 's-b' } }],
-    [true, state(thread('a', 'needs-you'), thread('b', 'needs-you')), { running: 0, blocked: 2, target: overview }],
+    [true, state(thread('a', 'stale')), undefined],
+    [true, state(thread('a', 'idle'), thread('b', 'resolved'), thread('c', 'stale')), { total: 2, running: 0, blocked: 0, target: overview }],
+    [true, state(thread('a', 'running'), thread('b', 'running')), { total: 2, running: 2, blocked: 0, target: overview }],
+    [true, state(thread('a', 'needs-you')), { total: 1, running: 0, blocked: 1, target: { kind: 'thread', sessionId: 's-a' } }],
+    [true, state(thread('a', 'running'), thread('b', 'awaiting-coordinator')), { total: 2, running: 1, blocked: 1, target: overview }],
+    [true, state(thread('a', 'awaiting-coordinator'), thread('b', 'needs-you')), { total: 2, running: 0, blocked: 2, target: { kind: 'thread', sessionId: 's-b' } }],
+    [true, state(thread('a', 'needs-you'), thread('b', 'needs-you')), { total: 2, running: 0, blocked: 2, target: overview }],
   ]
   for (const [coordinated, table, expected] of cases) assert.deepEqual(threadStripView(coordinated, table), expected)
 })
 
-test('the chip drops the running half when nothing runs', () => {
+test('the chip leaves out the counts that are zero', () => {
   const overview = { kind: 'overview' } as const
-  assert.deepEqual(threadStripText({ running: 2, blocked: 1, target: overview }), { running: '2 个线程运行中', blocked: '· 1 个需要你' })
-  assert.deepEqual(threadStripText({ running: 2, blocked: 0, target: overview }), { running: '2 个线程运行中', blocked: undefined })
-  assert.deepEqual(threadStripText({ running: 0, blocked: 3, target: overview }), { running: undefined, blocked: '3 个需要你' })
+  assert.deepEqual(threadStripText({ total: 3, running: 2, blocked: 1, target: overview }), { total: '3 个线程', running: '· 2 个运行中', blocked: '· 1 个需要你' })
+  assert.deepEqual(threadStripText({ total: 3, running: 0, blocked: 0, target: overview }), { total: '3 个线程', running: undefined, blocked: undefined })
 })
 
 test('switching sessions prunes extras and selections with nothing behind them', () => {

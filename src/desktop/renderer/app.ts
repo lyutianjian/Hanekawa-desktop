@@ -239,14 +239,7 @@ const suggestions = createSuggestionsView(required('suggestions'), (index) => {
 // Resident, and window-level like every other singleton the active pane drives:
 // it lives on the composer's own axis, so exactly one is on screen at a time.
 const taskPanel = createTaskPanelView(required('task-panel'))
-const processStrip = createProcessStripView(
-  required('process-strip'),
-  () => activePane()?.toggleBackgroundTasks(),
-  (target) => {
-    if (target.kind === 'overview') showSideTab('threads')
-    else openSessionById(activeLaneInfo()!.projectRoot, target.sessionId)
-  },
-)
+const processStrip = createProcessStripView(required('process-strip'), () => activePane()?.toggleBackgroundTasks())
 const status = createStatusView({
   usage: required('status-usage'),
   cost: required('status-cost'),
@@ -367,6 +360,18 @@ function attachPaneSession(lane: string): void {
     onSubagentsChanged: () => renderSubagents(),
     isCoordinator: () => shellClient.getLanes().find((info) => info.lane === lane)?.coordinationRole === 'coordinator',
     onOpenOverview: () => showSideTab('threads'),
+    threadStrip: () => {
+      const info = shellClient.getLanes().find((one) => one.lane === lane)
+      return threadStripView(info?.coordinationRole !== undefined, info && coordinationByRoot.get(info.projectRoot))
+    },
+    onOpenThreads: (target) => {
+      if (target.kind === 'overview') showSideTab('threads')
+      else openSessionById(activeLaneInfo()!.projectRoot, target.sessionId)
+    },
+    coordinationOpening: () => {
+      const root = shellClient.getLanes().find((info) => info.lane === lane)?.projectRoot
+      return root !== undefined && coordinationByRoot.get(root)?.openingThreadId !== undefined
+    },
     onExit: () => {
       // `/exit` closes this pane, not the window: the single window holds every
       // other lane, and `window.close()` would take them all down.
@@ -458,7 +463,7 @@ function activateLane(lane: string): void {
   // The merge bar belongs to the lane's project and role: hide what the last
   // lane showed now, and pull this one's after the debounce.
   renderMergeBar()
-  renderThreadStrip()
+  activePane()?.refreshWelcome()
   scheduleMergePull()
   openModelSetupIfNeeded()
 }
@@ -1126,7 +1131,7 @@ shellClient.onCoordinationThreads((state) => {
     && state.threads.some((thread) => !previous.threads.some((known) => known.threadId === thread.threadId))
   if (state.projectRoot === activeLaneInfo()?.projectRoot) {
     if (autoOpensOverview(started, overviewClosed.has(state.projectRoot)) && !coordinated()) showSideTab('threads')
-    renderThreadStrip()
+    activePane()?.refreshWelcome()
   }
   renderSidebar()
   renderCanvasHeader()
@@ -1759,10 +1764,6 @@ function toggleOverview(): void {
   renderBrowser()
 }
 
-function renderThreadStrip(): void {
-  processStrip.renderThreads(threadStripView(coordinated(), activeCoordination()))
-}
-
 function openSubagent(id: string): void {
   selectedSubagent = id
   showSideTab('subagents')
@@ -2201,7 +2202,7 @@ shellClient.onLanes((lanes) => {
   renderBrowser()
   // The active lane's coordination role can move with the topology.
   renderMergeBar()
-  renderThreadStrip()
+  activePane()?.refreshWelcome()
   scheduleMergePull()
 })
 

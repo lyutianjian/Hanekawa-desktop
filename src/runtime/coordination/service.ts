@@ -37,7 +37,7 @@ import type {
   ThreadSummary,
 } from '../protocol/coordinationHost.js'
 import { lastCompactSummary } from './contextPolicy.js'
-import { composeThreadKickoff, formatCoordinatorSeed, formatOpeningMessage, threadSlug } from './messages.js'
+import { OPENING_THREAD, composeThreadKickoff, formatCoordinatorSeed, threadSlug } from './messages.js'
 
 export const COORDINATOR_SESSION_TITLE = '项目调度'
 const FETCH_DEFAULT_LIMIT = 20
@@ -148,7 +148,7 @@ export class CoordinationService implements CoordinationHost {
   }
 
   /** The project's threads for the desktop, newest activity first; no coordinator check. */
-  async threadInfos(cwd: string): Promise<{ coordinatorSessionId?: string; started: boolean; threads: ThreadInfo[] }> {
+  async threadInfos(cwd: string): Promise<{ coordinatorSessionId?: string; openingThreadId?: string; started: boolean; threads: ThreadInfo[] }> {
     const store = this.coordinationStore(cwd)
     const file = await store.read()
     const threads = applyLifecycle(file.threads, new Date(), this.port.settings(cwd))
@@ -160,6 +160,7 @@ export class CoordinationService implements CoordinationHost {
       .sort((a, b) => (b.lastActivityAt ?? '').localeCompare(a.lastActivityAt ?? ''))
     return {
       ...(file.coordinator?.sessionId ? { coordinatorSessionId: file.coordinator.sessionId } : {}),
+      ...(file.coordinator?.openingThreadId ? { openingThreadId: file.coordinator.openingThreadId } : {}),
       started: await store.exists(),
       threads,
     }
@@ -183,7 +184,10 @@ export class CoordinationService implements CoordinationHost {
 
   async startThread(caller: CoordinationCaller, request: StartThreadRequest): Promise<StartedThread> {
     await this.requireCoordinator(caller)
-    const cwd = caller.projectDir
+    return this.startThreadIn(caller.projectDir, request)
+  }
+
+  private async startThreadIn(cwd: string, request: StartThreadRequest): Promise<StartedThread> {
     const store = this.coordinationStore(cwd)
     const sessions = this.port.storeFor(cwd)
     const threadId = newThreadId()
@@ -333,15 +337,23 @@ export class CoordinationService implements CoordinationHost {
     const pointer = await store.getCoordinatorSessionId()
     if (pointer && (await sessions.resolve(pointer))) return pointer
     const id = await this.createCoordinatorSession(cwd)
-    if (options.opening) await this.issueOpening(cwd, id)
+    if (options.opening) await this.startOpening(cwd, id)
     return id
   }
 
-  /** The opening turn goes through the wake channel but is never counted in `autoWakeCount`. */
-  private async issueOpening(cwd: string, sessionId: string): Promise<void> {
-    const lane = await this.port.openLane(cwd, sessionId, { activate: false })
-    if (!(await this.coordinationStore(cwd).claimOpening(sessionId))) return
-    lane.requestWake(formatOpeningMessage(), { opening: true })
+  /**
+   * A new project opens with a survey thread rather than a coordinator turn, so
+   * the coordinator's transcript holds only what the survey found. Its report
+   * wakes the coordinator like any thread's. A failure leaves the project
+   * without one and says so.
+   */
+  private async startOpening(cwd: string, coordinatorId: string): Promise<void> {
+    try {
+      const { threadId } = await this.startThreadIn(cwd, OPENING_THREAD)
+      await this.coordinationStore(cwd).setOpeningThread(threadId)
+    } catch (error) {
+      this.port.notify({ title: COORDINATOR_SESSION_TITLE, body: `未能开始了解项目：${errorMessage(error)}`, sessionId: coordinatorId })
+    }
   }
 
   /**

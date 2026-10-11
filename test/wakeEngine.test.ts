@@ -409,7 +409,7 @@ test('a retired coordinator lane no longer drives the wake state', async () => {
   assert.equal(f.coordinator!.wakeLocked, true)
 })
 
-test('a coordinator wake-origin turn with no notes (the opening) neither counts toward the limit nor locks anything', async () => {
+test('a coordinator wake-origin turn with no notes neither counts toward the limit nor locks anything', async () => {
   const h = await setup(0)
   await h.store.setAutoWakeCount(3)
   h.coord.start('wake'); h.coord.end('wake')

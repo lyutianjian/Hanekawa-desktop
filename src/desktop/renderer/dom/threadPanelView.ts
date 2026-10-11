@@ -79,12 +79,18 @@ export function createThreadPanelView(root: HTMLElement, onIntent: (intent: Thre
     )
   }
 
+  const emptyState = (): HTMLElement => el('div', 'thread-panel-empty',
+    el('h2', 'thread-panel-empty-title', '概览'),
+    el('p', 'thread-panel-empty-lead', '线程开始后，这里会跟踪它们的进展：哪些正在进行、哪些在等你处理、哪些已经完成。'),
+    el('div', 'thread-panel-empty-hint', icon('overview'), el('p', undefined, '协调会话开始工作后，线程会显示在这里。')),
+  )
+
   return {
     render(view) {
       const signature = JSON.stringify(view)
       if (signature === drawn) return
       drawn = signature
-      if (!view.available) replace(root, view.notice === undefined ? undefined : el('div', 'thread-panel-notice', view.notice), el('p', 'thread-panel-empty', '当前项目还没有线程'))
+      if (!view.available) replace(root, view.notice === undefined ? undefined : el('div', 'thread-panel-notice', view.notice), emptyState())
       else replace(root, panel(view))
     },
   }

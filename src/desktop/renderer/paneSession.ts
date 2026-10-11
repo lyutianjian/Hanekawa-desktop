@@ -50,6 +50,8 @@ import { finishPresenceWithin } from './dom/presence.js'
 import { createRepaint } from './frame.js'
 import { createTranscriptView, type TranscriptView } from './dom/transcriptView.js'
 import { createCoordinatorWelcome, createWelcomeView } from './dom/welcomeView.js'
+import { threadChip } from './dom/processStripView.js'
+import type { ThreadStripView } from './model/sidePanel.js'
 import { isTranscriptEmpty, welcomeView } from './model/welcome.js'
 import {
   branchPickerKeyToIntent,
@@ -209,6 +211,11 @@ export interface PaneSessionDeps {
   isCoordinator?: () => boolean
   /** The coordinator welcome's 「概览」 link: raises the overview panel. */
   onOpenOverview?: () => void
+  /** Whether this coordinator's project opened with a survey thread; the welcome says it went to look. */
+  coordinationOpening?: () => boolean
+  /** The thread chip drawn under the messages of a coordination session; `undefined` draws none. */
+  threadStrip?: () => ThreadStripView | undefined
+  onOpenThreads?: (target: ThreadStripView['target']) => void
   /** The lane key. Stable across `/clear` and `/resume`; identifies this pane. */
   lane: string
   channel: RuntimeChannel
@@ -406,6 +413,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   // footnote under the Hero rather than pushing it off the top of the canvas.
   const welcomeEl = el('div', 'welcome')
   let coordinatorWelcomeEl: HTMLElement | undefined
+  let coordinatorWelcomeKey = ''
+  let threadChipEl: HTMLElement | undefined
+  let threadChipKey = ''
   const transcriptEl = el('div', 'transcript')
   transcriptEl.setAttribute('aria-live', 'polite')
   append(paneEl, [welcomeEl, transcriptEl])
@@ -750,12 +760,26 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // turn is the honest floor for 「how long have I been waiting」.
     if (isStreaming && turnStartedAt === undefined) turnStartedAt = Date.now()
     const coordinator = deps.isCoordinator?.() ?? false
+    if (coordinator) {
+      const input = { projectName, opening: deps.coordinationOpening?.() ?? false }
+      const key = JSON.stringify(input)
+      if (key !== coordinatorWelcomeKey || !coordinatorWelcomeEl) {
+        coordinatorWelcomeKey = key
+        coordinatorWelcomeEl = createCoordinatorWelcome(input, () => deps.onOpenOverview?.())
+      }
+    }
+    const strip = deps.threadStrip?.()
+    const stripKey = strip ? JSON.stringify(strip) : ''
+    if (stripKey !== threadChipKey) {
+      threadChipKey = stripKey
+      threadChipEl = strip ? threadChip(strip, (target) => deps.onOpenThreads?.(target)) : undefined
+    }
     transcriptView.render(presented, disclosure, {
       isStreaming,
       startedAt: turnStartedAt,
       turnId: transcript.turnId,
       ...(transcript.phase ? { phase: transcript.phase } : {}),
-    }, selectedSubagent, coordinator ? (coordinatorWelcomeEl ??= createCoordinatorWelcome(() => deps.onOpenOverview?.())) : undefined)
+    }, selectedSubagent, coordinator ? coordinatorWelcomeEl : undefined, threadChipEl)
     subagentList = undefined
     // The one place that decides whether this pane has a conversation, so the
     // transcript and the welcome screen cannot disagree about it.

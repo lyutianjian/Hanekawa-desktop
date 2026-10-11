@@ -132,7 +132,7 @@ export class CoordinationStore {
       const cur = f.coordinator
       if (!cur) f.coordinator = emptyCoordinator(id)
       else if (cur.sessionId !== id) {
-        const { openingIssued: _issued, ...rest } = cur
+        const { openingThreadId: _opening, ...rest } = cur
         f.coordinator = { ...rest, sessionId: id, autoWakeCount: 0, wakeLocked: false }
       }
       if (f.threads.length > 0 && f.coordinator && (!cur || cur.sessionId !== id)) {
@@ -211,15 +211,10 @@ export class CoordinationStore {
     })
   }
 
-  /** True for the first caller only, and only while the pointer still names `sessionId`; the flag outlives restarts so the opening turn never runs twice. */
-  async claimOpening(sessionId: string): Promise<boolean> {
-    let claimed = false
+  async setOpeningThread(threadId: string): Promise<void> {
     await this.mutateCoordinator((c) => {
-      claimed = c.sessionId === sessionId && c.openingIssued !== true
-      if (!claimed) return
-      c.openingIssued = true
+      c.openingThreadId = threadId
     })
-    return claimed
   }
 
   async setWakeLocked(b: boolean): Promise<void> {

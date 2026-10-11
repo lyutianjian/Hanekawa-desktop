@@ -3198,12 +3198,25 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 .process-chip:hover { color: var(--text-primary); background: var(--surface-hover); }
 .process-chip .icon { width: 8px; height: 8px; color: var(--text-success); }
-.thread-chip .icon {
-  width: 12px;
-  height: 12px;
-  color: var(--accent-brand-strong);
-  animation: spin var(--motion-running) linear infinite;
+/* The thread chip under a coordination session's messages. */
+.thread-chip-row { margin-bottom: var(--space-5); }
+.thread-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-card);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font: inherit;
+  font-size: var(--type-ui);
+  line-height: 1.4;
+  cursor: pointer;
 }
+.thread-chip:hover { color: var(--text-primary); background: var(--surface-hover); }
+.thread-chip .icon { width: 14px; height: 14px; }
+.thread-chip.running .icon { color: var(--accent-brand-strong); animation: spin var(--motion-running) linear infinite; }
 .thread-chip-blocked { color: var(--text-warn); }
 .task-panel {
   position: relative;
@@ -5591,6 +5604,8 @@ body.projects-open #browser-resizer,
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-2);
   min-width: 28px;
   height: 28px;
   border: 0;
@@ -5634,11 +5649,30 @@ body.projects-open #browser-resizer,
 }
 .thread-panel-active { display: flex; flex-direction: column; padding: var(--space-1); }
 .thread-panel-empty {
-  margin: 0;
-  padding: var(--space-3);
-  color: var(--text-secondary);
-  font-size: var(--type-meta);
+  display: flex;
+  flex-direction: column;
+  min-height: 60vh;
+  padding: var(--space-4) var(--space-3);
 }
+.thread-panel-empty-title {
+  margin: 0 0 var(--space-2);
+  font: 500 var(--type-display)/1.3 var(--font-serif);
+  color: var(--text-primary);
+}
+.thread-panel-empty-lead { margin: 0; color: var(--text-secondary); font-size: var(--type-meta); line-height: 1.6; }
+.thread-panel-empty-hint {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  color: var(--text-secondary);
+  font-size: var(--type-ui);
+  text-align: center;
+}
+.thread-panel-empty-hint .icon { width: 28px; height: 28px; }
+.thread-panel-empty-hint p { margin: 0; }
 .thread-row {
   display: flex;
   flex-direction: column;
@@ -5781,17 +5815,27 @@ body.projects-open #browser-resizer,
 .merge-bar-item { min-width: 0; }
 
 /* The coordinator's fixed welcome above the first entry. */
-.coordinator-welcome { margin-bottom: var(--space-4); color: var(--text-secondary); font-size: var(--type-meta); }
-.coordinator-welcome p { margin: 0 0 var(--space-1); }
+.coordinator-welcome { margin-bottom: var(--space-5); color: var(--text-primary); line-height: 1.7; }
+.coordinator-welcome p { margin: 0 0 var(--space-3); }
+.coordinator-welcome p:last-child { margin-bottom: 0; }
+/* 「概览」 as an inline chip, the way the header button reads. */
 .coordinator-welcome-link {
-  padding: 0;
-  background: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin: 0 2px;
+  padding: 0 6px;
   border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
   color: var(--link);
   font: inherit;
+  line-height: 1.5;
+  vertical-align: baseline;
   cursor: pointer;
 }
-.coordinator-welcome-link:hover { text-decoration: underline; }
+.coordinator-welcome-link .icon { width: 14px; height: 14px; }
+.coordinator-welcome-link:hover { background: var(--surface-active); }
 
 /* Note cards in the transcript: title and status on one line, the report
    clipped to one line beneath, and 查看 at the right. */

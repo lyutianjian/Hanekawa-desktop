@@ -85,11 +85,11 @@ function mount(t: { after(fn: () => void): void }): Mounted {
   }
 }
 
-test('no threads shows the empty line and no panel', (t) => {
+test('no threads shows the empty state and no panel', (t) => {
   const r = mount(t)
   r.render(view([]))
   assert.equal(r.panel(), undefined)
-  assert.match(r.root.textContent ?? '', /还没有线程/)
+  assert.match(r.root.textContent ?? '', /线程会显示在这里/)
 })
 
 test('the header button stops everything and is disabled with nothing running', (t) => {

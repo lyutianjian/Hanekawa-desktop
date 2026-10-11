@@ -185,13 +185,14 @@ export type CoordinatorWelcomeSegment = string | { readonly link: 'overview'; re
 /**
  * The text fixed at the top of a coordinator session's transcript, whatever the
  * conversation holds. Pure interface: never a record, never sent to the model.
- * Absent outside a coordinator (threads and ordinary sessions).
+ * `opening` adds the line for a project that opened with a survey thread.
  */
-export function coordinatorWelcome(coordinator: boolean): readonly (readonly CoordinatorWelcomeSegment[])[] | undefined {
-  if (!coordinator) return undefined
+export function coordinatorWelcome(input: { projectName: string | undefined; opening: boolean }): readonly (readonly CoordinatorWelcomeSegment[])[] {
+  const place = input.projectName === undefined ? '这个项目' : `「${input.projectName}」`
   return [
-    ['我负责协调这个项目。有需求直接说，我会直接回答，或开线程并行处理。'],
-    ['线程的状态在', { link: 'overview', label: '概览' }, '里看；有任务完成或需要你处理时，我会告诉你。'],
+    [`你好，欢迎来到${place}。我负责协调这里的工作：有任何需要尽管提，我会直接回答，或者开几个线程并行处理。`],
+    ['线程会自己完成工作，你可以在', { link: 'overview', label: '概览' }, '里查看它们的状态。我会留意正在运行的内容，有任务完成或需要你处理时告诉你。'],
+    ...(input.opening ? [['我先去了解一下这个项目，然后给你一些建议，马上回来。']] : []),
   ]
 }
 

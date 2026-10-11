@@ -908,6 +908,7 @@ test('the serif is display-only, and only in the whitelisted spots', () => {
   // spots, spelled out, and every other selector naming `--font-serif` fails.
   const SERIF_WHITELIST = [
     '.welcome-title', // the welcome Hero
+    '.thread-panel-empty-title', // 概览's empty state, the same kind of greeting
     '#overlay-panel .title', // the two dialog titles, which are one object
     '#rewind-panel .title',
   ]

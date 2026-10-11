@@ -69,29 +69,34 @@ export function autoOpensOverview(started: boolean, overviewClosed: boolean): bo
 }
 
 export interface ThreadStripView {
+  /** Every thread the project still has a session for, finished or not. */
+  readonly total: number
   readonly running: number
   readonly blocked: number
   /** One thread needing the user goes straight to the main canvas; otherwise the overview opens. */
   readonly target: { readonly kind: 'thread'; readonly sessionId: string } | { readonly kind: 'overview' }
 }
 
+/** The chip under a coordination session's messages: there whenever the project has a thread. */
 export function threadStripView(
   coordinated: boolean,
   state: WireCoordinationThreads | undefined,
 ): ThreadStripView | undefined {
   if (!coordinated || state === undefined) return undefined
-  const { running, blocked } = coordinationCounts(state.threads)
-  if (running === 0 && blocked === 0) return undefined
-  const needsYou = state.threads.filter((thread) => thread.status === 'needs-you')
+  const threads = state.threads.filter((thread) => thread.status !== 'stale')
+  if (threads.length === 0) return undefined
+  const { running, blocked } = coordinationCounts(threads)
+  const needsYou = threads.filter((thread) => thread.status === 'needs-you')
   const only = needsYou.length === 1 ? needsYou[0] : undefined
-  return { running, blocked, target: only ? { kind: 'thread', sessionId: only.sessionId } : { kind: 'overview' } }
+  return { total: threads.length, running, blocked, target: only ? { kind: 'thread', sessionId: only.sessionId } : { kind: 'overview' } }
 }
 
-/** The chip's words: the running half is left out when nothing runs. */
-export function threadStripText(view: ThreadStripView): { running: string | undefined; blocked: string | undefined } {
+/** The chip's words, the counts that are zero left out. */
+export function threadStripText(view: ThreadStripView): { total: string; running: string | undefined; blocked: string | undefined } {
   return {
-    running: view.running > 0 ? `${view.running} 个线程运行中` : undefined,
-    blocked: view.blocked > 0 ? `${view.running > 0 ? '· ' : ''}${view.blocked} 个需要你` : undefined,
+    total: `${view.total} 个线程`,
+    running: view.running > 0 ? `· ${view.running} 个运行中` : undefined,
+    blocked: view.blocked > 0 ? `· ${view.blocked} 个需要你` : undefined,
   }
 }
 

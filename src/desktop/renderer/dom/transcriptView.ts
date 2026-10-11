@@ -46,7 +46,7 @@ import {
   type WaitingRow,
 } from '../model/waiting.js'
 import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
-import { OPENING_CARD_LABEL, type ThreadNoteCard } from '../model/threadNotes.js'
+import type { ThreadNoteCard } from '../model/threadNotes.js'
 import type { WireThreadStatus } from '../../shellProtocol.js'
 import { button } from './controls.js'
 import { diffNode } from './diffView.js'
@@ -110,9 +110,10 @@ export interface TranscriptView {
    * `activity` is what the pane knows about the turn in flight — whether one is
    * running, when it started and which turn it is — and `model/waiting.ts` turns
    * that into 「which group is live」 and 「what the tail row reads」. `undefined`
-   * is an idle session: no row is drawn. `header` is fixed above every entry.
+   * is an idle session: no row is drawn. `header` is fixed above every entry,
+   * `trailer` below the last.
    */
-  render(state: TranscriptState, disclosure: DisclosureState, activity?: WaitingInput, selectedSubagent?: string, header?: HTMLElement): void
+  render(state: TranscriptState, disclosure: DisclosureState, activity?: WaitingInput, selectedSubagent?: string, header?: HTMLElement, trailer?: HTMLElement): void
   /**
    * Stops the live status's clock.
    *
@@ -469,7 +470,7 @@ export function createTranscriptView(
       refs.clear()
       seenDisclosures.clear()
     },
-    render(state, disclosure, activity, selectedSubagent, header) {
+    render(state, disclosure, activity, selectedSubagent, header, trailer) {
       if (!document.hidden && !observing) {
         resizeObserver?.observe(container)
         resizeObserver?.observe(column)
@@ -529,7 +530,7 @@ export function createTranscriptView(
       if (live.row) nodes.push(waitingNode(painter, live.row))
       else clockNode = undefined
       painter.prune()
-      reconcile(column, header ? [header, ...nodes] : nodes)
+      reconcile(column, [...(header ? [header] : []), ...nodes, ...(trailer ? [trailer] : [])])
       for (const run of afterPaint) run()
       runClock(live.row ? activity?.startedAt : undefined)
 
@@ -1627,7 +1628,6 @@ function threadNotesNode(painter: Painter, item: TranscriptItem, classes: string
     data.wake === undefined
       ? undefined
       : el('div', 'thread-notes-head', `自动唤醒 · ${data.wake.count}/${data.wake.limit}`),
-    data.opening ? el('div', 'thread-note-card', el('span', 'thread-note-title', OPENING_CARD_LABEL)) : undefined,
     ...data.cards.map((card) => threadNoteCard(painter, card)),
   ])
 }

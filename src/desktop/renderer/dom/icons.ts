@@ -62,6 +62,8 @@ export type IconName =
   | 'database'
   // --- the composer's model chip, once the row is too narrow for its name ---
   | 'model'
+  // --- 概览: the canvas header button, the welcome's chip and the panel's empty state ---
+  | 'overview'
 
 interface IconSpec {
   /** Path data on a 16×16 grid. */
@@ -226,6 +228,7 @@ const ICONS = {
   // already reads as "the model", and the one shape in the row that is not a
   // control's own affordance.
   model: { paths: ['M8 2.4 9.5 6.5 13.6 8 9.5 9.5 8 13.6 6.5 9.5 2.4 8 6.5 6.5Z'] },
+  overview: { paths: ['M3 4.5h.01', 'M3 8h.01', 'M3 11.5h.01', 'M6 4.5h7', 'M6 8h7', 'M6 11.5h7'] },
 } as const satisfies Record<IconName, IconSpec>
 
 export function icon(name: IconName, className = 'icon'): SVGSVGElement {

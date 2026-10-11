@@ -863,6 +863,7 @@ function recordItems(record: SessionRecord, context: ItemContext = {}): Transcri
       // The automatic wake is a user record the app wrote: its notes are cards.
       if (record.role === 'user') {
         const threadNotes = parseThreadNoteMessage(messageText(record))
+        if (threadNotes?.opening) return []
         if (threadNotes) return [{ id: record.id, kind: 'thread-notes', text: messageText(record), threadNotes, ...stamp }]
       }
       const text: TranscriptItem = {
