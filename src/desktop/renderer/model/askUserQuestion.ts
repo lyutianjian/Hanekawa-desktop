@@ -99,7 +99,9 @@ export function askKeyToIntent(
   event: { key: string; ctrlKey?: boolean; metaKey?: boolean },
   state: AskState,
 ): AskIntent {
-  if (event.ctrlKey === true || event.metaKey === true) return { kind: 'none' }
+  if (event.ctrlKey === true || event.metaKey === true) {
+    return event.key === 'Enter' && !state.collapsed ? { kind: 'commit' } : { kind: 'none' }
+  }
 
   if (state.collapsed) {
     if (event.key === 'Escape') return { kind: 'cancel' }

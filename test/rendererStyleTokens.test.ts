@@ -778,7 +778,8 @@ test('accents are for icons and state rules, never for fills', () => {
   const ACCENT_FILL_EXCEPTIONS: readonly { selector: string; prop: string }[] = [
     { selector: '.settings-toggle.on', prop: 'background' },
     { selector: '#submit', prop: 'background' },
-    { selector: '.session-row::before', prop: 'background' },
+    { selector: '.ask-chip', prop: 'background' },
+    { selector: '#composer-request.tone-danger .dialog-btn.primary', prop: 'background' },
     // The usage card's data marks: heatmap cells and share bars are the chart.
     { selector: '.usage-heat.level-1', prop: 'background' },
     { selector: '.usage-heat.level-2', prop: 'background' },
@@ -1111,23 +1112,6 @@ test('the session on screen is painted, and the four row states stack in order',
   assert.ok(
     order('.session-row.active') < order('.session-row.confirming'),
     '.session-row.confirming must come last, or the active paint hides the question',
-  )
-
-  // The brand bar beside the fill. It has to exist on the resting row — a
-  // pseudo-element created by `.active` would appear at full height with nothing
-  // to animate from — so the resting rule carries the paint at `scaleY(0)` and
-  // `.active` only reopens it.
-  const bar = blockFor('.session-row::before')
-  assert.ok(declares(bar, 'transform', 'scaleY(0)'), 'the resting bar must be collapsed, not absent')
-  assert.ok(declares(bar, 'transform-origin', 'center'), 'the bar grows from the row’s middle')
-  assert.ok(declares(bar, 'width', '3px'), 'the bar is a 3px rule, not a stripe')
-  assert.ok(
-    declares(blockFor('.session-row.active::before'), 'transform', 'scaleY(1)'),
-    'only the session on screen shows the bar',
-  )
-  assert.ok(
-    order('.session-row::before') < order('.session-row.active::before'),
-    'the resting bar must come first, or the active row never opens it',
   )
 })
 

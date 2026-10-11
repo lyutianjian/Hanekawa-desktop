@@ -158,6 +158,14 @@ test('Other on a single-select question answers with just the typed text', () =>
   assert.deepEqual(press(typed, ['Enter']).result, { kind: 'answers', answers: { 'Which?': 'xy' } })
 })
 
+test('Cmd/Ctrl+Enter commits like Enter, and does nothing on a collapsed card', () => {
+  const state = createAskState(request([{}]))
+  assert.deepEqual(askKeyToIntent({ key: 'Enter', metaKey: true }, state), { kind: 'commit' })
+  assert.deepEqual(askKeyToIntent({ key: 'Enter', ctrlKey: true }, state), { kind: 'commit' })
+  assert.deepEqual(askKeyToIntent({ key: '1', metaKey: true }, state), { kind: 'none' })
+  assert.deepEqual(askKeyToIntent({ key: 'Enter', metaKey: true }, { ...state, collapsed: true }), { kind: 'none' })
+})
+
 test('empty free text is not an answer; typed keys are left to the input', () => {
   const opened = press(createAskState(request([{}])), ['3']).state
 

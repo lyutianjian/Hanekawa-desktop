@@ -950,7 +950,7 @@ function diffStat(added: number, deleted: number): Child[] {
 
 /**
  * A thought that is not part of a tool run: one line showing its first sentence
- * (「正在思考 · 最新一句」 while it arrives), opening to the whole text.
+ * (「正在思考 · 最新一句」 while it arrives), opening in place to the whole text.
  */
 function thinkingLine(
   painter: Painter,
@@ -963,34 +963,24 @@ function thinkingLine(
     const headKey = `thinking-head:${step.id}`
     const ref = painter.ref(headKey, expanded)
     const label = step.pending === true ? thoughtLiveLabel(step.text) : thoughtLabel(step.text)
+    const shown = expanded ? step.text : label
     const head = painter.node(
       headKey,
       'run-line',
-      [label, expanded],
+      [shown, label, expanded],
       (node) => {
         node.title = label
         node.setAttribute('aria-label', label)
         node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
         return [
-          lineText(painter, headKey, label, true),
+          lineText(painter, headKey, shown, true),
           icon('chevron-right'),
         ]
       },
       () => button('run-line', '', label, () => painter.onToggle(step.id, ref.expanded)),
     )
-    return [head, thoughtBody(painter, step, expanded, head)]
+    return [head]
   })
-}
-
-/** The whole thought, in a body that opens and closes with its line or row. */
-function thoughtBody(
-  painter: Painter,
-  step: Extract<ActivityStep, { kind: 'thinking' }>,
-  expanded: boolean,
-  head: HTMLElement,
-): HTMLElement | undefined {
-  const key = `thinking-body:${step.id}`
-  return painter.disclose(key, expanded, head, () => painter.node(key, 'thought', [step.text], () => [step.text]))
 }
 
 // --- steps -------------------------------------------------------------------
@@ -1041,19 +1031,19 @@ function thinkingRow(painter: Painter, step: Extract<ActivityStep, { kind: 'thin
     const head = painter.node(
       headKey,
       'step-head',
-      [label, expanded],
+      [expanded ? step.text : label, label, expanded],
       (node) => {
         node.title = label
         node.setAttribute('aria-label', label)
         node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
         return [
-          el('span', 'step-label', label),
+          el('span', 'step-label', expanded ? step.text : label),
           icon('chevron-right'),
         ]
       },
       () => button('step-head', '', label, () => painter.onToggle(step.id, ref.expanded)),
     )
-    return [head, thoughtBody(painter, step, expanded, head)]
+    return [head]
   })
 }
 

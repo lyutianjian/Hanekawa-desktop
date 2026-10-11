@@ -46,7 +46,7 @@ export function createQuestionCardView(
     const head = el(
       'div',
       'ask-head',
-      el('span', 'ask-chip', view.header),
+      view.questionTotal > 1 && el('span', 'ask-chip', `${view.questionNumber}/${view.questionTotal}`),
       el('span', 'ask-title', view.question),
       collapse,
       close,
@@ -78,13 +78,13 @@ export function createQuestionCardView(
 
     submit = button('dialog-btn primary', view.isLast ? '提交' : '下一个', view.isLast ? '提交' : '下一个',
       () => onIntent({ kind: 'commit' }), { enabled: view.canSubmit })
+    submit.appendChild(el('span', 'kbd', '⌘⏎'))
     const back = view.questionTotal > 1 && view.canGoBack
       ? button('dialog-btn', '上一个', '上一个', () => onIntent({ kind: 'back' }))
       : false
     const footer = el(
       'div',
       'ask-footer',
-      view.questionTotal > 1 && el('span', 'ask-progress', `${view.questionNumber}/${view.questionTotal}`),
       back,
       el('span', 'ask-spacer'),
       button('dialog-btn', '跳过', '跳过', () => onIntent({ kind: 'skip' })),

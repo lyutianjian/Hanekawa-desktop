@@ -1638,27 +1638,6 @@ body.settings-open #browser-resizer { display: none; }
   border-radius: var(--radius-md);
   cursor: pointer;
 }
-/* The active row's brand bar. It lives on *every* row at `scaleY(0)` rather than
-   only on `.active`, because a pseudo-element that comes into existence with the
-   class has nothing to transition from — the same rule that keeps entrance
-   animations off nodes that re-render underneath themselves. Collapsed to zero
-   height it paints nothing, so the fill is invisible until the row is the one on
-   screen. `transform-origin: center` is the design: the bar grows out of the
-   row's middle rather than dropping in from the top (design_guidance 六.2). */
-.session-row::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 50%;
-  width: 3px;
-  height: 16px;
-  margin-top: -8px;
-  border-radius: var(--radius-pill);
-  background: var(--accent-brand);
-  transform: scaleY(0);
-  transform-origin: center;
-  transition: transform var(--motion-micro) var(--ease-out);
-}
 /* Four row states, and the cascade order below is the whole design:
    hover (the pointer is here) → selected (the keyboard cursor, a hairline, so it
    can coexist with a fill) → active (the session on screen) → confirming (the
@@ -1679,7 +1658,6 @@ body.settings-open #browser-resizer { display: none; }
    *below* this one, so repainting it under the pointer would read as the active
    row dimming. */
 .session-row.active { background: var(--surface-active); }
-.session-row.active::before { transform: scaleY(1); }
 .session-open {
   flex: 1 1 auto;
   min-width: 0;
@@ -2229,21 +2207,20 @@ body.settings-open #browser-resizer { display: none; }
 /* The name and summary of a sub-agent's latest tool, in `.step-live` below. */
 .step-name { min-width: 0; color: var(--text-secondary); font-family: var(--font-mono); overflow-wrap: anywhere; }
 .step-summary { min-width: 0; color: var(--text-tertiary); font-family: var(--font-mono); overflow-wrap: anywhere; }
-/* A thought, whole: a thin line down its left, set a rung above the row's own ink. */
-.thought {
-  min-width: 0;
+/* An open thought is its own line, whole: it wraps, and scrolls past 320px. */
+.thinking.open > .run-line,
+.step.thinking:not(.collapsed) > .step-head { align-items: flex-start; }
+.thinking.open > .run-line .icon,
+.step.thinking:not(.collapsed) > .step-head .icon { margin-top: 0.4em; }
+.thinking.open > .run-line .line-text,
+.step.thinking:not(.collapsed) .step-label {
   max-height: 320px;
   overflow-y: auto;
-  padding: 2px 0 2px 14px;
-  border-left: 2px solid var(--border-subtle);
-  color: var(--text-secondary);
-  font-size: var(--type-ui);
-  line-height: 1.75;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+  text-overflow: clip;
+  line-height: 1.75;
 }
-.thinking > .thought { margin: var(--space-2) 0 var(--space-1); }
-.step > .thought { margin: 0 var(--space-3) var(--space-3); }
 /* The sub-agent panel's status dot and type tag. The transcript's own rows say
    their state in words; the panel's rows keep the dot, in one colour per state. */
 .step-bead {
@@ -2557,13 +2534,13 @@ body.settings-open #browser-resizer { display: none; }
    `turnId` joins no group and is still drawn as one flat line. Everything with a
    turn goes through `.step` above. */
 .transcript .item.tool {
-  color: var(--text-secondary);
-  border-left: 2px solid var(--border-strong);
-  padding-left: var(--space-3);
+  color: var(--text-tertiary);
+  padding: 7px var(--space-3);
   font-family: var(--font-mono);
-  font-size: var(--type-code);
+  font-size: var(--type-ui);
+  line-height: 1.5;
 }
-.transcript .item.tool.failed { color: var(--text-danger); border-left-color: var(--text-danger); }
+.transcript .item.tool.failed { color: var(--text-danger); }
 /* A streaming item carries no caret: the composer below already owns the only
    caret on this screen, and the live status line says what is running. */
 
@@ -3243,19 +3220,17 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .attachment-tile:hover .attachment-remove,
 .attachment-tile:focus-within .attachment-remove { opacity: 1; }
 .attachment-remove:hover { color: var(--text-danger); }
-/* The tone lives on the card, never on the capsule: `#composer`'s border is the
-   focus affordance, and recolouring it would read as "this field is wrong".
-   A 2px rule down the leading edge — the same weak-brand indicator-bar idiom
-   `.session-row.active::before` uses — rather than a tinted fill. */
+/* The tone never touches the capsule: `#composer`'s border is the focus
+   affordance, and recolouring it would read as "this field is wrong". It is
+   said by the glyph before the title and by the primary button instead. */
 #composer-request {
-  border-left-width: 2px;
-  border-left-style: solid;
-  border-left-color: var(--accent-brand);
-  padding: 2px 0 2px var(--space-3);
+  padding: 2px 0;
   font-size: 13px;
 }
-#composer-request.tone-danger { border-left-color: var(--accent-danger); }
-#composer-request.tone-caution { border-left-color: var(--accent-warn); }
+#composer-request.tone-danger .request-head .icon { color: var(--text-danger); }
+#composer-request.tone-caution .request-head .icon { color: var(--text-warn); }
+#composer-request.tone-danger .dialog-btn.primary { background: var(--accent-danger); color: var(--surface-base); }
+#composer-request.tone-caution .dialog-btn.primary { border-color: var(--accent-warn); }
 .request-head {
   display: flex;
   align-items: center;
@@ -3263,9 +3238,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   color: var(--text-secondary);
   font-size: var(--type-meta);
 }
-/* Inherits the head's own `--text-secondary`: the brand is already carrying the
-   rule down the leading edge, and a second brand mark on the same 20px of card
-   is the interface starting to shout. */
+/* Inherits the head's own `--text-secondary`; a tone recolours it. */
 .request-head .icon { flex: 0 0 auto; }
 .request-title { color: var(--text-primary); font-weight: 600; }
 /* The path, the risk and the "n/m pending" counter. Truncated rather than
@@ -3909,21 +3882,27 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 /* Where Enter is aimed. On a destructive permission request that is *deny*, so
    this is not decoration — it is the answer about to be given. */
 #rewind-panel .dialog-btn.selected,
-#composer-request .dialog-btn.selected { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+#composer-request .dialog-btn.selected { outline: 1px solid var(--border-strong); outline-offset: 1px; }
 #rewind-panel .dialog-btn:focus-visible,
-#composer-request .dialog-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+#composer-request .dialog-btn:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: 1px; }
 /* The key badge. Monospaced because a key name is read character by character,
    and it is the only place a shortcut is printed now that the hint line is gone. */
 #rewind-panel .kbd,
 #composer-request .kbd {
-  padding: 0 5px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-canvas);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: transparent;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: 11px;
-  line-height: 1.6;
+  line-height: 1;
 }
 
 /* --- the docked question card ---
@@ -3941,12 +3920,12 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .ask-chip {
   flex: 0 0 auto;
   padding: 1px 8px;
-  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
-  background: var(--surface-canvas);
-  color: var(--text-tertiary);
+  background: color-mix(in srgb, var(--accent-warn) 16%, transparent);
+  color: var(--text-warn);
   font-size: 11px;
   font-weight: 500;
+  font-variant-numeric: tabular-nums;
 }
 .ask-title { flex: 1 1 auto; min-width: 0; }
 .ask-card.collapsed .ask-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -3969,17 +3948,18 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .ask-icon-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .ask-collapse .icon { transition: transform var(--motion-micro) var(--ease-out); }
 .ask-collapse.collapsed .icon { transform: rotate(180deg); }
-.ask-options { display: flex; flex-direction: column; gap: 2px; margin: var(--space-2) 0 0; }
+.ask-options { display: flex; flex-direction: column; gap: 4px; margin: var(--space-2) 0 0; }
 .ask-option {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  padding: 6px 10px;
+  padding: 8px 10px;
   border-radius: var(--radius-md);
+  background: var(--surface-hover);
   cursor: pointer;
   transition: background-color var(--motion-micro) var(--ease-out);
 }
-.ask-option:hover { background: var(--surface-hover); }
+.ask-option:hover { background: var(--surface-active); }
 .ask-option.selected { background: var(--surface-active); }
 .ask-option-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .ask-option-label { color: var(--text-primary); }
@@ -4010,7 +3990,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .ask-other-input:focus { border-color: var(--focus-ring); }
 .ask-footer { display: flex; align-items: center; gap: 8px; margin-top: var(--space-3); }
 .ask-spacer { flex: 1 1 auto; }
-.ask-progress { color: var(--text-tertiary); font-size: 12px; }
 /* --- the docked plan card and the plan panel ---
    The card is the question card's sibling: a head, an optional field and the
    shared button bar, split so the declining pair sits left and the accepting
@@ -4098,6 +4077,9 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .plan-panel-copy:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
 .plan-panel-copy:disabled { opacity: 0.45; cursor: default; }
 .plan-panel-copy:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+#composer-request .dialog-btn { background: var(--surface-hover); border-color: transparent; }
+#composer-request .dialog-btn.primary { background: var(--text-primary); border-color: transparent; color: var(--surface-base); }
+#composer-request .dialog-btn.primary .kbd { border-color: currentColor; color: inherit; opacity: 0.6; }
 #composer-request .dialog-btn:disabled { opacity: 0.45; cursor: default; background: var(--surface-card); }
 
 /*
@@ -4154,7 +4136,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 #rewind-panel .confirm { margin: 10px 0 6px; }
 #rewind-panel .confirm .message {
   background: var(--surface-canvas);
-  border-left: 2px solid var(--border-strong);
   border-radius: var(--radius-md);
   padding: 6px 10px;
   margin-bottom: 4px;
@@ -4897,21 +4878,16 @@ body.projects-open #browser-resizer,
 }
 
 /* Drawn inside the card it is about now, not stacked at the top of the column:
-   the answer to a click belongs where the click was. The leading bar is what
+   the answer to a click belongs where the click was. The thin border is what
    separates it from the ordinary rows above and below it — no second shadow or
    radius rung, which is the depth rule (`--shadow-float` is for popovers). */
 .settings-card > .settings-confirm,
 .settings-card > .settings-form {
   margin: 0 var(--space-4) var(--space-3);
-  border-left-width: 2px;
-  border-left-style: solid;
-  border-left-color: var(--accent-brand);
 }
 
 .settings-card > .settings-form {
   border: 1px solid var(--border-subtle);
-  border-left-width: 2px;
-  border-left-color: var(--accent-brand);
   border-radius: var(--radius-md);
   background: var(--surface-base);
 }

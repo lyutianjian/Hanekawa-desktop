@@ -77,9 +77,9 @@ test('M04 keeps the thinking line through an unchanged streaming snapshot', (t) 
   assert.deepEqual(view.toggled.at(-1), ['th', false], 'reset does not inherit the previous disclosure ref')
 })
 
-test('M05 keeps the thought body and settled assistant blocks across deltas', (t) => {
+test('M05 keeps the thought text node and settled assistant blocks across deltas', (t) => {
   const view = mount(t)
-  const body = trackIdentity(view.column, '.thought')
+  const body = trackIdentity(view.column, '.line-text')
   let firstBody: unknown
   let firstParagraph: unknown
   for (const text of ['A', 'AB', 'AB', 'ABC']) {
@@ -109,7 +109,7 @@ test('M21 real stream records retain thinking, Markdown and manual disclosure th
   apply({ type: 'stream', event: { type: 'message_start' } })
   apply({ type: 'stream', event: { type: 'thinking_delta', thinking: 'Reasoning.' } })
   const head = trackIdentity(view.column, '.run-line').sample()
-  const body = trackIdentity(view.column, '.thought').sample()
+  const body = trackIdentity(view.column, '.line-text').sample()
   assert.ok(head)
   assert.ok(body)
   const text = 'Stable paragraph.\n\n~~~ts\nconst value = 1\n~~~\n\n$E=mc^2$\n\nMore.'
@@ -120,7 +120,7 @@ test('M21 real stream records retain thinking, Markdown and manual disclosure th
   apply({ type: 'record', record: { type: 'message', id: 'a1', role: 'assistant', content: text,
     thinkingBlocks: [{ type: 'thinking', thinking: 'Reasoning.' }], turnId: 't1', createdAt } })
   assert.equal(trackIdentity(view.column, '.run-line').sample(), head)
-  assert.equal(trackIdentity(view.column, '.thought').sample(), body)
+  assert.equal(trackIdentity(view.column, '.line-text').sample(), body)
   assert.equal(view.stub.activeElement(), head)
   assert.equal(trackIdentity(view.column, '.md').sample(), owner)
   apply({ type: 'record', record: { type: 'tool_use', id: 'tool1', tool: 'Read', input: { filePath: 'a.ts' }, turnId: 't1', createdAt, riskLevel: 'safe' } })
@@ -173,16 +173,32 @@ test('a finished turn stays folded, however it was read', (t) => {
   assert.equal(runOf(view).children.length, 1, 'only the summary line')
 })
 
+test('a thought opens in place: the whole text on the line, no body, focus stays', (t) => {
+  const view = mount(t)
+  const item: TranscriptItem = { id: 'a', kind: 'thinking', text: '首句。\n后文。', turnId: 't1' }
+  const paint = (open: boolean) => view.render(transcript([item]), new Map([['a', open]]))
+  paint(false)
+  const head = runOf(view).children[0]!.children[0]!.node as HTMLElement
+  view.stub.focus(head)
+  paint(true)
+  assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '首句。\n后文。')
+  assert.equal(runOf(view).children[0]!.children.length, 1)
+  assert.equal(view.stub.activeElement(), head)
+  paint(false)
+  assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '首句。')
+  assert.equal(view.stub.activeElement(), head)
+})
+
 test('M14 advancing the current thought keeps an opened one open without replay', (t) => {
   const view = mount(t)
   const first: TranscriptItem = { id: 'a', kind: 'thinking', text: 'first', turnId: 't1', pending: true }
   const opened = new Map([['a', true]])
   view.render(transcript([first]), opened, RUNNING_T1)
-  const body = runOf(view).children[0]!.children[1]!.node
+  const head = runOf(view).children[0]!.children[0]!.node
   view.render(transcript([{ ...first, pending: false }, { ...first, id: 'b', text: 'next' }]), opened, RUNNING_T1)
   const earlier = runOf(view).children[0]!
   assert.equal(earlier.classes.includes('open'), true)
-  assert.equal(earlier.children[1]!.node, body, 'the open body stays where it is')
+  assert.equal(earlier.children[0]!.node, head, 'the open line stays where it is')
   assert.equal(runOf(view).children[1]!.classes.includes('open'), false, 'the new thought starts folded')
 })
 
@@ -208,15 +224,17 @@ test('a live thought reads as its newest sentence, and opens to the whole text',
   view.render(transcript([item]), new Map([['s', true]]), RUNNING_T1)
   const open = runOf(view).children[0]!
   assert.equal(open.classes.includes('open'), true)
-  assert.equal(open.children[1]!.classes.includes('thought'), true)
-  assert.equal(open.children[1]!.text, '第一行。\n第二行。\n第三行。', 'the whole text, not the sentence')
+  assert.equal(open.children.length, 1, 'no body node: the line itself opens')
+  assert.equal(open.children[0]!.children[0]!.text, '第一行。\n第二行。\n第三行。', 'the whole text, not the sentence')
 
   // Sealed: the line says the first sentence.
   const { pending: _pending, ...sealed } = item
   view.render(transcript([sealed]), new Map([['s', true]]))
   const done = runOf(view).children[0]!.children[0]!
   assert.deepEqual(done.children.map((part) => part.classes.join(' ')), ['line-text', 'icon'])
-  assert.equal(done.children[0]!.text, '第一行。')
+  assert.equal(done.children[0]!.text, '第一行。\n第二行。\n第三行。')
+  view.render(transcript([sealed]), NO_DISCLOSURE)
+  assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '第一行。')
 })
 
 test('a sealed thought shows no time, measured or not', (t) => {
@@ -518,11 +536,12 @@ test('the pane’s absolute answer outranks the default, both ways', (t) => {
 
   render(transcript([sealedThinking]), new Map([['thinking-0', true]]))
   assert.equal(line().classes.includes('open'), true)
-  assert.deepEqual(line().children[1]!.classes.filter((name) => name === 'thought'), ['thought'])
-  assert.equal(line().children[1]!.text, '推理。然后呢。')
+  assert.equal(line().children.length, 1)
+  assert.equal(line().children[0]!.children[0]!.text, '推理。然后呢。')
 
   render(transcript([sealedThinking]), new Map([['thinking-0', false]]))
   assert.equal(line().classes.includes('open'), false)
+  assert.equal(line().children[0]!.children[0]!.text, '推理。', 'folded back to the first sentence')
 })
 
 test('clicking the line reports the thought’s id and what it showed', (t) => {
