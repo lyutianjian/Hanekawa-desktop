@@ -64,6 +64,8 @@ export type IconName =
   | 'model'
   // --- 概览: the canvas header button, the welcome's chip and the panel's empty state ---
   | 'overview'
+  // --- a running sub-agent's capsule ---
+  | 'agent'
 
 interface IconSpec {
   /** Path data on a 16×16 grid. */
@@ -92,6 +94,8 @@ const ICONS = {
       'M4.6 4.5l.5 8a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.5-8',
     ],
   },
+  // An outlined diamond: the running sub-agent's capsule.
+  agent: { paths: ['M8 2.8 13.2 8 8 13.2 2.8 8z'] },
   folder: { paths: ['M2 5a1.5 1.5 0 0 1 1.5-1.5h2.2L7 5h5.5A1.5 1.5 0 0 1 14 6.5v5A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z'] },
   // A sheet with a folded corner, for the inline file pills in a user message.
   file: {

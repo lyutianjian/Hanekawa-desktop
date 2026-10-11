@@ -8,6 +8,7 @@ import {
   formatWorkedDuration,
   groupTranscript,
   presentationTranscript,
+  toStep,
   toolCallSummary,
   toolStatusLabel,
 } from '../src/desktop/renderer/model/transcript.js'
@@ -1082,9 +1083,12 @@ test('a sub-agent run merges into the call it belongs to, live and on replay', (
   const captions = displays({ ag1: { displayName: 'explore agent', useSummary: '扫一遍 tools/' } })
 
   const replayed = groupTranscript(createTranscriptState(records, captions).items)
-  assert.equal(runAt(replayed, 1).steps.length, 1, 'the run is the call it belongs to, not a second row beside it')
-
-  const step = toolStep(replayed, 1)
+  // The call stands alone as an entry (never a step of a run), with the run's facts merged in.
+  assert.deepEqual(withoutSpans(replayed).map((entry) => entry.kind), ['item', 'item'])
+  const entry = replayed[1]
+  assert.ok(entry?.kind === 'item')
+  const step = toStep(entry.item)
+  assert.ok(step.kind === 'tool')
   assert.equal(step.kind, 'tool')
   assert.equal(step.toolName, 'Agent')
   assert.equal(step.tool.task, '找到 display 的所有用法', 'the prompt rides the call it came in on')
@@ -1154,13 +1158,15 @@ test('a run record no call claims keeps a row of its own, without erroring', () 
   ])
 
   const group = runAt(entries, 1)
-  assert.equal(group.steps.length, 2)
+  assert.equal(group.steps.length, 1)
   // The parent-less record is the standalone row it has always been.
   assert.equal(group.steps[0]!.kind, 'subagent')
   assert.equal(group.steps[0]!.text, '子代理 · explore 已完成：旧报告')
-  // The unanswerable pointer paints as the family's own step: the run's facts,
+  // The unanswerable pointer paints as the family's own entry: the run's facts,
   // with no call around them — its body is the report the record carries.
-  const orphan = group.steps[1]!
+  const last = withoutSpans(entries).at(-1)
+  assert.ok(last?.kind === 'item')
+  const orphan = toStep(last.item)
   assert.equal(orphan.kind, 'tool')
   assert.equal(orphan.tool.subagent?.model, 'opus')
   assert.equal(orphan.tool.subagent?.summary, '22 个工具返回了 display.summary。')
@@ -1330,4 +1336,24 @@ test('a rejected plan quotes the feedback, or says only 已拒绝', () => {
   ]).items))
   assert.deepEqual(rejected('分两步做'), [{ kind: 'plan', accepted: false, text: '已拒绝 · 你的反馈：分两步做' }])
   assert.deepEqual(rejected(''), [{ kind: 'plan', accepted: false, text: '已拒绝' }])
+})
+
+test('an Agent call is its own entry and splits the run around it', () => {
+  const call = (id: string): TranscriptItem => ({
+    id, kind: 'tool', text: id, toolName: id.startsWith('agent') ? 'Agent' : 'Read', turnId: 't1',
+    tool: { displayName: id, useSummary: id },
+  })
+  const cases: ReadonlyArray<readonly [string, string[], string[]]> = [
+    ['at the start', ['agent1', 'r1', 'r2'], ['item:agent1', 'run:r1,r2']],
+    ['in the middle', ['r1', 'agent1', 'r2'], ['run:r1', 'item:agent1', 'run:r2']],
+    ['at the end', ['r1', 'r2', 'agent1'], ['run:r1,r2', 'item:agent1']],
+    ['several in a row', ['r1', 'agent1', 'agent2', 'r2'], ['run:r1', 'item:agent1', 'item:agent2', 'run:r2']],
+    ['alone', ['agent1'], ['item:agent1']],
+  ]
+  for (const [name, ids, expected] of cases) {
+    const shape = groupTranscript(ids.map(call)).map((entry) => (
+      entry.kind === 'item' ? `item:${entry.item.id}` : `run:${entry.run.steps.map((step) => step.id).join(',')}`
+    ))
+    assert.deepEqual(shape, expected, name)
+  }
 })

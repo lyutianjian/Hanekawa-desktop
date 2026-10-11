@@ -2,6 +2,7 @@ import katex from 'katex'
 
 import type { MdBlock, MdInline, MdListItem } from '../model/markdown.js'
 import { parseMarkdownBlocks, parseMarkdownSegments } from '../model/markdown.js'
+import { REDUCED_MOTION_QUERY } from '../model/reducedMotion.js'
 import { el, append } from './dom.js'
 
 /**
@@ -36,16 +37,120 @@ export function markdownChildren(content: string, owner?: HTMLElement): HTMLElem
   if (!owner) return parseMarkdownBlocks(content).map(blockNode)
   const previous = keptBlocks.get(owner)
   const next = new Map<string, { signature: string; node: HTMLElement }>()
+  // A repaint of an owner that already holds blocks is a stream growing: text
+  // past what the previous paint showed fades in. A first paint (history, a
+  // rebuilt row) and a reduced-motion preference paint plain.
+  const fade = previous !== undefined && !prefersReducedMotion()
+  let faded = false
   const nodes = parseMarkdownSegments(content).map((segment) => {
     const cached = previous?.get(segment.id)
-    const entry = cached?.signature === segment.signature
-      ? cached
-      : { signature: segment.signature, node: blockNode(segment.block) }
-    next.set(segment.id, entry)
-    return entry.node
+    let entry = cached
+    if (cached?.signature !== segment.signature) {
+      entry = { signature: segment.signature, node: blockNode(segment.block) }
+      if (fade && fadeNewText(entry.node, cached?.node.textContent ?? '')) faded = true
+    }
+    next.set(segment.id, entry!)
+    return entry!.node
   })
   keptBlocks.set(owner, next)
+  if (faded) watchFades(owner)
   return nodes
+}
+
+const FADE_CLASS = 'md-fade'
+/** Longer than the CSS animation; only a backstop for an `animationend` that never fires. */
+const FADE_SWEEP_MS = 600
+const fadeWatch = new WeakMap<HTMLElement, { timer: ReturnType<typeof setTimeout> | undefined }>()
+
+function prefersReducedMotion(): boolean {
+  return typeof window !== 'undefined' && window.matchMedia?.(REDUCED_MOTION_QUERY).matches === true
+}
+
+function isText(node: Node): node is Text {
+  return typeof (node as Text).data === 'string'
+}
+
+/**
+ * Wraps the text of `block` that lies past its common prefix with `before` (the
+ * same block's text on the previous paint) in `.md-fade` spans. Maths is left
+ * alone: KaTeX owns that subtree and wrapping inside it would corrupt the
+ * typeset tree (an equation appears whole when its closing delimiter arrives).
+ * Code and link text are wrapped like any other.
+ */
+function fadeNewText(block: HTMLElement, before: string): boolean {
+  const after = block.textContent ?? ''
+  let prefix = 0
+  const limit = Math.min(before.length, after.length)
+  while (prefix < limit && before.charCodeAt(prefix) === after.charCodeAt(prefix)) prefix++
+  if (prefix >= after.length) return false
+
+  const found: Array<{ node: Text; cut: number }> = []
+  let offset = 0
+  const walk = (parent: Node): void => {
+    for (const child of Array.from(parent.childNodes)) {
+      if (isText(child)) {
+        const end = offset + child.data.length
+        if (end > prefix) found.push({ node: child, cut: Math.max(0, prefix - offset) })
+        offset = end
+      } else if (!(child as HTMLElement).className?.includes?.('md-math')) {
+        walk(child)
+      } else {
+        offset += child.textContent?.length ?? 0
+      }
+    }
+  }
+  walk(block)
+  for (const { node, cut } of found) {
+    const parent = node.parentNode!
+    const span = el('span', FADE_CLASS, node.data.slice(cut))
+    if (cut === 0) {
+      parent.insertBefore(span, node)
+      parent.removeChild(node)
+    } else {
+      node.data = node.data.slice(0, cut)
+      parent.insertBefore(span, parent.childNodes[Array.prototype.indexOf.call(parent.childNodes, node) + 1] ?? null)
+    }
+  }
+  return found.length > 0
+}
+
+/** Back to a plain text node, merged into its neighbours so the tree does not grow. */
+function unwrapFade(span: Node): void {
+  const parent = span.parentNode
+  if (!parent) return
+  const siblings = Array.from(parent.childNodes)
+  const at = siblings.indexOf(span as ChildNode)
+  const before = siblings[at - 1]
+  const after = siblings[at + 1]
+  let text = span.firstChild as Text
+  parent.insertBefore(text, span)
+  parent.removeChild(span)
+  if (before && isText(before)) {
+    before.data += text.data
+    parent.removeChild(text)
+    text = before
+  }
+  if (after && isText(after)) {
+    text.data += after.data
+    parent.removeChild(after)
+  }
+}
+
+function watchFades(owner: HTMLElement): void {
+  let watch = fadeWatch.get(owner)
+  if (!watch) {
+    watch = { timer: undefined }
+    fadeWatch.set(owner, watch)
+    owner.addEventListener('animationend', (event) => {
+      const target = event.target as HTMLElement
+      if (target.className === FADE_CLASS) unwrapFade(target)
+    })
+  }
+  // One pending sweep per owner, pushed back while the stream keeps painting.
+  clearTimeout(watch.timer)
+  watch.timer = setTimeout(() => {
+    for (const span of Array.from(owner.querySelectorAll(`.${FADE_CLASS}`))) unwrapFade(span)
+  }, FADE_SWEEP_MS)
 }
 
 function blockNode(block: MdBlock): HTMLElement {

@@ -174,6 +174,11 @@ export function runningProcessCount(tasks: readonly BackgroundTaskSnapshot[]): n
   return tasks.filter((task) => task.kind === 'shell' && task.status === 'running').length
 }
 
+/** Every running background task, agents included — what the status line's button counts. */
+export function runningTaskCount(tasks: readonly BackgroundTaskSnapshot[]): number {
+  return tasks.filter((task) => task.status === 'running').length
+}
+
 export function formatElapsed(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000))
   if (seconds < 60) return `${seconds}s`

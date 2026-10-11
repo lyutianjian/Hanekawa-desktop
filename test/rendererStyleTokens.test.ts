@@ -35,6 +35,7 @@ const MOTION_TOKENS = {
   "--motion-disclosure": "200ms",
   "--motion-layout": "280ms",
   "--motion-panel-in": "300ms",
+  "--motion-text-in": "300ms",
   "--motion-panel-out": "200ms",
   "--motion-scrim-in": "200ms",
   "--motion-scrim-out": "120ms",

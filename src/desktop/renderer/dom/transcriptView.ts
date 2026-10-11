@@ -17,6 +17,8 @@ import {
 import {
   formatMessageTime,
   groupTranscript,
+  isAgentCall,
+  toStep,
   toolStatusLabel,
   type ActivityRun,
   type ActivityStep,
@@ -128,6 +130,8 @@ export interface TranscriptHandlers {
   onOpenPlan(planContent: string | undefined): void
   /** An `Agent` row was clicked: its run opens in the side panel, not in place. */
   onOpenSubagent(id: string): void
+  /** The status line's 「N 个后台任务」 button: opens (or closes) the background-task list. */
+  onOpenBackgroundTasks?(): void
   /**
    * A path in a search result was clicked (§6.2 检索). `path` is relative to the
    * session's cwd — exactly what the tool printed — and `line` is the hit's own
@@ -546,8 +550,10 @@ export function createTranscriptView(
       // Built before `prune`, or its key would count as dead on the very paint
       // that asked for it. A kept line keeps the spans its fill handed over.
       status = live.row ? { row: live.row, tokens: activity?.outputTokens } : undefined
-      if (live.row) nodes.push(waitingNode(painter))
-      else {
+      const tasks = activity?.backgroundTasks ?? 0
+      if (live.row) nodes.push(waitingNode(painter, tasks))
+      else if (tasks > 0 && painter.onOpenBackgroundTasks) nodes.push(idleStatusNode(painter, tasks))
+      if (!live.row) {
         clockNode = labelNode = markHost = undefined
         gate = undefined
         metaShown = ''
@@ -639,15 +645,38 @@ const IDLE: WaitingInput = { isStreaming: false, startedAt: undefined, turnId: u
  * `.transcript` is `aria-live="polite"`, so the label is spoken and the counter
  * is `aria-hidden`, or a screen reader would read a new number ten times a second.
  */
-function waitingNode(painter: Painter): HTMLElement {
-  return painter.node('waiting', 'waiting', [], () => [
+function waitingNode(painter: Painter, tasks: number): HTMLElement {
+  return painter.node('waiting', 'waiting', [tasks], () => [
     markNode(painter, 'waiting'),
     elapsedNode(painter, 'waiting'),
     painter.node('waiting:text', 'line-text', [], (span) => {
       painter.keepLabel(span)
       return []
     }, () => el('span')),
+    tasksButton(painter, tasks),
   ])
+}
+
+/** The status line between turns: no mark, no clock, only the button for tasks that outlived the turn. */
+function idleStatusNode(painter: Painter, tasks: number): HTMLElement {
+  return painter.node('waiting', 'waiting idle', [tasks], () => [tasksButton(painter, tasks)])
+}
+
+/** 「N 个后台任务」, the status line's last element; absent with no tasks or no one to open them. */
+function tasksButton(painter: Painter, tasks: number): HTMLElement | undefined {
+  const open = painter.onOpenBackgroundTasks
+  if (tasks === 0 || !open) return undefined
+  const text = `${tasks} 个后台任务`
+  return painter.node('waiting:tasks', 'line-tasks', [tasks], (node) => {
+    node.setAttribute('aria-label', `${text}，查看`)
+    return [text]
+  }, () => {
+    const node = el('button', 'line-tasks')
+    node.type = 'button'
+    node.title = '查看后台任务'
+    node.addEventListener('click', open)
+    return node
+  })
 }
 
 /**
@@ -774,6 +803,7 @@ function createPainter(
     onTaskStep: handlers.onTaskStep,
     onOpenPlan: handlers.onOpenPlan,
     onOpenSubagent: handlers.onOpenSubagent,
+    onOpenBackgroundTasks: handlers.onOpenBackgroundTasks,
     onOpenPath: handlers.onOpenPath,
     onViewImage: handlers.onViewImage,
     imageThumbUrl: handlers.imageThumbUrl,
@@ -1243,6 +1273,8 @@ function toolRow(painter: Painter, step: ToolLike): HTMLElement {
   const status = step.kind === 'tool' ? step.status : step.pending === true ? 'running' : 'done'
   const agent = step.kind === 'tool' && step.toolName === AGENT_TOOL
   const selected = agent && painter.selectedSubagent === step.id
+  // Running: a bordered capsule that says only which agent. Finished: one line of prose.
+  const capsule = agent && status !== 'done' && status !== 'failed'
   const expanded = isExpanded(painter.disclosure, step.id) && !agent
   const classes = ['step', step.kind, status]
   if (!expanded) classes.push('collapsed')
@@ -1258,17 +1290,20 @@ function toolRow(painter: Painter, step: ToolLike): HTMLElement {
     const body = agent ? undefined : stepBody(step, family, painter)
     const label = rowLabel(step)
     const name = stepAccessibleName(step, label, status, stats)
+    const ran = agent && status === 'done' ? ranAgentLabel(step, family.agent) : undefined
     const toggles = body !== undefined
     const headKey = `${toggles ? 'tool-head' : 'tool-static'}:${step.id}`
     const ref = painter.ref(headKey, expanded)
-    const right = rowRight(family, stats)
-    const head = painter.node(headKey, toggles || agent ? 'step-head' : 'step-head static', [name, detail, step.text, expanded, selected], (node) => {
+    const right = capsule || ran ? undefined : rowRight(family, stats)
+    const headClass = capsule ? 'step-head agent-chip' : ran ? 'step-head agent-ran' : toggles || agent ? 'step-head' : 'step-head static'
+    const head = painter.node(headKey, headClass, [name, detail, step.text, expanded, selected], (node) => {
       node.title = name
       node.setAttribute('aria-label', name)
       if (agent) node.setAttribute('aria-pressed', selected ? 'true' : 'false')
       else if (toggles) node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
+      if (capsule) return [icon('agent'), el('span', 'step-label', agentName(step)), icon('chevron-right')]
       return [
-        el('span', 'step-label', ...label.parts),
+        el('span', 'step-label', ...(ran ?? label.parts)),
         toggles ? icon('chevron-right') : undefined,
         right,
       ]
@@ -1323,6 +1358,22 @@ function rowLabel(step: ToolLike): { readonly text: string; readonly parts: Chil
   if (target.length === 0) return { text: `${verb}${failed}`, parts: [`${verb}${failed}`] }
   if (bare) return { text: `${target}${failed}`, parts: [target, failed] }
   return { text: `${verb} ${target}${failed}`, parts: [`${verb} `, el('strong', '', target), failed] }
+}
+
+/** What the Agent call is called to the reader: the task it was given, else its type. */
+function agentName(step: ToolLike): string {
+  if (step.kind !== 'tool') return step.text
+  return step.tool.useSummary || step.tool.agentType || step.tool.displayName
+}
+
+/** 「已运行子代理 名称 · 模型」: the verb and the model quiet, the name carrying the line. */
+function ranAgentLabel(step: ToolLike, run: SubagentRun | undefined): Child[] {
+  const model = run?.model
+  return [
+    el('span', 'agent-verb', '已运行子代理 '),
+    el('strong', '', agentName(step)),
+    model ? el('span', 'agent-model', ` · ${model}`) : undefined,
+  ].filter((part) => part !== undefined)
 }
 
 /** The right edge of a row: the family's counts, if it has any. */
@@ -1541,6 +1592,10 @@ function itemNode(painter: Painter, item: TranscriptItem, footer?: TurnFooter): 
   }
   if (item.kind === 'thread-notes' && item.threadNotes) return threadNotesNode(painter, item, classes, key)
   if (item.kind === 'receipt' && item.receipt) return receiptNode(painter, item.receipt, classes, key)
+  if (isAgentCall(item)) {
+    const row = toolRow(painter, toStep(item) as ToolLike)
+    return painter.node(`agent:${item.id}`, 'run agent-entry', [row], () => [row])
+  }
   if (item.kind === 'user') {
     // The item is the *column* here, not the bubble: the bubble is its own node,
     // so the meta row sits under it rather than inside it — a control tucked in

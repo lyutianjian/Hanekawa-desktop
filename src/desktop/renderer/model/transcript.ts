@@ -1355,6 +1355,11 @@ export function groupTranscript(input: readonly TranscriptItem[]): readonly Tran
   return entries
 }
 
+/** An `Agent` tool call: standalone in the transcript rather than a step of a run. */
+export function isAgentCall(item: TranscriptItem): boolean {
+  return item.kind === 'tool' && item.toolName === AGENT_TOOL && item.tool !== undefined
+}
+
 function isRunItem(item: TranscriptItem): boolean {
   return item.kind === 'thinking' || item.kind === 'tool' || item.kind === 'subagent'
 }
@@ -1403,6 +1408,13 @@ function buildTranscriptEntries(input: readonly TranscriptItem[]): TranscriptEnt
     if (asked) {
       flush(false)
       entries.push({ kind: 'item', item: receiptItem(item.id, item, asked) })
+      continue
+    }
+    // A sub-agent is its own line, not a row of the work around it: that work
+    // splits into a run on either side.
+    if (isAgentCall(item)) {
+      flush(false)
+      entries.push({ kind: 'item', item })
       continue
     }
     if (isRunItem(item)) {
@@ -1608,7 +1620,7 @@ export function toolStatusLabel(status: ToolStepStatus): string {
   }
 }
 
-function toStep(item: TranscriptItem): ActivityStep {
+export function toStep(item: TranscriptItem): ActivityStep {
   switch (item.kind) {
     case 'thinking':
       return {

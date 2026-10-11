@@ -1,5 +1,7 @@
 import {
   formatWorkedDuration,
+  isAgentCall,
+  toStep,
   type ActivityRun,
   type TranscriptEntry,
   type TranscriptItem,
@@ -38,6 +40,8 @@ export interface WaitingInput {
   readonly phase?: TurnPhase
   /** The `header` of the question the user is being asked, while one is pending. */
   readonly asking?: string
+  /** Background tasks still running; the status line keeps a button for them, turn or no turn. */
+  readonly backgroundTasks?: number
 }
 
 export interface WaitingRow {
@@ -112,6 +116,11 @@ export function turnActivity(entries: readonly TranscriptEntry[], input: Waiting
     ? last.run
     : undefined
   if (asking !== undefined) return { row: row(asking), mark: plain }
+  // A sub-agent is no run's step, so its own wait is named here.
+  if (last?.kind === 'item' && last.item.pending === true && isAgentCall(last.item) && last.item.turnId === input.turnId) {
+    const step = toStep(last.item) as CallStep
+    return { row: row(step.tool.awaitingApproval === true ? `等待确认 · ${callPhrase(step)}` : callPhrase(step)), mark: plain }
+  }
   if (run) {
     const calls = run.steps.filter(isRunningCall)
     const waiting = calls.filter((step) => step.tool.awaitingApproval === true).at(-1)

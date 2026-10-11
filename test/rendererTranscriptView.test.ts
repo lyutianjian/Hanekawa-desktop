@@ -256,6 +256,8 @@ interface Rendered {
   readonly toggled: Array<readonly [string, boolean]>
   /** How many times a `TodoWrite` row asked the task panel to flash. */
   readonly taskClicks: () => number
+  /** How many times the status line's background-task button was pressed. */
+  readonly backgroundOpens: () => number
   /** `[path, line]` per clicked search row, the `open-in-editor` payload. */
   readonly opened: ReadonlyArray<readonly [string, number | undefined]>
   /** `[imageId, name]` per clicked image line under a user bubble (S12). */
@@ -290,6 +292,7 @@ function mount(t: { after(fn: () => void): void }): Rendered {
   const openedSubagents: string[] = []
   const openedPlans: Array<string | undefined> = []
   let taskClicks = 0
+  let backgroundOpens = 0
   const view = createTranscriptView(container, host, {
     onToggle: (id, expanded) => toggled.push([id, expanded]),
     onTaskStep: () => { taskClicks += 1 },
@@ -300,6 +303,7 @@ function mount(t: { after(fn: () => void): void }): Rendered {
     onCopy: (text) => copied.push(text),
     onRewind: (id) => rewound.push(id),
     onOpenSubagent: (id) => openedSubagents.push(id),
+    onOpenBackgroundTasks: () => { backgroundOpens += 1 },
   })
   // Disposed before the stub goes: a live mark's frame timers outlive the test otherwise.
   t.after(() => {
@@ -322,6 +326,7 @@ function mount(t: { after(fn: () => void): void }): Rendered {
     container,
     host,
     taskClicks: () => taskClicks,
+    backgroundOpens: () => backgroundOpens,
     toggled,
     opened,
     viewedImages,
@@ -1307,6 +1312,13 @@ test('a Read step numbers its rows from the tool’s own prefix, offset included
   )
 })
 
+/** The Agent row: a standalone entry of its own, never a row of a run card. */
+const agentRowOf = (rendered: Rendered): StubView => {
+  const found = rendered.items().find((item) => item.classes.includes('agent-entry'))
+  assert.ok(found, 'no Agent entry was painted')
+  return found.children[0]!
+}
+
 function agentStep(): TranscriptItem {
   return {
     id: 'agent-1',
@@ -1356,12 +1368,15 @@ test('a running Agent step says what its sub-agent is doing, even folded', (t) =
   }
   view.render(transcript([running]), new Map([['run:agent-1', true], ['agent-1', false]]))
 
-  const step = rowOf(view)
+  const step = agentRowOf(view)
   const head = step?.children[0]
+  // A bordered capsule — diamond, name, chevron — with the count left to the live line.
+  assert.equal(head?.className, 'step-head agent-chip')
   assert.deepEqual(
     head?.children.map((part) => [part.className, part.text]),
-    [['step-label', '子代理 explore · 扫一遍 tools/'], ['step-right', '3 工具']],
+    [['icon', ''], ['step-label', '扫一遍 tools/'], ['icon', '']],
   )
+  assert.equal(head?.attributes.get('aria-label'), '子代理 explore · 扫一遍 tools/ · 3 工具 · 执行中')
   const live = step?.children[1]
   assert.equal(live?.className, 'step-live')
   assert.deepEqual(live?.children.map((part) => part.text), ['↳', 'Read', 'src/a.ts'])
@@ -1371,13 +1386,18 @@ test('an Agent step is a link to the side panel, with the run in the head', (t) 
   const view = mount(t)
   view.render(transcript([agentStep()]), opened('agent-1'))
 
-  const step = rowOf(view)
+  const step = agentRowOf(view)
   // The run's model and tool count are one unit on the right — and the result's
   // own `headerSuffix` carries that same model, so it is not drawn twice.
   const head = step?.children[0]
   assert.deepEqual(
     head?.children.map((part) => [part.className, part.text]),
-    [['step-label', 'explore agent 扫一遍 tools/'], ['step-right', 'opus · 12 工具']],
+    [['step-label', '已运行子代理 扫一遍 tools/ · opus']],
+  )
+  assert.equal(head?.className, 'step-head agent-ran')
+  assert.deepEqual(
+    head?.children[0]?.children.map((part) => [part.className, part.text]),
+    [['agent-verb', '已运行子代理 '], ['', '扫一遍 tools/'], ['agent-model', ' · opus']],
   )
   assert.equal(head?.attributes.get('aria-label'), 'explore agent 扫一遍 tools/ · opus · 12 工具 · 完成')
 
@@ -1389,9 +1409,27 @@ test('an Agent step is a link to the side panel, with the run in the head', (t) 
   assert.deepEqual(view.toggled, [])
 
   view.render(transcript([agentStep()]), new Map([['run:agent-1', true]]), undefined, 'agent-1')
-  const selected = rowOf(view)
+  const selected = agentRowOf(view)
   assert.equal(selected?.classes.includes('selected'), true)
   assert.equal(selected?.children[0]?.attributes.get('aria-pressed'), 'true')
+})
+
+test('an Agent call splits the work around it and is counted in no run summary', (t) => {
+  const view = mount(t)
+  const read = (id: string): TranscriptItem => ({ id, kind: 'tool', text: id, toolName: 'Read', turnId: 't1', tool: { displayName: 'Read', useSummary: `${id}.ts` } })
+  const other = { ...agentStep(), id: 'agent-2' }
+  view.render(transcript([read('r1'), agentStep(), read('r2'), other, { ...agentStep(), id: 'agent-3' }]), NO_DISCLOSURE)
+  assert.deepEqual(view.items().map((entry) => entry.classes.join(' ')), ['run', 'run agent-entry', 'run', 'run agent-entry', 'run agent-entry'])
+  assert.equal(runOf(view).children[0]!.attributes.get('aria-label'), '读取 1 个文件')
+})
+
+test('a failed Agent step keeps its plain row and says so in words', (t) => {
+  const view = mount(t)
+  const failed = { ...agentStep(), failed: true }
+  view.render(transcript([failed]), opened('agent-1'))
+  const head = agentRowOf(view).children[0]
+  assert.equal(head?.className, 'step-head')
+  assert.equal(head?.children[0]?.text.endsWith('失败'), true)
 })
 
 function webStep(overrides: { failed?: boolean; errorCode?: ToolErrorCode } = {}): TranscriptItem {
@@ -2327,4 +2365,55 @@ test('a turn with no answer hangs its footer under its last entry; side views dr
   // The subagent panel and the thread detail render without an activity.
   render(transcript(turn))
   assert.deepEqual(items().map((item) => item.classes.join(' ')), ['item user', 'item error failed'])
+})
+
+test('the background-task button ends the status line and opens the task list', (t) => {
+  const view = mount(t)
+  const state = transcript([{ id: 'u1', kind: 'user', text: 'go' }], { turnId: 't1' })
+  view.render(state, NO_DISCLOSURE, { ...waiting(state, Date.now() - 5000), backgroundTasks: 2 })
+
+  const row = view.items().at(-1)!
+  assert.deepEqual(row.children.map((child) => child.classes.join(' ')), ['line-mark', 'line-meta line-elapsed', 'line-text', 'line-tasks'])
+  const tasks = row.children[3]!
+  assert.equal(tasks.text, '2 个后台任务')
+  assert.equal(tasks.attributes.get('aria-label'), '2 个后台任务，查看')
+  view.stub.click(tasks.node)
+  assert.equal(view.backgroundOpens(), 1)
+
+  // A new count refills the button in place; the mark and counter stay mounted.
+  const pieces = row.children
+  view.render(state, NO_DISCLOSURE, { ...waiting(state, Date.now() - 5000), backgroundTasks: 3 })
+  const again = view.items().at(-1)!
+  assert.equal(again.children[3]!.text, '3 个后台任务')
+  assert.equal(again.children[3]!.node, tasks.node)
+  for (const index of [0, 1, 2]) assert.equal(again.children[index]!.node, pieces[index]!.node)
+
+  // None left: the button goes, the rest of the line stays.
+  view.render(state, NO_DISCLOSURE, waiting(state, Date.now() - 5000))
+  assert.equal(view.items().at(-1)!.children.length, 3)
+})
+
+test('with tasks still running, an idle session keeps the button alone as its status line', (t) => {
+  const view = mount(t)
+  const state = transcript(turnItems(), { turnId: undefined })
+  const idle = { isStreaming: false, startedAt: undefined, turnId: undefined }
+  view.render(state, NO_DISCLOSURE, { ...idle, backgroundTasks: 1 })
+
+  const row = view.items().at(-1)!
+  assert.deepEqual(row.classes, ['waiting', 'idle'])
+  assert.deepEqual(row.children.map((child) => [child.classes.join(' '), child.text]), [['line-tasks', '1 个后台任务']])
+  view.stub.click(row.children[0]!.node)
+  assert.equal(view.backgroundOpens(), 1)
+
+  view.render(state, NO_DISCLOSURE, idle)
+  assert.equal(view.items().some((item) => item.classes.includes('waiting')), false)
+})
+
+test('a turn starting over an idle task button swaps it for the full status line', (t) => {
+  const view = mount(t)
+  const state = transcript([{ id: 'u1', kind: 'user', text: 'go' }], { turnId: undefined })
+  view.render(state, NO_DISCLOSURE, { isStreaming: false, startedAt: undefined, turnId: undefined, backgroundTasks: 1 })
+  const running = transcript([{ id: 'u1', kind: 'user', text: 'go' }], { turnId: 't1' })
+  view.render(running, NO_DISCLOSURE, { ...waiting(running, Date.now() - 3000), backgroundTasks: 1 })
+  assert.deepEqual(view.items().at(-1)!.children.map((child) => child.classes[0]), ['line-mark', 'line-meta', 'line-text', 'line-tasks'])
 })

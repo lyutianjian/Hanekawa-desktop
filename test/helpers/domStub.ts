@@ -96,6 +96,8 @@ type Listener = (event: StubEvent) => void
 class StubText {
   parent: StubElement | undefined
   constructor(public data: string) {}
+  get parentNode(): StubElement | undefined { return this.parent }
+  get textContent(): string { return this.data }
 }
 
 type StubChild = StubElement | StubText
@@ -205,6 +207,8 @@ class StubElement {
   }
 
   /** As `Element.parentElement`; views use it to find the bar a control lives in. */
+  get parentNode(): StubElement | undefined { return this.parent }
+
   get parentElement(): StubElement | null {
     return this.parent ?? null
   }

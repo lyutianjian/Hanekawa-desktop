@@ -150,6 +150,7 @@
   --motion-disclosure: 200ms;
   --motion-layout: 280ms;
   --motion-panel-in: 300ms;
+  --motion-text-in: 300ms;
   --motion-panel-out: 200ms;
   --motion-scrim-in: 200ms;
   --motion-scrim-out: 120ms;
@@ -2156,6 +2157,22 @@ body.settings-open #browser-resizer { display: none; }
 .line-meta { flex: none; color: var(--text-tertiary); }
 .waiting .line-meta { display: flex; gap: 6px; color: inherit; }
 .line-sep { color: var(--text-tertiary); }
+/* 「N 个后台任务」: the status line's last element, a quiet text button. */
+.line-tasks {
+  flex: none;
+  margin: 0 0 0 var(--space-2);
+  padding: 0 6px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary);
+  font: inherit;
+  cursor: pointer;
+}
+.line-tasks:hover { background: var(--surface-hover); color: var(--text-secondary); }
+.line-tasks:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.waiting.idle { user-select: auto; }
+.waiting.idle .line-tasks { margin-left: 0; padding-left: 0; }
 .line-fail { flex: none; color: var(--text-danger); }
 /* The counter stays out of the line until the wait is worth a number. */
 .line-elapsed:empty { display: none; }
@@ -2248,6 +2265,30 @@ body.settings-open #browser-resizer { display: none; }
 }
 .step:not(.collapsed) > .step-head .icon { transform: rotate(90deg); }
 .step-right { flex: none; margin-left: auto; padding-left: var(--space-3); }
+/* A sub-agent is a line of the transcript, outside any run card. Running, it is
+   a bordered capsule; finished, a line of prose whose verb and model sit back
+   and whose name carries it. */
+.agent-entry .step-head {
+  width: auto;
+  max-width: 100%;
+  min-height: 0;
+  align-self: flex-start;
+  padding: 0;
+  font-size: inherit;
+  line-height: 1.6;
+}
+.agent-entry .step-head:hover { background: none; color: var(--text-secondary); }
+.agent-entry .step-head.agent-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  color: var(--text-secondary);
+}
+.agent-entry .step-head.agent-chip:hover { background: var(--surface-hover); }
+.agent-entry .step-head:focus-visible { outline-offset: 3px; border-radius: var(--radius-sm); }
+.agent-entry .step-live { padding: var(--space-1) 0 0 10px; }
+.agent-verb, .agent-model { color: var(--text-tertiary); font-weight: 400; }
+.step-label .agent-model { color: var(--text-tertiary); }
 .step.failed .step-head,
 .step.failed .step-label strong { color: var(--text-danger); }
 /* The name and summary of a sub-agent's latest tool, in `.step-live` below. */
@@ -4229,6 +4270,10 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0 0 8px; }
+/* Streamed text arrives in the secondary colour and settles into the inherited
+   one; `markdownView.ts` unwraps the span on `animationend`. */
+.md-fade { animation: md-fade-in var(--motion-text-in) var(--ease-out); }
+@keyframes md-fade-in { from { color: var(--text-secondary); } }
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
   margin: 12px 0 6px;
   color: var(--text-primary);

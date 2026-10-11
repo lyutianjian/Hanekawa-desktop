@@ -208,3 +208,13 @@ test('the label gate: a new epoch switches at once', () => {
   r = settleLabel(r.gate, 'B', 2, 10)
   assert.deepEqual([r.label, r.recheckAt, r.gate.epoch], ['B', undefined, 2])
 })
+
+test('a running sub-agent names the status, though it is no run’s step', () => {
+  const agent: TranscriptItem = {
+    id: 'ag', kind: 'tool', text: 'ag', toolName: 'Agent', pending: true, turnId: TURN,
+    tool: { displayName: '子代理', useSummary: '扫一遍 tools/', agentType: 'explore' },
+  }
+  assert.equal(activity(turn([agent]))?.row?.label, '子代理 · 扫一遍 tools/')
+  const asking = { ...agent, tool: { ...agent.tool!, awaitingApproval: true } }
+  assert.equal(activity(turn([asking]))?.row?.label, '等待确认 · 子代理 · 扫一遍 tools/')
+})

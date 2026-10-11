@@ -139,3 +139,74 @@ test('prose is untouched by the extension', () => {
   assert.match(view.text, /It costs \$5 and \$10\./)
   assert.equal(descendants(view).filter((node) => node.tagName === 'STRONG').length, 1)
 })
+
+function fades(owner: StubView): StubView[] {
+  return find(owner, 'md-fade')
+}
+
+function paintTo(owner: ReturnType<DomStub['createContainer']>, content: string): void {
+  reconcile(owner, markdownChildren(content, owner))
+}
+
+test('streamed text fades in only past what was already shown', () => {
+  const owner = stub.createContainer()
+  paintTo(owner, 'Hello wor')
+  assert.equal(fades(stub.inspect(owner)).length, 0)
+  paintTo(owner, 'Hello world and more')
+  const spans = fades(stub.inspect(owner))
+  assert.deepEqual(spans.map((span) => span.text), ['ld and more'])
+  assert.equal(stub.inspect(owner).text, 'Hello world and more')
+  paintTo(owner, 'Hello world and more')
+  assert.deepEqual(fades(stub.inspect(owner)).map((span) => span.text), ['ld and more'])
+})
+
+test('settled blocks are neither rebuilt nor re-wrapped; a new block fades whole', () => {
+  const owner = stub.createContainer()
+  paintTo(owner, 'First paragraph.\n\nSec')
+  const first = stub.inspect(owner).children[0]!.node
+  paintTo(owner, 'First paragraph.\n\nSecond one')
+  assert.equal(stub.inspect(owner).children[0]!.node, first)
+  assert.equal(fades(stub.inspect(first as never)).length, 0)
+  paintTo(owner, 'First paragraph.\n\nSecond one\n\nThird')
+  assert.deepEqual(fades(stub.inspect(owner)).map((span) => span.text), ['ond one', 'Third'])
+})
+
+test('animationend and the backstop sweep unwrap spans and merge text', async () => {
+  const owner = stub.createContainer()
+  paintTo(owner, 'Hello **bo')
+  paintTo(owner, 'Hello **bold** and a [link](https://x.test/a) tail')
+  const view = stub.inspect(owner)
+  const before = view.text
+  const spans = fades(view)
+  assert.ok(spans.length >= 2)
+  stub.dispatch(owner, 'animationend', { target: spans[0]!.node as never })
+  assert.equal(fades(stub.inspect(owner)).length, spans.length - 1)
+  await new Promise((resolve) => setTimeout(resolve, 700))
+  assert.equal(fades(stub.inspect(owner)).length, 0)
+  assert.equal(stub.inspect(owner).text, before)
+  const p = stub.inspect(owner).children[0]!
+  assert.ok(p.nodes.every((node, index, all) => typeof node !== 'string' || typeof all[index - 1] !== 'string'))
+})
+
+test('maths and code take the fade correctly: maths is skipped, code text wraps', () => {
+  const owner = stub.createContainer()
+  paintTo(owner, 'a $x')
+  paintTo(owner, 'a $x^2$ then `co')
+  paintTo(owner, 'a $x^2$ then `code` more')
+  const view = stub.inspect(owner)
+  assert.equal(descendants(view).filter((node) => node.classes.includes('md-fade') && node.classes.includes('katex')).length, 0)
+  for (const span of fades(view)) assert.equal(span.classes.includes('md-math'), false)
+  assert.ok(find(view, 'md-math').every((math) => fades(math).length === 0))
+})
+
+test('first paint, non-owner paint and reduced motion never wrap', () => {
+  const owner = stub.createContainer()
+  paintTo(owner, 'A whole settled message.')
+  assert.equal(fades(stub.inspect(owner)).length, 0)
+  assert.equal(fades(render('plain text')).length, 0)
+  stub.setMedia('(prefers-reduced-motion: reduce)', true)
+  const calm = stub.createContainer()
+  paintTo(calm, 'abc')
+  paintTo(calm, 'abc def ghi')
+  assert.equal(fades(stub.inspect(calm)).length, 0)
+})

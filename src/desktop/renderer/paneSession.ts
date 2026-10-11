@@ -149,6 +149,7 @@ import {
   moveSurfaceSelection as stepSurfaceSelection,
   resumePickerView,
   runningProcessCount,
+  runningTaskCount,
   type SupportedSurface,
   type SurfaceAction,
   type SurfaceView,
@@ -442,6 +443,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   const transcriptView: TranscriptView = createTranscriptView(transcriptEl, paneEl, {
     onToggle: (id, expanded) => toggleDisclosureAt(id, expanded),
     onOpenSubagent: (id) => deps.onOpenSubagent?.(id),
+    onOpenBackgroundTasks: toggleBackgroundTasks,
     onOpenThread: (id) => deps.onOpenThread?.(id),
     // The panel is a singleton the active pane drives, so a background pane
     // cannot reach it — and cannot be clicked either, since it does not paint.
@@ -524,6 +526,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    */
   let turnStartedAt: number | undefined
   let shownTurnTokens: number | undefined
+  let shownTaskCount = 0
   let queue: UiQueueState = createUiQueue()
   let completions: CompletionState = NO_COMPLETIONS
   let commands: WireCommandInfo[] = []
@@ -834,12 +837,14 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       if (composer) glideFrom(composer, composerTop, document.documentElement.dataset.reducedMotion === 'true')
     }
     const asking = askState ? askViewModel(askState)?.header : undefined
+    const taskCount = shownTaskCount = runningTaskCount(client.getBackgroundTasks())
     transcriptView.render(presented, disclosure, {
       isStreaming,
       startedAt: turnStartedAt,
       turnId: transcript.turnId,
       ...(turnOutputTokens === undefined ? {} : { outputTokens: turnOutputTokens }),
       ...(asking === undefined ? {} : { asking }),
+      ...(taskCount === 0 ? {} : { backgroundTasks: taskCount }),
       ...(transcript.phase ? { phase: transcript.phase } : {}),
     }, selectedSubagent, coordinator ? coordinatorWelcomeEl : undefined, threadChipEl)
     subagentList = undefined
@@ -1638,7 +1643,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     if (tokens !== shownTurnTokens) {
       shownTurnTokens = tokens
       renderTranscript()
-    }
+    } else if (runningTaskCount(client.getBackgroundTasks()) !== shownTaskCount) renderTranscript()
     // A `/clear` or `/resume` rebinds the host to another session, and the
     // checkpoints on screen belong to the one it left: every option would
     // resolve to a message the new session has never heard of.
