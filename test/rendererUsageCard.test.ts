@@ -15,7 +15,7 @@ test('tokens format in 万 / 亿 with one decimal under 100 of the unit', () => 
 test('an empty history is zeros and dashes, with an all-quiet heatmap', () => {
   const view = usageCardView([], 'overview', 'all', new Date(2026, 9, 11))
   assert.equal(view.loading, false)
-  assert.deepEqual(view.cells.map((cell) => cell.value), ['0', '0', '0', '0', '—', '—'])
+  assert.deepEqual(view.cells.map((cell) => cell.value), ['0', '0', '0'])
   assert.ok(view.heatmap.flat().every((cell) => cell === null || cell.level === 0))
   assert.equal(view.footnote, '你用掉的 token 大约相当于 0 本《三体》')
 })
@@ -25,11 +25,32 @@ test('no data yet is loading; shares appear only on the model tab', () => {
   assert.equal(usageCardView(undefined, 'overview', 'all', now).loading, true)
   const days = [{ day: '2026-10-11', sessions: 1, turns: 2, tokens: 100, hours: new Array<number>(24).fill(0), models: { a: 100 } }]
   assert.equal(usageCardView(days, 'overview', 'all', now).shares.length, 0)
+  assert.deepEqual(usageCardView(days, 'overview', 'all', now).facts, [])
   assert.deepEqual(usageCardView(days, 'models', 'all', now).shares, [{ model: 'a', tokens: '100', percent: '100%', width: 100 }])
 })
 
-test('large values group their digits', () => {
-  assert.equal(formatTokens(60_660_000), '6,066 万')
+test('the overview is three figures; peak hour and top model live on the model tab', () => {
+  const now = new Date(2026, 9, 11)
+  const hours = new Array<number>(24).fill(0)
+  hours[21] = 2
+  const days = [{ day: '2026-10-11', sessions: 1, turns: 2, tokens: 25_000, hours, models: { a: 25_000 } }]
+  const overview = usageCardView(days, 'overview', 'all', now)
+  assert.deepEqual(overview.cells, [
+    { label: '总 token', value: '2.5 万' },
+    { label: '会话数', value: '1' },
+    { label: '活跃天数', value: '1' },
+  ])
+  assert.deepEqual(usageCardView(days, 'models', 'all', now).facts, [
+    { label: '高峰时段', value: '21 时' },
+    { label: '常用模型', value: 'a' },
+  ])
+})
+
+test('the heatmap is 42 weeks whatever the range', () => {
+  const now = new Date(2026, 9, 11)
+  for (const range of ['all', '30d', '7d'] as const) {
+    assert.equal(usageCardView([], 'overview', range, now).heatmap.length, 42)
+  }
 })
 
 test('large values group their digits', () => {

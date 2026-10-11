@@ -21,7 +21,7 @@ test('empty data gives zeros, no peak, no model and an all-zero heatmap', () => 
   assert.equal(stats.peakHour, null)
   assert.equal(stats.topModel, null)
   assert.deepEqual(stats.modelShares, [])
-  assert.equal(stats.heatmap.length, 26)
+  assert.equal(stats.heatmap.length, 42)
   assert.ok(stats.heatmap.flat().every((cell) => cell === null || cell.level === 0))
 })
 
@@ -56,11 +56,11 @@ test('books convert tokens to one decimal', () => {
 test('heatmap lays weeks out Sunday-first, nulls the future and scales levels to the busiest day', () => {
   const days = [day('2026-10-11', { turns: 8 }), day('2026-10-10', { turns: 1 })]
   const heatmap = computeUsageStats(days, '7d', now).heatmap
-  assert.equal(heatmap.length, 2)
-  const last = heatmap[1]!
+  assert.equal(heatmap.length, 42)
+  const last = heatmap[41]!
   assert.equal(last[0]!.day, '2026-10-11')
   assert.equal(last[0]!.level, 4)
   assert.equal(last[1], null)
-  assert.equal(heatmap[0]![6]!.day, '2026-10-10')
-  assert.equal(heatmap[0]![6]!.level, 1)
+  assert.equal(heatmap[40]![6]!.day, '2026-10-10')
+  assert.equal(heatmap[40]![6]!.level, 1)
 })

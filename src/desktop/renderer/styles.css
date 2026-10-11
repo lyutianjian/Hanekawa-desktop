@@ -2616,51 +2616,87 @@ body.settings-open #browser-resizer { display: none; }
 .scroll-bottom:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 /* --- welcome (empty state) ---
-   The home page a new conversation opens with: a brand mark and one title line
-   at the top of the reading column, the usage card under it, and the project /
-   branch pills settled just above the composer. Only drawn while the pane has
-   no conversation; `model/welcome.ts` owns that verdict and `dom/welcomeView.ts`
-   drops the subtree when it is false.
+   The home page a new conversation opens with: a brand mark and one title line,
+   the project / branch pills and the usage card, centred on the canvas as one
+   group *around the composer* — title above it, pills and card below. Only drawn
+   while the pane has no conversation; `model/welcome.ts` owns that verdict and
+   `dom/welcomeView.ts` drops the subtree when it is false.
 
-   `.pane.empty` takes the transcript out of the flex stretch so the pills settle
-   against the composer instead of sharing the canvas with an almost-empty
-   scroller. The startup notices a fresh draft carries stay visible underneath —
-   never hide output the host emitted. */
-.pane.empty .transcript { flex: 0 0 auto; overflow: visible; }
-.welcome {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: var(--space-4);
-  /* The reading axis, so the title's left edge is the transcript's left edge. */
-  width: 100%;
-  max-width: var(--reading-measure);
-  margin: 0 auto;
-  padding: var(--space-7) var(--reading-gutter) var(--space-3);
+   Nothing moves in the DOM. The composer is `#canvas`'s child while the welcome
+   lives inside the pane, so while a visible pane is empty `#transcript-area`,
+   the pane and the welcome stop making boxes (`display: contents`) and their
+   parts become `#canvas` flex items, ordered around `#input-row`. The first
+   message removes `.empty`, the composer drops to the bottom, and
+   `dom/layoutTransition.ts` animates that single move. The startup notices a
+   fresh draft carries stay visible underneath — never hide output the host
+   emitted. The `:not([hidden])` on the pane is what keeps a backgrounded empty
+   pane from reshaping the canvas under the one in front. */
+#canvas:has(> #transcript-area > .pane.empty:not([hidden])):not(.settings-open):not(.projects-open) {
+  justify-content: safe center;
 }
-/* While the completion list is up it covers the lower half of the page, and the
-   upper half peeking out above it reads as a rendering fault. The block steps
-   back for as long as the list is wanted (`inert` is off exactly then). */
-.welcome { transition: opacity var(--motion-micro) var(--ease-out); }
-#canvas:has(#suggestions:not([inert])) .welcome { opacity: 0; }
-.welcome-head { display: flex; align-items: center; gap: var(--space-2); }
+#canvas:has(> #transcript-area > .pane.empty:not([hidden])):not(.settings-open):not(.projects-open) > #transcript-area,
+#canvas:has(> #transcript-area > .pane.empty:not([hidden])):not(.settings-open):not(.projects-open) > #transcript-area > .pane.empty,
+#canvas:has(> #transcript-area > .pane.empty:not([hidden])):not(.settings-open):not(.projects-open) .pane.empty > .welcome {
+  display: contents;
+}
+#canvas:has(> #transcript-area > .pane.empty:not([hidden])):not(.settings-open):not(.projects-open) > #input-row { order: 2; }
+#canvas:has(> #transcript-area > .pane.empty:not([hidden])):not(.settings-open):not(.projects-open) .composer-column {
+  max-width: 576px;
+}
+/* The completion list and picker normally rise from the composer's upper edge.
+   Here the composer sits high on the canvas with the title above it, so the
+   stack would leave the window; it hangs below instead, over the pills and the
+   card, which step back while the list is up. */
+#canvas:has(> #transcript-area > .pane.empty:not([hidden])):not(.settings-open):not(.projects-open) #composer-popovers {
+  top: 100%;
+  bottom: auto;
+  margin: var(--space-2) 0 0;
+}
+.pane.empty .transcript { order: 5; flex: 0 0 auto; overflow: visible; }
+.welcome-head,
+.welcome-pills,
+.welcome-usage {
+  box-sizing: border-box;
+  width: 100%;
+  /* The composer column's 576px, plus the side padding `#input-row` carries and
+     these parts, living outside it, repeat — so all four share one edge. */
+  max-width: calc(576px + 2 * (var(--reading-gutter) - var(--composer-overhang)));
+  margin-inline: auto;
+  padding-inline: calc(var(--reading-gutter) - var(--composer-overhang));
+  flex: 0 0 auto;
+}
+/* While the completion list is up it covers the head above the composer, and
+   the upper half peeking out above it reads as a rendering fault. The group
+   steps back for as long as the list is wanted (`inert` is off exactly then). */
+.welcome-head,
+.welcome-pills,
+.welcome-usage { transition: opacity var(--motion-micro) var(--ease-out); }
+#canvas:has(#suggestions:not([inert])) :is(.welcome-head, .welcome-pills, .welcome-usage) { opacity: 0; }
+.welcome-head {
+  order: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-5);
+}
 .welcome-mark { width: 20px; height: 20px; color: var(--accent-brand-strong); }
 .welcome-title {
   margin: 0;
-  font-family: var(--font-ui);
-  font-size: var(--type-title);
-  font-weight: 500;
+  font-family: var(--font-serif);
+  font-size: var(--type-display);
+  font-weight: 400;
   line-height: 1.3;
   color: var(--text-primary);
 }
-/* The usage card. */
+/* The usage card: one row of three figures over a heatmap, on the composer's
+   axis and no taller than it needs to be. */
+.welcome-usage { order: 4; margin-top: var(--space-4); }
 .usage-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-3) var(--space-4) var(--space-4);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -2668,7 +2704,7 @@ body.settings-open #browser-resizer { display: none; }
 .usage-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
 .usage-segments { display: inline-flex; gap: 2px; }
 .usage-segment {
-  padding: 3px 10px;
+  padding: 2px 8px;
   border: 0;
   border-radius: var(--radius-pill);
   background: transparent;
@@ -2680,18 +2716,12 @@ body.settings-open #browser-resizer { display: none; }
 .usage-segment:hover { color: var(--text-primary); }
 .usage-segment.active { background: var(--surface-hover); color: var(--text-primary); }
 .usage-segment:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-.usage-body { display: flex; flex-direction: column; gap: var(--space-4); min-height: 196px; }
-.usage-cells { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
-.usage-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  padding: var(--space-2) var(--space-3);
-  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  border-radius: var(--radius-md);
-}
-.usage-label { order: -1; font-size: var(--type-micro); color: var(--text-secondary); }
+.usage-body { display: flex; flex-direction: column; gap: var(--space-2); min-height: 148px; }
+.usage-cells,
+.usage-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+.usage-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.usage-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.usage-label { order: -1; font-size: var(--type-micro); color: var(--text-tertiary); }
 .usage-value {
   font-size: var(--type-body);
   font-weight: 500;
@@ -2701,15 +2731,18 @@ body.settings-open #browser-resizer { display: none; }
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.usage-heatmap { display: flex; justify-content: center; gap: 4px; }
-.usage-heat-col { flex: 1 1 0; max-width: 22px; display: flex; flex-direction: column; gap: 4px; }
-.usage-heat { aspect-ratio: 1; border-radius: 3px; background: color-mix(in srgb, var(--text-primary) 7%, transparent); }
-.usage-heat.future { background: transparent; }
-.usage-heat.level-1 { background: color-mix(in srgb, var(--accent-info) 45%, transparent); }
-.usage-heat.level-2 { background: color-mix(in srgb, var(--accent-info) 65%, transparent); }
-.usage-heat.level-3 { background: color-mix(in srgb, var(--accent-info) 85%, transparent); }
-.usage-heat.level-4 { background: var(--accent-info); }
-.usage-footnote { font-size: var(--type-meta); color: var(--text-tertiary); }
+/* Fixed 10px cells: the model gives more weeks than any card shows, and what
+   does not fit is clipped from the left (`flex-end` puts the overflow there),
+   so the newest week is always the one in view. */
+.usage-heatmap { display: flex; justify-content: flex-end; gap: 3px; overflow: hidden; }
+.usage-heat-col { flex: 0 0 10px; display: flex; flex-direction: column; gap: 3px; }
+.usage-heat { width: 10px; height: 10px; border-radius: 2px; background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.usage-heat.future { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
+.usage-heat.level-1 { background: color-mix(in srgb, var(--accent-info) 30%, transparent); }
+.usage-heat.level-2 { background: color-mix(in srgb, var(--accent-info) 50%, transparent); }
+.usage-heat.level-3 { background: color-mix(in srgb, var(--accent-info) 70%, transparent); }
+.usage-heat.level-4 { background: color-mix(in srgb, var(--accent-info) 90%, transparent); }
+.usage-footnote { font-size: var(--type-micro); color: var(--text-tertiary); }
 .usage-empty { padding: var(--space-5) 0; font-size: var(--type-meta); color: var(--text-tertiary); text-align: center; }
 .usage-shares { display: flex; flex-direction: column; gap: var(--space-3); }
 .usage-share { display: flex; flex-direction: column; gap: 5px; }
@@ -2733,12 +2766,13 @@ body.settings-open #browser-resizer { display: none; }
 .usage-card.loading .usage-heat { color: transparent; animation: breathe var(--motion-running) var(--ease-out) infinite; }
 .usage-card.loading .usage-value,
 .usage-card.loading .usage-footnote { background: color-mix(in srgb, var(--text-primary) 8%, transparent); border-radius: var(--radius-sm); width: fit-content; min-width: 3em; }
-/* The pills sit at the foot of the page, just above the composer. */
+/* The pills are one row under the composer. */
 .welcome-pills {
+  order: 3;
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin-top: auto;
+  margin-top: var(--space-2);
 }
 .welcome-pill {
   display: inline-flex;
@@ -2768,14 +2802,14 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .welcome-pill-slot { display: inline-flex; }
 .welcome-pill-anchor { position: relative; }
 /* The two switchers. A menu, so they take the menu depth — `--radius-md` and
-   `--shadow-float` — rather than inventing a third step. They open *upward*: the
-   pills sit just above the composer, and a popover hanging below them would
-   unroll straight into it. Flush with the pill's left edge. */
+   `--shadow-float` — rather than inventing a third step. They open *downward*: the
+   pills sit under the composer, and a popover rising from them would cover it.
+   Flush with the pill's left edge. */
 .branch-picker,
 .project-picker {
   position: absolute;
   left: 0;
-  bottom: calc(100% + var(--space-2));
+  top: calc(100% + var(--space-2));
   z-index: 1;
   width: 16rem;
   max-height: 40vh;

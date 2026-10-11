@@ -464,7 +464,7 @@ test('the card shows a skeleton until the stats arrive, then the numbers', async
   await Promise.resolve()
   const card = child(view(), 'usage-card')
   assert.equal(card.classes.includes('loading'), false)
-  assert.deepEqual(cellValues(card), ['3', '12', '2.5 万', '1', '21 时', 'alpha'])
+  assert.deepEqual(cellValues(card), ['2.5 万', '3', '1'])
   assert.equal(child(card, 'usage-footnote').text, '你用掉的 token 大约相当于 0.1 本《三体》')
 })
 
@@ -472,7 +472,7 @@ test('an empty history draws zeros and dashes', async (t) => {
   const { view } = render(t, welcomeViewFixture(), Promise.resolve([]))
   await Promise.resolve()
   await Promise.resolve()
-  assert.deepEqual(cellValues(child(view(), 'usage-card')), ['0', '0', '0', '0', '—', '—'])
+  assert.deepEqual(cellValues(child(view(), 'usage-card')), ['0', '0', '0'])
 })
 
 test('the segments switch the tab and the range locally', async (t) => {
@@ -484,11 +484,15 @@ test('the segments switch the tab and the range locally', async (t) => {
   const shares = child(view(), 'usage-shares').children
   assert.deepEqual(shares.map((share) => share.text), ['alpha2 万 · 80%', 'beta5,000 · 20%'])
   assert.equal(segment(view(), '模型').attributes.get('aria-pressed'), 'true')
+  assert.deepEqual(
+    child(view(), 'usage-facts').children.map((fact) => fact.children[0]!.text),
+    ['21 时', 'alpha'],
+  )
 
   stub.click(segment(view(), '概览').node)
   stub.click(segment(view(), '7 天').node)
   assert.equal(segment(view(), '7 天').attributes.get('aria-pressed'), 'true')
-  assert.equal(child(view(), 'usage-cells').children[0]!.children[0]!.text, '3')
+  assert.equal(child(view(), 'usage-cells').children[1]!.children[0]!.text, '3')
   assert.equal(loads.count, 1)
 })
 

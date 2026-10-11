@@ -198,6 +198,7 @@ import {
 } from './model/imageViewer.js'
 import type { ImageViewerView } from './dom/imageViewerView.js'
 import type { ImageAttachmentRef } from '../../media/types.js'
+import { glideFrom } from './dom/layoutTransition.js'
 import { localizeCommands } from './model/builtinLabels.js'
 import {
   advanceTaskPanel,
@@ -802,16 +803,15 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       threadChipKey = stripKey
       threadChipEl = strip ? threadChip(strip, (target) => deps.onOpenThreads?.(target)) : undefined
     }
-    const asking = askState ? askViewModel(askState)?.header : undefined
-    transcriptView.render(presented, disclosure, {
-      isStreaming,
-      startedAt: turnStartedAt,
-      turnId: transcript.turnId,
-      ...(turnOutputTokens === undefined ? {} : { outputTokens: turnOutputTokens }),
-      ...(asking === undefined ? {} : { asking }),
-      ...(transcript.phase ? { phase: transcript.phase } : {}),
-    }, selectedSubagent, coordinator ? coordinatorWelcomeEl : undefined, threadChipEl)
-    subagentList = undefined
+    // Before the transcript paints, so what it measures is the layout it will
+    // keep: the first message's anchor is computed against the canvas with the
+    // welcome gone and the composer already back at the bottom.
+    //
+    // The composer's old top is taken first, while the home page still centres
+    // it, and handed to `glideFrom` once the class has moved it.
+    const composerTop = !paneEl.hidden && paneEl.classList.contains('empty')
+      ? paneEl.closest('#canvas')?.querySelector<HTMLElement>('#input-row')?.getBoundingClientRect().top
+      : undefined
     // The one place that decides whether this pane has a conversation, so the
     // transcript and the welcome screen cannot disagree about it.
     welcome.render(welcomeView({
@@ -827,7 +827,22 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       branchPicker,
       projectPicker: projectPickerState(),
     }))
-    paneEl.classList.toggle('empty', !coordinator && isTranscriptEmpty(shown))
+    const empty = !coordinator && isTranscriptEmpty(shown)
+    paneEl.classList.toggle('empty', empty)
+    if (composerTop !== undefined && !empty) {
+      const composer = paneEl.closest('#canvas')?.querySelector<HTMLElement>('#input-row')
+      if (composer) glideFrom(composer, composerTop, document.documentElement.dataset.reducedMotion === 'true')
+    }
+    const asking = askState ? askViewModel(askState)?.header : undefined
+    transcriptView.render(presented, disclosure, {
+      isStreaming,
+      startedAt: turnStartedAt,
+      turnId: transcript.turnId,
+      ...(turnOutputTokens === undefined ? {} : { outputTokens: turnOutputTokens }),
+      ...(asking === undefined ? {} : { asking }),
+      ...(transcript.phase ? { phase: transcript.phase } : {}),
+    }, selectedSubagent, coordinator ? coordinatorWelcomeEl : undefined, threadChipEl)
+    subagentList = undefined
     // Thumbnails arrive on demand, exactly as the composer's tiles do: the
     // paint draws the boxes, then each uncached id asks once. Streaming makes
     // this run per chunk; `beginPreviewLoad` is what keeps that one request.

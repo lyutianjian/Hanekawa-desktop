@@ -38,7 +38,10 @@ export interface UsageShareView {
 export interface UsageCardView {
   /** No data yet: the cells draw as skeletons. */
   loading: boolean
+  /** The overview's one row of figures. */
   cells: UsageCell[]
+  /** The model tab's extra facts, drawn above the shares; empty on the overview. */
+  facts: UsageCell[]
   /** Columns are weeks, rows are weekdays; `null` is a day that has not happened. */
   heatmap: (UsageHeatCellView | null)[][]
   shares: UsageShareView[]
@@ -66,13 +69,16 @@ export function usageCardView(
   return {
     loading: days === undefined,
     cells: [
-      { label: '会话数', value: String(stats.sessions) },
-      { label: '消息数', value: String(stats.messages) },
       { label: '总 token', value: formatTokens(stats.tokens) },
+      { label: '会话数', value: String(stats.sessions) },
       { label: '活跃天数', value: String(stats.activeDays) },
-      { label: '高峰时段', value: stats.peakHour === null ? USAGE_EMPTY : `${stats.peakHour} 时` },
-      { label: '常用模型', value: stats.topModel ?? USAGE_EMPTY },
     ],
+    facts: tab === 'models'
+      ? [
+          { label: '高峰时段', value: stats.peakHour === null ? USAGE_EMPTY : `${stats.peakHour} 时` },
+          { label: '常用模型', value: stats.topModel ?? USAGE_EMPTY },
+        ]
+      : [],
     heatmap: stats.heatmap.map((column) =>
       column.map((cell) => (cell ? { level: cell.level, title: `${cell.day} · ${cell.turns} 条消息` } : null)),
     ),

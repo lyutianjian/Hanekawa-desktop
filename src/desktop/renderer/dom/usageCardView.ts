@@ -5,6 +5,7 @@ import {
   USAGE_TABS,
   usageCardView,
   type UsageCardView,
+  type UsageCell,
   type UsageTab,
 } from '../model/usageCard.js'
 import type { UsageRange } from '../model/usageStats.js'
@@ -60,9 +61,12 @@ export function createUsageCard(now: () => Date = () => new Date()): UsageCardDo
   const element = el('section', 'usage-card', head, body)
   element.setAttribute('aria-label', '使用统计')
 
+  const cells = (className: string, list: readonly UsageCell[]): HTMLElement =>
+    el('div', className, ...list.map((cell) =>
+      el('div', 'usage-cell', el('div', 'usage-value', cell.value), el('div', 'usage-label', cell.label))))
+
   const overview = (view: UsageCardView): HTMLElement[] => [
-    el('div', 'usage-cells', ...view.cells.map((cell) =>
-      el('div', 'usage-cell', el('div', 'usage-value', cell.value), el('div', 'usage-label', cell.label)))),
+    cells('usage-cells', view.cells),
     el('div', 'usage-heatmap', ...view.heatmap.map((column) =>
       el('div', 'usage-heat-col', ...column.map((cell) => {
         const node = el('span', `usage-heat level-${cell?.level ?? 0}${cell ? '' : ' future'}`)
@@ -75,7 +79,7 @@ export function createUsageCard(now: () => Date = () => new Date()): UsageCardDo
   const models = (view: UsageCardView): HTMLElement[] =>
     view.shares.length === 0
       ? [el('div', 'usage-empty', USAGE_NO_MODELS)]
-      : [el('div', 'usage-shares', ...view.shares.map((share) => {
+      : [cells('usage-facts', view.facts), el('div', 'usage-shares', ...view.shares.map((share) => {
           const bar = el('progress', 'usage-share-bar')
           bar.setAttribute('max', '100')
           bar.setAttribute('value', String(share.width))

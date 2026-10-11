@@ -6,8 +6,12 @@ export type UsageRange = 'all' | '30d' | '7d'
 export const TOKENS_PER_BOOK = 400_000
 
 const RANGE_DAYS: Record<UsageRange, number | null> = { all: null, '30d': 30, '7d': 7 }
-/** Heatmap width in weeks; `all` shows the last half year. */
-const HEATMAP_WEEKS: Record<UsageRange, number> = { all: 26, '30d': 5, '7d': 2 }
+/**
+ * Heatmap width in weeks, whatever the range: enough to fill the widest card
+ * (560px of 10px cells and 3px gaps). The stylesheet fixes the cell size and
+ * clips from the left, so a narrower card simply shows fewer of them.
+ */
+const HEATMAP_WEEKS = 42
 
 export interface UsageHeatCell {
   day: string
@@ -47,8 +51,8 @@ function addDays(date: Date, delta: number): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate() + delta)
 }
 
-function heatmapOf(days: Map<string, WireUsageDay>, range: UsageRange, today: Date): UsageStats['heatmap'] {
-  const weeks = HEATMAP_WEEKS[range]
+function heatmapOf(days: Map<string, WireUsageDay>, today: Date): UsageStats['heatmap'] {
+  const weeks = HEATMAP_WEEKS
   const start = addDays(today, -today.getDay() - (weeks - 1) * 7)
   const columns: (UsageHeatCell | null)[][] = []
   let busiest = 0
@@ -107,7 +111,7 @@ export function computeUsageStats(allDays: readonly WireUsageDay[], range: Usage
     activeDays: days.filter((day) => day.turns > 0).length,
     peakHour: peak > 0 ? hours.indexOf(peak) : null,
     topModel: modelShares[0]?.model ?? null,
-    heatmap: heatmapOf(heatSource, range, today),
+    heatmap: heatmapOf(heatSource, today),
     modelShares,
     books: Math.round((tokens / TOKENS_PER_BOOK) * 10) / 10,
   }
