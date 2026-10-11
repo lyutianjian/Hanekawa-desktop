@@ -29,9 +29,9 @@ export type PresenceKind = 'popover' | 'panel' | 'disclosure' | 'layout' | 'back
 
 /** CSS duration plus 60ms event-delivery slack; pinned to the sheet by token tests. */
 export const PRESENCE_FALLBACK_MS: Readonly<Record<PresenceKind, number>> = {
-  popover: 340,
+  popover: 260,
   panel: 360,
-  disclosure: 360,
-  layout: 440,
+  disclosure: 260,
+  layout: 340,
   backdrop: 260,
 }

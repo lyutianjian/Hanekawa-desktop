@@ -144,25 +144,30 @@
 
   /* Semantic motion: one cadence per kind of interaction. CSS owns timing;
      model fallback constants are pinned to these values by the token tests. */
-  --motion-press: 80ms;
-  --motion-release: 140ms;
-  --motion-micro: 160ms;
-  --motion-popover-in: 280ms;
-  --motion-popover-out: 200ms;
-  --motion-disclosure: 300ms;
-  --motion-layout: 380ms;
+  --motion-press: 0ms;
+  --motion-release: 300ms;
+  --motion-micro: 60ms;
+  --motion-popover-in: 200ms;
+  --motion-popover-out: 120ms;
+  --motion-disclosure: 200ms;
+  --motion-layout: 280ms;
   --motion-panel-in: 300ms;
   --motion-panel-out: 200ms;
   --motion-scrim-in: 200ms;
-  --motion-scrim-out: 180ms;
-  --motion-running: 2800ms;
+  --motion-scrim-out: 120ms;
+  --motion-running: 2000ms;
   --motion-spark: 1200ms;
   --motion-locate: 600ms;
   --motion-hover-delay: 500ms;
   --presence-x: 0px;
   --presence-y: 8px;
   --presence-scale: 0.985;
-  --ease-standard: cubic-bezier(0.22, 0, 0.22, 1);
+  /* Hover and colour settle on ease-out; reveals, panels and scrims snap; a
+     popover arrives with a little overshoot; a released press springs back. */
+  --ease-out: cubic-bezier(0.165, 0.84, 0.44, 1);
+  --ease-snap: cubic-bezier(0.32, 0.72, 0, 1);
+  --ease-overshoot: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --spring: linear(0, 0.009, 0.035 2.1%, 0.141, 0.281 6.7%, 0.723 12.9%, 0.938 16.7%, 1.017, 1.077, 1.121, 1.149 24.3%, 1.159, 1.163, 1.161, 1.154 29.9%, 1.129 32.8%, 1.051 39.6%, 1.017 43.1%, 0.991, 0.977 51%, 0.974 53.8%, 0.975 57.1%, 0.997 69.8%, 1.003 76.9%, 1);
   /* The one curve that is allowed to leave slowly and land hard: it exists for
      the states that animate *out* under a state machine (the sidebar's collapse
      middle state), not for entrances. */
@@ -451,7 +456,7 @@ body {
   gap: var(--space-1);
   flex: 0 0 calc(var(--sidebar-width) + var(--sidebar-scrollbar-overhang) - max(var(--space-3), var(--titlebar-inset-left)) - var(--space-1));
   min-width: max-content;
-  transition: flex-basis var(--motion-layout) var(--ease-standard);
+  transition: flex-basis var(--motion-layout) var(--ease-out);
 }
 body:has(#sidebar.collapsed) .titlebar-lead {
   flex-basis: 0;
@@ -789,7 +794,7 @@ body.settings-open .titlebar-lead::after { display: none; }
      fill of its own and `body`'s material runs down through it. */
   background: transparent;
   overflow: hidden;
-  transition: flex-basis var(--motion-layout) var(--ease-standard);
+  transition: flex-basis var(--motion-layout) var(--ease-out);
 }
 /* The column that holds the four regions, at the sidebar's *open* width and
    never narrower. `#sidebar` is the thing that animates, and a flex column that
@@ -810,16 +815,16 @@ body.settings-open .titlebar-lead::after { display: none; }
   min-height: 0;
   display: flex;
   flex-direction: column;
-  transition: opacity var(--motion-layout) var(--ease-standard),
-              transform var(--motion-layout) var(--ease-standard);
+  transition: opacity var(--motion-layout) var(--ease-out),
+              transform var(--motion-layout) var(--ease-out);
 }
 /* Collapsed is zero width, not a rail: the toggle it used to keep reachable now
    lives in the title bar (`.titlebar-rail`), which collapsing does not touch.
    The collapse is the one direction that leaves rather than arrives, so it takes
-   `--ease-exit` while the expansion keeps the decelerating standard curve
+   `--ease-exit` while the expansion keeps the decelerating ease-out
    declared above. A transition on the state class, not on the base rule, is how
    CSS spells "one curve per direction".
-   The shell's fade is left on the standard curve and the shorter step: it has to
+   The shell's fade is left on ease-out and the shorter step: it has to
    be gone well before the column finishes closing, or the last frames are legible
    text being sliced by the crop. */
 #sidebar.collapsed {
@@ -864,7 +869,7 @@ body.settings-open #sidebar { display: none; }
   width: 1px;
   background: var(--border-strong);
   opacity: 0;
-  transition: opacity var(--motion-micro) var(--ease-standard);
+  transition: opacity var(--motion-micro) var(--ease-out);
 }
 #sidebar-resizer:hover::after,
 body.resizing #sidebar-resizer::after { opacity: 1; }
@@ -1103,7 +1108,7 @@ body.resizing #sidebar { transition: none; }
   width: 1px;
   background: var(--border-strong);
   opacity: 0;
-  transition: opacity var(--motion-micro) var(--ease-standard);
+  transition: opacity var(--motion-micro) var(--ease-out);
 }
 #browser-resizer:hover::after,
 body.resizing #browser-resizer::after { opacity: 1; }
@@ -1597,7 +1602,7 @@ body.settings-open #browser-resizer { display: none; }
   grid-template-rows: 1fr;
   grid-template-columns: minmax(0, 1fr);
   overflow: hidden;
-  transition: grid-template-rows var(--motion-disclosure) var(--ease-standard);
+  transition: grid-template-rows var(--motion-disclosure) var(--ease-snap);
 }
 .project-group.collapsed > .project-body { grid-template-rows: 0fr; }
 .project-rows { min-height: 0; min-width: 0; }
@@ -1649,7 +1654,7 @@ body.settings-open #browser-resizer { display: none; }
   background: var(--accent-brand);
   transform: scaleY(0);
   transform-origin: center;
-  transition: transform var(--motion-micro) var(--ease-standard);
+  transition: transform var(--motion-micro) var(--ease-out);
 }
 /* Four row states, and the cascade order below is the whole design:
    hover (the pointer is here) → selected (the keyboard cursor, a hairline, so it
@@ -1928,7 +1933,7 @@ body.settings-open #browser-resizer { display: none; }
    its end, so each frame of the shrinking content pulls the last line down with
    it. */
 .transcript-column.settling {
-  transition: padding-bottom var(--motion-layout) var(--ease-standard);
+  transition: padding-bottom var(--motion-layout) var(--ease-out);
 }
 /* 24px between turns, and the line-height a wall of prose needs. Both are the
    rhythm half of design_guidance 四.3 — the old 10px/1.5 ran the assistant's
@@ -1984,7 +1989,7 @@ body.settings-open #browser-resizer { display: none; }
   background: var(--surface-card);
   object-fit: cover;
   cursor: pointer;
-  transition: border-color var(--motion-micro) var(--ease-standard);
+  transition: border-color var(--motion-micro) var(--ease-out);
 }
 .user-image-thumb:hover { border-color: var(--border-strong); }
 /* --- a message's meta row ---
@@ -2009,7 +2014,7 @@ body.settings-open #browser-resizer { display: none; }
   font-variant-numeric: tabular-nums;
   user-select: none;
   opacity: 0;
-  transition: opacity var(--motion-micro) var(--ease-standard);
+  transition: opacity var(--motion-micro) var(--ease-out);
 }
 .transcript .item:hover .item-meta,
 .transcript .item .item-meta:focus-within { opacity: 1; }
@@ -2112,7 +2117,7 @@ body.settings-open #browser-resizer { display: none; }
   height: 13px;
   flex: none;
   opacity: 0.8;
-  transition: transform var(--motion-disclosure) var(--ease-standard);
+  transition: transform var(--motion-disclosure) var(--ease-snap);
 }
 .run.open > .run-line .icon,
 .thinking.open > .run-line .icon { transform: rotate(90deg); }
@@ -2180,7 +2185,7 @@ body.settings-open #browser-resizer { display: none; }
   width: 11px;
   height: 11px;
   flex: none;
-  transition: transform var(--motion-disclosure) var(--ease-standard);
+  transition: transform var(--motion-disclosure) var(--ease-snap);
 }
 .step:not(.collapsed) > .step-head .icon { transform: rotate(90deg); }
 .step-right { flex: none; margin-left: auto; padding-left: var(--space-3); }
@@ -2214,8 +2219,8 @@ body.settings-open #browser-resizer { display: none; }
   color: var(--text-tertiary);
   background: currentColor;
 }
-.step-bead.awaiting-approval { color: var(--accent-warn); animation: blink var(--motion-running) var(--ease-standard) infinite; }
-.step-bead.running { animation: breathe var(--motion-running) var(--ease-standard) infinite; }
+.step-bead.awaiting-approval { color: var(--accent-warn); animation: blink var(--motion-running) var(--ease-out) infinite; }
+.step-bead.running { animation: breathe var(--motion-running) var(--ease-out) infinite; }
 .step-bead.done { color: var(--accent-review); }
 .step-bead.failed { color: var(--accent-danger); }
 @keyframes blink { 50% { opacity: 0.65; } }
@@ -2554,7 +2559,7 @@ body.settings-open #browser-resizer { display: none; }
 /* While the completion list is up it covers the lower half of the Hero, and the
    upper half peeking out above it reads as a rendering fault. The block steps
    back for as long as the list is wanted (`inert` is off exactly then). */
-.welcome { transition: opacity var(--motion-micro) var(--ease-standard); }
+.welcome { transition: opacity var(--motion-micro) var(--ease-out); }
 #canvas:has(#suggestions:not([inert])) .welcome { opacity: 0; }
 /* The masthead, and the rule it hangs on. A left border rather than a drawn
    element: it then spans exactly the block's own height, so a Hero that wraps
@@ -2963,7 +2968,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border-color: var(--accent-brand);
   border-radius: inherit;
   pointer-events: none;
-  animation: task-flash var(--motion-locate) var(--ease-standard);
+  animation: task-flash var(--motion-locate) var(--ease-out);
 }
 @keyframes task-flash { from { opacity: 1; } to { opacity: 0; } }
 /* The 2px bar across the top. The fill is a *rule*, not a surface: the accent
@@ -2979,7 +2984,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   height: 0;
   border-top: 2px solid;
   border-top-color: var(--accent-brand);
-  transition: width var(--motion-layout) var(--ease-standard);
+  transition: width var(--motion-layout) var(--ease-out);
 }
 /* The head is the whole switch, as in the transcript (§9): no chevron, the
    hover tint is the affordance. A resting rule of its own, because a bare
@@ -3038,7 +3043,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: none;
   box-shadow: inset 0 0 0 1px currentColor;
 }
-.task-bead.in_progress { animation: breathe var(--motion-running) var(--ease-standard) infinite; }
+.task-bead.in_progress { animation: breathe var(--motion-running) var(--ease-out) infinite; }
 .task-bead.completed { color: var(--accent-review); }
 .task-label {
   overflow: hidden;
@@ -3057,8 +3062,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   padding: var(--space-3) var(--space-4);
-  transition: border-color var(--motion-micro) var(--ease-standard),
-    box-shadow var(--motion-micro) var(--ease-standard), height var(--motion-layout) var(--ease-standard);
+  transition: border-color var(--motion-micro) var(--ease-out),
+    box-shadow var(--motion-micro) var(--ease-out), height var(--motion-layout) var(--ease-out);
 }
 /* Focus lifts the capsule off the page rather than recolouring it further: the
    composer is the one control the user returns to between every turn, and a
@@ -3126,7 +3131,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: var(--surface-hover);
   object-fit: cover;
   padding: 0;
-  transition: border-color var(--motion-micro) var(--ease-standard);
+  transition: border-color var(--motion-micro) var(--ease-out);
 }
 .attachment-thumb {
   cursor: pointer;
@@ -3138,7 +3143,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    `failed` carries the danger edge, and its 重试 sits over the box because
    there is no row left to put it in. */
 .attachment-tile.importing .attachment-placeholder {
-  animation: breathe var(--motion-running) var(--ease-standard) infinite;
+  animation: breathe var(--motion-running) var(--ease-out) infinite;
 }
 .attachment-tile.failed .attachment-placeholder { border-color: var(--accent-danger); }
 .attachment-retry {
@@ -3171,7 +3176,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border: 1px solid var(--border-strong);
   color: var(--text-secondary);
   opacity: 0;
-  transition: opacity var(--motion-micro) var(--ease-standard);
+  transition: opacity var(--motion-micro) var(--ease-out);
 }
 .attachment-tile:hover .attachment-remove,
 .attachment-tile:focus-within .attachment-remove { opacity: 1; }
@@ -3709,7 +3714,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   /* The transform is the animated property; panning bypasses it by being a
      pointer-driven stream of its own, which is why the duration is the micro
      one rather than a panel's. */
-  transition: transform var(--motion-micro) var(--ease-standard);
+  transition: transform var(--motion-micro) var(--ease-out);
   user-select: none;
   -webkit-user-drag: none;
 }
@@ -4753,8 +4758,8 @@ body.projects-open #browser-resizer,
   height: 14px;
   border-radius: var(--radius-pill);
   background: var(--text-tertiary);
-  transition: transform var(--motion-micro) var(--ease-standard),
-              background-color var(--motion-micro) var(--ease-standard);
+  transition: transform var(--motion-micro) var(--ease-out),
+              background-color var(--motion-micro) var(--ease-out);
 }
 
 .settings-toggle.on .settings-toggle-knob {
@@ -5086,18 +5091,18 @@ body.projects-open #browser-resizer,
 #overlay-panel .dialog-btn,
 #rewind-panel .row,
 #rewind-panel .dialog-btn {
-  transition: background-color var(--motion-micro) var(--ease-standard),
-              color var(--motion-micro) var(--ease-standard),
-              border-color var(--motion-micro) var(--ease-standard),
-              box-shadow var(--motion-micro) var(--ease-standard),
-              opacity var(--motion-micro) var(--ease-standard),
-              transform var(--motion-micro) var(--ease-standard);
+  transition: background-color var(--motion-micro) var(--ease-out),
+              color var(--motion-micro) var(--ease-out),
+              border-color var(--motion-micro) var(--ease-out),
+              box-shadow var(--motion-micro) var(--ease-out),
+              opacity var(--motion-micro) var(--ease-out),
+              transform var(--motion-micro) var(--ease-out);
 }
 /* The one press affordance in the app, on the one button that commits
    something. Scale rather than a colour: the send button is already the sheet's
    single brand fill and has nowhere brighter to go. */
-#submit, #stop { transition-duration: var(--motion-release); }
-#submit:active, #stop:active { transform: scale(0.94); transition-duration: var(--motion-press); }
+#submit, #stop { transition-duration: var(--motion-release); transition-timing-function: var(--spring); }
+#submit:active, #stop:active { transform: scale(0.96); transition-duration: var(--motion-press); }
 
 @keyframes fade-in { from { opacity: 0; } }
 /* A menu that hangs *below* its trigger arrives from above it, and one that
@@ -5119,12 +5124,12 @@ body.projects-open #browser-resizer,
   animation: none;
   opacity: 1;
   transform: none;
-  transition: opacity var(--motion-popover-in) var(--ease-standard), transform var(--motion-popover-in) var(--ease-standard);
+  transition: opacity var(--motion-popover-in) var(--ease-overshoot), transform var(--motion-popover-in) var(--ease-overshoot);
 }
 .presence.presence-drop { --presence-y: -8px; transform-origin: top; }
 .presence.presence-slide { --presence-x: -8px; --presence-y: 0px; transform-origin: left; }
 .presence.presence-none { --presence-y: 0px; --presence-scale: 1; }
-.presence[data-presence="panel"] { --presence-scale: 1; transition-duration: var(--motion-panel-in); }
+.presence[data-presence="panel"] { --presence-scale: 1; transition-duration: var(--motion-panel-in); transition-timing-function: var(--ease-snap); }
 
 /* The modal panel owns settlement; the scrim is a separate, shorter track. */
 #overlay.modal-layer,
@@ -5137,14 +5142,14 @@ body.projects-open #browser-resizer,
   background: var(--surface-scrim);
   opacity: 1;
   pointer-events: none;
-  transition: opacity var(--motion-scrim-in) var(--ease-standard);
+  transition: opacity var(--motion-scrim-in) var(--ease-snap);
 }
 .modal-layer > .presence { position: relative; }
 .modal-layer.presence-closed::before,
 .modal-layer.presence-closing::before { opacity: 0; }
 .modal-layer.presence-closing::before {
   transition-duration: var(--motion-scrim-out);
-  transition-timing-function: var(--ease-exit);
+  transition-timing-function: var(--ease-snap);
   transition-delay: calc(var(--motion-panel-out) - var(--motion-scrim-out));
 }
 .modal-layer[inert] { pointer-events: none; }
@@ -5156,7 +5161,7 @@ body.projects-open #browser-resizer,
 }
 .presence[data-presence].presence-closing {
   transition-duration: var(--motion-popover-out);
-  transition-timing-function: var(--ease-exit);
+  transition-timing-function: var(--ease-snap);
 }
 .presence[data-presence="panel"].presence-closing { transition-duration: var(--motion-panel-out); }
 
@@ -5171,14 +5176,14 @@ body.projects-open #browser-resizer,
   overflow: clip;
   opacity: 1;
   transform: none;
-  transition: height var(--motion-disclosure) var(--ease-standard),
-    padding-top var(--motion-disclosure) var(--ease-standard), padding-bottom var(--motion-disclosure) var(--ease-standard),
-    margin-top var(--motion-disclosure) var(--ease-standard), margin-bottom var(--motion-disclosure) var(--ease-standard);
+  transition: height var(--motion-disclosure) var(--ease-snap),
+    padding-top var(--motion-disclosure) var(--ease-snap), padding-bottom var(--motion-disclosure) var(--ease-snap),
+    margin-top var(--motion-disclosure) var(--ease-snap), margin-bottom var(--motion-disclosure) var(--ease-snap);
 }
 .presence[data-presence="disclosure"].presence-closed,
 .presence[data-presence="disclosure"].presence-closing {
   transition-duration: var(--motion-disclosure);
-  transition-timing-function: var(--ease-standard);
+  transition-timing-function: var(--ease-snap);
   height: 0;
   padding-block: 0;
   margin-block: 0;

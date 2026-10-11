@@ -171,7 +171,7 @@ export function nextCollapsePhase(
  * Without the timer the fold would sit in `'collapsing'` forever and never
  * unmount its rows. `rendererStyleTokens` pins this against the token.
  */
-export const SIDEBAR_COLLAPSE_FALLBACK_MS = 440
+export const SIDEBAR_COLLAPSE_FALLBACK_MS = 340
 
 /**
  * Whether the rail's rows, search box, nav and footer belong in the DOM.
