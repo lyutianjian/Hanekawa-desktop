@@ -43,6 +43,7 @@ function snapshot(overrides: Partial<SessionControllerSnapshot> = {}): SessionCo
     taskSnapshot: undefined,
     spinnerSubText: undefined,
     contextUsedTokens: undefined,
+    turnOutputTokens: undefined,
     ...overrides,
   }
 }

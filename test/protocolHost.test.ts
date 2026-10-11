@@ -159,10 +159,12 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
     taskSnapshot: undefined
     spinnerSubText: undefined
     contextUsedTokens: number | undefined
+    turnOutputTokens: number | undefined
   } = {
     isStreaming: false,
     usage: { lastRequest: null, total: { inputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0 } },
     contextUsedTokens: undefined,
+    turnOutputTokens: undefined,
     taskSnapshot: undefined,
     spinnerSubText: undefined,
   }

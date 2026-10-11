@@ -522,6 +522,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    * pane's turn is still its own turn.
    */
   let turnStartedAt: number | undefined
+  let shownTurnTokens: number | undefined
   let queue: UiQueueState = createUiQueue()
   let completions: CompletionState = NO_COMPLETIONS
   let commands: WireCommandInfo[] = []
@@ -780,7 +781,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     const shown = withQueuedMessages(transcript, queued)
     const presented = presentationTranscript(shown)
     disclosure = pruneDisclosure(groupTranscript(presented.items), disclosure)
-    const isStreaming = client.getSnapshot().isStreaming
+    const { isStreaming, turnOutputTokens } = client.getSnapshot()
     // A pane can find itself mid-turn without having seen `turn-start` — it was
     // resumed, or the turn began while this pane was in the background — and a
     // row counting from `undefined` would have no clock at all. Noticing the
@@ -806,6 +807,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       isStreaming,
       startedAt: turnStartedAt,
       turnId: transcript.turnId,
+      ...(turnOutputTokens === undefined ? {} : { outputTokens: turnOutputTokens }),
       ...(asking === undefined ? {} : { asking }),
       ...(transcript.phase ? { phase: transcript.phase } : {}),
     }, selectedSubagent, coordinator ? coordinatorWelcomeEl : undefined, threadChipEl)
@@ -1615,6 +1617,13 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // ring and every sidebar badge ride on this one snapshot.
     statusRepaint.request()
     if (active) refreshTasksSurface()
+    // The turn's token count reads on the transcript's status line, and a
+    // response's usage may land after its records have already painted.
+    const tokens = client.getSnapshot().turnOutputTokens
+    if (tokens !== shownTurnTokens) {
+      shownTurnTokens = tokens
+      renderTranscript()
+    }
     // A `/clear` or `/resume` rebinds the host to another session, and the
     // checkpoints on screen belong to the one it left: every option would
     // resolve to a message the new session has never heard of.

@@ -445,6 +445,34 @@ test('a request that lands mid-turn moves both lastRequest and the running total
   assert.deepEqual(harness.controller.getSnapshot().usage.lastRequest, usage(2000, 2))
 })
 
+test('the turn output count adds up its requests, starts absent and clears on the next turn', async () => {
+  let harness: Harness | undefined
+  const seen: Array<number | undefined> = []
+  let reports = [usage(1000, 5), usage(2000, 7)]
+  harness = await createHarness({
+    run: async () => {
+      seen.push(harness!.controller.getSnapshot().turnOutputTokens)
+      for (const report of reports) {
+        harness!.proxy.onRequestUsage(report)
+        seen.push(harness!.controller.getSnapshot().turnOutputTokens)
+      }
+      // Compaction and subagents never reach the count.
+      return okResult({ usage: usage(9000, 99) })
+    },
+  })
+
+  assert.equal(harness.controller.getSnapshot().turnOutputTokens, undefined)
+  await harness.controller.submit({ text: 'hello' })
+  assert.deepEqual(seen, [undefined, 5, 12])
+  assert.equal(harness.controller.getSnapshot().turnOutputTokens, 12)
+
+  seen.length = 0
+  reports = []
+  await harness.controller.submit({ text: 'again' })
+  assert.deepEqual(seen, [undefined])
+  assert.equal(harness.controller.getSnapshot().turnOutputTokens, undefined)
+})
+
 test('compaction and subagent usage still land on top of the reported requests', async () => {
   // `AgentRunResult.usage` is the foreground responses *plus* compaction and
   // subagent transcripts, which never come through `onRequestUsage` — the
@@ -477,6 +505,7 @@ test('a failed run keeps the tokens its requests already spent', async () => {
 
   // The run never reached its settle, but the request was billed all the same.
   assert.deepEqual(harness.controller.getSnapshot().usage.total, usage(900, 7))
+  assert.equal(harness.controller.getSnapshot().turnOutputTokens, 7)
   // And the abandoned accumulator must not be subtracted from the next run.
   failing = false
   await harness.controller.submit({ text: 'again' })

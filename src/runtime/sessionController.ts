@@ -119,6 +119,12 @@ export interface SessionControllerSnapshot {
    * read this field rather than deriving a number of their own.
    */
   readonly contextUsedTokens: number | undefined
+  /**
+   * Output tokens the current turn's foreground requests have reported so far —
+   * no subagents, no compaction. Cleared when a turn starts and absent until its
+   * first response lands; an aborted or failed turn keeps what it reported.
+   */
+  readonly turnOutputTokens: number | undefined
 }
 
 export interface SessionControllerDeps {
@@ -189,6 +195,7 @@ export class SessionController {
    * agree instead of double-counting each other.
    */
   private runReportedUsage = createEmptyUsage()
+  private turnOutputTokens: number | undefined
   private taskSnapshot: TaskDisplaySnapshot | undefined
   private spinnerSubText: string | undefined
   /** Records of the live session, for the part of the context estimate no usage covers. */
@@ -324,6 +331,7 @@ export class SessionController {
 
     this.streaming = true
     this.spinnerSubText = undefined
+    this.turnOutputTokens = undefined
 
     const ac = new AbortController()
     let completedResult: AgentRunResult | undefined
@@ -548,6 +556,7 @@ export class SessionController {
    */
   private handleRequestUsage = (usage: TokenUsage, anchorRecordId?: string): void => {
     this.runReportedUsage = addTokenUsage(this.runReportedUsage, usage)
+    this.turnOutputTokens = (this.turnOutputTokens ?? 0) + usage.outputTokens
     this.usage = { lastRequest: usage, total: addTokenUsage(this.usage.total, usage) }
     this.usageAnchorRecordId = anchorRecordId
     this.lastRequestAt = Date.now()
@@ -906,6 +915,7 @@ export class SessionController {
       taskSnapshot: this.taskSnapshot,
       spinnerSubText: this.spinnerSubText,
       contextUsedTokens: this.contextUsed(),
+      turnOutputTokens: this.turnOutputTokens,
     })
   }
 
@@ -919,6 +929,7 @@ export class SessionController {
       && next.taskSnapshot === previous.taskSnapshot
       && next.spinnerSubText === previous.spinnerSubText
       && next.contextUsedTokens === previous.contextUsedTokens
+      && next.turnOutputTokens === previous.turnOutputTokens
     ) return
 
     this.snapshot = next

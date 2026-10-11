@@ -42,6 +42,8 @@ export interface WaitingInput {
   readonly startedAt: number | undefined
   /** The turn whose records are arriving (`TranscriptState.turnId`). */
   readonly turnId: string | undefined
+  /** Output tokens this turn has reported so far; absent until the first response. */
+  readonly outputTokens?: number
   /** A wait no record shows (`TranscriptState.phase`); outranks what the steps say. */
   readonly phase?: TurnPhase
   /** The `header` of the question the user is being asked, while one is pending. */

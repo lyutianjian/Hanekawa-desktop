@@ -104,6 +104,7 @@ export class SessionClient {
     taskSnapshot: undefined,
     spinnerSubText: undefined,
     contextUsedTokens: undefined,
+    turnOutputTokens: undefined,
   })
   private subagentProgress: ReadonlyMap<string, string> = new Map()
   /**
@@ -799,6 +800,7 @@ export class SessionClient {
       && !contextChanged
       && previous.isStreaming === next.isStreaming
       && previous.spinnerSubText === next.spinnerSubText
+      && previous.turnOutputTokens === next.turnOutputTokens
       && usage === previous.usage
       && taskSnapshot === previous.taskSnapshot
     ) return
@@ -810,6 +812,7 @@ export class SessionClient {
       taskSnapshot,
       spinnerSubText: next.spinnerSubText,
       contextUsedTokens: next.contextUsedTokens,
+      turnOutputTokens: next.turnOutputTokens,
     })
     this.notify()
   }
