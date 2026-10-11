@@ -2,30 +2,25 @@ import { stripAnsi } from '../model/ansi.js'
 import { parseUnifiedPatch, type PatchRows } from '../model/diffRows.js'
 import { parseSearchResults, searchStats, type SearchResults } from '../model/searchResults.js'
 import {
-  groupFailureLabel,
-  groupHeaderLabel,
-  groupHeaderName,
-  groupRunningLabel,
-  isGroupExpanded,
-  isLooseThinkingExpanded,
-  isStepCollapsible,
-  isStepExpanded,
   EDIT_TOOLS,
-  resolveDisclosure,
-  thinkingDisclosureId,
+  failureLabel,
+  isExpanded,
+  runHasTools,
+  summarizeRun,
   thinkingDurationLabel,
-  thinkingHeaderLabel,
-  thinkingHeaderName,
-  STEP_COMPLETION_FALLBACK_MS,
   THINKING_DONE_FALLBACK,
+  thoughtFirstSentence,
+  thoughtLabel,
+  thoughtLiveLabel,
   type DisclosureState,
+  type RunSummary,
 } from '../model/thinking.js'
 import {
   formatMessageTime,
   formatWorkedDuration,
   groupTranscript,
   toolStatusLabel,
-  type ActivityGroup,
+  type ActivityRun,
   type ActivityStep,
   type SubagentLive,
   type SubagentRun,
@@ -42,9 +37,11 @@ import type { ToolErrorCode } from '../../../harness/types.js'
 import {
   turnActivity,
   waitingElapsedLabel,
+  type TurnActivity,
   type WaitingInput,
   type WaitingRow,
 } from '../model/waiting.js'
+import { callParts } from '../model/toolPhrases.js'
 import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
 import type { ThreadNoteCard } from '../model/threadNotes.js'
 import type { WireThreadStatus } from '../../shellProtocol.js'
@@ -57,67 +54,46 @@ import { createPresence, finishPresenceWithin, type Presence } from './presence.
 import { motionDelay, motionPolicy } from './motion.js'
 
 /**
- * Paints the transcript: loose items interleaved with activity groups (§2).
+ * Paints the transcript: loose items interleaved with activity runs.
  *
- * There is no in-flight tool line any more. It was a singleton strip under the
- * scroller that named whatever tool was running, which since T4 is something the
- * running step's own head says — with its bead, its arguments and its elapsed
- * time — one line above where the strip used to sit. Two places saying the same
- * thing is one place too many, and the strip was the one that could not say
- * *which* of a batch's calls it meant.
- *
- * ## Two layers of disclosure
- *
- * A group is a whole turn: its head carries the boundary and the total, and each
- * step inside opens on its own. Every head is a `<button>` with `aria-expanded`,
- * and a folded body is **absent rather than `hidden`**: the transcript is
- * `aria-live="polite"`, so a hidden-but-present streaming block is text a screen
- * reader announces that nobody asked for (§8).
+ * A run is the work between two pieces of prose, folded to one summary line
+ * (「已运行 2 个命令，读取 2 个文件」) that opens into a card with a row per step; a
+ * row opens again into the tool's own output. While the turn runs, the last line
+ * of the transcript is its live status. Every head is a `<button>` with
+ * `aria-expanded`, and a folded body is **absent rather than `hidden`**: the
+ * transcript is `aria-live="polite"`, so a hidden-but-present streaming block is
+ * text a screen reader announces that nobody asked for.
  *
  * ## Nodes are reused by id
  *
- * The file used to rebuild the whole subtree on every paint, and its header said
- * the fix — keying by id — could wait for a profile. §8 brought that day forward
- * for a correctness reason instead: steps now collapse *by themselves* when the
- * turn ends, which shortens the content above the reader. The browser's
- * `overflow-anchor` absorbs exactly that, but only while the anchor node survives
- * the paint; a `replace()` of the whole column destroys it and the reader is
- * thrown to a different place in the conversation.
- *
- * So each entry and each step keeps its element across paints, keyed by id. An
+ * Each entry and each step keeps its element across paints, keyed by id. An
  * unchanged item is left untouched (its markdown is not even re-parsed); a changed
- * one is refilled *in place*, so the node the anchor points at is still there.
- *
- * Keeping the *element* is only half of it: it also has to stay **attached**. A
- * `replaceChildren` of the column, or a `replace()` of a group's contents, removes
- * every child and puts it back — and a node that leaves the document has its CSS
- * animations cancelled and restarted, and stops being an anchor the browser can
- * hold a scroll position by. That is what made `unfold` (220ms, on every open
- * step) replay once per streamed token: the open thinking body pumped up from zero
- * height on every delta and shoved the answer below it around. Every insertion
- * here goes through `reconcile`, which touches only the children that moved, and
- * the group's own children are keyed nodes for exactly that reason.
+ * one is refilled *in place*, so the node the browser's scroll anchor points at is
+ * still there. Keeping the *element* is only half of it: it also has to stay
+ * **attached** — a node that leaves the document has its CSS animations restarted
+ * and stops being an anchor — so every insertion here goes through `reconcile`,
+ * which touches only the children that moved.
  *
  * The jump-to-bottom button is built here rather than in `paneSession.ts` because
- * every piece of scroll knowledge in the renderer already lives in this file, and
- * `paneSession.ts` has no unit tests. It is appended to a host *outside* the
- * scroller: an absolutely positioned child of a scroll container would anchor to
- * the bottom of the content rather than to the viewport.
+ * every piece of scroll knowledge in the renderer already lives in this file. It is
+ * appended to a host *outside* the scroller: an absolutely positioned child of a
+ * scroll container would anchor to the bottom of the content rather than to the
+ * viewport.
  */
 export interface TranscriptView {
   /**
-   * `disclosure` is the pane's absolute answer for every group and step (§5.2).
+   * `disclosure` is the pane's absolute answer for every run and step.
    * `activity` is what the pane knows about the turn in flight — whether one is
    * running, when it started and which turn it is — and `model/waiting.ts` turns
-   * that into 「which group is live」 and 「what the tail row reads」. `undefined`
-   * is an idle session: no row is drawn. `header` is fixed above every entry,
+   * that into 「which run carries the live status」 and 「what the status line of
+   * its own reads」. `undefined` is an idle session: no status is drawn. `header` is fixed above every entry,
    * `trailer` below the last.
    */
   render(state: TranscriptState, disclosure: DisclosureState, activity?: WaitingInput, selectedSubagent?: string, header?: HTMLElement, trailer?: HTMLElement): void
   /**
    * Stops the live status's clock.
    *
-   * The row's elapsed time is the one thing in this view that changes without a
+   * The live line's elapsed time is the one thing in this view that changes without a
    * paint, so it is the one thing with a timer — and a pane that goes to the
    * background or is disposed keeps its DOM, so nothing else would ever stop it.
    * The next `render` starts it again from the same `startedAt`.
@@ -206,7 +182,6 @@ export function createTranscriptView(
 
   const cache = new Map<string, CachedNode>()
   const refs = new Map<string, DisclosureRef>()
-  const feedback = new Map<string, StepFeedback>()
   const disclosures = new Map<string, { node: HTMLElement; presence: Presence }>()
   const seenDisclosures = new Set<string>()
   let generation: number | undefined
@@ -242,7 +217,7 @@ export function createTranscriptView(
   function readingReference(): ReadingPosition | undefined {
     const viewport = box(container)
     if (!viewport) return undefined
-    const candidates = [...column.querySelectorAll<HTMLElement>('.step-head, .group-head, p, .md-code, .item')]
+    const candidates = [...column.querySelectorAll<HTMLElement>('.step-head, .run-line, p, .md-code, .item')]
     const node = candidates.find((candidate) => {
       const rect = box(candidate)
       return rect && rect.top >= viewport.top && rect.top < viewport.bottom
@@ -320,11 +295,10 @@ export function createTranscriptView(
     container.scrollTop = container.scrollHeight
   }
 
-  // The live status's clock. The span is kept rather than looked up: the tail
-  // row is a node reused by key like every other, so the element its fill built
-  // is still the one on screen,
-  // and it is only refilled when the status itself changed, which is exactly
-  // when this is reassigned.
+  // The live status's clock. The span is kept rather than looked up: the live line
+  // is a node reused by key like every other, so the element its fill built is
+  // still the one on screen, and it is only refilled when the status itself
+  // changed, which is exactly when this is reassigned.
   let clockNode: HTMLElement | undefined
   let clock: ReturnType<typeof setInterval> | undefined
   let clockFrom: number | undefined
@@ -450,7 +424,6 @@ export function createTranscriptView(
   function stopMotion(): void {
     stopClock()
     stopViewportMotion()
-    for (const entry of feedback.values()) settleFeedback(entry)
     finishPresenceWithin(container)
     resizeObserver?.disconnect()
     observing = false
@@ -466,7 +439,6 @@ export function createTranscriptView(
       for (const entry of disclosures.values()) entry.presence.dispose()
       disclosures.clear()
       cache.clear()
-      feedback.clear()
       refs.clear()
       seenDisclosures.clear()
     },
@@ -484,8 +456,6 @@ export function createTranscriptView(
         seenDisclosures.clear()
         cache.clear()
         refs.clear()
-        for (const entry of feedback.values()) settleFeedback(entry)
-        feedback.clear()
         clockNode = undefined
         anchorId = undefined
         generation = state.generation
@@ -493,46 +463,51 @@ export function createTranscriptView(
       const atBottom = atTail()
       const before = guardedPosition ?? (!atBottom ? readingReference() : undefined)
       const wasSettled = anchorSettled
-      const entries = groupTranscript(state.items)
+      let entries = groupTranscript(state.items)
+      // A turn that is still streaming has no elapsed line yet; the replay-made one
+      // for its records so far is not it.
+      const tail = entries[entries.length - 1]
+      if (tail?.kind === 'item' && tail.item.kind === 'duration' && activity?.isStreaming === true
+        && tail.item.turnId !== undefined && tail.item.turnId === activity.turnId) {
+        entries = entries.slice(0, -1)
+      }
       const live = turnActivity(entries, activity ?? IDLE)
       const focused = new Set<string>()
       const selected = new Set<string>()
       const selection = window.getSelection?.()
       for (const entry of entries) {
-        const id = entry.kind === 'group' ? entry.group.turnId : entry.item.id
-        const key = entry.kind === 'group' ? `group:${id}` : itemKey(entry.item)
+        const id = entry.kind === 'run' ? entry.run.id : entry.item.id
+        const key = entry.kind === 'run' ? id : itemKey(entry.item)
         const node = cache.get(key)?.node
         if (!node) continue
         if (node.contains(document.activeElement)) focused.add(id)
         if (selection && !selection.isCollapsed
           && (node.contains(selection.anchorNode) || node.contains(selection.focusNode))) selected.add(id)
       }
-      const resolvedDisclosure = resolveDisclosure(entries, disclosure, live.liveGroupId)
       const afterPaint: Array<() => void> = []
-      const painter = createPainter(cache, refs, feedback, disclosures, seenDisclosures, resolvedDisclosure, {
+      const painter = createPainter(cache, refs, disclosures, seenDisclosures, disclosure, {
         ...handlers,
         onToggle(id, expanded) {
-          const head = cache.get(`head:${id}`)?.node ?? cache.get(`thinking-head:${id}`)?.node
-            ?? cache.get(`tool-head:${id}`)?.node ?? cache.get(`loose-thinking-head:${id}`)?.node
+          const head = cache.get(`run-head:${id}`)?.node ?? cache.get(`thinking-head:${id}`)?.node
+            ?? cache.get(`tool-head:${id}`)?.node
           beginLayoutChange(head)
           handlers.onToggle(id, expanded)
         },
       }, {
-        liveGroupId: live.liveGroupId,
-        startedAt: activity?.startedAt,
+        live: live.live,
         selectedSubagent,
         keepClock: (span) => { clockNode = span },
         afterPaint: (run) => afterPaint.push(run),
       })
       const nodes = entries.map((entry) => entryNode(painter, entry))
       // Built before `prune`, or its key would count as dead on the very paint
-      // that asked for it. A kept row keeps the span its fill handed over.
+      // that asked for it. A kept line keeps the span its fill handed over.
       if (live.row) nodes.push(waitingNode(painter, live.row))
-      else clockNode = undefined
+      else if (!live.live) clockNode = undefined
       painter.prune()
       reconcile(column, [...(header ? [header] : []), ...nodes, ...(trailer ? [trailer] : [])])
       for (const run of afterPaint) run()
-      runClock(live.row ? activity?.startedAt : undefined)
+      runClock(live.row || live.live ? activity?.startedAt : undefined)
 
       // The turn the reader is looking at: the newest user message. Read off the
       // *entries* rather than off `state.items`, because what the lift needs is
@@ -596,60 +571,55 @@ export function createTranscriptView(
   }
 }
 
-/** An idle session: no turn, no clock, no live head. */
+/** An idle session: no turn, no clock, no live line. */
 const IDLE: WaitingInput = { isStreaming: false, startedAt: undefined, turnId: undefined }
 
 /**
- * The live status row: a breathing bead, the label, the elapsed time and the
- * interrupt key, on one line at the tail of the transcript, for the whole turn.
+ * The live status on a line of its own: spark, label and elapsed time, at the
+ * tail of the transcript — for the gap no run can carry (before the first step,
+ * or after a paragraph while the model decides what next).
  *
- * What is announced and what is not follows the rest of this file: `.transcript`
- * is `aria-live="polite"`, so the label is spoken only in the gap before the
- * first step (`WaitingRow.announce`) — once it follows the turn from tool to
- * tool, each step's own head says what is new — and the counter is `aria-hidden` or a
- * screen reader would read a new number ten times a second. The bead is
- * `aria-hidden` for the same reason the step beads are: it is decoration over a
- * state the label already says in words. The hint is hidden too — `Esc` is
- * discoverable to the keyboard user without being read out mid-answer.
+ * `.transcript` is `aria-live="polite"`, so the label is spoken and the counter
+ * is `aria-hidden`, or a screen reader would read a new number ten times a second.
  */
 function waitingNode(painter: Painter, row: WaitingRow): HTMLElement {
-  return painter.node('waiting', 'waiting', [row.label, row.hint, row.startedAt, row.announce], () => [
-    ...liveParts(painter, 'waiting', row.label, row.hint, row.announce),
+  return painter.node('waiting', 'waiting', [row.label, row.startedAt], () => [
+    sparkNode(painter, 'waiting'),
+    lineText(painter, 'waiting', row.label, false),
+    elapsedNode(painter, 'waiting'),
   ])
 }
 
-/**
- * The live status's four pieces.
- *
- * The elapsed span starts empty rather than at 「0s」: the view's clock fills it
- * on the same tick it starts, and a hard-coded first value would be the one
- * string here that could disagree with `formatWorkedDuration`. It also *stays*
- * empty until the wait passes `waitingElapsedLabel`'s threshold, which is why the
- * sheet hides an empty counter rather than leaving its gap behind.
+/*
+ * The three pieces of a live line are nodes of their own, kept across the label
+ * changing: the dots keep turning without restarting their animation at every tool,
+ * and the clock keeps the span it is writing into.
  */
-function liveParts(painter: Painter, key: string, label: string, hint: string, announce = true): HTMLElement[] {
-  const part = (name: string, text: string, hidden = true): HTMLElement => painter.node(
-    `${key}:${name}`, `waiting-${name}`, [text, hidden], (node) => {
-      if (hidden) node.setAttribute('aria-hidden', 'true')
-      return name === 'label' ? [text, sheenNode(text)] : [text]
-    }, () => el('span'),
-  )
-  const bead = part('bead', '')
-  const elapsed = part('elapsed', '')
-  painter.keepClock(elapsed)
-  return [bead, part('label', label, !announce), elapsed, part('hint', hint)]
+
+/** The running mark: three dots in the brand colour, turning. Decoration, so hidden from readers. */
+function sparkNode(painter: Painter, key: string): HTMLElement {
+  return painter.node(`${key}:spark`, 'line-spark', [], (node) => {
+    node.setAttribute('aria-hidden', 'true')
+    return [el('i'), el('i'), el('i')]
+  }, () => el('span'))
 }
 
-/**
- * The label's sheen: a window sliding over the words that shows them again in
- * the brighter colour. Its copy is generated content (`attr(data-label)`), so
- * the label's text and accessible name stay the words once.
- */
-function sheenNode(text: string): HTMLElement {
-  const node = el('span', 'waiting-sheen')
-  node.dataset.label = text
-  node.setAttribute('aria-hidden', 'true')
+/** The elapsed span, empty until the wait is worth a number; hidden, or a reader would hear it ten times a second. */
+function elapsedNode(painter: Painter, key: string): HTMLElement {
+  const node = painter.node(`${key}:elapsed`, 'line-meta line-elapsed', [], (span) => {
+    span.setAttribute('aria-hidden', 'true')
+    return []
+  }, () => el('span'))
+  painter.keepClock(node)
   return node
+}
+
+/** A line's words. `hidden` where the line is a button whose accessible name says them already. */
+function lineText(painter: Painter, key: string, text: string, hidden: boolean): HTMLElement {
+  return painter.node(`${key}:text`, 'line-text', [text], (node) => {
+    if (hidden) node.setAttribute('aria-hidden', 'true')
+    return [text]
+  }, () => el('span'))
 }
 
 // --- node reuse --------------------------------------------------------------
@@ -674,26 +644,11 @@ interface CachedNode {
  */
 interface DisclosureRef {
   expanded: boolean
-  /** The id a click answers under, when it is not the row's own (a live thought). */
-  id?: string
 }
 
-interface StepFeedback {
-  status: string
-  readonly node: HTMLElement
-  timer?: ReturnType<typeof setTimeout>
-}
-
-function settleFeedback(entry: StepFeedback): void {
-  clearTimeout(entry.timer)
-  entry.timer = undefined
-  entry.node.classList.remove('completing')
-}
-
-/** What this paint knows about the turn in flight, for the head that shows it. */
+/** What this paint knows about the turn in flight, for the line that shows it. */
 interface LivePaint {
-  readonly liveGroupId: string | undefined
-  readonly startedAt: number | undefined
+  readonly live: TurnActivity['live']
   /** The `Agent` row whose run the side panel is showing. */
   readonly selectedSubagent: string | undefined
   /** Handed the elapsed span whichever carrier built it, so the clock can fill it. */
@@ -725,8 +680,7 @@ interface Painter extends TranscriptHandlers, LivePaint {
     create?: () => HTMLElement,
   ): HTMLElement
   /** The mutable disclosure a kept head reads at click time. */
-  ref(key: string, expanded: boolean, id?: string): DisclosureRef
-  feedback(key: string, node: HTMLElement, status: string): void
+  ref(key: string, expanded: boolean): DisclosureRef
   disclose(key: string, expanded: boolean, head: HTMLElement, body: () => HTMLElement | undefined): HTMLElement | undefined
   prune(): void
 }
@@ -734,7 +688,6 @@ interface Painter extends TranscriptHandlers, LivePaint {
 function createPainter(
   cache: Map<string, CachedNode>,
   refs: Map<string, DisclosureRef>,
-  feedback: Map<string, StepFeedback>,
   disclosures: Map<string, { node: HTMLElement; presence: Presence }>,
   seenDisclosures: Set<string>,
   disclosure: DisclosureState,
@@ -750,8 +703,7 @@ function createPainter(
   }
   return {
     disclosure,
-    liveGroupId: paint.liveGroupId,
-    startedAt: paint.startedAt,
+    live: paint.live,
     selectedSubagent: paint.selectedSubagent,
     keepClock: paint.keepClock,
     afterPaint: paint.afterPaint,
@@ -789,34 +741,15 @@ function createPainter(
       cache.set(key, { node, className, signature, children })
       return node
     },
-    ref(key, expanded, id) {
+    ref(key, expanded) {
       const existing = refs.get(key)
       if (existing) {
         existing.expanded = expanded
-        existing.id = id
         return existing
       }
-      const created = { expanded, id }
+      const created = { expanded }
       refs.set(key, created)
       return created
-    },
-    feedback(key, node, status) {
-      const previous = feedback.get(key)
-      if (!previous) {
-        const entry: StepFeedback = { node, status }
-        feedback.set(key, entry)
-        node.addEventListener('animationend', (event) => {
-          if (event.target === node && event.animationName === 'bead-pop') settleFeedback(entry)
-        })
-        return // History and first paint initialise; they are never completions.
-      }
-      const completing = previous.status === 'running' && (status === 'done' || status === 'failed')
-      previous.status = status
-      if (!completing) return
-      settleFeedback(previous)
-      node.classList.add('completing')
-      previous.timer = setTimeout(() => settleFeedback(previous), motionDelay(STEP_COMPLETION_FALLBACK_MS))
-      ;(previous.timer as unknown as { unref?: () => void }).unref?.()
     },
     disclose(key, expanded, head, build) {
       const seen = seenDisclosures.has(key)
@@ -856,15 +789,8 @@ function createPainter(
       for (const key of [...cache.keys()]) {
         if (!live.has(key)) cache.delete(key)
       }
-      // Keyed by the group's own node key, so a turn that left the transcript
-      // takes its head's state with it.
       for (const key of [...refs.keys()]) {
         if (!live.has(key)) refs.delete(key)
-      }
-      for (const [key, entry] of feedback) {
-        if (live.has(key)) continue
-        settleFeedback(entry)
-        feedback.delete(key)
       }
       for (const [key, entry] of disclosures) {
         if (live.has(key)) continue
@@ -883,233 +809,207 @@ function sameSignature(a: readonly unknown[], b: readonly unknown[]): boolean {
 // --- entries -----------------------------------------------------------------
 
 function entryNode(painter: Painter, entry: TranscriptEntry): HTMLElement {
-  return entry.kind === 'group' ? groupNode(painter, entry.group) : itemNode(painter, entry.item)
+  return entry.kind === 'run' ? runNode(painter, entry.run) : itemNode(painter, entry.item)
 }
 
 /**
- * A turn as one group: a head that summarises it, and its steps.
+ * A run of work: one summary line, which opens into a card of rows.
  *
- * Three kept nodes rather than one, and the split is what stops the fold from
- * replaying: the group's signature is the *identity* of its own two children, so a
- * paint that changed nothing inside touches nothing here, and a paint that
- * rebuilt the head re-inserts the head alone — the steps box, and every animation
- * and scroll anchor under it, is left where it stands.
- *
- * The head used to be rebuilt unconditionally, because it closes over the
- * disclosure it reports. It keeps itself now and reads that through
- * `painter.ref`, so a reader who has tabbed to it does not lose focus once per
- * streamed token.
+ * Two kept nodes under one: the line and the card. The run's signature is the
+ * *identity* of its own children, so a paint that changed nothing inside touches
+ * nothing here, and a paint that rebuilt the line re-inserts the line alone — the
+ * card, and every animation and scroll anchor under it, is left where it stands.
+ * A run with no tool in it is just its thoughts, each a line of its own.
  */
-function groupNode(painter: Painter, group: ActivityGroup): HTMLElement {
-  const live = painter.liveGroupId === group.turnId
-  const expanded = isGroupExpanded(group, painter.disclosure, live)
-  const classes = ['activity-group', live ? 'running' : group.status]
+function runNode(painter: Painter, run: ActivityRun): HTMLElement {
+  const live = painter.live?.runId === run.id ? painter.live : undefined
+  if (!runHasTools(run)) {
+    const lines = run.steps.map((step, index) => thinkingLine(
+      painter,
+      step as Extract<ActivityStep, { kind: 'thinking' }>,
+      index === run.steps.length - 1 ? live : undefined,
+    ))
+    return painter.node(run.id, 'run thinking-run', lines, () => lines)
+  }
+  const expanded = isExpanded(painter.disclosure, run.id)
+  const classes = ['run']
   if (live) classes.push('live')
-  if (!expanded) classes.push('collapsed')
-  const head = groupHead(painter, group, expanded, live)
-  const steps = painter.disclose(`steps:${group.turnId}`, expanded, head, () => stepsNode(painter, group))
-  return painter.node(`group:${group.turnId}`, classes.join(' '), [head, steps], () => [head, steps])
+  if (expanded) classes.push('open')
+  const head = runLine(painter, run, summarizeRun(run), live, expanded)
+  const card = painter.disclose(`card:${run.id}`, expanded, head, () => cardNode(painter, run))
+  return painter.node(run.id, classes.join(' '), [head, card], () => [head, card])
 }
 
-/** The steps box, kept so its children are not re-inserted with their group. */
-function stepsNode(painter: Painter, group: ActivityGroup): HTMLElement {
-  const steps = group.steps.map((step, index) => stepNode(painter, group, step, index))
-  return painter.node(`steps:${group.turnId}`, 'group-steps', steps, () => steps)
+/** The card's rows, kept so they are not re-inserted with their run. */
+function cardNode(painter: Painter, run: ActivityRun): HTMLElement {
+  const rows = run.steps.map((step) => stepNode(painter, step))
+  return painter.node(`card:${run.id}`, 'run-card', rows, () => rows)
 }
 
 /**
- * The turn's head: 「工作中 · N 步」 while the turn runs, sealing to
- * `groupHeaderLabel`'s 「已处理 …」 when it ends.
- *
- * Deliberately quiet while live — no bead, no clock. The live status is the
- * transcript's last row (`waitingNode`), where the reader following the tail can
- * see it; a second copy up here scrolled out of view on every long turn and
- * repeated 「正在思考」 right above the thinking step that already said it.
+ * The run's line: the summary while it is settled, the live status while the turn
+ * is working on it. The name a screen reader gets is the summary, or just 「工作中」
+ * while live — the visible text is hidden from it, because this subtree sits in an
+ * `aria-live` region and a status that changes with every tool would be read out
+ * once per step.
  */
-function groupHead(painter: Painter, group: ActivityGroup, expanded: boolean, live: boolean): HTMLElement {
-  const ref = painter.ref(`group:${group.turnId}`, expanded)
-  const name = groupHeaderName(group, live)
-  const label = live ? groupRunningLabel(group) : groupHeaderLabel(group)
-  const counts = live ? groupRunningLabel(group, false) : groupHeaderLabel(group, false)
-  const failures = groupFailureLabel(group)
+function runLine(
+  painter: Painter,
+  run: ActivityRun,
+  summary: RunSummary,
+  live: TurnActivity['live'],
+  expanded: boolean,
+): HTMLElement {
+  const headKey = `run-head:${run.id}`
+  const ref = painter.ref(headKey, expanded)
+  const text = live ? live.label : summary.text
+  const failed = summary.failed > 0 ? failureLabel(summary.failed) : undefined
+  const name = live ? '工作中' : [summary.text, failed, summary.aborted ? '已中断' : undefined].filter(Boolean).join(' · ')
+  const { diff } = summary
   return painter.node(
-    `head:${group.turnId}`,
-    live ? 'group-head live' : 'group-head',
-    [name, label, expanded, live],
-    (head) => {
-      // `button()` writes these at build time only, and this node outlives the
-      // turn's status: a sealed group's name is not the running one's.
-      head.title = label
-      head.setAttribute('aria-label', name)
-      head.setAttribute('aria-expanded', expanded ? 'true' : 'false')
-      // The label is a child rather than `button()`'s own so it can be
-      // `aria-hidden`: a live one's step count moves as the turn works, and this
-      // subtree sits in an `aria-live` region (§8). The name is
-      // `groupHeaderName`'s stable one instead. The chevron is the fold said in a
-      // shape: a folded turn's head is a quiet line that did not read as a switch.
+    headKey,
+    live ? 'run-line live' : 'run-line',
+    [text, diff?.added, diff?.deleted, summary.failed, summary.aborted, expanded, live !== undefined],
+    (node) => {
+      // `button()` writes these at build time only, and this node outlives the text
+      // it was built with.
+      node.title = name
+      node.setAttribute('aria-label', name)
+      node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
       return [
-        quiet('btn-label', counts),
-        failures === undefined ? undefined : quiet('group-failures', failures),
+        live ? sparkNode(painter, headKey) : undefined,
+        lineText(painter, headKey, text, true),
+        diff === undefined ? undefined : el('span', 'line-meta', ...diffStat(diff.added, diff.deleted)),
+        failed === undefined || live ? undefined : quiet('line-fail', `· ${failed}`),
+        summary.aborted && !live ? quiet('line-meta', '· 已中断') : undefined,
+        live ? elapsedNode(painter, headKey) : undefined,
         icon('chevron-right'),
       ]
     },
-    () => button('group-head', '', name, () => painter.onToggle(group.turnId, ref.expanded)),
+    () => button('run-line', '', name, () => painter.onToggle(run.id, ref.expanded)),
   )
 }
 
-function stepPending(step: ActivityStep): boolean {
-  return 'pending' in step && step.pending === true
+/** `+12 −3`, each count in its own colour. */
+function diffStat(added: number, deleted: number): Child[] {
+  return [el('span', 'stat-add', `+${added}`), ' ', el('span', 'stat-del', `−${deleted}`)]
 }
 
 /**
- * The bead — the tool's only *visual* status vocabulary (§3), which is exactly
- * why it is `aria-hidden`: the state also reaches the accessible name of the head
- * in words, because colour may not be the only carrier.
+ * A thought that is not part of a tool run: one line showing its first sentence
+ * (「正在思考 · 最新一句」 while it arrives), opening to the whole text. The last one
+ * of a live run carries the live status instead.
  */
-function bead(step: ActivityStep, className: string): HTMLElement {
-  const node = el('span', `${className} ${beadStatus(step)}`)
-  node.setAttribute('aria-hidden', 'true')
-  return node
+function thinkingLine(
+  painter: Painter,
+  step: Extract<ActivityStep, { kind: 'thinking' }>,
+  live: TurnActivity['live'],
+): HTMLElement {
+  const expanded = isExpanded(painter.disclosure, step.id)
+  const classes = ['thinking']
+  if (live) classes.push('live')
+  if (expanded) classes.push('open')
+  return painter.node(`step:${step.id}`, classes.join(' '), [step.text, step.durationMs, step.pending, expanded, live?.label], () => {
+    const headKey = `thinking-head:${step.id}`
+    const ref = painter.ref(headKey, expanded)
+    const label = live ? live.label : step.pending === true ? thoughtLiveLabel(step.text) : thoughtLabel(step.text)
+    const duration = live ? undefined : thinkingDurationLabel(step)
+    const head = painter.node(
+      headKey,
+      live ? 'run-line live' : 'run-line',
+      [label, duration, expanded, live !== undefined],
+      (node) => {
+        node.title = label
+        node.setAttribute('aria-label', live ? '正在思考' : label)
+        node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
+        return [
+          live ? sparkNode(painter, headKey) : undefined,
+          lineText(painter, headKey, label, true),
+          duration === undefined ? undefined : quiet('line-meta', duration),
+          live ? elapsedNode(painter, headKey) : undefined,
+          icon('chevron-right'),
+        ]
+      },
+      () => button('run-line', '', label, () => painter.onToggle(step.id, ref.expanded)),
+    )
+    return [head, thoughtBody(painter, step, expanded, head)]
+  })
 }
 
-function beadStatus(step: ActivityStep): string {
-  return 'status' in step ? step.status : stepPending(step) ? 'running' : 'done'
+/** The whole thought, in a body that opens and closes with its line or row. */
+function thoughtBody(
+  painter: Painter,
+  step: Extract<ActivityStep, { kind: 'thinking' }>,
+  expanded: boolean,
+  head: HTMLElement,
+): HTMLElement | undefined {
+  const key = `thinking-body:${step.id}`
+  return painter.disclose(key, expanded, head, () => painter.node(key, 'thought', [step.text], () => [step.text]))
 }
 
 // --- steps -------------------------------------------------------------------
 
-function stepNode(painter: Painter, group: ActivityGroup, step: ActivityStep, index: number): HTMLElement {
-  const expanded = isStepExpanded(group, index, painter.disclosure)
+function stepNode(painter: Painter, step: ActivityStep): HTMLElement {
   switch (step.kind) {
     case 'thinking':
-      return thinkingStep(painter, step, expanded)
+      return thinkingRow(painter, step)
     case 'tool':
     case 'subagent':
-      return toolStep(painter, step, expanded)
+      return toolRow(painter, step)
     case 'task':
-      return taskStep(painter, step)
-    case 'text':
-      // Staged prose: full markdown, shown whole, never folded (§4.4).
-      return painter.node(`text:${step.id}`, 'step text md', [step.text], (node) => markdownChildren(step.text, node))
-    case 'system':
-      return painter.node(
-        `step:${step.id}`,
-        step.failed === true ? 'step system failed' : 'step system',
-        [step.text],
-        () => [el('span', 'step-label', step.text), rule()],
-      )
+      return taskRow(painter, step)
   }
 }
 
 /**
- * A `TodoWrite` row: one line, no body, ever (§4.4). The checklist it wrote is
- * drawn once — above the composer, where it stays useful after the group folds —
- * so clicking the row flashes *that* panel rather than repeating the list here.
+ * A `TodoWrite` row: one line, no body, ever. The checklist it wrote is drawn once
+ * — above the composer, where it stays useful after the run folds — so clicking the
+ * row points at *that* panel rather than repeating the list here.
  *
  * A `<button>` with no `aria-expanded`, because nothing here opens: the row is a
  * pointer, not a disclosure.
  */
-function taskStep(painter: Painter, step: Extract<ActivityStep, { kind: 'task' }>): HTMLElement {
+function taskRow(painter: Painter, step: Extract<ActivityStep, { kind: 'task' }>): HTMLElement {
   return painter.node(`step:${step.id}`, `step task ${step.status}`, [step.text, step.status], () => {
-    const label = `${step.text} · ${toolStatusLabel(step.status)}`
-    const head = button('step-head', '', label, () => painter.onTaskStep())
-    append(head, [bead(step, 'step-bead'), el('span', 'step-label', step.text)])
+    const head = button('step-head', '', `${step.text} · ${toolStatusLabel(step.status)}`, () => painter.onTaskStep())
+    append(head, [el('span', 'step-label', step.text)])
     return [head]
   })
 }
 
-/**
- * A thinking step: no bead — it is not an execution and has no outcome (§3).
- *
- * The hairline is the *live* row's status and only that: while the thought is
- * still arriving it runs from the label to the chevron with a sheen travelling
- * along it, and the moment the thought seals it is gone, leaving the time the
- * model spent (when the live stream measured one) at the row's right end.
- *
- * The body is always drawn. Folded, it is a two-line preview of the thought's
- * *opening* — stable while tokens arrive, so the row does not grow or scroll
- * under the reader — cut with an ellipsis; open, it is the whole text, capped in
- * height and scrolling inside itself like a tool's output. Clicking the preview
- * opens it too; clicking open text does not fold it, or selecting a sentence
- * would.
- *
- * The head is a **kept node**, which is what makes the sheen watchable. Its own
- * signature is the label, the disclosure and the live flag — none of which move
- * while tokens arrive — so the row's growing text refills the body underneath a
- * head that stays put. Rebuilding it per delta, as it did before, would take the
- * hairline out of the document and restart its running cycle ten times a second,
- * which is the same reason the group's head is kept (§8).
- */
-function thinkingStep(painter: Painter, step: Extract<ActivityStep, { kind: 'thinking' }>, expanded: boolean): HTMLElement {
-  const classes = ['step', 'thinking']
+/** A thought inside an opened run: 「思考：first sentence」, opening to the whole text. */
+function thinkingRow(painter: Painter, step: Extract<ActivityStep, { kind: 'thinking' }>): HTMLElement {
+  const expanded = isExpanded(painter.disclosure, step.id)
   const live = step.pending === true
+  const classes = ['step', 'thinking']
   if (live) classes.push('live')
   if (!expanded) classes.push('collapsed')
-  // Fields rather than the step object: `toStep` mints a new one on every paint,
-  // so an object identity would mean 「always different」 and no reuse at all. The
-  // strings it carries *are* the item's own, so `===` still settles in one compare.
+  // Fields rather than the step object: `toStep` mints a new one on every paint, so
+  // an object identity would mean 「always different」 and no reuse at all. The strings
+  // it carries *are* the item's own, so `===` still settles in one compare.
   return painter.node(`step:${step.id}`, classes.join(' '), [step.text, step.durationMs, expanded, live], () => {
-    // Not 「正在思考」 while live: inside a group the tail row already says that,
-    // one line below, and the hairline is this head's own sign of life.
-    const label = THINKING_DONE_FALLBACK
+    const first = thoughtFirstSentence(step.text)
+    const label = live ? thoughtLiveLabel(step.text) : first ? `思考：${first}` : THINKING_DONE_FALLBACK
     const duration = thinkingDurationLabel(step)
-    const name = thinkingHeaderName(label, duration)
-    // The kept head outlives the paint that built it, so its click reads the
-    // disclosure from the mutable ref rather than from a closed-over boolean.
-    //
-    // Keyed by the *head's own node key*, and that is load-bearing: `prune()`
-    // drops every ref whose key no `node()` call claimed this paint, so a ref
-    // under a key of its own is thrown away and rebuilt every render — leaving
-    // the head holding the first paint's object, forever reporting 「folded」.
     const headKey = `thinking-head:${step.id}`
-    const ref = painter.ref(headKey, expanded, thinkingDisclosureId(step))
+    const ref = painter.ref(headKey, expanded)
     const head = painter.node(
       headKey,
-      'step-head thinking-step-head',
-      [name, expanded, live],
+      'step-head',
+      [label, duration, expanded],
       (node) => {
-        // `button()` writes these at build time only, and this node outlives the
-        // label it was built with: the time lands once the thought seals.
-        node.title = name
-        node.setAttribute('aria-label', name)
+        node.title = label
+        node.setAttribute('aria-label', label)
         node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
         return [
-          el('span', 'btn-label', label),
+          el('span', 'step-label', label),
           icon('chevron-right'),
-          live ? rule() : duration === undefined ? undefined : quiet('step-duration', duration),
+          duration === undefined ? undefined : quiet('step-right', duration),
         ]
       },
-      () => button('step-head thinking-step-head', '', label, () => painter.onToggle(ref.id!, ref.expanded)),
+      () => button('step-head', '', label, () => painter.onToggle(step.id, ref.expanded)),
     )
-    return [head, thinkingText(painter, `thinking-body:${step.id}`, 'step-body', step.text, expanded, live, ref)]
-  })
-}
-
-/**
- * The thought itself, shared by the step and the loose block: the whole text while
- * open; folded, a preview while it streams (CSS clamps it) and nothing once it
- * seals. The node is kept across the fold so the toggle is a class change, not a
- * rebuild.
- */
-function thinkingText(
-  painter: Painter,
-  key: string,
-  base: string,
-  text: string,
-  expanded: boolean,
-  live: boolean,
-  ref: DisclosureRef,
-): HTMLElement {
-  const fold = expanded ? '' : live ? ' preview' : ' folded'
-  return painter.node(key, `${base} thinking-text${fold}`, [text], (node) => {
-    node.textContent = text
-    return [...node.childNodes]
-  }, () => {
-    const node = el('div', '')
-    node.addEventListener('click', () => {
-      if (!ref.expanded) painter.onToggle(ref.id!, false)
-    })
-    return node
+    return [head, thoughtBody(painter, step, expanded, head)]
   })
 }
 
@@ -1299,48 +1199,58 @@ function familyStats(family: FamilyData): string | undefined {
   return agentStats(family.agent)
 }
 
-function toolStep(painter: Painter, step: ToolLike, disclosed: boolean): HTMLElement {
+/**
+ * A tool's row in an opened run: 「读取 **pricing.js**」, with what the result adds
+ * (the patch's counts, the lines read, the files found, or the time it took) on the
+ * right. It opens into the tool's own output when there is any; a row with nothing
+ * to show is a plain line, and a sub-agent's row opens its run in the side panel.
+ */
+function toolRow(painter: Painter, step: ToolLike): HTMLElement {
   const status = step.kind === 'tool' ? step.status : step.pending === true ? 'running' : 'done'
-  // A sub-agent's run lives in the side panel; its row is a link there, never a fold.
   const agent = step.kind === 'tool' && step.toolName === AGENT_TOOL
-  const expanded = disclosed && !agent
   const selected = agent && painter.selectedSubagent === step.id
+  const expanded = isExpanded(painter.disclosure, step.id) && !agent
   const classes = ['step', step.kind, status]
   if (!expanded) classes.push('collapsed')
   if (selected) classes.push('selected')
   // `step.tool` is the item's own detail object, so it changes reference exactly
-  // when the result merges in — see `thinkingStep` for why not the step itself.
+  // when the result merges in — see `thinkingRow` for why not the step itself.
   const detail = step.kind === 'tool' ? step.tool : undefined
   return painter.node(`step:${step.id}`, classes.join(' '), [step.text, detail, status, expanded, selected], () => {
     const family = familyData(step)
     const live = subagentLive(step, status)
     // A running sub-agent has no run record yet; its live count stands in.
     const stats = familyStats(family) ?? (live === undefined ? undefined : `${live.toolCount} 工具`)
-    const beadKey = `tool-bead:${step.id}`
-    const statusBead = painter.node(beadKey, `step-bead ${status}`, [status], (node) => {
-      node.setAttribute('aria-hidden', 'true')
-      return []
-    }, () => el('span'))
-    painter.feedback(beadKey, statusBead, status)
-    const headKey = `tool-head:${step.id}`
+    const body = agent ? undefined : stepBody(step, family, painter)
+    const label = rowLabel(step)
+    const name = stepAccessibleName(step, label, status, stats)
+    const toggles = body !== undefined
+    const headKey = `${toggles ? 'tool-head' : 'tool-static'}:${step.id}`
     const ref = painter.ref(headKey, expanded)
-    const name = stepAccessibleName(step, status, stats)
-    const head = painter.node(headKey, 'step-head', [name, detail, step.text, expanded, selected], (node) => {
+    const right = rowRight(step, family, stats)
+    const head = painter.node(headKey, toggles || agent ? 'step-head' : 'step-head static', [name, detail, step.text, expanded, selected], (node) => {
       node.title = name
       node.setAttribute('aria-label', name)
       if (agent) node.setAttribute('aria-pressed', selected ? 'true' : 'false')
-      else node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
-      return [statusBead, ...headParts(step, stats)]
-    }, () => button('step-head', '', name, () => {
-      if (agent) painter.onOpenSubagent(step.id)
-      else painter.onToggle(step.id, ref.expanded)
-    }))
-    const bodyKey = `tool-body:${step.id}`
-    const body = painter.disclose(bodyKey, expanded, head, () => {
-      const content = stepBody(step, family, painter)
-      return content ? painter.node(bodyKey, 'step-body', [step.text, detail], () => [...content.childNodes]) : undefined
+      else if (toggles) node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
+      return [
+        el('span', 'step-label', ...label.parts),
+        toggles ? icon('chevron-right') : undefined,
+        right,
+      ]
+    }, () => {
+      if (!toggles && !agent) return el('div', 'step-head static')
+      return button('step-head', '', name, () => {
+        if (agent) painter.onOpenSubagent(step.id)
+        else painter.onToggle(step.id, ref.expanded)
+      })
     })
-    return [head, live === undefined ? undefined : liveLine(live), body]
+    const bodyKey = `tool-body:${step.id}`
+    const shown = body === undefined ? undefined : painter.disclose(bodyKey, expanded, head, () => {
+      const content = body()
+      return painter.node(bodyKey, 'step-body', [step.text, detail], () => [...content.childNodes])
+    })
+    return [head, live === undefined ? undefined : liveLine(live), shown]
   })
 }
 
@@ -1364,42 +1274,36 @@ function liveLine(live: SubagentLive): HTMLElement {
 }
 
 /**
- * `Read` + `src/a.ts` + the result's own suffix + the call's elapsed time — the
- * head reads left to right as 「什么工具、对什么、结果如何、花了多久」 (§4.5).
- * The families insert their own counts where a suffix would sit, because for
- * those tools the counts *are* the result's note.
+ * A row's words: verb and object, the object in the stronger ink. The shell has no
+ * verb — its description, or the command, already says it — and a failure says so
+ * in words too, because the red is not the only carrier.
  */
-function headParts(step: ToolLike, stats: string | undefined): Child[] {
-  if (step.kind === 'subagent') return [el('span', 'step-name', step.text)]
-  const { displayName, useSummary, headerSuffix, durationMs } = step.tool
-  // The Agent family's suffix is one unit — `opus · 12 工具` — built from the
-  // run's own record, which names the same model the result's `headerSuffix`
-  // carries. While the unit stands, the generic suffix stands down; keeping
-  // both would say `opus` twice on one row.
-  const agentUnit = step.kind === 'tool' && step.toolName === AGENT_TOOL && stats !== undefined
-  const agentType = step.toolName === AGENT_TOOL ? step.tool.agentType : undefined
-  return [
-    el('span', 'step-name', displayName),
-    agentType === undefined ? undefined : el('span', 'step-tag', agentType),
-    useSummary ? el('span', 'step-summary', useSummary) : undefined,
-    stats === undefined ? undefined : el('span', 'step-suffix', stats),
-    headerSuffix === undefined || agentUnit ? undefined : el('span', 'step-suffix', headerSuffix),
-    // Under a second is not worth a number: every quick Read would carry a `0s`.
-    durationMs === undefined || durationMs < 1000
-      ? undefined
-      : el('span', 'step-duration', formatWorkedDuration(durationMs)),
-  ]
+function rowLabel(step: ToolLike): { readonly text: string; readonly parts: Child[] } {
+  if (step.kind === 'subagent') return { text: step.text, parts: [step.text] }
+  const failed = step.status === 'failed' ? ' 失败' : ''
+  if (step.toolName === AGENT_TOOL) {
+    const target = [step.tool.agentType, step.tool.useSummary].filter(Boolean).join(' · ')
+    return { text: `${step.tool.displayName} ${target}${failed}`, parts: [step.tool.displayName, ' ', el('strong', '', target), failed] }
+  }
+  const { verb, target, bare } = callParts(step, true)
+  if (target.length === 0) return { text: `${verb}${failed}`, parts: [`${verb}${failed}`] }
+  if (bare) return { text: `${target}${failed}`, parts: [target, failed] }
+  return { text: `${verb} ${target}${failed}`, parts: [`${verb} `, el('strong', '', target), failed] }
 }
 
-/** The state in words, because the bead is `aria-hidden` and colour is not a name. */
-function stepAccessibleName(step: ToolLike, status: string, stats: string | undefined): string {
-  const label = toolStatusLabel(status as Parameters<typeof toolStatusLabel>[0])
-  if (step.kind === 'subagent') return `${step.text} · ${label}`
-  const { displayName, useSummary, headerSuffix } = step.tool
-  // The same stand-down as `headParts`: the Agent family's suffix unit already
-  // names the model the `headerSuffix` would repeat.
-  const agentUnit = step.toolName === AGENT_TOOL && stats !== undefined
-  return [displayName, useSummary, stats, agentUnit ? undefined : headerSuffix, label]
+/** The right edge of a row: the family's counts, else a call that took a second or more. */
+function rowRight(step: ToolLike, family: FamilyData, stats: string | undefined): HTMLElement | undefined {
+  if (stats !== undefined) {
+    const patch = family.patch !== undefined && !family.patch.capped ? family.patch : undefined
+    return el('span', 'step-right', ...(patch ? diffStat(patch.added, patch.deleted) : [stats]))
+  }
+  const durationMs = step.kind === 'tool' ? step.tool.durationMs : undefined
+  return durationMs === undefined || durationMs < 1000 ? undefined : el('span', 'step-right', formatWorkedDuration(durationMs))
+}
+
+/** The state in words, because colour is not a name. */
+function stepAccessibleName(step: ToolLike, label: { readonly text: string }, status: string, stats: string | undefined): string {
+  return [label.text, stats, toolStatusLabel(status as Parameters<typeof toolStatusLabel>[0])]
     .filter((part) => part && part.length > 0)
     .join(' · ')
 }
@@ -1444,64 +1348,70 @@ function stepAccessibleName(step: ToolLike, status: string, stats: string | unde
  * Nothing to show yields no body at all rather than an empty box: a call with no
  * result yet is the common case, and an empty disclosure is noise.
  */
-function stepBody(step: ToolLike, family: FamilyData, painter: Painter): HTMLElement | undefined {
-  if (step.kind === 'subagent') return el('div', 'step-body', step.text)
-  if (family.patch !== undefined) return el('div', 'step-body', diffNode(family.patch.rows))
-  if (family.found !== undefined) return el('div', 'step-body', searchBody(family.found, painter))
+function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => HTMLElement) | undefined {
+  if (step.kind === 'subagent') return () => el('div', 'step-body', step.text)
+  if (family.patch !== undefined) return () => el('div', 'step-body', diffNode(family.patch!.rows))
+  if (family.found !== undefined) return () => el('div', 'step-body', searchBody(family.found!, painter))
   const terminal = shellOutput(step)
   if (terminal !== undefined) {
     const { errorCode } = step.tool
     const error = errorCode === undefined ? undefined : TOOL_ERROR_LABELS[errorCode]
     // The shell's `(no output)` placeholder is not output: one line, no empty box.
     if (terminal.trim() === SHELL_NO_OUTPUT) {
-      return el('div', 'step-body', el('div', error === undefined ? 'step-body-head' : 'step-error',
+      return () => el('div', 'step-body', el('div', error === undefined ? 'step-body-head' : 'step-error',
         error === undefined ? '无输出' : `${error}，无输出`))
     }
-    return el(
+    // The row says what the command is for; the command itself heads its output.
+    const { description, useSummary } = step.tool
+    const shown = description !== undefined && useSummary ? `$ ${useSummary}\n${terminal}` : terminal
+    return () => el(
       'div',
       'step-body',
       error === undefined ? undefined : el('div', 'step-error', error),
-      el('pre', 'step-terminal', terminal),
+      el('pre', 'step-terminal', shown),
     )
   }
   if (family.rows !== undefined) {
-    return el('div', 'step-body', el('div', 'step-code', ...family.rows.map((row) => el(
+    return () => el('div', 'step-body', el('div', 'step-code', ...family.rows!.map((row) => el(
       'div',
       'step-code-row',
       el('span', 'step-code-line', String(row.line)),
       el('span', 'step-code-text', row.text),
     ))))
   }
-  const web = webBody(step)
-  if (web !== undefined) return web
+  if (isWebProse(step)) return () => webBody(step)
   const { resultSummary, detail, content } = step.tool
   const text = detail ?? content
   if (resultSummary === undefined && (text === undefined || text.length === 0)) return undefined
-  return el(
+  return () => el(
     'div',
     'step-body',
     resultSummary === undefined ? undefined : el('div', 'step-body-head', resultSummary),
-    // Clipping is the stylesheet's (T8): `max-height` plus scrolling *inside* the
-    // block, so a long output never turns the group itself into a scroll window.
+    // Clipping is the stylesheet's: `max-height` plus scrolling *inside* the
+    // block, so a long output never turns the run card into a scroll window.
     text === undefined || text.length === 0 ? undefined : el('pre', 'step-body-text', text),
   )
 }
 
 /**
- * The web family's body: the fetched page as the markdown the tool already
- * made of it. A failed fetch is the fallback body's to draw, under the step's
- * `failed` class — the family only claims results that are prose.
+ * Whether the web family claims this step: a successful fetch or search whose
+ * result is prose. A failed fetch is the fallback body's to draw, under the step's
+ * `failed` class.
  */
-function webBody(step: ToolLike): HTMLElement | undefined {
-  if (step.kind !== 'tool' || step.failed === true) return undefined
-  if (step.toolName === undefined || !WEB_TOOLS.has(step.toolName)) return undefined
+function isWebProse(step: Extract<ToolLike, { kind: 'tool' }>): boolean {
+  if (step.failed === true || step.toolName === undefined || !WEB_TOOLS.has(step.toolName)) return false
+  const { content } = step.tool
+  return content !== undefined && content.length > 0
+}
+
+/** The web family's body: the fetched page as the markdown the tool already made of it. */
+function webBody(step: Extract<ToolLike, { kind: 'tool' }>): HTMLElement {
   const { resultSummary, content } = step.tool
-  if (content === undefined || content.length === 0) return undefined
   return el(
     'div',
     'step-body',
     resultSummary === undefined ? undefined : el('div', 'step-body-head', resultSummary),
-    el('div', 'step-web md', ...markdownChildren(content)),
+    el('div', 'step-web md', ...markdownChildren(content!)),
   )
 }
 
@@ -1546,13 +1456,6 @@ function searchBody(results: SearchResults, painter: Painter): HTMLElement {
   )
 }
 
-/** The hairline that stands in for a bead on a row that has no outcome (§3). */
-function rule(): HTMLElement {
-  const node = el('span', 'step-rule')
-  node.setAttribute('aria-hidden', 'true')
-  return node
-}
-
 // --- loose items -------------------------------------------------------------
 
 /** Text can become a staged step after a tool call; its carrier stays the same. */
@@ -1578,7 +1481,6 @@ function itemNode(painter: Painter, item: TranscriptItem): HTMLElement {
       metaRow(painter, item),
     ])
   }
-  if (item.kind === 'thinking') return looseThinkingNode(painter, item, classes, key)
   if (item.kind === 'thread-notes' && item.threadNotes) return threadNotesNode(painter, item, classes, key)
   if (item.kind === 'user') {
     // The item is the *column* here, not the bubble: the bubble is its own node,
@@ -1615,7 +1517,10 @@ function itemNode(painter: Painter, item: TranscriptItem): HTMLElement {
       ],
     )
   }
-  return painter.node(key, classes.join(' '), [item.text], () => [item.text])
+  // The interruption is said once, in the turn's own words: 「已中断」, the way a
+  // finished turn says 「已处理 …」.
+  const text = item.interrupt === true ? '已中断' : item.text
+  return painter.node(key, item.interrupt === true ? `${classes.join(' ')} interrupt` : classes.join(' '), [text], () => [text])
 }
 
 /**
@@ -1739,44 +1644,6 @@ function imageTileNode(painter: Painter, image: ImageAttachmentRef, index: numbe
     open()
   })
   return thumb
-}
-
-/**
- * A thinking block from a record with no `turnId` — it joins no group, so it keeps
- * the standalone disclosure it has always had.
- */
-function looseThinkingNode(
-  painter: Painter,
-  item: TranscriptItem,
-  classes: string[],
-  key: string,
-): HTMLElement {
-  const expanded = isLooseThinkingExpanded(item, painter.disclosure)
-  if (!expanded) classes.push('collapsed')
-  // Driven by the item, never by `TranscriptState.isThinking`: that flag goes false
-  // on `thinking_stop` while the block is still arriving.
-  if (item.pending === true) classes.push('live')
-  return painter.node(key, classes.join(' '), [item.text, item.pending, item.durationMs, expanded], () => {
-    const label = thinkingHeaderLabel(item)
-    const duration = thinkingDurationLabel(item)
-    const name = thinkingHeaderName(label, duration)
-    // 「思考过程 `⌵` 12s」 (design_guidance 四.3): the glyph follows the label and
-    // still flips to point up while the block is open — that rule matches on the
-    // class, not on the position.
-    const headKey = `loose-thinking-head:${item.id}`
-    const ref = painter.ref(headKey, expanded, thinkingDisclosureId(item))
-    const header = painter.node(headKey, 'thinking-header', [name, expanded], (node) => {
-      node.setAttribute('aria-expanded', String(expanded))
-      node.setAttribute('aria-label', name)
-      node.title = name
-      return [
-        el('span', 'btn-label', label),
-        icon('chevron-down'),
-        duration === undefined ? undefined : quiet('thinking-duration', duration),
-      ]
-    }, () => button('thinking-header', '', label, () => painter.onToggle(ref.id!, ref.expanded)))
-    return [header, thinkingText(painter, `loose-thinking-body:${item.id}`, 'thinking-body', item.text, expanded, item.pending === true, ref)]
-  })
 }
 
 export function isScrolledToBottom(container: HTMLElement): boolean {

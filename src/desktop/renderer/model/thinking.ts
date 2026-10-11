@@ -1,183 +1,37 @@
+import { parseUnifiedPatch } from './diffRows.js'
 import { formatWorkedDuration } from './transcript.js'
-import type { ActivityGroup, ActivityStep, TranscriptEntry, TranscriptItem } from './transcript.js'
+import type { ActivityRun, ActivityStep, TranscriptEntry } from './transcript.js'
 
 /**
- * Which activity groups and steps are open, as pure decisions (§5).
+ * What the transcript's activity lines say, and which of them are open — as pure
+ * decisions.
  *
- * Two halves, and the split is the whole point:
- *
- * - a **dynamic default** (§5.1), which is what the reader gets for free — the
- *   running turn's group is open, already-open steps stay open until the turn
- *   ends, and completion organises only content the reader is not using;
- * - the user's **absolute** answer for anything they clicked (§5.2), which from
- *   then on outranks the default entirely.
- *
- * The retired pre-T5 pair stored the *other* thing — a deviation from the
- * default — and that is exactly what stops working here. A deviation is only
- * meaningful against a static default (streaming = open, sealed = closed); against
- * 「am I the last step」 it inverts under the reader: collapse the running step by
- * hand, let the next step arrive, and the deviation re-opens the step the user just
- * shut. So a click records `expanded: true | false` and nothing recomputes it.
+ * Disclosure is the user's alone: everything is folded by default (a failure and
+ * an edit's diff included — the summary line says how many failed), and a click
+ * records `expanded: true | false` as an absolute answer that nothing recomputes.
  *
  * DOM-free, like everything in `model/`.
  */
 
-/** While the block is still arriving. */
+/** While the thought is still arriving. */
 export const THINKING_LIVE_LABEL = '正在思考'
-/** A sealed block's name; its elapsed time, when measured, sits beside it. */
+/** A sealed thought that said nothing; its elapsed time, when measured, sits beside it. */
 export const THINKING_DONE_FALLBACK = '思考过程'
-/** Completion feedback's base duration plus event-delivery slack; retimed with motion tokens. */
-export const STEP_COMPLETION_FALLBACK_MS = 240
 
-/**
- * The header of a thinking block, whether it arrived as a loose item or as a step.
- *
- * Both shapes carry the same fields, so the label takes the fields rather than
- * either type — a thinking `ActivityStep` is a projection of the item it came from.
- */
-export function thinkingHeaderLabel(block: { readonly pending?: boolean }): string {
-  return block.pending === true ? THINKING_LIVE_LABEL : THINKING_DONE_FALLBACK
-}
-
-/**
- * 「12s」 beside a sealed block's name, or nothing: a block still arriving has no
- * total yet, and a replayed one was never timed (only the live stream sees the
- * clock), so a guess would be a number nobody measured.
- */
-export function thinkingDurationLabel(block: { readonly pending?: boolean; readonly durationMs?: number }): string | undefined {
-  if (block.pending === true || block.durationMs === undefined) return undefined
-  return formatWorkedDuration(block.durationMs)
-}
-
-/**
- * The accessible name of a thinking head: its label plus the time, in words, since
- * the time itself is drawn `aria-hidden` beside it.
- */
-export function thinkingHeaderName(label: string, duration: string | undefined): string {
-  return duration === undefined ? label : `${label} · 用时 ${duration}`
-}
-
-/**
- * What the user decided by hand, by group id (`turnId`) or step id. Absent = the
- * default still rules.
- */
+/** What the user decided by hand, by run id or step id. Absent = folded. */
 export type DisclosureState = ReadonlyMap<string, boolean>
 
 export const NO_DISCLOSURE: DisclosureState = new Map()
 
-/**
- * A step whose body is a disclosure at all.
- *
- * Staged prose is shown whole (§4.4), a `TodoWrite` line's list lives in the task
- * panel (§7), and a system notice is its own single line — none of the three has a
- * body to open, so none of them may consume a click or a toggle entry.
- */
-export function isStepCollapsible(step: ActivityStep): boolean {
-  return step.kind === 'thinking' || step.kind === 'tool' || step.kind === 'subagent'
-}
-
-/**
- * `status` describes steps; the session supplies `live` from turnActivity. Keep it
- * separate, as for groupHeaderName, so a tool result cannot finish a live turn.
- * The default is for callers without a session; an explicit false is authoritative.
- */
-export function isGroupExpanded(
-  group: ActivityGroup,
-  state: DisclosureState = NO_DISCLOSURE,
-  live = group.status === 'running',
-): boolean {
-  return state.get(group.turnId) ?? (live && group.status !== 'aborted')
-}
-
-/**
- * The tools whose body is a diff. They open by default (§5.1): the patch *is*
- * the result, where a read, a search or a command already said what it did on
- * its head line.
- */
-export const EDIT_TOOLS: ReadonlySet<string> = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
-
-/** A step's disclosure: the user's answer when there is one, else the default. */
-export function isStepExpanded(
-  group: ActivityGroup,
-  index: number,
-  state: DisclosureState = NO_DISCLOSURE,
-): boolean {
-  const step = group.steps[index]
-  if (step === undefined) return false
-  if (!isStepCollapsible(step)) return true
-  return state.get(step.id) ?? defaultStepExpanded(step)
-}
-
-/**
- * Open only what the head line cannot say: a failure, and an edit's diff. A
- * successful read, search, command or sub-agent stays one line whether the turn
- * is running or sealed — a running step that unfolded itself turned the turn
- * into a wall of output and made the viewport jump with every tool.
- */
-function defaultStepExpanded(step: ActivityStep): boolean {
-  // A failure is the reason someone opens a finished group at all, so it opens
-  // itself — in a running turn just as much as in a sealed one.
-  if (isStepFailed(step)) return true
-  // A live thought folds to a two-line preview, a sealed one away entirely; only
-  // a click shows it whole.
-  if (step.kind !== 'tool') return false
-  // The permission request is drawn in the composer and that is where the user is
-  // looking; unfolding a diff up here would take the focus back (§5.1).
-  if (step.status === 'awaiting-approval') return false
-  return step.toolName !== undefined && EDIT_TOOLS.has(step.toolName)
-}
-
-/**
- * The disclosure every row paints with. Only the user's clicks survive the turn:
- * the live group is open while it runs and folds the moment it ends — whether or
- * not the reader was scrolled into it, focused in it or selecting in it — unless
- * they opened the group, or a step inside it, by hand.
- */
-export function resolveDisclosure(
-  entries: readonly TranscriptEntry[],
-  manual: DisclosureState,
-  liveGroupId: string | undefined,
-): DisclosureState {
-  const next = new Map<string, boolean>()
-  for (const entry of entries) {
-    if (entry.kind === 'item') {
-      if (entry.item.kind !== 'thinking') continue
-      next.set(entry.item.id, manual.get(thinkingDisclosureId(entry.item)) ?? false)
-      continue
-    }
-    const { group } = entry
-    const live = group.turnId === liveGroupId && group.status !== 'aborted'
-    const manuallyOpenedChild = group.steps.some((step) => manual.get(step.id) === true)
-    const open = manual.get(group.turnId) ?? (manuallyOpenedChild || isGroupExpanded(group, NO_DISCLOSURE, live))
-    next.set(group.turnId, open)
-    for (let index = 0; index < group.steps.length; index += 1) {
-      const step = group.steps[index]!
-      const answer = manual.get(step.kind === 'thinking' ? thinkingDisclosureId(step) : step.id)
-      next.set(step.id, answer ?? (open && isStepExpanded(group, index)))
-    }
-  }
-  return next
-}
-
-/** The same predicate `groupTranscript` counts with, so head and body agree. */
-function isStepFailed(step: ActivityStep): boolean {
-  return ('status' in step && step.status === 'failed') || ('failed' in step && step.failed === true)
-}
-
-/**
- * The key a thought's disclosure is answered under. A live thought answers under
- * a `:live` key of its own, so opening it mid-stream is forgotten the moment it
- * seals: a finished thought always folds away, whatever was clicked before.
- */
-export function thinkingDisclosureId(block: { readonly id: string; readonly pending?: boolean }): string {
-  return block.pending === true ? `${block.id}:live` : block.id
+export function isExpanded(state: DisclosureState, id: string): boolean {
+  return state.get(id) === true
 }
 
 /**
  * Records the user's answer for `id` as an absolute value.
  *
  * `expanded` is what the row shows **now**, so the first click always does the
- * visible thing whether or not a default was in force.
+ * visible thing.
  */
 export function toggleDisclosure(state: DisclosureState, id: string, expanded: boolean): DisclosureState {
   const next = new Map(state)
@@ -186,25 +40,16 @@ export function toggleDisclosure(state: DisclosureState, id: string, expanded: b
 }
 
 /**
- * Drops answers for groups and steps that no longer exist.
- *
- * The same necessity `pruneThinkingToggles` had, unchanged by the new shape: a
- * `transcript-reset` rebuilds the state with `thinkingCount` back at zero, so the
- * next block reuses `thinking-0` and would inherit a *different* block's answer —
- * and now a stale answer is absolute, so it would not even be corrected by the
- * default.
+ * Drops answers for runs and steps that no longer exist: a `transcript-reset`
+ * rebuilds the state with the thinking counter back at zero, so the next block
+ * reuses `thinking-0` and would inherit a *different* block's answer.
  */
 export function pruneDisclosure(entries: readonly TranscriptEntry[], state: DisclosureState): DisclosureState {
   const live = new Set<string>()
   for (const entry of entries) {
-    if (entry.kind === 'group') {
-      live.add(entry.group.turnId)
-      for (const step of entry.group.steps) live.add(step.kind === 'thinking' ? thinkingDisclosureId(step) : step.id)
-    } else if (entry.item.kind === 'thinking') {
-      // A thinking block from a record with no `turnId` never joins a group, and
-      // it is still a disclosure the user can have answered.
-      live.add(thinkingDisclosureId(entry.item))
-    }
+    if (entry.kind !== 'run') continue
+    live.add(entry.run.id)
+    for (const step of entry.run.steps) live.add(step.id)
   }
   const next = new Map<string, boolean>()
   for (const [id, expanded] of state) {
@@ -214,83 +59,127 @@ export function pruneDisclosure(entries: readonly TranscriptEntry[], state: Disc
 }
 
 /**
- * A thinking block that never joined a group — a record with no `turnId`.
- *
- * Folded by default like a thinking step: a preview while it streams, away once
- * it seals. The answer is still absolute, stored under `thinkingDisclosureId`.
+ * The tools whose body is a diff. Their summary carries the line counts, and the
+ * patch is the body of their row.
  */
-export function isLooseThinkingExpanded(item: TranscriptItem, state: DisclosureState = NO_DISCLOSURE): boolean {
-  return state.get(item.id) ?? false
+export const EDIT_TOOLS: ReadonlySet<string> = new Set(['Edit', 'MultiEdit', 'Write', 'NotebookEdit'])
+
+// --- thoughts ----------------------------------------------------------------
+
+/** The sentences of a thought: split after 。！？, after `.!?` and a space, and at line breaks. */
+function sentences(text: string): string[] {
+  return text.split(/(?<=[。！？])|(?<=[.!?])\s+|\n+/).map((part) => part.trim()).filter((part) => part.length > 0)
+}
+
+/** The first sentence of a thought — what its sealed line says. */
+export function thoughtFirstSentence(text: string): string {
+  return sentences(text)[0] ?? ''
+}
+
+/** The sealed line: the first sentence, or the generic name when nothing was said. */
+export function thoughtLabel(text: string): string {
+  return thoughtFirstSentence(text) || THINKING_DONE_FALLBACK
+}
+
+/** The live line: 「正在思考 · 最新一句」, the newest sentence being the one just written. */
+export function thoughtLiveLabel(text: string): string {
+  const latest = sentences(text).at(-1)
+  return latest === undefined ? THINKING_LIVE_LABEL : `${THINKING_LIVE_LABEL} · ${latest}`
 }
 
 /**
- * The group head (§5.3).
- *
- * It is the *collapsed* summary of a whole turn, so it deliberately does not name
- * what is happening right now — that belongs on the current step's head, because
- * the transcript is an `aria-live` region and a head tracking the activity would
- * be re-announced at every step (§8).
+ * 「12s」 beside a sealed thought, or nothing: one still arriving has no total
+ * yet, and a replayed one was never timed, so a guess would be a number nobody
+ * measured.
  */
-export function groupHeaderLabel(group: ActivityGroup, withFailures = true): string {
-  // `stepCount` counts actions, so zero is a turn that only thought and answered.
-  // 「0 步」 is not a fact worth a slot; the status alone carries that turn.
-  const parts = [groupStatusLabel(group), ...(group.stepCount > 0 ? [`${group.stepCount} 步`] : [])]
-  // Stated, not opened: a failure already opens its own step (§5.1), and forcing
-  // the whole group open would move everything under it.
-  if (withFailures && group.failedCount > 0) parts.push(groupFailureLabel(group)!)
-  return parts.join(' · ')
+export function thinkingDurationLabel(block: { readonly pending?: boolean; readonly durationMs?: number }): string | undefined {
+  if (block.pending === true || block.durationMs === undefined) return undefined
+  return formatWorkedDuration(block.durationMs)
+}
+
+// --- run summary -------------------------------------------------------------
+
+export interface RunSummary {
+  /** 「已运行 2 个命令，读取 2 个文件」; empty for a run with no tool in it. */
+  readonly text: string
+  /** The edits' line counts, when every patch could be read. */
+  readonly diff?: { readonly added: number; readonly deleted: number }
+  readonly failed: number
+  readonly aborted: boolean
+}
+
+type Category = 'cmd' | 'read' | 'edit' | 'search' | 'web' | 'agent' | 'todo' | 'other'
+
+const CATEGORY_OF: Readonly<Record<string, Category>> = {
+  Bash: 'cmd', BashOutput: 'cmd', KillShell: 'cmd',
+  Read: 'read',
+  Edit: 'edit', MultiEdit: 'edit', Write: 'edit', NotebookEdit: 'edit', Delete: 'edit',
+  Grep: 'search', Glob: 'search',
+  WebFetch: 'web', WebSearch: 'web',
+  Agent: 'agent',
+  TodoWrite: 'todo', TaskCreate: 'todo', TaskUpdate: 'todo', TaskList: 'todo', TaskGet: 'todo',
+}
+
+const CATEGORY_TEXT: Readonly<Record<Exclude<Category, 'todo'>, (count: number) => string>> = {
+  cmd: (count) => `已运行 ${count} 个命令`,
+  read: (count) => `读取 ${count} 个文件`,
+  edit: (count) => `编辑 ${count} 个文件`,
+  search: (count) => `搜索 ${count} 次`,
+  web: (count) => `浏览 ${count} 个网页`,
+  agent: (count) => `运行 ${count} 个子代理`,
+  other: (count) => `已使用 ${count} 个工具`,
+}
+
+function categoryOf(step: ActivityStep): Category | undefined {
+  if (step.kind === 'thinking') return undefined
+  if (step.kind === 'subagent') return 'agent'
+  if (step.kind === 'task') return 'todo'
+  return (step.toolName === undefined ? undefined : CATEGORY_OF[step.toolName]) ?? 'other'
 }
 
 /**
- * The head of the turn in flight: 「工作中 · 3 步」, plus failures.
- *
- * Not `groupHeaderLabel`: `status` reads `done` in every gap between two tool
- * calls, and a head that flashed 「已完成」 after each result would report a
- * running turn as over. Liveness is the session's (`model/waiting.ts`).
+ * The line a run folds to. Counts are per category, in the order each category
+ * first appears; a file edited five times is still one file. Thinking is not
+ * counted. A failure or an interruption is appended by the view in its own colour.
  */
-export function groupRunningLabel(group: ActivityGroup, withFailures = true): string {
-  const parts = [RUNNING_LABEL, ...(group.stepCount > 0 ? [`${group.stepCount} 步`] : [])]
-  if (withFailures && group.failedCount > 0) parts.push(groupFailureLabel(group)!)
-  return parts.join(' · ')
+export function summarizeRun(run: ActivityRun): RunSummary {
+  const counts = new Map<Category, Set<string>>()
+  let added = 0
+  let deleted = 0
+  let readable = true
+  for (const step of run.steps) {
+    const category = categoryOf(step)
+    if (category === undefined) continue
+    const keys = counts.get(category) ?? new Set<string>()
+    counts.set(category, keys)
+    // An edit counts files, not calls: the same path again is not another file.
+    keys.add(category === 'edit' && step.kind === 'tool' && step.tool.useSummary ? step.tool.useSummary : step.id)
+    if (category === 'edit' && step.kind === 'tool' && step.status === 'done') {
+      const patch = step.tool.detail === undefined ? undefined : parseUnifiedPatch(step.tool.detail)
+      if (patch === undefined || patch.capped) readable = false
+      else {
+        added += patch.added
+        deleted += patch.deleted
+      }
+    }
+  }
+  const text = [...counts].map(([category, keys]) => (
+    category === 'todo' ? '更新了待办' : CATEGORY_TEXT[category](keys.size)
+  )).join('，')
+  return {
+    text,
+    ...(counts.has('edit') && readable && added + deleted > 0 ? { diff: { added, deleted } } : {}),
+    failed: run.failedCount,
+    aborted: run.status === 'aborted',
+  }
 }
 
-/** 「2 失败」, drawn apart from the rest of the head so it can take the danger colour. */
-export function groupFailureLabel(group: ActivityGroup): string | undefined {
-  return group.failedCount > 0 ? `${group.failedCount} 失败` : undefined
+/** A run with at least one thing that is not a thought: it folds to a summary line. */
+export function runHasTools(run: ActivityRun): boolean {
+  return run.steps.some((step) => step.kind !== 'thinking')
 }
 
-/**
- * The group head's **accessible name** (§8), which is not its visible label.
- *
- * The label above is a live counter: `工作中 · 2 步` becomes `工作中 · 3 步` the
- * moment the next tool starts, and the transcript is an `aria-live="polite"`
- * region — so a name built from it would have a screen reader re-announce the
- * whole turn once per step, over the top of the step that actually is new.
- *
- * So a running group is named by its status alone, which does not change until
- * the turn ends. What changed belongs to the current step's own head, and the
- * counts stay in the visible label, which `dom/transcriptView.ts` hides from the
- * accessibility tree for the same reason the bead strip is hidden.
- *
- * A sealed group keeps the full label: it is written once, and the totals are
- * exactly what someone reading a finished turn wants read out.
- *
- * `live` is the session's own 「a turn is in flight」 (`model/waiting.ts` decides
- * which group is live) and outranks `status`, which reads `done` in every gap
- * between two tool calls: a head whose name settled to 「已完成 · 2 步」 while the
- * turn was still working would announce the turn as over, repeatedly.
- */
-export function groupHeaderName(group: ActivityGroup, live = false): string {
-  return live || group.status === 'running' ? RUNNING_LABEL : groupHeaderLabel(group)
-}
-
-/** 「the turn is working」 — the running head's whole, unchanging name. */
-const RUNNING_LABEL = '工作中'
-
-function groupStatusLabel(group: ActivityGroup): string {
-  if (group.status === 'running') return RUNNING_LABEL
-  // An aborted turn has no measured time to quote — `turn-end` withholds the
-  // duration line for it, and a record span would be a number nobody measured.
-  if (group.status === 'aborted') return '已中断'
-  return group.durationMs === undefined ? '已完成' : `已处理 ${formatWorkedDuration(group.durationMs)}`
+/** 「2 个失败」, drawn apart from the summary so it can take the danger colour. */
+export function failureLabel(count: number): string {
+  return `${count} 个失败`
 }

@@ -137,6 +137,7 @@
      chip) — at 12px those read as swollen — and pill for anything that reads
      as a control (design_guidance 四.2). */
   --radius-lg: 20px;
+  --radius-bubble: 13px;
   --radius-md: 12px;
   --radius-sm: 8px;
   --radius-pill: 9999px;
@@ -154,9 +155,8 @@
   --motion-panel-out: 200ms;
   --motion-scrim-in: 200ms;
   --motion-scrim-out: 180ms;
-  --motion-complete: 180ms;
   --motion-running: 2800ms;
-  --motion-label-sheen: 3200ms;
+  --motion-spark: 1200ms;
   --motion-locate: 600ms;
   --motion-hover-delay: 500ms;
   --presence-x: 0px;
@@ -171,7 +171,7 @@
   /* The conversation's reading axis. `.transcript-column` and `.composer-column`
      must both resolve their width from here — sharing one axis is the whole
      reason the composer lines up with the text above it. */
-  --reading-measure: 980px;
+  --reading-measure: 760px;
   /* The gutter the column keeps from the canvas edge. Load-bearing once the
      window is narrower than `--reading-measure`: the column then resolves to
      100% and, without this, text and composer would run flush into the panel's
@@ -290,6 +290,7 @@
   --type-display: 28px;
   --type-title: 20px;
   --type-body: 15px;
+  --type-reading: 14px;
   --type-ui: 14px;
   --type-meta: 12.5px;
   --type-micro: 11px;
@@ -1842,7 +1843,12 @@ body.settings-open #browser-resizer { display: none; }
   flex: 1 1 auto;
   overflow-y: auto;
   padding: var(--space-2) var(--reading-gutter);
-  font-size: var(--type-body);
+  /* One step smaller than the rest of the app, and only here: the conversation is
+     the one surface read in long stretches, and its rows, code and tool output
+     step down with the prose. */
+  font-size: var(--type-reading);
+  --type-ui: 13px;
+  --type-code: 12px;
   /* A flex column, and **not** `justify-content: flex-end`: in a scroll
      container that makes the top of overflowing content unreachable. Nothing
      here may move the reading column vertically at all now — the pad below does
@@ -1888,8 +1894,8 @@ body.settings-open #browser-resizer { display: none; }
    line and a short conversation renders as a narrow strip pushed to the right
    edge. Block layout (what this was before todo V2 made `.transcript` a flex
    column) sized it to the container for free; flex layout does not. */
-/* `min-width: 0` runs the length of the group chain below (`.activity-group`,
-   `.group-steps`, `.step`, `.step-head`, `.step-body`): a flex or grid item
+/* `min-width: 0` runs the length of the run chain below (`.run`, `.run-card`,
+   `.step`, `.step-head`, `.step-body`): a flex or grid item
    refuses to shrink under its own content unless it is told to, and one link
    without it hands the whole column its widest unbroken token as a floor. */
 /* `padding-bottom` is the room the newest question needs above it, written per
@@ -1950,9 +1956,9 @@ body.settings-open #browser-resizer { display: none; }
   margin-left: auto;
 }
 .transcript .item.user .user-bubble {
-  padding: var(--space-3) var(--space-4);
+  padding: 7px 13px;
   background: var(--surface-card);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-bubble);
   color: var(--text-primary);
 }
 .transcript .item.assistant { color: var(--text-primary); }
@@ -2048,313 +2054,158 @@ body.settings-open #browser-resizer { display: none; }
 }
 .file-chip .icon { width: 12px; height: 12px; }
 .file-chip-label { font-family: var(--font-mono); }
-/* --- thinking ---
-   One disclosure per block: 「正在思考」 while it streams, 「思考过程」 and the time
-   the model spent once it seals. The header is the only control in the stream, so it carries no fill — it
-   has to read as the metadata line `design_guidance.md` 三.3 describes. */
-.transcript .item.thinking { color: var(--text-tertiary); }
-.thinking-header {
-  display: inline-flex;
+/* Text stays still; only status marks move. Reduced-motion lives at the end
+   of the sheet: the token parser allows no other nested rule here except
+   `@keyframes`. */
+@keyframes breathe { 50% { opacity: 0.65; } }
+/* --- activity lines ---
+   A run of work folds to one quiet line — 「已运行 2 个命令，读取 2 个文件」 — and
+   opens into a bordered card with a row per step. A thought outside a run is the
+   same line with its first sentence on it. While the turn works, the last line of
+   the transcript is its live status: the same line with the spark in front and
+   the elapsed time behind. `model/waiting.ts` decides which one carries it. */
+.run {
+  min-width: 0;
+  margin-bottom: var(--space-3);
+}
+.waiting { margin-bottom: var(--space-3); }
+.run-line,
+.waiting {
+  display: flex;
   align-items: center;
-  gap: var(--space-1);
+  gap: 6px;
+  max-width: 100%;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+.run-line {
+  margin: 0;
   padding: 0;
   border: none;
   background: none;
   color: var(--text-tertiary);
   font: inherit;
-  font-size: var(--type-meta);
-  /* The sealed label carries the turn's elapsed time; tabular figures keep
-     the digits steady as they land (design_guidance 三.3). */
-  font-variant-numeric: tabular-nums;
+  text-align: left;
   cursor: pointer;
 }
-.thinking-header:hover { color: var(--text-secondary); }
-.thinking-header:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-/* Points down while closed (the affordance) and up while open (the state). */
-.transcript .item.thinking:not(.collapsed) .thinking-header .icon { transform: rotate(180deg); }
-/* No `opacity` here any more: `--text-tertiary` already states the rung, and
-   dimming a colour that was chosen against the page produces a value the palette
-   never agreed to — one that fails the ladder in light mode (design_guidance
-   六.3). The colour and the size carry the distinction. */
-.thinking-body {
-  margin-top: var(--space-1);
-  color: var(--text-tertiary);
-}
-.thinking-duration { margin-left: var(--space-1); }
-/* The thought's text, in a step or loose. Upright: the italic was a synthesized
-   slant on CJK glyphs, which have none, and it read as smudged small print. The
-   text keeps its own line breaks.
-
-   Folded while it streams, it is a two-line preview of the opening, clamped with
-   an ellipsis and clickable to open; folded once sealed, it is gone; open, it is the whole thought, capped and scrolling inside
-   itself like a terminal block, so a long one never turns the turn into a wall. */
-.thinking-text {
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  line-height: 1.6;
-}
-.thinking-text.preview {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  overflow: hidden;
-  cursor: pointer;
-}
-.thinking-text.preview:hover { color: var(--text-secondary); }
-.thinking-text.folded { display: none; }
-.thinking-text:not(.preview) {
-  max-height: 320px;
-  overflow-y: auto;
-}
-/* Text stays still; only status beads breathe. Reduced-motion lives at the end
-   of the sheet: the token parser allows no other nested rule here except
-   `@keyframes`. */
-@keyframes breathe { 50% { opacity: 0.65; } }
-/* --- the waiting row ---
-   The turn's live status, at the transcript's tail where the reader is looking:
-   a breathing bead, a label (「正在思考」 or the running tool's name), the
-   elapsed time and the key that stops the turn. `model/waiting.ts` decides when
-   it exists — the whole turn, except while an answer is visibly arriving — so it
-   needs no fade of its own.
-
-   Four rungs of loudness on one line, which is the whole design: the bead is the
-   only accent, the label is secondary text, and the counter and
-   the hint are `--text-tertiary` metadata. Nothing here is a control — the hint
-   names a key, it is not a button — so the row carries no hover and no radius.
-
-   The bead breathes with the step bead's own `breathe`, at the same duration: a
-   turn waiting on the model and a tool still running are the same 「alive, not
-   urgent」, and two rates would read as two vocabularies. */
-.waiting {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-bottom: var(--space-5);
-  font-size: var(--type-ui);
-  color: var(--text-secondary);
-  user-select: none;
-}
-/* Painted through `color` and filled with `currentColor`, like every other bead
-   in this sheet. Neutral grey rather than the brand, on the lighter tertiary
-   rung, and a deeper breath than the step beads' `breathe`: this dot is the
-   row's only motion besides the sheen, so its swing has to read at a glance. */
-.waiting-bead {
-  position: relative;
-  flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
-  border-radius: var(--radius-pill);
-  color: var(--text-tertiary);
-  background: currentColor;
-  animation: waiting-breathe var(--motion-running) var(--ease-standard) infinite;
-}
-@keyframes waiting-breathe { 50% { opacity: 0.3; } }
-/* The words carry the thinking row's old sheen, now that the tail row is where
-   「正在思考」 is read: a band of `--text-primary` travelling through
-   `--text-tertiary` letters. The band is a text highlight, not an accent, so it
-   holds in both themes — brighter on dark, deeper on light. Tertiary rather than
-   secondary: on the light canvas secondary sat too close to primary for the
-   band to show.
-
-   Drawn with transforms only, so the compositor runs it without a repaint per
-   frame: `.waiting-sheen` is a soft-edged window 60% of the label wide sliding
-   left to right, and its `::after` — the same words in the brighter colour, as
-   wide as the label — slides back by the same distance, so the letters never
-   move. The resting transforms park the window past the right edge, which is
-   also where reduced motion leaves it: plain tertiary text.
-
-   The sweep is about 1.4s, then 1.8s of plain text, in one
-   `--motion-label-sheen` loop. */
-.waiting-label {
-  position: relative;
+.run-line:hover { color: var(--text-secondary); }
+.run-line:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; border-radius: var(--radius-sm); }
+.run-line.live,
+.waiting { color: var(--text-secondary); }
+.waiting { user-select: none; }
+.thinking { min-width: 0; margin-bottom: var(--space-3); }
+.thinking-run > .thinking:last-child { margin-bottom: 0; }
+.line-text {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
-  color: var(--text-tertiary);
 }
-.waiting-sheen {
+.line-meta { flex: none; color: var(--text-tertiary); }
+.line-fail { flex: none; color: var(--text-danger); }
+/* The counter stays out of the line until the wait is worth a number. */
+.line-elapsed:empty { display: none; }
+.stat-add { color: var(--diff-add-fg); }
+.stat-del { color: var(--diff-del-fg); }
+.run-line .icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  opacity: 0.8;
+  transition: transform var(--motion-disclosure) var(--ease-standard);
+}
+.run.open > .run-line .icon,
+.thinking.open > .run-line .icon { transform: rotate(90deg); }
+/* The running mark: three dots in the brand colour, taking turns. */
+.line-spark { position: relative; flex: none; width: 14px; height: 14px; margin-right: 3px; }
+.line-spark i {
   position: absolute;
-  top: 0;
-  bottom: 0;
-  left: 0;
-  width: 60%;
-  overflow: hidden;
-  pointer-events: none;
-  -webkit-mask-image: linear-gradient(90deg, transparent, black 50%, transparent);
-  mask-image: linear-gradient(90deg, transparent, black 50%, transparent);
-  transform: translateX(166.667%);
-  animation: label-sheen var(--motion-label-sheen) linear infinite;
+  width: 4px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  color: var(--accent-brand-strong);
+  background: currentColor;
+  animation: spark var(--motion-spark) linear infinite;
 }
-.waiting-sheen::after {
-  content: attr(data-label);
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 166.667%;
-  color: var(--text-primary);
-  transform: translateX(-100%);
-  animation: label-sheen-words var(--motion-label-sheen) linear infinite;
-}
-@keyframes label-sheen {
-  0% { transform: translateX(-100%); }
-  44%, to { transform: translateX(166.667%); }
-}
-@keyframes label-sheen-words {
-  0% { transform: translateX(60%); }
-  44%, to { transform: translateX(-100%); }
-}
-/* The counter, in the digits that do not jitter as they climb. Monospaced for
-   the same reason the meta row's time is: it changes ten times a second. */
-.waiting-elapsed {
-  font-family: var(--font-mono);
-  font-size: var(--type-micro);
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-}
-/* Below the model's threshold the counter has no text, and a flex gap on either
-   side of an empty span is a hole in the row. */
-.waiting-elapsed:empty,
-.waiting-hint:empty { display: none; }
-.waiting-hint { font-size: var(--type-micro); color: var(--text-tertiary); }
-/* --- activity groups ---
-   Two layers of disclosure (§2): the group head carries the turn's boundary and
-   total, every step inside opens on its own. Depth stays at the sheet's two steps —
-   a step is **not** a card, so the layering here is whitespace, the head's own
-   status line and the beads — never a third shadow or radius rung, and not an
-   indent either: the steps sit on the group head's own left margin.
-
-   The group head carries a small chevron: a folded turn is one quiet grey line,
-   and without the glyph it did not read as something that opens. Step heads
-   have none — the row is the switch, and the hover tint is the affordance, the
-   reason both heads carry a radius and a negative margin (the tint has to reach
-   past the text to read as a row rather than as a highlighted label).
-
-   The two heads are written out rather than grouped: `rendererStyleTokens` asks
-   a control's resting state to be a selector of its own, and a shared
-   `.group-head, .step-head { … }` is a rule neither of them owns. */
-/* The session's live turn is authoritative: its group stays running between
-   tool results. Step status belongs to individual step beads, not this shell. */
-.activity-group {
+.line-spark i:nth-child(1) { left: 5px; top: 1px; }
+.line-spark i:nth-child(2) { left: 9px; top: 8px; animation-delay: calc(var(--motion-spark) / -3); }
+.line-spark i:nth-child(3) { left: 1px; top: 8px; animation-delay: calc(var(--motion-spark) / -1.5); }
+@keyframes spark { 0%, 100% { opacity: 0.25; transform: scale(0.7); } 33% { opacity: 1; transform: scale(1); } }
+/* --- the run card ---
+   A card, not a list: the border is the grouping, and each row inside is one tool.
+   Depth stays at the sheet's two steps — a row opens into its output, never into a
+   second card. */
+.run-card {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  gap: 0;
+  margin-top: var(--space-2);
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
 }
-.group-head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  min-width: 0;
-  padding: var(--space-1) var(--space-2);
-  margin-left: calc(-1 * var(--space-2));
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-tertiary);
-  font: inherit;
-  font-size: var(--type-meta);
-  /* The elapsed times land digit by digit as a turn runs. */
-  font-variant-numeric: tabular-nums;
-  text-align: left;
-  cursor: pointer;
-}
-/* `flex-wrap` is the row's answer to a head that does not fit: it breaks onto a
-   second line rather than pushing the transcript sideways. The scroller's
-   `overflow-y: auto` computes `overflow-x` to `auto` as well, so *anything* wider
-   than the reading column turns the whole conversation into a horizontal
-   scroller — a row that has to be dragged left and right to be read. */
+.run-card > .step + .step { border-top: 1px solid var(--border-subtle); }
+.step { display: flex; flex-direction: column; min-width: 0; }
 .step-head {
   display: flex;
-  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-2);
+  gap: 6px;
   width: 100%;
   min-width: 0;
-  padding: var(--space-1) var(--space-2);
-  margin-left: calc(-1 * var(--space-2));
+  min-height: 34px;
+  padding: 7px var(--space-3);
   border: none;
-  border-radius: var(--radius-sm);
   background: none;
   color: var(--text-tertiary);
   font: inherit;
-  font-size: var(--type-meta);
+  font-size: var(--type-ui);
+  line-height: 1.5;
   font-variant-numeric: tabular-nums;
   text-align: left;
   cursor: pointer;
 }
-.group-head:hover,
 .step-head:hover { background: var(--surface-hover); color: var(--text-secondary); }
-.group-head:focus-visible,
-.step-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-/* `button()` wraps its label in a `.btn-label`, and that class is `nowrap` for
-   the chrome it was written for. Nothing in a group truncates: the label folds
-   with the rest of the row, and a flex item that refuses to shrink would be a
-   floor under the whole reading column besides. */
-.step-head .btn-label {
+.step-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+/* A row with nothing to open is a plain line: no hover, no pointer. */
+.step-head.static { cursor: default; }
+.step-head.static:hover { background: none; color: var(--text-tertiary); }
+.step-label {
   min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-/* The turn's own label — 「已处理 3 步 · 12s」, a string this renderer builds, so
-   it is short by construction. It still folds rather than truncates: one
-   vocabulary for the whole group, and no head is allowed to be the column's
-   floor. */
-.group-head .btn-label {
-  min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-.group-head .icon {
-  width: 12px;
-  height: 12px;
+.step-label strong { font-weight: 500; color: var(--text-secondary); }
+.step-head .icon {
+  width: 11px;
+  height: 11px;
   flex: none;
+  transition: transform var(--motion-disclosure) var(--ease-standard);
 }
-.activity-group:not(.collapsed) > .group-head .icon { transform: rotate(90deg); }
-/* The failure count takes the one colour on the row: it is why a folded turn is
-   worth opening. The separator is the label's own 「 · 」, split off with it. */
-.group-failures { margin-left: calc(-1 * var(--space-2)); color: var(--text-danger); }
-.group-failures::before { content: '\00a0·\00a0'; color: var(--text-tertiary); }
-/* Prose a turn writes between its steps (「我先看一下项目结构。」) sits a rung
-   below the final answer, or it reads as the answer having already begun. */
-.group-steps > .step.text {
+.step:not(.collapsed) > .step-head .icon { transform: rotate(90deg); }
+.step-right { flex: none; margin-left: auto; padding-left: var(--space-3); }
+.step.failed .step-head,
+.step.failed .step-label strong { color: var(--text-danger); }
+/* The name and summary of a sub-agent's latest tool, in `.step-live` below. */
+.step-name { min-width: 0; color: var(--text-secondary); font-family: var(--font-mono); overflow-wrap: anywhere; }
+.step-summary { min-width: 0; color: var(--text-tertiary); font-family: var(--font-mono); overflow-wrap: anywhere; }
+/* A thought, whole: a thin line down its left, set a rung above the row's own ink. */
+.thought {
+  min-width: 0;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 2px 0 2px 14px;
+  border-left: 2px solid var(--border-subtle);
   color: var(--text-secondary);
   font-size: var(--type-ui);
+  line-height: 1.75;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
-.group-steps {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  margin-top: var(--space-1);
-  /* The disclosure presence clips this box, and every `.step-head` hangs its
-     hover tint `--space-2` past its left edge. Widen the clip to the left by
-     exactly that much, or the tint's left corners are cut square. */
-  padding-left: var(--space-2);
-  margin-left: calc(-1 * var(--space-2));
-  gap: var(--space-1);
-  /* No indent and no rule down the edge. Once the hairline went, the padding was
-     holding the column off an edge that no longer existed: the steps share the
-     group head's left margin, so a thinking row's label lines up with the head's
-     and every bead lines up with every other bead. The two layers are told apart
-     by the head's own status line and the beads, not by a step of whitespace. */
-}
-.step { display: flex; flex-direction: column; min-width: 0; }
-/* The body itself carries disclosure presence; heads never shrink or fade. */
-/* `.step.task` is not here: since T10 its row *is* a `.step-head`, which lays
-   itself out and paints its own hover — the row points at the task panel above
-   the composer, so it had to become a control. */
-.step.system {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--text-tertiary);
-  font-size: var(--type-meta);
-}
+.thinking > .thought { margin: var(--space-2) 0 var(--space-1); }
+.step > .thought { margin: 0 var(--space-3) var(--space-3); }
+/* The sub-agent panel's status dot and type tag. The transcript's own rows say
+   their state in words; the panel's rows keep the dot, in one colour per state. */
 .step-bead {
   flex: 0 0 auto;
   width: 7px;
@@ -2363,127 +2214,11 @@ body.settings-open #browser-resizer { display: none; }
   color: var(--text-tertiary);
   background: currentColor;
 }
-/* The four states, and the bead is the *whole* visual vocabulary for them (§3):
-   no glyph, no word, no badge. Each is a colour plus a motion, because colour
-   alone would be one channel and this row may be read at a glance — and each is
-   `aria-hidden`, with the state repeated in words in the head's accessible name.
-
-   Waiting on the user pulses without disappearing. Running breathes, the same
-   「alive, not urgent」 as the group head. Settled states give one small opacity
-   feedback on a live completion edge, then hold still. */
-.step-bead.awaiting-approval {
-  color: var(--accent-warn);
-  animation: blink var(--motion-running) var(--ease-standard) infinite;
-}
+.step-bead.awaiting-approval { color: var(--accent-warn); animation: blink var(--motion-running) var(--ease-standard) infinite; }
 .step-bead.running { animation: breathe var(--motion-running) var(--ease-standard) infinite; }
-.step-bead.done {
-  color: var(--accent-review);
-}
-.step-bead.failed {
-  color: var(--accent-danger);
-}
-/* Historical state is static; only an observed running-to-settled edge adds this. */
-.step-bead.completing { animation: bead-pop var(--motion-complete) var(--ease-standard); }
+.step-bead.done { color: var(--accent-review); }
+.step-bead.failed { color: var(--accent-danger); }
 @keyframes blink { 50% { opacity: 0.65; } }
-/* The completion listener retains this name; feedback never scales the dot. */
-@keyframes bead-pop { 50% { opacity: 0.7; } }
-/* The hairline that stands in for a bead on a row with no outcome (§3): a system
-   row, which reports rather than runs, and a thinking row *while it is still
-   thinking*. A sealed thought drops it — the line was the waiting, and there is
-   nothing left to wait for. */
-.step-rule {
-  flex: 1 1 auto;
-  height: 1px;
-  background: var(--border-subtle);
-}
-/* While the model is still thinking, the hairline is the row's status: a sheen
-   travelling along it in `--accent-tool`. It is still a hairline and not a fill —
-   the accent reaches it through `color`, and the gradient is drawn in
-   `currentColor` — so the three named accent fills stay three. It is watchable
-   only because the head that holds it is a kept node: see `thinkingStep`. */
-.step.thinking.live .step-rule {
-  position: relative;
-  overflow: hidden;
-  color: var(--accent-tool);
-  background: transparent;
-}
-/* A transform, not `background-position`, so the compositor runs it. */
-.step.thinking.live .step-rule::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(90deg, transparent, currentColor, transparent);
-  transform: translateX(100%);
-  animation: sheen var(--motion-running) var(--ease-standard) infinite;
-}
-@keyframes sheen { 0% { transform: translateX(-100%); } to { transform: translateX(100%); } }
-/* --- the thinking row's head ---
-   Not the turn's head and not a tool's: nothing ran, so the row is set apart by
-   size rather than by dimming — the micro rung, read at `--text-secondary`. The
-   sealed row's time sits at the right end like a tool's; the live state is
-   carried by the sheen on the hairline, not by a colour the sealed row then has
-   to climb back out of.
-
-   It is also the one head that does not light a whole row on hover. A fill that
-   wide, on a row nobody has to act on, was the loudest thing on a quiet turn; the
-   hover lights the *text* instead — all the way to the primary rung. The chevron
-   stays beside the label, since the preview under it is only part of the
-   thought: it points right while the thought is folded and down once it is open,
-   which is the disclosure said in a shape rather than in a bar of colour.
-
-   The rotation has no transition: the head is refilled when `expanded` changes
-   (its signature carries it), so a transition on it would never run. */
-.thinking-step-head {
-  gap: var(--space-2);
-  color: var(--text-secondary);
-  font-size: var(--type-micro);
-}
-/* All the way up, not one rung: the row is quiet at rest, and under the pointer
-   it is the thing being read. A half-lit hover is the worst of both. */
-.thinking-step-head:hover { background: none; color: var(--text-primary); }
-/* Beside the label, not out at the panel's edge: the glyph belongs to the words
-   it opens. While the thought is live the hairline runs on from it. */
-.thinking-step-head .icon {
-  width: 12px;
-  height: 12px;
-}
-.step.thinking:not(.collapsed) .thinking-step-head .icon { transform: rotate(90deg); }
-/* The tool's own name, and the task/system row's text. Both are flex items on a
-   wrapping head, so both may fold under themselves rather than set a floor: a
-   `TodoWrite` line is a sentence and a subagent's name is free text. */
-.step-name {
-  min-width: 0;
-  color: var(--text-secondary);
-  font-family: var(--font-mono);
-  overflow-wrap: anywhere;
-}
-.step-label {
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-/* The call's arguments — a command, a path, a pattern — **shown whole**. It was
-   one ellipsized line, on the reasoning that the head is a skim row and the body
-   below has the full string; but for a `Grep` or a `Bash` the arguments *are* the
-   step, the ellipsis fell on the end of the path (the file name, the part being
-   read for), and the body is a different question — the results, not the call. So
-   the row folds instead, on `.step-head`'s own `flex-wrap`.
-   `min-width: 0` is still load-bearing, and now for the wrap rather than the
-   ellipsis: a flex item refuses to shrink under its own content unless it is told
-   to, so without it a long argument widened the row and took the transcript's
-   horizontal scrollbar with it. `anywhere` because a path has no spaces to break
-   at. `flex: 1 1 auto` gives it the leftover width, so it folds last. */
-.step-summary {
-  flex: 1 1 auto;
-  min-width: 0;
-  color: var(--text-tertiary);
-  font-family: var(--font-mono);
-  overflow-wrap: anywhere;
-}
-.step-suffix,
-.step-duration { color: var(--text-tertiary); }
-.step-suffix { min-width: 0; overflow-wrap: anywhere; }
-.step-duration { margin-left: auto; }
-/* The Agent family's `subagent_type`: a quiet tag, the name being 「子代理」. */
 .step-tag {
   padding: 0 var(--space-1);
   border: 1px solid var(--border-subtle);
@@ -2499,29 +2234,22 @@ body.settings-open #browser-resizer { display: none; }
   align-items: baseline;
   gap: var(--space-2);
   min-width: 0;
-  margin-left: var(--space-4);
-  padding-bottom: var(--space-1);
+  padding: 0 var(--space-3) var(--space-2);
   color: var(--text-tertiary);
   font-size: var(--type-code);
 }
 .step-live-arrow { color: var(--text-tertiary); }
 /* Padding rather than a vertical margin, and `overflow: hidden`: the body is the
-   grid item the fold above collapses, and a margin lives outside the track it
-   would be collapsing — the row would fold to a gap instead of to nothing.
-   `min-height: 0` is the other half, or the item refuses to shrink under its
-   content. */
+   node the fold collapses, and a margin lives outside the box it would be
+   collapsing — the row would fold to a gap instead of to nothing. */
 .step-body {
   overflow: hidden;
   min-height: 0;
   min-width: 0;
-  padding: var(--space-1) 0 var(--space-2);
-  margin-left: var(--space-4);
+  padding: 0 var(--space-3) var(--space-3);
   color: var(--text-tertiary);
   font-size: var(--type-code);
 }
-/* The thought is prose, not a tool's output: the body's padding stays, and the
-   fold is the preview's clamp rather than the disclosure grid. */
-.step.thinking .step-body { padding-bottom: var(--space-1); }
 .step-body-head { margin-bottom: var(--space-1); overflow-wrap: anywhere; }
 /* The edit family's body (T13) is the same diff block the permission dialog
    paints — one diff look everywhere — but a group is not a dialog: the cap
@@ -2569,8 +2297,7 @@ body.settings-open #browser-resizer { display: none; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.step.failed .step-body-text,
-.step.failed .step-name { color: var(--text-danger); }
+.step.failed .step-body-text { color: var(--text-danger); }
 .step.failed .step-terminal { color: var(--text-danger); }
 
 /* The search family's body (T15): Grep/Glob results grouped by file, every
@@ -2734,13 +2461,16 @@ body.settings-open #browser-resizer { display: none; }
   color: var(--text-secondary);
 }
 .transcript .item.notice { color: var(--text-secondary); font-style: italic; }
+.transcript .item.notice.interrupt { font-style: normal; }
 .transcript .item.error { color: var(--text-danger); }
 .transcript .item.subagent { color: var(--accent-tool); }
-.transcript .item.duration {
+/* The turn's total, in small type under its answer — and 「已中断」 where a turn was
+   stopped, in the same place and the same voice. */
+.transcript .item.duration,
+.transcript .item.notice.interrupt {
+  margin: calc(-1 * var(--space-1)) 0 var(--space-5);
   color: var(--text-tertiary);
   font-size: var(--type-meta);
-  /* 「已处理 Xm Xs」, the same string the thinking header seals to — tabular
-     figures keep the two renderings and stacked turn summaries steady. */
   font-variant-numeric: tabular-nums;
 }
 /* Tool lines are command text and tool output: they have to stay monospaced or
@@ -2756,14 +2486,8 @@ body.settings-open #browser-resizer { display: none; }
   font-size: var(--type-code);
 }
 .transcript .item.tool.failed { color: var(--text-danger); border-left-color: var(--text-danger); }
-/* A streaming item carries no caret. A `▌` chasing the last token is a cursor
-   nobody can put anything at — the composer below already owns the only caret on
-   this screen — and it sat on the answer's final line for the whole of a turn's
-   tool work, which is the one place the reader's eye keeps returning to. The
-   thinking hairline and the group head's status say what is live. */
-/* There is no `.tool-progress` strip any more (T10): the running tool names
-   itself on its own step's head, one line up, with its bead and its elapsed
-   time. */
+/* A streaming item carries no caret: the composer below already owns the only
+   caret on this screen, and the live status line says what is running. */
 
 /* --- jump to bottom ---
    Floats over the tail of the transcript while the user is reading back, and is
@@ -5312,8 +5036,7 @@ body.projects-open #browser-resizer,
      and disclosures. Intent changes retarget the current visual value in both
      directions; content updates do not restart entrance.
 
-   Transcript text has no entrance animation. Actual completion edges own the
-   one-shot bead feedback. Both transitions and running signals depend on nodes
+   Transcript text has no entrance animation. Both transitions and running signals depend on nodes
    staying attached: `reconcile` preserves that identity through streaming. */
 .titlebar-rail,
 .titlebar-menu-trigger,
@@ -5336,7 +5059,7 @@ body.projects-open #browser-resizer,
 .session-actions,
 .welcome-project,
 .scroll-bottom,
-.group-head,
+.run-line,
 .step-head,
 #composer-attach,
 #chip-permission,
@@ -5485,18 +5208,14 @@ body.projects-open #browser-resizer,
   .presence[data-presence], #submit:active, #stop:active {
     transform: none !important;
   }
-  .waiting-bead,
+  .line-spark i,
   .step-bead,
-  .step.thinking.live .step-rule,
   .task-bead,
   .task-panel,
   .session-badge.running .icon,
   .thread-status .icon,
   .session-title-text {
     animation: none !important;
-  }
-  .step.thinking.live .step-rule {
-    background: currentColor;
   }
   /* The blanket rule above stops the marquee, and stopping it is not enough: the
      hover state also turns the ellipsis off and makes the text an atomic box, so

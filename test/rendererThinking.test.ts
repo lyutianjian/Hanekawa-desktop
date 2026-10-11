@@ -5,245 +5,125 @@ import {
   NO_DISCLOSURE,
   THINKING_DONE_FALLBACK,
   THINKING_LIVE_LABEL,
-  groupHeaderLabel,
-  groupHeaderName,
-  isGroupExpanded,
-  isLooseThinkingExpanded,
-  isStepCollapsible,
-  isStepExpanded,
+  failureLabel,
+  isExpanded,
   pruneDisclosure,
-  resolveDisclosure,
+  runHasTools,
+  summarizeRun,
   thinkingDurationLabel,
-  thinkingHeaderLabel,
-  thinkingHeaderName,
+  thoughtFirstSentence,
+  thoughtLabel,
+  thoughtLiveLabel,
   toggleDisclosure,
 } from '../src/desktop/renderer/model/thinking.js'
 import type { DisclosureState } from '../src/desktop/renderer/model/thinking.js'
 import type {
-  ActivityGroup,
+  ActivityRun,
   ActivityStep,
   ToolStepStatus,
   TranscriptEntry,
-  TranscriptItem,
 } from '../src/desktop/renderer/model/transcript.js'
 
 /**
- * The thinking disclosure's decisions, which are all pure: what the header says,
- * whether the block is open, and which toggles are still about a block that exists.
+ * What an activity line says and which of them are open, as pure decisions.
  */
 
-const live = (id = 'thinking-0'): TranscriptItem => ({ id, kind: 'thinking', text: 'why', pending: true })
-const sealed = (durationMs?: number, id = 'thinking-0'): TranscriptItem => ({
-  id, kind: 'thinking', text: 'why', ...(durationMs === undefined ? {} : { durationMs }),
+test('a thought reads as its first sentence, and as its newest one while it arrives', () => {
+  const text = '先确认目录是否为空。再看本机有哪些运行时，然后定技术栈。\n设计上只用一个强调色。'
+  assert.equal(thoughtFirstSentence(text), '先确认目录是否为空。')
+  assert.equal(thoughtLabel(text), '先确认目录是否为空。')
+  assert.equal(thoughtLiveLabel(text), `${THINKING_LIVE_LABEL} · 设计上只用一个强调色。`)
+  // A dot inside a name is not a sentence end; one before a space is.
+  assert.equal(thoughtFirstSentence('open design-directions.md first. Then read'), 'open design-directions.md first.')
+  // Nothing said yet.
+  assert.equal(thoughtLabel(''), THINKING_DONE_FALLBACK)
+  assert.equal(thoughtLiveLabel('  \n'), THINKING_LIVE_LABEL)
 })
 
-test('the header says what the block is doing, and the time only once it is measured', () => {
-  assert.equal(thinkingHeaderLabel(live()), THINKING_LIVE_LABEL)
-  assert.equal(thinkingHeaderLabel(sealed(458_000)), THINKING_DONE_FALLBACK)
-  assert.equal(thinkingDurationLabel(sealed(458_000)), '7m 38s')
+test('the time sits beside a sealed thought only once it is measured', () => {
+  assert.equal(thinkingDurationLabel({ durationMs: 458_000 }), '7m 38s')
   // A replayed block was never timed, and a live one has no total yet.
-  assert.equal(thinkingDurationLabel(sealed()), undefined)
-  assert.equal(thinkingDurationLabel({ ...live(), durationMs: 900 }), undefined)
-  assert.equal(thinkingHeaderName('思考过程', '12s'), '思考过程 · 用时 12s')
-  assert.equal(thinkingHeaderName('思考过程', undefined), '思考过程')
+  assert.equal(thinkingDurationLabel({}), undefined)
+  assert.equal(thinkingDurationLabel({ pending: true, durationMs: 900 }), undefined)
 })
 
-test('a block outside every group folds to its preview, streaming or sealed', () => {
-  assert.equal(isLooseThinkingExpanded(live()), false)
-  assert.equal(isLooseThinkingExpanded(sealed(1000)), false)
+const tool = (id: string, toolName: string, extra: Partial<Extract<ActivityStep, { kind: 'tool' }>> & { useSummary?: string; detail?: string } = {}): ActivityStep => {
+  const { useSummary, detail, ...rest } = extra
+  return {
+    kind: 'tool',
+    id,
+    text: id,
+    toolName,
+    status: 'done' as ToolStepStatus,
+    tool: { displayName: toolName, useSummary: useSummary ?? id, ...(detail === undefined ? {} : { detail }) },
+    ...rest,
+  }
+}
+const thinking = (id: string): ActivityStep => ({ kind: 'thinking', id, text: '想想' })
 
-  // And the answer is absolute: opened by hand stays open, and nothing about
-  // another block's id leaks across.
-  const state: DisclosureState = new Map([['thinking-0', true]])
-  assert.equal(isLooseThinkingExpanded(live(), state), true)
-  assert.equal(isLooseThinkingExpanded(live('thinking-1'), state), false)
-})
-
-/**
- * §5's disclosure: a dynamic default plus the user's absolute answer.
- */
-
-const toolStep = (id: string, status: ToolStepStatus, toolName = 'Read'): ActivityStep => ({
-  kind: 'tool',
-  id,
-  text: id,
-  toolName,
-  status,
-  tool: { displayName: 'Read', useSummary: 'a.ts' },
-  ...(status === 'running' || status === 'awaiting-approval' ? { pending: true as const } : {}),
-  ...(status === 'failed' ? { failed: true as const } : {}),
-})
-
-const group = (steps: readonly ActivityStep[], status: ActivityGroup['status']): ActivityGroup => ({
-  turnId: 'turn-1',
+const run = (steps: readonly ActivityStep[], status: ActivityRun['status'] = 'done'): ActivityRun => ({
+  id: `run:${steps[0]!.id}`,
   steps,
   status,
-  stepCount: steps.length,
   failedCount: steps.filter((step) => 'status' in step && step.status === 'failed').length,
 })
 
-test('M02 keeps the group open in a live turn with no pending steps', () => {
-  const between = group([toolStep('a', 'done')], 'done')
-  assert.equal(isGroupExpanded(between, NO_DISCLOSURE, true), true)
-  const manual = new Map([['turn-1', false], ['a', true]])
-  assert.equal(isGroupExpanded(between, manual, true), false)
-  assert.equal(isStepExpanded(between, 0, manual), true)
+test('a run folds to one line of counts, in the order each kind first appears', () => {
+  const summary = summarizeRun(run([
+    tool('b1', 'Bash'), tool('b2', 'Bash'), thinking('t'), tool('r1', 'Read'), tool('r2', 'Read'),
+    tool('g', 'Grep'), tool('w', 'WebFetch'), tool('mcp', 'mcp__x__y'),
+  ]))
+  assert.equal(summary.text, '已运行 2 个命令，读取 2 个文件，搜索 1 次，浏览 1 个网页，已使用 1 个工具')
+  assert.equal(summary.failed, 0)
+  assert.equal(summary.aborted, false)
+  assert.equal(summarizeRun(run([tool('a', 'Agent')])).text, '运行 1 个子代理')
+  assert.equal(
+    summarizeRun(run([{ ...tool('todo', 'TodoWrite'), kind: 'task' } as ActivityStep, tool('r', 'Read')])).text,
+    '更新了待办，读取 1 个文件',
+  )
+  assert.equal(runHasTools(run([thinking('t')])), false)
+  assert.equal(runHasTools(run([thinking('t'), tool('r', 'Read')])), true)
 })
 
-test('a turn folds the moment it ends, keeping only what the user opened by hand', () => {
-  const entries = (steps: ActivityStep[], status: ActivityGroup['status'] = 'running'): TranscriptEntry[] =>
-    [{ kind: 'group', group: group(steps, status) }]
-  const running = resolveDisclosure(entries([toolStep('a', 'done'), toolStep('e', 'done', 'Edit')]), NO_DISCLOSURE, 'turn-1')
-  assert.equal(running.get('turn-1'), true)
-  assert.equal(running.get('a'), false, 'a successful read stays one line')
-  assert.equal(running.get('e'), true, 'an edit shows its diff')
-  const done = entries([toolStep('a', 'done'), toolStep('b', 'done')], 'done')
-  assert.equal(resolveDisclosure(done, NO_DISCLOSURE, undefined).get('turn-1'), false)
-  const manual = resolveDisclosure(done, new Map([['a', true], ['b', false]]), undefined)
-  assert.equal(manual.get('turn-1'), true, 'a manually opened child keeps its containing group available')
-  assert.equal(manual.get('a'), true)
-  assert.equal(manual.get('b'), false)
+test('an edit counts files, not calls, and carries the patch counts when every patch parses', () => {
+  const patch = (added: number): string => `--- a\n+++ b\n@@ -1,1 +1,${added} @@\n${Array.from({ length: added }, (_, i) => `+line ${i}`).join('\n')}\n-old`
+  const edits = run([
+    tool('e1', 'Edit', { useSummary: 'src/a.ts', detail: patch(2) }),
+    tool('e2', 'Edit', { useSummary: 'src/a.ts', detail: patch(3) }),
+    tool('w', 'Write', { useSummary: 'src/b.ts', detail: patch(1) }),
+  ])
+  const summary = summarizeRun(edits)
+  assert.equal(summary.text, '编辑 2 个文件')
+  assert.deepEqual(summary.diff, { added: 6, deleted: 3 })
+  // One edit with no patch to read: the counts would be partial, so there are none.
+  assert.equal(summarizeRun(run([tool('e', 'Edit')])).diff, undefined)
 })
 
-test('turn liveness never revives an interruption', () => {
-  const aborted = group([toolStep('a', 'running')], 'aborted')
-  assert.equal(isGroupExpanded(aborted, NO_DISCLOSURE, false), false)
-  assert.equal(isGroupExpanded(aborted, NO_DISCLOSURE, true), false)
-  assert.equal(isGroupExpanded(group([toolStep('a', 'running')], 'running'), NO_DISCLOSURE, false), false)
+test('a failure or an interruption is said beside the counts, not in them', () => {
+  const failed = run([tool('a', 'Read', { status: 'failed', failed: true }), tool('b', 'Read')])
+  assert.equal(summarizeRun(failed).text, '读取 2 个文件')
+  assert.equal(summarizeRun(failed).failed, 1)
+  assert.equal(failureLabel(1), '1 个失败')
+  assert.equal(summarizeRun(run([tool('a', 'Read')], 'aborted')).aborted, true)
 })
 
-test('the group head summarises the turn without naming what is happening now', () => {
-  const steps = [toolStep('a', 'done'), toolStep('b', 'done')]
-  assert.equal(groupHeaderLabel({ ...group(steps, 'done'), durationMs: 458_000 }), '已处理 7m 38s · 2 步')
-  // A failure is stated, not opened — the failed *step* opens itself instead.
-  const failed = group([toolStep('a', 'done'), toolStep('b', 'failed')], 'done')
-  assert.equal(groupHeaderLabel({ ...failed, durationMs: 1200 }), '已处理 1s · 2 步 · 1 失败')
-  // Nothing here tracks the current step: the transcript is an `aria-live` region.
-  assert.equal(groupHeaderLabel(group(steps, 'running')), '工作中 · 2 步')
-  assert.equal(groupHeaderLabel(group(steps, 'aborted')), '已中断 · 2 步')
-  // A replayed turn whose records carry no usable span still has to name itself.
-  assert.equal(groupHeaderLabel(group(steps, 'done')), '已完成 · 2 步')
-  // `stepCount` counts actions, so a turn that only thought and answered has
-  // none — and 「0 步」 is not a fact worth a slot.
-  assert.equal(groupHeaderLabel({ ...group(steps, 'done'), stepCount: 0 }), '已完成')
+test('everything is folded until the user opens it, and the answer is absolute', () => {
+  assert.equal(isExpanded(NO_DISCLOSURE, 'a'), false)
+  const opened = toggleDisclosure(NO_DISCLOSURE, 'a', false)
+  assert.equal(isExpanded(opened, 'a'), true)
+  const closed = toggleDisclosure(opened, 'a', true)
+  assert.equal(isExpanded(closed, 'a'), false)
+  assert.equal(closed.get('a'), false, 'recorded, not forgotten')
 })
 
-test('a running group is named by its status alone, so nothing is re-announced per step', () => {
-  // The label counts steps; the name may not, or the `aria-live` transcript
-  // replays the whole turn head every time a tool starts (§8).
-  const one = group([toolStep('a', 'running')], 'running')
-  const two = group([toolStep('a', 'done'), toolStep('b', 'running')], 'running')
-  assert.notEqual(groupHeaderLabel(one), groupHeaderLabel(two))
-  assert.equal(groupHeaderName(one), '工作中')
-  assert.equal(groupHeaderName(two), '工作中')
-  // A failure arriving mid-turn does not move it either — the failed step opens
-  // itself and its own head says so.
-  assert.equal(groupHeaderName(group([toolStep('a', 'failed')], 'running')), '工作中')
-  // Sealed, the head is written once: the totals are what a finished turn is for.
-  assert.equal(groupHeaderName({ ...group([toolStep('a', 'done')], 'done'), durationMs: 1200 }), '已处理 1s · 1 步')
-  assert.equal(groupHeaderName(group([toolStep('a', 'done')], 'aborted')), '已中断 · 1 步')
-})
-
-test('the group is open while the turn runs and closed once it is over', () => {
-  const steps = [toolStep('a', 'done')]
-  assert.equal(isGroupExpanded(group(steps, 'running')), true)
-  assert.equal(isGroupExpanded(group(steps, 'done')), false)
-  assert.equal(isGroupExpanded(group(steps, 'aborted')), false)
-})
-
-test('successful steps stay folded, running or sealed; edits and failures open', () => {
-  const running = group([
-    toolStep('a', 'done'), toolStep('e', 'done', 'Edit'), toolStep('c', 'running', 'Bash'),
-  ], 'running')
-  assert.deepEqual(running.steps.map((_step, index) => isStepExpanded(running, index)), [false, true, false])
-
-  const done = group([toolStep('a', 'done', 'Grep'), toolStep('w', 'done', 'Write'), toolStep('x', 'failed', 'Bash')], 'done')
-  assert.deepEqual(done.steps.map((_step, index) => isStepExpanded(done, index)), [false, true, true])
-  const agent: ActivityStep = { ...toolStep('s', 'done', 'Agent') }
-  assert.equal(isStepExpanded(group([agent], 'running'), 0), false, 'a sub-agent folds too')
-})
-
-test('a failed step opens itself, and one waiting for approval does not', () => {
-  const sealed = group([toolStep('a', 'done'), toolStep('b', 'failed')], 'done')
-  assert.deepEqual(sealed.steps.map((_step, index) => isStepExpanded(sealed, index)), [false, true])
-
-  // The permission request is drawn in the composer; the transcript must not pull
-  // the focus back up, not even though this is the running turn's last step.
-  const asking = group([toolStep('a', 'done'), toolStep('b', 'awaiting-approval', 'Edit')], 'running')
-  assert.deepEqual(asking.steps.map((_step, index) => isStepExpanded(asking, index)), [false, false])
-})
-
-test('a step with no body is never a disclosure', () => {
-  const text: ActivityStep = { kind: 'text', id: 't', text: 'staged' }
-  const task: ActivityStep = {
-    kind: 'task', id: 'todo', text: 'TodoWrite', status: 'done',
-    tool: { displayName: 'TodoWrite', useSummary: '' },
-  }
-  const system: ActivityStep = { kind: 'system', id: 's', text: 'Context compacted.' }
-  for (const step of [text, task, system]) {
-    assert.equal(isStepCollapsible(step), false, step.kind)
-    const sealed = group([step], 'done')
-    // Shown whole even under a collapsing default, and even if a stale answer
-    // claims otherwise: there is nothing to fold.
-    assert.equal(isStepExpanded(sealed, 0), true)
-    assert.equal(isStepExpanded(sealed, 0, new Map([[step.id, false]])), true)
-  }
-  assert.equal(isStepExpanded(group([], 'done'), 0), false, 'no such step')
-})
-
-test('a hand-collapsed edit stays collapsed when the next step arrives', () => {
-  // The case the deviation model got wrong: a recorded deviation re-opens what
-  // the user shut once the default moves under it.
-  const running = group([toolStep('a', 'done', 'Edit')], 'running')
-  assert.equal(isStepExpanded(running, 0), true)
-
-  const state = toggleDisclosure(NO_DISCLOSURE, 'a', isStepExpanded(running, 0))
-  assert.equal(isStepExpanded(running, 0, state), false, 'closed by hand')
-
-  const grown = group([toolStep('a', 'done', 'Edit'), toolStep('b', 'done', 'Edit')], 'running')
-  assert.equal(isStepExpanded(grown, 0, state), false, 'and it stays closed')
-  assert.equal(isStepExpanded(grown, 1, state), true)
-  assert.equal(isStepExpanded(group([toolStep('a', 'done', 'Edit')], 'done'), 0, state), false)
-})
-
-test('a hand-opened step survives the automatic collapse at turn end', () => {
-  const sealed = group([toolStep('a', 'done'), toolStep('b', 'done')], 'done')
-  const state = toggleDisclosure(NO_DISCLOSURE, 'a', isStepExpanded(sealed, 0))
-  assert.equal(isStepExpanded(sealed, 0, state), true)
-  assert.equal(isStepExpanded(sealed, 1, state), false, 'and nothing leaks to its neighbour')
-})
-
-test('a hand-answered group ignores its own default from then on', () => {
-  const running = group([toolStep('a', 'running')], 'running')
-  const state = toggleDisclosure(NO_DISCLOSURE, running.turnId, isGroupExpanded(running))
-  assert.equal(isGroupExpanded(running, state), false)
-  assert.equal(isGroupExpanded(group([toolStep('a', 'done')], 'done'), state), false)
-
-  // And a second click is a second absolute value, not a stack of deviations.
-  const reopened = toggleDisclosure(state, running.turnId, false)
-  assert.equal(isGroupExpanded(running, reopened), true)
-})
-
-test('pruning keeps only groups, steps and loose thinking blocks that exist', () => {
-  const live = group([toolStep('a', 'done')], 'done')
+test('pruning keeps only the runs and steps that exist', () => {
   const entries: TranscriptEntry[] = [
     { kind: 'item', item: { id: 'm1', kind: 'user', text: 'hi' } },
-    { kind: 'group', group: live },
-    { kind: 'item', item: { id: 'loose-thinking', kind: 'thinking', text: 'why' } },
+    { kind: 'run', run: run([thinking('t1'), tool('a', 'Read')]) },
   ]
-  const state: DisclosureState = new Map([
-    ['turn-1', false],
-    ['a', true],
-    ['loose-thinking', true],
-    ['m1', true],
-    ['turn-0', true],
-    ['thinking-0', false],
-  ])
+  const state: DisclosureState = new Map([['t1', true], ['a', true], ['m1', true], ['gone', true]])
 
-  assert.deepEqual(
-    [...pruneDisclosure(entries, state)],
-    [['turn-1', false], ['a', true], ['loose-thinking', true]],
-  )
+  assert.deepEqual([...pruneDisclosure(entries, state)], [['t1', true], ['a', true]])
   // A `transcript-reset` restarts the id counter, so nothing may survive it.
   assert.deepEqual([...pruneDisclosure([], state)], [])
 })

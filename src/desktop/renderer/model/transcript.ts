@@ -22,19 +22,18 @@ import { parseCoordinationUpdate, parseThreadNoteMessage, type ThreadNotesData }
  * DOM-free on purpose — `test/` imports this, and that puts it in the base
  * tsconfig program, which has no DOM lib.
  *
- * ## Activity groups
+ * ## Activity runs
  *
- * The decision `activity_group_tasks.md` T2 asks to fix, so nothing downstream
- * reopens it: **`items` stays the single authoritative list, and the activity
- * group tree is a pure derivation over it** (`groupTranscript`). It is not a
- * second structure the fold has to keep in step.
+ * **`items` stays the single authoritative list, and the activity runs are a pure
+ * derivation over it** (`groupTranscript`). It is not a second structure the fold
+ * has to keep in step.
  *
- * That is what makes §4.2's symmetry cheap rather than a standing risk: live and
- * replay agree on the group tree exactly when they agree on `items`, which is one
- * property to test instead of two code paths to keep aligned. Every fact a group
- * needs therefore rides on an item — `turnId` (the grouping key, §4.1),
- * `createdAt` (the fallback span), `durationMs` on the turn's `duration` item (the
- * authoritative elapsed time), `interrupt` (an aborted turn).
+ * That is what makes the live/replay symmetry cheap rather than a standing risk:
+ * the two agree on the runs exactly when they agree on `items`, which is one
+ * property to test instead of two code paths to keep aligned. Every fact a run
+ * needs therefore rides on an item — `turnId`, `createdAt` (the span a replayed
+ * turn is timed by), `durationMs` on the turn's `duration` item (the authoritative
+ * elapsed time), `interrupt` (an aborted turn).
  *
  * ## Live and replay produce the *same* items (§4.2, T3)
  *
@@ -51,10 +50,7 @@ import { parseCoordinationUpdate, parseThreadNoteMessage, type ThreadNotesData }
  *    commit and what makes the two trees compare field-for-field.
  *
  * Live items are stamped with `turnId` from the records already seen this turn, so
- * a streaming segment joins its group before the turn ends. §4.6's demotion of a
- * tentative final answer then needs no code of its own: `groupTranscript` keeps
- * only the run's *last* assistant text outside the group, so a `tool_use` arriving
- * after it moves it inside by itself.
+ * a streaming segment belongs to its turn before the turn ends.
  *
  * ## A tool is one step, not two rows (§4.5, T4)
  *
@@ -188,7 +184,7 @@ export interface TranscriptItem {
   readonly pending?: boolean
   readonly failed?: boolean
   readonly toolName?: string
-  /** The activity group this item belongs to (§4.1). Absent = outside every group. */
+  /** The turn this item belongs to. Absent = outside every turn. */
   readonly turnId?: string
   /** The originating record's timestamp; the fallback source of a group's duration. */
   readonly createdAt?: string
@@ -220,7 +216,7 @@ export interface TranscriptItem {
   readonly threadNotes?: ThreadNotesData
 }
 
-/** One step inside an activity group. `text` is the body; heads are the view's job. */
+/** One step inside an activity run. `text` is the body; heads are the view's job. */
 export type ActivityStep =
   | { readonly kind: 'thinking'; readonly id: string; readonly text: string; readonly pending?: boolean; readonly durationMs?: number }
   | {
@@ -233,11 +229,9 @@ export type ActivityStep =
       readonly status: ToolStepStatus
       readonly tool: ToolStepDetail
     }
-  | { readonly kind: 'text'; readonly id: string; readonly text: string }
   | { readonly kind: 'subagent'; readonly id: string; readonly text: string; readonly pending?: boolean }
-  | { readonly kind: 'system'; readonly id: string; readonly text: string; readonly failed?: boolean }
   // `TodoWrite`: a single line that never expands — the list itself lives in the
-  // task panel above the composer (§4.4, §7).
+  // task panel above the composer.
   | {
       readonly kind: 'task'
       readonly id: string
@@ -249,34 +243,28 @@ export type ActivityStep =
       readonly tool: ToolStepDetail
     }
 
-export interface ActivityGroup {
-  /** The grouping key, and the group's stable id. */
-  readonly turnId: string
+/**
+ * A stretch of work between two pieces of prose: consecutive thinking, tools,
+ * to-do writes and sub-agent runs. It is drawn as one summary line that opens
+ * into a card with a row per step.
+ */
+export interface ActivityRun {
+  /** `run:` plus the first step's id: stable, and apart from the step's own disclosure id. */
+  readonly id: string
+  readonly turnId?: string
   readonly steps: readonly ActivityStep[]
+  /** `aborted`: the turn was interrupted right after this run. */
   readonly status: 'running' | 'done' | 'aborted'
-  readonly durationMs?: number
-  /**
-   * How many **actions** the turn took — tool calls, the task-list write, a
-   * sub-agent run — and not `steps.length`.
-   *
-   * A step is any row inside the group, which includes the turn's reasoning and
-   * the prose staged between two tools. Counting those made 「7 步」 out of a turn
-   * that ran one command: what a reader counts a turn's work in is the things it
-   * *did*, and thinking and text are the narration around them. Zero is a real
-   * answer (a turn that only thought aloud), and the head drops the counter
-   * rather than claiming 「0 步」.
-   */
-  readonly stepCount: number
   readonly failedCount: number
 }
 
 /**
- * The transcript as the view reads it: loose items (user messages, the final
- * answer, turn-less notices) interleaved with activity groups, in order.
+ * The transcript as the view reads it, in order: loose items (messages, notices,
+ * the turn's elapsed line) interleaved with activity runs.
  */
 export type TranscriptEntry =
   | { readonly kind: 'item'; readonly item: TranscriptItem }
-  | { readonly kind: 'group'; readonly group: ActivityGroup }
+  | { readonly kind: 'run'; readonly run: ActivityRun }
 
 export interface TranscriptState {
   readonly items: readonly TranscriptItem[]
@@ -1286,17 +1274,15 @@ function truncate(value: string, maxLength: number): string {
 }
 
 /**
- * Items to «loose item | activity group», in order (§2, §4.4).
+ * Items to «loose item | activity run», in order.
  *
- * A group is one contiguous run of items sharing a `turnId`. Contiguity is what
- * keeps the projection order-preserving: were the same turn to appear twice with
- * something else between, hoisting the later half into the earlier group would
- * move rows the reader has already read.
+ * Thinking, tool calls, to-do writes and sub-agent runs that follow one another
+ * make one run; anything else — a user message, prose, a notice, a thread card, the
+ * turn's elapsed line — is a loose item and ends the run. A notice therefore cuts a
+ * run in two, and an interruption marks the run it cut off as `aborted`.
  *
- * What leaves the group: the user's message, and the turn's final answer — the
- * last assistant text of the run, which §4.6 keeps outside as the only 「正文」.
- * A turn with no steps draws no empty group; its duration falls back to the
- * single line it is today (§5.3).
+ * A turn that was replayed has no measured `duration` item, so one is made from the
+ * span of its records. The view hides it while that turn is still streaming.
  *
  * Memoised on the *identity* of the item list, one slot deep. Two callers ask
  * for the same projection on every paint — `paneSession.ts` for
@@ -1315,43 +1301,91 @@ export function groupTranscript(input: readonly TranscriptItem[]): readonly Tran
   return entries
 }
 
+function isRunItem(item: TranscriptItem): boolean {
+  return item.kind === 'thinking' || item.kind === 'tool' || item.kind === 'subagent'
+}
+
 function buildTranscriptEntries(input: readonly TranscriptItem[]): TranscriptEntry[] {
   const items = hoistDurations(input)
   const entries: TranscriptEntry[] = []
-  for (let index = 0; index < items.length;) {
-    const turnId = items[index]!.turnId
-    if (turnId === undefined) {
-      entries.push({ kind: 'item', item: items[index]! })
-      index += 1
+  const interruptedTurns = new Set(items.filter((item) => item.interrupt === true).map((item) => item.turnId))
+  let segment: TranscriptItem[] = []
+  let turn: { id: string; first: number; last: number; settled: boolean } | undefined
+
+  const flush = (aborted: boolean): void => {
+    if (segment.length > 0) entries.push({ kind: 'run', run: makeRun(segment, aborted, interruptedTurns) })
+    segment = []
+  }
+  const closeTurn = (): void => {
+    if (turn && !turn.settled && turn.last > turn.first) {
+      const durationMs = turn.last - turn.first
+      entries.push({
+        kind: 'item',
+        item: { id: `duration-span-${turn.id}`, kind: 'duration', text: `已处理 ${formatWorkedDuration(durationMs)}`, durationMs, turnId: turn.id },
+      })
+    }
+    turn = undefined
+  }
+
+  for (const item of items) {
+    if (item.turnId !== undefined && item.turnId !== turn?.id) {
+      flush(false)
+      closeTurn()
+      turn = { id: item.turnId, first: Infinity, last: -Infinity, settled: false }
+    }
+    if (turn && item.turnId !== undefined) {
+      const stamp = item.createdAt === undefined ? NaN : Date.parse(item.createdAt)
+      if (Number.isFinite(stamp)) {
+        turn.first = Math.min(turn.first, stamp)
+        turn.last = Math.max(turn.last, stamp)
+      }
+    }
+    if (turn && (item.kind === 'duration' || item.interrupt === true)) turn.settled = true
+    // An empty assistant record is the shape of a tool-only request: no bubble,
+    // and no reason to end the run around it.
+    if (item.kind === 'assistant' && item.text.trim().length === 0) continue
+    if (isRunItem(item)) {
+      segment.push(item)
       continue
     }
-    let end = index
-    while (end < items.length && items[end]!.turnId === turnId) end += 1
-    entries.push(...turnEntries(turnId, items.slice(index, end)))
-    index = end
+    flush(item.interrupt === true)
+    entries.push({ kind: 'item', item })
   }
+  flush(false)
+  closeTurn()
   return entries
 }
 
+function makeRun(items: readonly TranscriptItem[], cutByInterrupt: boolean, interruptedTurns: ReadonlySet<string | undefined>): ActivityRun {
+  const steps = items.map(toStep)
+  const turnId = items[0]!.turnId
+  const pending = steps.some((step) => 'pending' in step && step.pending === true)
+  // A notice can stand between the run and the interruption, so a run that is
+  // still waiting on a call is aborted by an interruption anywhere in its turn.
+  const aborted = cutByInterrupt || (pending && interruptedTurns.has(turnId))
+  return {
+    id: `run:${items[0]!.id}`,
+    ...(turnId === undefined ? {} : { turnId }),
+    steps,
+    // An interruption outranks a step still marked pending: the tool call the abort
+    // cut off never gets a result, so "running" would be permanent.
+    status: aborted ? 'aborted' : pending ? 'running' : 'done',
+    failedCount: steps.filter((step) => (
+      ('status' in step && step.status === 'failed') || ('failed' in step && step.failed === true)
+    )).length,
+  }
+}
+
 /**
- * Moves each `duration` item back beside the run it measures.
+ * Moves each `duration` item back beside the turn it measures.
  *
  * A notice minted between a turn's last record and its `turn-end` — an
- * interruption, a turn-level error — carries no `turnId`, so it splits the
- * turn's contiguous run in two and the duration lands in a run of its own.
- * `turnEntries` then reads that as 「a turn with no steps」 and draws a standalone
- * 「已处理」 line under the answer, while the activity group above has already
- * fallen back to the record span for the same total. The total belongs in one
- * place, and this is the cheapest place to say so: everything downstream keeps
- * reading one contiguous run per turn.
- *
- * Order-preserving otherwise — the item only ever moves *earlier*, to just after
- * the last item of its own turn, so nothing the reader has read changes place.
+ * interruption, a turn-level error — carries no `turnId`, so it separates the
+ * turn's items and the duration would land after it, away from the answer. Order-preserving otherwise — the item only ever moves *earlier*, to just after
+ * the last item of its own turn.
  */
 function hoistDurations(items: readonly TranscriptItem[]): readonly TranscriptItem[] {
-  // The *input* is handed back when nothing moved, which is the common case —
-  // callers compare item identity, not list identity, but there is no reason to
-  // mint a second list per paint either.
+  // The *input* is handed back when nothing moved, which is the common case.
   let moved = false
   const list = [...items]
   for (let index = 0; index < list.length; index += 1) {
@@ -1368,83 +1402,6 @@ function hoistDurations(items: readonly TranscriptItem[]): readonly TranscriptIt
     moved = true
   }
   return moved ? list : items
-}
-
-function turnEntries(turnId: string, run: readonly TranscriptItem[]): TranscriptEntry[] {
-  const before: TranscriptItem[] = []
-  const after: TranscriptItem[] = []
-  const body: TranscriptItem[] = []
-  // Thread notes are cards, never steps: folded into the group they would be
-  // hidden behind 「已处理」 and drawn as the raw wake text when unfolded.
-  const notes: TranscriptItem[] = []
-  let duration: TranscriptItem | undefined
-
-  for (const item of run) {
-    if (item.kind === 'user') (body.length === 0 ? before : body).push(item)
-    else if (item.kind === 'thread-notes') (body.length === 0 ? before : notes).push(item)
-    else if (item.kind === 'duration') duration = item
-    // An empty assistant record is the shape of a tool-only request: no bubble.
-    else if (item.kind === 'assistant' && item.text.trim().length === 0) continue
-    else body.push(item)
-  }
-  // The final answer is the run's last item only when nothing followed it.
-  const last = body[body.length - 1]
-  if (last?.kind === 'assistant') { after.push(last); body.pop() }
-
-  const steps = body.map(toStep)
-  const entries: TranscriptEntry[] = before.map((item) => ({ kind: 'item' as const, item }))
-  if (steps.length === 0) {
-    // The single elapsed line goes where it has always gone: under the answer.
-    entries.push(...[...notes, ...after].map((item) => ({ kind: 'item' as const, item })))
-    if (duration) entries.push({ kind: 'item', item: duration })
-    return entries
-  }
-
-  // An interruption outranks a step still marked pending: the tool call the abort
-  // cut off never gets a result, so "running" would be permanent. Both paths read
-  // the same `turn_interruption` record, which is why live and replay agree —
-  // `turn-end`'s own `aborted` flag is deliberately not consulted, replay has none.
-  const interrupted = run.some((item) => item.interrupt === true)
-  const running = steps.some((step) => 'pending' in step && step.pending === true)
-  entries.push({
-    kind: 'group',
-    group: {
-      turnId,
-      steps,
-      status: interrupted ? 'aborted' : running ? 'running' : 'done',
-      ...durationOf(duration, run),
-      stepCount: steps.filter(isActionStep).length,
-      failedCount: steps.filter((step) => (
-        ('status' in step && step.status === 'failed') || ('failed' in step && step.failed === true)
-      )).length,
-    },
-  })
-  return [...entries, ...[...notes, ...after].map((item) => ({ kind: 'item' as const, item }))]
-}
-
-/**
- * A step that counts towards 「N 步」: something the turn *did*.
- *
- * `system` is out with `thinking` and `text` — a compaction notice or an
- * interruption is a thing that happened *to* the turn, not work it performed —
- * but a failed one still reaches `failedCount`, which counts trouble rather than
- * actions.
- */
-export function isActionStep(step: ActivityStep): boolean {
-  return step.kind === 'tool' || step.kind === 'task' || step.kind === 'subagent'
-}
-
-/**
- * The measured elapsed time when the turn ended under this state, and otherwise
- * the span of the turn's records — a replayed turn has no `turn-end` to quote.
- */
-function durationOf(duration: TranscriptItem | undefined, run: readonly TranscriptItem[]): { durationMs?: number } {
-  if (duration?.durationMs !== undefined) return { durationMs: duration.durationMs }
-  const stamps = run
-    .map((item) => (item.createdAt === undefined ? NaN : Date.parse(item.createdAt)))
-    .filter((value) => Number.isFinite(value))
-  if (stamps.length < 2) return {}
-  return { durationMs: Math.max(...stamps) - Math.min(...stamps) }
 }
 
 const TASK_TOOL = 'TodoWrite'
@@ -1564,15 +1521,8 @@ function toStep(item: TranscriptItem): ActivityStep {
         text: item.text,
         ...(item.pending === true ? { pending: true } : {}),
       }
-    // A notice or error inside a turn is a system record — a compaction, an
-    // interruption — and where it happened is the information (§4.4).
-    case 'notice':
-      return { kind: 'system', id: item.id, text: item.text }
-    case 'error':
-      return { kind: 'system', id: item.id, text: item.text, failed: true }
-    // Staged prose between tools: a step, shown whole, never folded (§4.4).
     default:
-      return { kind: 'text', id: item.id, text: item.text }
+      throw new Error(`Not a run item: ${item.kind}`)
   }
 }
 

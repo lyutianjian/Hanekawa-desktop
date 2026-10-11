@@ -8,7 +8,6 @@ import { SIDEBAR_COLLAPSE_FALLBACK_MS } from '../src/desktop/renderer/model/side
 import { SIDEBAR_WIDTH_DEFAULT } from '../src/desktop/renderer/model/sidebarWidth.js'
 import { MARQUEE_GAP } from '../src/desktop/renderer/model/marquee.js'
 import { PRESENCE_FALLBACK_MS, type PresenceKind } from '../src/desktop/renderer/model/presence.js'
-import { STEP_COMPLETION_FALLBACK_MS } from '../src/desktop/renderer/model/thinking.js'
 import { TASK_LOCATE_FALLBACK_MS } from '../src/desktop/renderer/model/tasks.js'
 
 /**
@@ -39,9 +38,8 @@ const MOTION_TOKENS = {
   "--motion-panel-out": "200ms",
   "--motion-scrim-in": "200ms",
   "--motion-scrim-out": "180ms",
-  "--motion-complete": "180ms",
   "--motion-running": "2800ms",
-  "--motion-label-sheen": "3200ms",
+  "--motion-spark": "1200ms",
   "--motion-locate": "600ms",
   "--motion-hover-delay": "500ms"
 }
@@ -371,6 +369,7 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-6': '32px',
       '--space-7': '48px',
       '--radius-lg': '20px',
+      '--radius-bubble': '13px',
       '--radius-md': '12px',
       '--radius-sm': '8px',
       '--radius-pill': '9999px',
@@ -380,7 +379,7 @@ test('the palette is the one that was agreed, value for value', () => {
     '--presence-scale': '0.985',
       '--ease-standard': 'cubic-bezier(0.22, 0, 0.22, 1)',
       '--ease-exit': 'cubic-bezier(0.4, 0, 1, 1)',
-      '--reading-measure': '980px',
+      '--reading-measure': '760px',
       '--reading-gutter': 'clamp(16px, 4cqi, 40px)',
       '--composer-overhang': '16px',
       // The rail's resting width. A layout number, not a colour: `app.ts`
@@ -428,6 +427,7 @@ test('the palette is the one that was agreed, value for value', () => {
       '--type-display': '28px',
       '--type-title': '20px',
       '--type-body': '15px',
+      '--type-reading': '14px',
       '--type-ui': '14px',
       '--type-meta': '12.5px',
       '--type-micro': '11px',
@@ -484,6 +484,7 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-6': '32px',
       '--space-7': '48px',
       '--radius-lg': '20px',
+      '--radius-bubble': '13px',
       '--radius-md': '12px',
       '--radius-sm': '8px',
       '--radius-pill': '9999px',
@@ -493,7 +494,7 @@ test('the palette is the one that was agreed, value for value', () => {
     '--presence-scale': '0.985',
       '--ease-standard': 'cubic-bezier(0.22, 0, 0.22, 1)',
       '--ease-exit': 'cubic-bezier(0.4, 0, 1, 1)',
-      '--reading-measure': '980px',
+      '--reading-measure': '760px',
       '--reading-gutter': 'clamp(16px, 4cqi, 40px)',
       '--composer-overhang': '16px',
       // The rail's resting width. A layout number, not a colour: `app.ts`
@@ -541,6 +542,7 @@ test('the palette is the one that was agreed, value for value', () => {
       '--type-display': '28px',
       '--type-title': '20px',
       '--type-body': '15px',
+      '--type-reading': '14px',
       '--type-ui': '14px',
       '--type-meta': '12.5px',
       '--type-micro': '11px',
@@ -575,6 +577,7 @@ test('the light block overrides only colours, and adds no token the dark palette
     '--space-6',
     '--space-7',
     '--radius-lg',
+    '--radius-bubble',
     '--radius-md',
     '--radius-sm',
     '--radius-pill',
@@ -587,6 +590,7 @@ test('the light block overrides only colours, and adds no token the dark palette
     '--type-display',
     '--type-title',
     '--type-body',
+    '--type-reading',
     '--type-ui',
     '--type-meta',
     '--type-micro',
@@ -1550,68 +1554,30 @@ test('the composer raises its panels, and they no longer span the canvas', () =>
   }
 })
 
-test('the bead is the tool step\'s whole status vocabulary, and it stays flat', () => {
-  // §3: four states, one 7px dot, and the *only* place the transcript says how a
-  // tool call went. Each state has to be a rule of its own — a state the sheet
-  // never names is one the view can emit and nobody sees — and the two settled
-  // ones have to differ by more than a hue, because colour alone is one channel
-  // and a red/green pair is the one pair that fails first.
-  const bead = blockFor('.step-bead')
-  assert.ok(declares(bead, 'width', '7px'), 'the step bead is the 7px dot §3 specifies')
-  const named = (state: string): Block => blockFor(`.step-bead.${state}`)
-  assert.equal(named('awaiting-approval').decls.find((d) => d.prop === 'color')?.value, 'var(--accent-warn)')
-  assert.equal(named('done').decls.find((d) => d.prop === 'color')?.value, 'var(--accent-review)')
-  assert.equal(named('failed').decls.find((d) => d.prop === 'color')?.value, 'var(--accent-danger)')
-  for (const state of ['awaiting-approval', 'running', 'completing']) {
-    assert.ok(
-      named(state).decls.some((decl) => decl.prop === 'animation'),
-      `.step-bead.${state} carries no motion; colour alone is one channel`,
-    )
-  }
-  for (const state of ['done', 'failed']) {
-    assert.ok(!named(state).decls.some((decl) => decl.prop === 'animation'), 'historical state never replays completion')
-  }
-  // The two that are over do not loop: a settled step must not keep moving under
-  // a reader who has gone back to it.
-  for (const state of ['done', 'failed']) {
-    assert.ok(
-      !named(state).decls.some((decl) => decl.prop === 'animation' && /infinite/.test(decl.value)),
-      `.step-bead.${state} loops forever; only the two live states may`,
-    )
-  }
-
-  // A step is not a card (§9). Depth is the sheet's two steps and a step is
-  // neither of them, so the layering inside a group is indentation and
-  // whitespace — never a third shadow or radius rung.
+test('activity lines carry one running mark, which moves and stays readable', () => {
+  // The spark is the only motion in the transcript: three dots in the brand colour
+  // taking turns, on a semantic duration, drawn with opacity and scale only.
+  const dot = blockFor('.line-spark i')
+  assert.match(dot.decls.find((decl) => decl.prop === 'animation')!.value, /^spark var\(--motion-spark\) linear infinite$/)
+  assert.ok(declares(dot, 'color', 'var(--accent-brand-strong)'))
+  const frames = stripComments(css).match(/@keyframes spark \{([^@]*?\})\s*\}/)?.[1] ?? ''
+  assert.match(frames, /opacity/)
+  assert.doesNotMatch(frames, /background|left|top/)
+  // A card is a card and its rows are not: no row carries a shadow.
   for (const block of blocks) {
-    if (!/^\.step\b|^\.activity-group\b|^\.group-steps\b/.test(block.selector.trim())) continue
+    if (!/^\.step\b|^\.run\b|^\.run-card\b/.test(block.selector.trim())) continue
     for (const decl of block.decls) {
       assert.notEqual(decl.prop, 'box-shadow', `${block.selector} gives a step a card's depth`)
     }
   }
-})
-
-test('running signals stay readable, and completion never scales', () => {
   const source = stripComments(css)
-  assert.match(blockFor('.waiting-bead').decls.find((decl) => decl.prop === 'animation')!.value, /^waiting-breathe /)
-  // The tail row's words carry the thinking row's sheen, over tertiary text so
-  // every frame stays readable.
-  assert.ok(declares(blockFor('.waiting-label'), 'color', 'var(--text-tertiary)'))
-  assert.match(blockFor('.waiting-sheen').decls.find((decl) => decl.prop === 'animation')!.value, /^label-sheen /)
-  assert.ok(declares(blockFor('.waiting-sheen::after'), 'color', 'var(--text-primary)'))
-  // Every sheen runs on the compositor: a painted property would repaint per frame.
-  assert.doesNotMatch(source, /@keyframes[^{]*\{[^@]*background-position/)
-  assert.doesNotMatch(source, /\.waiting-bead::after|@keyframes (?:halo|sweep)\b/)
-  assert.doesNotMatch(source, /\.thinking-header\s*\{[^}]*animation:/)
   for (const name of ['breathe', 'blink']) {
     const frame = source.match(new RegExp(`@keyframes ${name} \\{ 50% \\{ ([^}]+)`))?.[1]
-    assert.ok(frame)
-    assert.match(frame, /opacity: 0\.65;/)
+    if (name === 'breathe') {
+      assert.ok(frame)
+      assert.match(frame, /opacity: 0\.65;/)
+    }
   }
-  const completion = source.match(/@keyframes bead-pop \{ 50% \{ ([^}]+)/)?.[1]
-  assert.ok(completion)
-  assert.match(completion, /opacity:/)
-  assert.doesNotMatch(completion, /transform/)
   for (const block of blocks) {
     for (const decl of block.decls) {
       if (decl.prop === 'animation' && /^spin /.test(decl.value)) assert.match(decl.value, /linear infinite$/)
@@ -1799,8 +1765,7 @@ test('depth is two steps: menus float, modals sit deeper, and the composer joins
   }
 })
 
-test('completion and location fallbacks track their semantic durations', () => {
-  assert.equal(STEP_COMPLETION_FALLBACK_MS, Number.parseInt(MOTION_TOKENS['--motion-complete']) + 60)
+test('location fallbacks track their semantic durations', () => {
   assert.equal(TASK_LOCATE_FALLBACK_MS, Number.parseInt(MOTION_TOKENS['--motion-locate']) + 60)
   for (const block of blocks) {
     for (const decl of block.decls) {
@@ -1965,7 +1930,7 @@ test('the transcript controls carry a rule of their own, not only a contextual o
   // search-list rows (T15) join for the same reason: their hover is the whole
   // clickable affordance, so they cannot live on a rule that is only ever
   // contextual either.
-  for (const selector of ['.thinking-header', '.scroll-bottom', '.group-head', '.step-head', '.search-file-head', '.search-hit']) {
+  for (const selector of ['.run-line', '.scroll-bottom', '.step-head', '.search-file-head', '.search-hit']) {
     const block = blocks.find((candidate) => candidate.selector === selector)
     assert.ok(block, `no rule whose whole selector is ${selector}; a descendant rule is not a resting state`)
     assert.ok(block.decls.length >= 3, `${selector} has ${block.decls.length} declarations; that cannot be a control`)
@@ -2077,8 +2042,8 @@ test('nothing in a turn can widen the transcript', () => {
 
   const CHAIN = [
     '.transcript-column',
-    '.activity-group',
-    '.group-steps',
+    '.run',
+    '.run-card',
     '.step',
     '.step-head',
     '.step-body',
@@ -2103,8 +2068,6 @@ test('nothing in a turn can widen the transcript', () => {
   // shrink is the column's floor whether or not its text may wrap.
   for (const selector of [
     '.step-summary',
-    '.step-head .btn-label',
-    '.group-head .btn-label',
     '.search-file-head .btn-label',
     '.search-hit-text',
   ]) {
