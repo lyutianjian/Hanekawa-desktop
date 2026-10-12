@@ -12,8 +12,8 @@ import type { ActivityRun, ActivityStep, TranscriptEntry } from './transcript.js
  * DOM-free, like everything in `model/`.
  */
 
-/** While the thought is still arriving. */
-export const THINKING_LIVE_LABEL = '正在思考'
+/** While the thought's first sentence is still being written. */
+export const THINKING_LIVE_LABEL = '思考'
 /** A sealed thought that said nothing; its elapsed time, when measured, sits beside it. */
 export const THINKING_DONE_FALLBACK = '思考过程'
 
@@ -80,10 +80,13 @@ export function thoughtLabel(text: string): string {
   return thoughtFirstSentence(text) || THINKING_DONE_FALLBACK
 }
 
-/** The live line: 「正在思考 · 最新一句」, the newest sentence being the one just written. */
+/**
+ * The live line: the first sentence once a second one has begun, so the line
+ * settles once rather than following the stream; 「思考」 until then.
+ */
 export function thoughtLiveLabel(text: string): string {
-  const latest = sentences(text).at(-1)
-  return latest === undefined ? THINKING_LIVE_LABEL : `${THINKING_LIVE_LABEL} · ${latest}`
+  const parts = sentences(text)
+  return parts.length > 1 ? parts[0]! : THINKING_LIVE_LABEL
 }
 
 // --- run summary -------------------------------------------------------------

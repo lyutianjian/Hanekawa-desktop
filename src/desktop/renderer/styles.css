@@ -2105,10 +2105,11 @@ body.settings-open #browser-resizer { display: none; }
 }
 .file-chip .icon { width: 12px; height: 12px; }
 .file-chip-label { font-family: var(--font-mono); }
-/* Text stays still; only status marks move. Reduced-motion lives at the end
-   of the sheet: the token parser allows no other nested rule here except
-   `@keyframes`. */
+/* Text stays still except a thought still arriving, which shimmers; otherwise
+   only status marks move. Reduced-motion lives at the end of the sheet: the
+   token parser allows no other nested rule here except `@keyframes`. */
 @keyframes breathe { 50% { opacity: 0.65; } }
+@keyframes sheen { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 /* --- activity lines ---
    A run of work folds to one quiet line — 「已运行 2 个命令，读取 2 个文件」 — and
    opens into a bordered card with a row per step. A thought outside a run is the
@@ -2148,6 +2149,13 @@ body.settings-open #browser-resizer { display: none; }
 }
 .thinking { min-width: 0; margin-bottom: var(--space-3); }
 .thinking-run > .thinking:last-child { margin-bottom: 0; }
+.thinking.live:not(.open) > .run-line .line-text {
+  background: linear-gradient(90deg, var(--text-tertiary) 35%, var(--text-primary) 50%, var(--text-tertiary) 65%);
+  background-size: 200% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: sheen var(--motion-running) linear infinite;
+}
 .line-text {
   min-width: 0;
   overflow: hidden;
@@ -2185,8 +2193,7 @@ body.settings-open #browser-resizer { display: none; }
   opacity: 0.8;
   transition: transform var(--motion-disclosure) var(--ease-snap);
 }
-.run.open > .run-line .icon,
-.thinking.open > .run-line .icon { transform: rotate(90deg); }
+.run.open > .run-line .icon { transform: rotate(90deg); }
 /* The working mark: one frame of a vertical sprite strip. `dom/workingMarkView.ts`
    names the sheet, its frame count and the frame through custom properties; a
    running animation writes `transform` over the held frame. Layers other than the
@@ -2295,12 +2302,8 @@ body.settings-open #browser-resizer { display: none; }
 .step-name { min-width: 0; color: var(--text-secondary); font-family: var(--font-mono); overflow-wrap: anywhere; }
 .step-summary { min-width: 0; color: var(--text-tertiary); font-family: var(--font-mono); overflow-wrap: anywhere; }
 /* An open thought is its own line, whole: it wraps, and scrolls past 320px. */
-.thinking.open > .run-line,
-.step.thinking:not(.collapsed) > .step-head { align-items: flex-start; }
-.thinking.open > .run-line .icon,
-.step.thinking:not(.collapsed) > .step-head .icon { margin-top: 0.4em; }
-.thinking.open > .run-line .line-text,
-.step.thinking:not(.collapsed) .step-label {
+.thinking.open > .run-line { align-items: flex-start; }
+.thinking.open > .run-line .line-text {
   max-height: 320px;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -5393,6 +5396,11 @@ body.projects-open #browser-resizer,
   }
   .presence[data-presence], #submit:active, #stop:active {
     transform: none !important;
+  }
+  .thinking.live:not(.open) > .run-line .line-text {
+    animation: none !important;
+    background: none;
+    color: inherit;
   }
   .step-bead,
   .task-bead,

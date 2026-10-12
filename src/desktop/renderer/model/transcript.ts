@@ -1481,6 +1481,12 @@ function buildTranscriptEntries(input: readonly TranscriptItem[]): TranscriptEnt
       entries.push({ kind: 'item', item })
       continue
     }
+    // A thought is a line of its own, never a row of the work around it.
+    if (item.kind === 'thinking') {
+      flush(false)
+      entries.push({ kind: 'run', run: makeRun([item], false, interruptedTurns) })
+      continue
+    }
     if (isRunItem(item)) {
       const last = segment[segment.length - 1]
       if (last !== undefined && isTaskCall(last) && isTaskCall(item)) {

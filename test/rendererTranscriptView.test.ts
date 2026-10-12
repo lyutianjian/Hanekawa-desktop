@@ -196,25 +196,25 @@ test('M14 advancing the current thought keeps an opened one open without replay'
   view.render(transcript([first]), opened, RUNNING_T1)
   const head = runOf(view).children[0]!.children[0]!.node
   view.render(transcript([{ ...first, pending: false }, { ...first, id: 'b', text: 'next' }]), opened, RUNNING_T1)
-  const earlier = runOf(view).children[0]!
-  assert.equal(earlier.classes.includes('open'), true)
-  assert.equal(earlier.children[0]!.node, head, 'the open line stays where it is')
-  assert.equal(runOf(view).children[1]!.classes.includes('open'), false, 'the new thought starts folded')
+  const [earlier, later] = view.items().map((item) => item.children[0]!)
+  assert.equal(earlier!.classes.includes('open'), true)
+  assert.equal(earlier!.children[0]!.node, head, 'the open line stays where it is')
+  assert.equal(later!.classes.includes('open'), false, 'the new thought starts folded')
 })
 
-test('a live thought reads as its newest sentence, and opens to the whole text', (t) => {
+test('a live thought shimmers on its first sentence, and opens to the whole text', (t) => {
   const view = mount(t)
   const item: TranscriptItem = { id: 's', kind: 'thinking', text: '第一行。\n第二行。\n第三行。', turnId: 't1', pending: true }
   view.render(transcript([item]), NO_DISCLOSURE, { ...RUNNING_T1, startedAt: Date.now() - 7_000 })
   const line = runOf(view).children[0]!
-  assert.deepEqual(line.classes, ['thinking'])
+  assert.deepEqual(line.classes, ['thinking', 'live'])
   const head = line.children[0]!
   assert.deepEqual(head.classes, ['run-line'])
   assert.deepEqual(
     head.children.map((part) => [part.classes.join(' '), part.text]),
-    [['line-text', '正在思考 · 第三行。'], ['icon', '']],
+    [['line-text', '第一行。']],
   )
-  assert.equal(head.attributes.get('aria-label'), '正在思考 · 第三行。')
+  assert.equal(head.attributes.get('aria-label'), '第一行。')
   assert.equal(head.attributes.get('aria-expanded'), 'false')
   assert.equal(line.children.length, 1, 'folded: no body in the page')
 
@@ -231,7 +231,8 @@ test('a live thought reads as its newest sentence, and opens to the whole text',
   const { pending: _pending, ...sealed } = item
   view.render(transcript([sealed]), new Map([['s', true]]))
   const done = runOf(view).children[0]!.children[0]!
-  assert.deepEqual(done.children.map((part) => part.classes.join(' ')), ['line-text', 'icon'])
+  assert.equal(runOf(view).children[0]!.classes.includes('live'), false, 'sealed: the shimmer stops')
+  assert.deepEqual(done.children.map((part) => part.classes.join(' ')), ['line-text'])
   assert.equal(done.children[0]!.text, '第一行。\n第二行。\n第三行。')
   view.render(transcript([sealed]), NO_DISCLOSURE)
   assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '第一行。')
@@ -241,7 +242,7 @@ test('a sealed thought shows no time, measured or not', (t) => {
   const view = mount(t)
   const head = (): StubView => runOf(view).children[0]!.children[0]!
   view.render(transcript([{ id: 's', kind: 'thinking', text: 'why', turnId: 't1', durationMs: 12_000 }]))
-  assert.deepEqual(head().children.map((child) => child.classes.join(' ')), ['line-text', 'icon'])
+  assert.deepEqual(head().children.map((child) => child.classes.join(' ')), ['line-text'])
 })
 
 function transcript(items: readonly TranscriptItem[] = [], overrides: Partial<TranscriptState> = {}): TranscriptState {
@@ -527,11 +528,8 @@ test('a thought with no tool is a line of its own, folded until opened', (t) => 
   assert.equal(head.tagName, 'BUTTON')
   assert.equal(head.attributes.get('aria-label'), '推理。')
   assert.equal(head.attributes.get('aria-expanded'), 'false')
-  // The first sentence and the caret: no time.
-  assert.deepEqual(head.children.map((child) => [child.className, child.text]), [
-    ['line-text', '推理。'],
-    ['icon', ''],
-  ])
+  // The first sentence alone: no time, no caret.
+  assert.deepEqual(head.children.map((child) => [child.className, child.text]), [['line-text', '推理。']])
   assert.equal(line.children.length, 1, 'the whole text is absent, not hidden')
 })
 
@@ -561,10 +559,7 @@ test('clicking the line reports the thought’s id and what it showed', (t) => {
 
 // --- runs of work ------------------------------------------------------------
 
-/**
- * A turn's items, the way the model hands them over: the user message, then a
- * thought and a tool call with nothing between them — one run.
- */
+/** A turn's items: the user message, then a tool call — one run. */
 function turnItems(overrides: { pending?: boolean } = {}): TranscriptItem[] {
   const tool: TranscriptItem = {
     id: 'call-1',
@@ -583,13 +578,12 @@ function turnItems(overrides: { pending?: boolean } = {}): TranscriptItem[] {
   }
   return [
     { id: 'm1', kind: 'user', text: 'hi', turnId: 't1' },
-    { id: 'th1', kind: 'thinking', text: '先看看这个文件。', durationMs: 2000, turnId: 't1' },
     tool,
   ]
 }
 
 /** The run's id is `run:` + its first step's, and that is the key of its own fold. */
-const RUN = 'run:th1'
+const RUN = 'run:call-1'
 
 /** Opens the run holding `ids[0]` and each of `ids`. */
 function opened(...ids: string[]): DisclosureState {
@@ -629,7 +623,7 @@ test('a settled run is one summary line, folded', (t) => {
 
 test('a failed call is counted in red beside the counts, and an edit’s patch counts ride the line', (t) => {
   const view = mount(t)
-  const failed: TranscriptItem = { ...turnItems()[2]!, failed: true }
+  const failed: TranscriptItem = { ...turnItems()[1]!, failed: true }
   view.render(transcript([turnItems()[0]!, failed]))
   assert.deepEqual(
     runOf(view).children[0]!.children.map((child) => [child.className, child.text]),
@@ -643,7 +637,7 @@ test('a failed call is counted in red beside the counts, and an edit’s patch c
     [['line-text', '编辑 1 个文件'], ['line-meta', '+1 −1'], ['icon', '']],
   )
 
-  const cut: TranscriptItem[] = [turnItems()[0]!, { ...turnItems({ pending: true })[2]!, pending: true }, { id: 'stop', kind: 'notice', text: 'Interrupted.', turnId: 't1', interrupt: true }]
+  const cut: TranscriptItem[] = [turnItems()[0]!, { ...turnItems({ pending: true })[1]!, pending: true }, { id: 'stop', kind: 'notice', text: 'Interrupted.', turnId: 't1', interrupt: true }]
   view.render(transcript(cut))
   assert.deepEqual(
     runOf(view).children[0]!.children.map((child) => [child.className, child.text]),
@@ -666,28 +660,22 @@ test('a running run’s line is its summary; the status is the line below it', (
   assert.equal(head.attributes.get('aria-expanded'), 'false', 'folded while it runs, too')
 })
 
-test('opened, a run is a card with a row per step, thoughts included', (t) => {
+test('opened, a run is a card with a row per step; a thought between tools is a line of its own', (t) => {
   const view = mount(t)
-  view.render(transcript(turnItems({ pending: true })), new Map([[RUN, true]]), RUNNING_T1)
+  const [user, tool] = turnItems({ pending: true })
+  const thought: TranscriptItem = { id: 'th1', kind: 'thinking', text: '先看看这个文件。', turnId: 't1' }
+  view.render(transcript([user!, thought, tool!]), new Map([[RUN, true]]), RUNNING_T1)
 
-  const run = runOf(view)
-  assert.deepEqual(run.classes, ['run', 'open'])
+  assert.deepEqual(view.items().map((entry) => entry.classes.join(' ')), ['item user', 'run thinking-run', 'run open', 'waiting'])
+  const run = view.items()[2]!
   assert.equal(run.children[1]!.classes.includes('run-card'), true)
-  assert.deepEqual(
-    run.children[1]!.children.map((row) => row.classes),
-    [['step', 'thinking', 'collapsed'], ['step', 'tool', 'running', 'collapsed']],
-  )
-  const thought = run.children[1]!.children[0]!.children[0]!
-  assert.deepEqual(thought.children.map((child) => [child.className, child.text]), [
-    ['step-label', '思考：先看看这个文件。'],
-    ['icon', ''],
-  ])
+  assert.deepEqual(run.children[1]!.children.map((row) => row.classes), [['step', 'tool', 'running', 'collapsed']])
 })
 
 test('a tool row is a button whose body exists only while it is open', (t) => {
   const view = mount(t)
-  view.render(transcript(turnItems()), opened('th1', 'call-1'))
-  const tool = runOf(view).children[1]!.children[1]!
+  view.render(transcript(turnItems()), opened('call-1'))
+  const tool = runOf(view).children[1]!.children[0]!
 
   const head = tool.children[0]
   assert.equal(head?.tagName, 'BUTTON')
@@ -701,9 +689,9 @@ test('a tool row is a button whose body exists only while it is open', (t) => {
     [['step-body-head', 'Read 240 lines'], ['step-body-text', 'line one']],
   )
 
-  view.render(transcript(turnItems()), opened('th1'))
-  view.stub.dispatch(runOf(view).children[1]?.children[1]?.children[1]?.node, 'transitionend', { propertyName: 'height' })
-  const folded = runOf(view).children[1]?.children[1]
+  view.render(transcript(turnItems()), new Map([[RUN, true]]))
+  view.stub.dispatch(runOf(view).children[1]?.children[0]?.children[1]?.node, 'transitionend', { propertyName: 'height' })
+  const folded = runOf(view).children[1]?.children[0]
   assert.equal(folded?.children.length, 1, 'folded: the head and nothing else')
   assert.equal(folded?.children[0]?.attributes.get('aria-expanded'), 'false')
 })
@@ -748,7 +736,7 @@ test('the run survives the turn ending, and its line is kept and reports what it
   assert.deepEqual(view.toggled, [[RUN, false]], 'the kept head reports the paint that is on screen')
 })
 
-test('all three levels report their own id and what they showed', (t) => {
+test('the run and its rows report their own id and what they showed', (t) => {
   const view = mount(t)
   view.render(transcript(turnItems()))
   view.stub.click(runOf(view).children[0]?.node)
@@ -757,8 +745,7 @@ test('all three levels report their own id and what they showed', (t) => {
   view.render(transcript(turnItems()), new Map([[RUN, true]]))
   const card = runOf(view).children[1]
   view.stub.click(card?.children[0]?.children[0]?.node)
-  view.stub.click(card?.children[1]?.children[0]?.node)
-  assert.deepEqual(view.toggled.slice(1), [['th1', false], ['call-1', false]])
+  assert.deepEqual(view.toggled.slice(1), [['call-1', false]])
 })
 
 test('nodes are kept by id across paints, so the scroll anchor survives', (t) => {
@@ -824,7 +811,7 @@ test('a streaming paint detaches nothing, so the open thought keeps its place an
   view.render(transcript(streaming('先', '')), open, RUNNING_T1)
   const run = runOf(view)
   const line = run.children[0]!
-  assert.deepEqual(line.classes, ['thinking', 'open'])
+  assert.deepEqual(line.classes, ['thinking', 'open', 'live'])
 
   const detached = {
     column: countDetaches(view.column().node),
@@ -1846,11 +1833,11 @@ test('a kept thought row reports the disclosure it is showing, both ways', (t) =
   // rebuilt every paint, which left the head reporting 「folded」 forever and a row
   // that opened but would not close.
   const view = mount(t)
-  const disclosure = new Map<string, boolean>([[RUN, true]])
-  const items = turnItems({ pending: true })
+  const disclosure = new Map<string, boolean>()
+  const items: TranscriptItem[] = [{ id: 'th1', kind: 'thinking', text: '先看看这个文件。', turnId: 't1', pending: true }]
   const paint = (): void => view.render(transcript(items), disclosure, RUNNING_T1)
   const head = (): StubView => {
-    const found = runOf(view).children[1]?.children[0]?.children[0]
+    const found = runOf(view).children[0]?.children[0]
     assert.ok(found)
     return found
   }
@@ -2349,6 +2336,27 @@ test('the turn footer rides on the answer: 复制 · 刚刚 · 用时 · tokens,
   assert.deepEqual(factsOf(items()[1]!), ['用时 24m 0s'])
   render(transcript(turn), NO_DISCLOSURE, { ...IDLE_ACTIVITY, isStreaming: true, turnId: 't2', startedAt: Date.now(), outputTokens: 90 })
   assert.deepEqual(factsOf(items()[1]!), ['用时 24m 0s'])
+})
+
+test('prose between tool calls carries no meta row; only the settled turn\'s answer does', (t) => {
+  const { render, items } = mount(t)
+  const at = new Date(Date.now() - 5_000).toISOString()
+  const meta = (item: StubView): boolean => item.children.some((child) => child.classes.includes('item-meta'))
+  const running: TranscriptItem[] = [
+    { id: 'u', kind: 'user', text: 'go', turnId: 't1' },
+    { id: 'a1', kind: 'assistant', text: 'looking first', model: 'm', turnId: 't1', createdAt: at },
+    { id: 'b', kind: 'tool', text: 'ls', toolName: 'Bash', turnId: 't1', createdAt: at },
+  ]
+  render(transcript(running, { turnId: 't1' }), NO_DISCLOSURE, { isStreaming: true, startedAt: Date.now(), turnId: 't1' })
+  assert.equal(meta(items()[1]!), false)
+
+  render(transcript([
+    ...running,
+    { id: 'a2', kind: 'assistant', text: 'done', model: 'm', turnId: 't1', createdAt: at },
+    { id: 'd', kind: 'duration', text: '已处理 5s', durationMs: 5000, turnId: 't1' },
+  ]), NO_DISCLOSURE, IDLE_ACTIVITY)
+  const assistants = items().filter((item) => item.classes.includes('assistant'))
+  assert.deepEqual(assistants.map(meta), [false, true])
 })
 
 test('a turn with no answer hangs its footer under its last entry; side views draw none', (t) => {

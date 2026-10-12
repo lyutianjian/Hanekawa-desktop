@@ -7,8 +7,6 @@ import {
   isExpanded,
   runHasTools,
   summarizeRun,
-  THINKING_DONE_FALLBACK,
-  thoughtFirstSentence,
   thoughtLabel,
   thoughtLiveLabel,
   type DisclosureState,
@@ -546,7 +544,7 @@ export function createTranscriptView(
         keepMark: (host) => { markHost = host },
         afterPaint: (run) => afterPaint.push(run),
       })
-      const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index)))
+      const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index), activity !== undefined))
       // Built before `prune`, or its key would count as dead on the very paint
       // that asked for it. A kept line keeps the spans its fill handed over.
       status = live.row ? { row: live.row, tokens: activity?.outputTokens } : undefined
@@ -902,8 +900,8 @@ function sameSignature(a: readonly unknown[], b: readonly unknown[]): boolean {
 
 // --- entries -----------------------------------------------------------------
 
-function entryNode(painter: Painter, entry: TranscriptEntry, footer?: TurnFooter): HTMLElement {
-  return entry.kind === 'run' ? runNode(painter, entry.run) : itemNode(painter, entry.item, footer)
+function entryNode(painter: Painter, entry: TranscriptEntry, footer: TurnFooter | undefined, inTurn: boolean): HTMLElement {
+  return entry.kind === 'run' ? runNode(painter, entry.run) : itemNode(painter, entry.item, footer, inTurn)
 }
 
 /**
@@ -979,8 +977,8 @@ function diffStat(added: number, deleted: number): Child[] {
 }
 
 /**
- * A thought that is not part of a tool run: one line showing its first sentence
- * (「正在思考 · 最新一句」 while it arrives), opening in place to the whole text.
+ * A thought: one line showing its first sentence, opening in place to the whole
+ * text. While it arrives the line shimmers (`.live`) instead of following the stream.
  */
 function thinkingLine(
   painter: Painter,
@@ -989,6 +987,7 @@ function thinkingLine(
   const expanded = isExpanded(painter.disclosure, step.id)
   const classes = ['thinking']
   if (expanded) classes.push('open')
+  if (step.pending === true) classes.push('live')
   return painter.node(`step:${step.id}`, classes.join(' '), [step.text, step.pending, expanded], () => {
     const headKey = `thinking-head:${step.id}`
     const ref = painter.ref(headKey, expanded)
@@ -1002,10 +1001,7 @@ function thinkingLine(
         node.title = label
         node.setAttribute('aria-label', label)
         node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
-        return [
-          lineText(painter, headKey, shown, true),
-          icon('chevron-right'),
-        ]
+        return [lineText(painter, headKey, shown, true)]
       },
       () => button('run-line', '', label, () => painter.onToggle(step.id, ref.expanded)),
     )
@@ -1018,7 +1014,7 @@ function thinkingLine(
 function stepNode(painter: Painter, step: ActivityStep): HTMLElement {
   switch (step.kind) {
     case 'thinking':
-      return thinkingRow(painter, step)
+      return thinkingLine(painter, step)
     case 'tool':
     case 'subagent':
       return toolRow(painter, step)
@@ -1039,40 +1035,6 @@ function taskRow(painter: Painter, step: Extract<ActivityStep, { kind: 'task' }>
   return painter.node(`step:${step.id}`, `step task ${step.status}`, [step.text, step.status], () => {
     const head = button('step-head', '', `${step.text} · ${toolStatusLabel(step.status)}`, () => painter.onTaskStep())
     append(head, [el('span', 'step-label', step.text)])
-    return [head]
-  })
-}
-
-/** A thought inside an opened run: 「思考：first sentence」, opening to the whole text. */
-function thinkingRow(painter: Painter, step: Extract<ActivityStep, { kind: 'thinking' }>): HTMLElement {
-  const expanded = isExpanded(painter.disclosure, step.id)
-  const live = step.pending === true
-  const classes = ['step', 'thinking']
-  if (live) classes.push('live')
-  if (!expanded) classes.push('collapsed')
-  // Fields rather than the step object: `toStep` mints a new one on every paint, so
-  // an object identity would mean 「always different」 and no reuse at all. The strings
-  // it carries *are* the item's own, so `===` still settles in one compare.
-  return painter.node(`step:${step.id}`, classes.join(' '), [step.text, expanded, live], () => {
-    const first = thoughtFirstSentence(step.text)
-    const label = live ? thoughtLiveLabel(step.text) : first ? `思考：${first}` : THINKING_DONE_FALLBACK
-    const headKey = `thinking-head:${step.id}`
-    const ref = painter.ref(headKey, expanded)
-    const head = painter.node(
-      headKey,
-      'step-head',
-      [expanded ? step.text : label, label, expanded],
-      (node) => {
-        node.title = label
-        node.setAttribute('aria-label', label)
-        node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
-        return [
-          el('span', 'step-label', expanded ? step.text : label),
-          icon('chevron-right'),
-        ]
-      },
-      () => button('step-head', '', label, () => painter.onToggle(step.id, ref.expanded)),
-    )
     return [head]
   })
 }
@@ -1280,7 +1242,7 @@ function toolRow(painter: Painter, step: ToolLike): HTMLElement {
   if (!expanded) classes.push('collapsed')
   if (selected) classes.push('selected')
   // `step.tool` is the item's own detail object, so it changes reference exactly
-  // when the result merges in — see `thinkingRow` for why not the step itself.
+  // when the result merges in; `toStep` mints the step itself anew every paint.
   const detail = step.kind === 'tool' ? step.tool : undefined
   return painter.node(`step:${step.id}`, classes.join(' '), [step.text, detail, status, expanded, selected], () => {
     const family = familyData(step)
@@ -1572,7 +1534,11 @@ function receiptNode(painter: Painter, receipt: Receipt, classes: string[], key:
   ))
 }
 
-function itemNode(painter: Painter, item: TranscriptItem, footer?: TurnFooter): HTMLElement {
+/**
+ * `inTurn`: the main transcript, where an assistant message only carries its
+ * meta row as the settled turn's answer — prose between tool calls is not one.
+ */
+function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | undefined, inTurn: boolean): HTMLElement {
   const classes = ['item', item.kind]
   if (item.pending) classes.push('pending')
   if (item.failed) classes.push('failed')
@@ -1587,7 +1553,7 @@ function itemNode(painter: Painter, item: TranscriptItem, footer?: TurnFooter): 
   if (item.kind === 'assistant') {
     return painter.node(key, `${classes.join(' ')} md`, [item.text, item.model, item.createdAt, footer?.durationMs, footer?.tokens, footer && relativeTime(item.createdAt, Date.now())], (node) => [
       ...markdownChildren(item.text, node),
-      metaRow(painter, item, footer),
+      inTurn && footer === undefined ? undefined : metaRow(painter, item, footer),
     ])
   }
   if (item.kind === 'thread-notes' && item.threadNotes) return threadNotesNode(painter, item, classes, key)

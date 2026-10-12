@@ -27,11 +27,13 @@ import type {
  * What an activity line says and which of them are open, as pure decisions.
  */
 
-test('a thought reads as its first sentence, and as its newest one while it arrives', () => {
+test('a thought reads as its first sentence, live or sealed, and never as a half-written one', () => {
   const text = '先确认目录是否为空。再看本机有哪些运行时，然后定技术栈。\n设计上只用一个强调色。'
   assert.equal(thoughtFirstSentence(text), '先确认目录是否为空。')
   assert.equal(thoughtLabel(text), '先确认目录是否为空。')
-  assert.equal(thoughtLiveLabel(text), `${THINKING_LIVE_LABEL} · 设计上只用一个强调色。`)
+  assert.equal(thoughtLiveLabel(text), '先确认目录是否为空。')
+  // The first sentence still being written: the line waits rather than following it.
+  assert.equal(thoughtLiveLabel('先确认目录是'), THINKING_LIVE_LABEL)
   // A dot inside a name is not a sentence end; one before a space is.
   assert.equal(thoughtFirstSentence('open design-directions.md first. Then read'), 'open design-directions.md first.')
   // Nothing said yet.

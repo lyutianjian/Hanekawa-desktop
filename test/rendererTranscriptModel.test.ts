@@ -647,7 +647,7 @@ function groupsOf(records: SessionRecord[]) {
   return groupTranscript(createTranscriptState(records).items)
 }
 
-test('a turn becomes runs of work between prose: thinking and tools together, the answer outside', () => {
+test('a turn becomes runs of work between prose: each thought a run of its own, the answer outside', () => {
   const entries = groupsOf([
     stamped(message('u1', 'user', 'go'), 't1', '2026-01-01T00:00:00.000Z'),
     assistant('a1', 't1', '2026-01-01T00:00:01.000Z', '', ['思考A']),
@@ -656,18 +656,18 @@ test('a turn becomes runs of work between prose: thinking and tools together, th
     assistant('a2', 't1', '2026-01-01T00:00:04.000Z', 'done', ['思考B']),
   ])
 
-  assert.deepEqual(entries.map((entry) => entry.kind), ['item', 'run', 'item', 'item'])
+  assert.deepEqual(entries.map((entry) => entry.kind), ['item', 'run', 'run', 'run', 'item', 'item'])
   assert.equal(itemAt(entries, 0).kind, 'user')
-  assert.equal(itemAt(entries, 2).text, 'done')
+  assert.equal(itemAt(entries, 4).text, 'done')
+  assert.deepEqual([1, 2, 3].map((index) => runAt(entries, index).steps.map((step) => step.kind)), [['thinking'], ['tool'], ['thinking']])
 
-  const run = runAt(entries, 1)
-  assert.equal(run.id, 'run:a1-thinking', 'the first step names the run')
+  const run = runAt(entries, 2)
+  assert.equal(run.id, 'run:tu1', 'the first step names the run')
   assert.equal(run.turnId, 't1')
-  assert.deepEqual(run.steps.map((step) => step.kind), ['thinking', 'tool', 'thinking'])
   assert.equal(run.failedCount, 0)
   assert.equal(run.status, 'done')
   // No turn-end to quote on replay: the records span the turn, and the line is made here.
-  assert.deepEqual([itemAt(entries, 3).kind, itemAt(entries, 3).durationMs, itemAt(entries, 3).text], ['duration', 4000, '已处理 4s'])
+  assert.deepEqual([itemAt(entries, 5).kind, itemAt(entries, 5).durationMs, itemAt(entries, 5).text], ['duration', 4000, '已处理 4s'])
 })
 
 test('a failed call is counted, and a never-answered one keeps the group running', () => {
@@ -721,18 +721,18 @@ test('prose between tools is a loose item that ends the run before it', () => {
 })
 
 test('adjacent thinking with no tool between it is one segment', () => {
-  const steps = runAt(groupsOf([
+  const entries = groupsOf([
     stamped(message('u1', 'user', 'go'), 't1', 'now'),
     assistant('a1', 't1', 'now', '', ['第一段', '第二段']),
     assistant('a2', 't1', 'now', '', ['第三段']),
     toolUse('tu1', 't1', 'now'),
     toolResult('tu1', 't1', 'now'),
     assistant('a3', 't1', 'now', 'done', ['第四段']),
-  ]), 1).steps
+  ])
 
-  assert.deepEqual(steps.map((step) => step.kind), ['thinking', 'tool', 'thinking'])
-  assert.equal(steps[0]?.text, '第一段\n\n第二段\n\n第三段')
-  assert.equal(steps[2]?.text, '第四段')
+  assert.deepEqual([1, 2, 3].map((index) => runAt(entries, index).steps.map((step) => step.kind)), [['thinking'], ['tool'], ['thinking']])
+  assert.equal(runAt(entries, 1).steps[0]?.text, '第一段\n\n第二段\n\n第三段')
+  assert.equal(runAt(entries, 3).steps[0]?.text, '第四段')
 })
 
 test('an old session without thinkingBlocks degrades to tool-only steps, unannotated', () => {
@@ -822,7 +822,8 @@ test('a live turn and a replay of its records produce the same runs, field for f
     'go',
     ['a1-thinking'],
     '先看文件',
-    ['tu1', 'a2-thinking'],
+    ['tu1'],
+    ['a2-thinking'],
     'done',
   ])
 })
@@ -1133,8 +1134,8 @@ test('a thought with no tool is a run of its own, and a sub-agent run is a step'
       records: [], createdAt: '2026-01-01T00:00:04.000Z', turnId: 't2',
     },
     assistant('a4', 't2', '2026-01-01T00:00:05.000Z', 'done'),
-  ]), 1)
-  assert.deepEqual(withRun.steps.map((step) => step.kind), ['thinking', 'tool', 'subagent'])
+  ]), 2)
+  assert.deepEqual(withRun.steps.map((step) => step.kind), ['tool', 'subagent'])
 })
 
 test('consecutive task calls fold into one row that says what they did', () => {
