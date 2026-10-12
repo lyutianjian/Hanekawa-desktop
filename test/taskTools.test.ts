@@ -19,11 +19,11 @@ function makeContext(): ToolContext {
 test('TaskCreate/List/Get/Update share task state and summarize remaining/completed tasks', async () => {
   const ctx = makeContext()
 
-  const created = await taskCreateTool.execute({
+  const created = await taskCreateTool.execute({ tasks: [{
     subject: 'Inspect plan mode',
     description: 'Compare behavior with Claude Code',
     activeForm: 'Inspecting plan mode',
-  }, ctx)
+  }] }, ctx)
   assert.equal(created.ok, true)
   assert.equal(ctx.taskState!.size, 1)
 
@@ -49,14 +49,11 @@ test('TaskCreate/List/Get/Update share task state and summarize remaining/comple
 
 test('TaskUpdate tracks owner metadata dependencies and cleans dependencies on delete', async () => {
   const ctx = makeContext()
-  await taskCreateTool.execute({
-    subject: 'Prepare base',
-    description: 'Create the base task',
-  }, ctx)
-  await taskCreateTool.execute({
-    subject: 'Run dependent work',
-    description: 'Depends on the base task',
-  }, ctx)
+  const created = await taskCreateTool.execute({ tasks: [
+    { subject: 'Prepare base', description: 'Create the base task' },
+    { subject: 'Run dependent work', description: 'Depends on the base task' },
+  ] }, ctx)
+  assert.equal(created.content, 'Created tasks #1: Prepare base, #2: Run dependent work')
 
   const updated = await taskUpdateTool.execute({
     taskId: '2',

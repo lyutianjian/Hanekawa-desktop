@@ -1,9 +1,10 @@
 import type { SessionRecord, TaskItem, ToolContext } from '../harness/types.js'
+import { normalizeToolInput } from './inputAliases.js'
 import { normalizeTask, sortedTasks } from './taskFormat.js'
 import {
   taskCreateInputSchema,
   taskUpdateInputSchema,
-  type TaskCreateInput,
+  type NewTaskInput,
   type TaskUpdateInput,
 } from './taskSchemas.js'
 
@@ -27,7 +28,7 @@ function nextTaskId(tasks: ReadonlyMap<string, TaskItem>): string {
   return String(index)
 }
 
-export function applyTaskCreate(input: TaskCreateInput, tasks: Map<string, TaskItem>): TaskItem {
+export function applyTaskCreate(input: NewTaskInput, tasks: Map<string, TaskItem>): TaskItem {
   const id = nextTaskId(tasks)
   const task = normalizeTask({
     id,
@@ -128,7 +129,9 @@ export function restoreTaskStateFromRecords(records: readonly SessionRecord[]): 
 
     try {
       if (toolUse.tool === 'TaskCreate') {
-        applyTaskCreate(taskCreateInputSchema.parse(toolUse.input), tasks)
+        // Sessions recorded before the batch shape hold one task at the top level.
+        const { tasks: created } = taskCreateInputSchema.parse(normalizeToolInput('TaskCreate', toolUse.input))
+        for (const task of created) applyTaskCreate(task, tasks)
       } else if (toolUse.tool === 'TaskUpdate') {
         applyTaskUpdate(taskUpdateInputSchema.parse(toolUse.input), tasks)
       }

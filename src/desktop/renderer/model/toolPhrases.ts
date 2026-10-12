@@ -1,4 +1,4 @@
-import type { ActivityStep } from './transcript.js'
+import type { ActivityStep, TaskOp } from './transcript.js'
 
 /**
  * How a tool call reads as an action, shared by the live status line (「读取
@@ -60,6 +60,7 @@ const TARGET_MAX = 40
  * keeps its verb.
  */
 export function callParts(step: CallStep, fullPath = false): { readonly verb: string; readonly target: string; readonly bare: boolean } {
+  if (step.tool.taskOps !== undefined) return { verb: taskPhrase(step.tool.taskOps), target: '', bare: false }
   const phrase = step.toolName === undefined ? undefined : PHRASES[step.toolName]
   if (phrase === undefined) {
     const name = step.tool.displayName || step.toolName || '工具'
@@ -71,6 +72,23 @@ export function callParts(step: CallStep, fullPath = false): { readonly verb: st
   const oneLine = raw.replace(/\s+/g, ' ').trim()
   const target = phrase.target === 'file' && !fullPath ? oneLine.split(/[\\/]/).pop()! : oneLine
   return { verb: phrase.verb, target, bare: step.toolName === 'Bash' && !!step.tool.description?.trim() }
+}
+
+const TASK_VERBS = { start: '开始', complete: '完成', update: '更新', delete: '删除' } as const
+
+/**
+ * What a row of task calls did: 「创建 5 个任务」, 「开始任务 1，完成任务 2」. A few ids
+ * are named, more are counted; a row that only looked is 「查看任务」.
+ */
+export function taskPhrase(ops: readonly TaskOp[]): string {
+  const created = ops.reduce((sum, op) => sum + (op.kind === 'create' ? op.count : 0), 0)
+  const parts = created > 0 ? [`创建 ${created} 个任务`] : []
+  for (const kind of ['start', 'complete', 'update', 'delete'] as const) {
+    const ids = [...new Set(ops.flatMap((op) => (op.kind === kind ? [op.id] : [])))]
+    if (ids.length === 0) continue
+    parts.push(ids.length <= 3 ? `${TASK_VERBS[kind]}任务 ${ids.join('、')}` : `${TASK_VERBS[kind]} ${ids.length} 个任务`)
+  }
+  return parts.join('，') || '查看任务'
 }
 
 /** 「读取 waiting.ts」, for the live line: the target is clipped to one short phrase. */

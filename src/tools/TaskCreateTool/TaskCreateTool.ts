@@ -12,23 +12,20 @@ export const taskCreateTool: Tool = {
   riskLevel: 'safe',
   userFacingName: () => 'TaskCreate',
   getToolUseSummary(input) {
-    return typeof input === 'object' && input !== null && typeof (input as { subject?: unknown }).subject === 'string'
-      ? (input as { subject: string }).subject
-      : null
+    const tasks = typeof input === 'object' && input !== null ? (input as { tasks?: unknown }).tasks : undefined
+    if (!Array.isArray(tasks)) return null
+    const subjects = tasks.map((task) => (task as { subject?: unknown } | null)?.subject).filter((subject) => typeof subject === 'string')
+    return subjects.length > 0 ? subjects.join(' · ') : null
   },
-  getActivityDescription(input) {
-    return typeof input === 'object' && input !== null && typeof (input as { activeForm?: unknown }).activeForm === 'string'
-      ? (input as { activeForm: string }).activeForm
-      : 'Creating task'
-  },
+  getActivityDescription: () => 'Creating tasks',
   shouldDisplayResult: () => true,
   async execute(input, context) {
     const parsed = taskCreateInputSchema.parse(input)
     const tasks = ensureTaskState(context)
-    const task = applyTaskCreate(parsed, tasks)
+    const created = parsed.tasks.map((task) => applyTaskCreate(task, tasks))
     return {
       ok: true,
-      content: `Task #${task.id} created successfully: ${task.subject}`,
+      content: `Created ${created.length === 1 ? 'task' : 'tasks'} ${created.map((task) => `#${task.id}: ${task.subject}`).join(', ')}`,
       metadata: { display: taskDisplay(sortedTasks(tasks.values())) },
     }
   },

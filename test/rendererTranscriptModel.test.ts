@@ -23,6 +23,7 @@ import type { ToolDisplayDto } from '../src/runtime/protocol/wire.js'
 import type { SessionRecord, ToolErrorCode } from '../src/harness/types.js'
 import type { SessionEvent } from '../src/runtime/sessionController.js'
 import { wrapInSystemReminder } from '../src/harness/systemReminder.js'
+import { taskPhrase } from '../src/desktop/renderer/model/toolPhrases.js'
 
 /**
  * The desktop transcript's fold over the controller's event stream.
@@ -1134,6 +1135,31 @@ test('a thought with no tool is a run of its own, and a sub-agent run is a step'
     assistant('a4', 't2', '2026-01-01T00:00:05.000Z', 'done'),
   ]), 1)
   assert.deepEqual(withRun.steps.map((step) => step.kind), ['thinking', 'tool', 'subagent'])
+})
+
+test('consecutive task calls fold into one row that says what they did', () => {
+  const call = (id: string, tool: string, input: Record<string, unknown>): SessionRecord[] => [
+    { type: 'tool_use', id, tool, input, riskLevel: 'safe', createdAt: '2026-01-01T00:00:01.000Z', turnId: 't1' },
+    { type: 'tool_result', id: `${id}-r`, toolUseId: id, tool, ok: true, content: 'ok', display: { summary: id, detail: `list after ${id}` }, createdAt: '2026-01-01T00:00:02.000Z', turnId: 't1' },
+  ]
+  const entries = groupsOf([
+    stamped(message('u1', 'user', 'go'), 't1', '2026-01-01T00:00:00.000Z'),
+    ...call('c1', 'TaskCreate', { tasks: [{ subject: 'a', description: 'a' }, { subject: 'b', description: 'b' }] }),
+    ...call('c2', 'TaskCreate', { subject: 'c', description: 'c' }),
+    ...call('u2', 'TaskUpdate', { taskId: '1', status: 'in_progress' }),
+    ...call('u3', 'TaskUpdate', { taskId: '2', status: 'completed' }),
+    toolUse('r1', 't1', '2026-01-01T00:00:03.000Z'),
+    toolResult('r1', 't1', '2026-01-01T00:00:04.000Z'),
+  ])
+
+  const run = runAt(entries, 1)
+  assert.deepEqual(run.steps.map((step) => step.id), ['c1', 'r1'], 'the fold keeps the first call\'s id')
+  const folded = run.steps[0]!
+  assert.ok(folded.kind === 'tool')
+  assert.equal(taskPhrase(folded.tool.taskOps!), '创建 3 个任务，开始任务 1，完成任务 2')
+  assert.equal(folded.tool.detail, 'list after u3', 'the body is the list as the last call left it')
+  assert.equal(taskPhrase([{ kind: 'view' }]), '查看任务')
+  assert.equal(taskPhrase(['1', '2', '3', '4'].map((id) => ({ kind: 'complete' as const, id }))), '完成 4 个任务')
 })
 
 test('a message time is the local wall clock, and unparseable stamps draw nothing', () => {

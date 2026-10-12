@@ -33,6 +33,8 @@ interface AliasSpec {
   values?: Record<string, Record<string, string>>
   /** array-valued key whose items get their own spec */
   nested?: { key: string; spec: AliasSpec }
+  /** array key a call without it is taken as the single item of */
+  wrap?: string
 }
 
 const FILE_PATH_ALIASES = { file_path: 'filePath', filepath: 'filePath', path: 'filePath' }
@@ -164,6 +166,8 @@ const SPECS: Record<string, AliasSpec> = {
   MessageThread: { rename: { message: 'text', content: 'text' } },
   AskCoordinator: { rename: { prompt: 'question', message: 'question', text: 'question', content: 'question' } },
   Browser: { ...BROWSER_SPEC, nested: { key: 'steps', spec: BROWSER_SPEC } },
+  // The prior creates one task per call, with the task's fields at the top level.
+  TaskCreate: { rename: { todos: 'tasks', items: 'tasks' }, wrap: 'tasks' },
 }
 
 const NUMERIC_LITERAL = /^-?\d+(\.\d+)?$/
@@ -191,6 +195,9 @@ function applySpec(input: Record<string, unknown>, spec: AliasSpec): Record<stri
     // so `{filePath, file_path}` cannot silently take the alias.
     if (canonical !== key && Object.hasOwn(input, canonical)) continue
     next[canonical] = value
+  }
+  if (spec.wrap !== undefined && !Object.hasOwn(next, spec.wrap) && Object.keys(next).length > 0) {
+    return { [spec.wrap]: [next] }
   }
 
   for (const key of spec.numbers ?? []) {

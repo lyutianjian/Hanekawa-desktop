@@ -117,6 +117,12 @@ export interface SubagentLive {
   readonly agentId?: string
 }
 
+/** One task-tool call, as the row's phrase counts it. */
+export type TaskOp =
+  | { readonly kind: 'create'; readonly count: number }
+  | { readonly kind: 'start' | 'complete' | 'delete' | 'update'; readonly id: string }
+  | { readonly kind: 'view' }
+
 /**
  * Everything a tool step's head and body need, gathered from both records.
  *
@@ -158,6 +164,8 @@ export interface ToolStepDetail {
   readonly agentType?: string
   /** The Agent family, while the run is going: the tool it started last and how many so far. */
   readonly live?: SubagentLive
+  /** The task tools: what each call did, in order — several once consecutive calls fold into one row. */
+  readonly taskOps?: readonly TaskOp[]
   /** `TodoWrite` only: the `3/6` the head shows (§4.4). */
   readonly progress?: { readonly completed: number; readonly total: number }
   /** `AskUserQuestion`: the questions asked (`input.questions[].question`), in order. */
@@ -942,6 +950,7 @@ function recordItems(record: SessionRecord, context: ItemContext = {}): Transcri
         ...(record.tool === AGENT_TOOL ? agentTask(record.input) : {}),
         ...(record.tool === 'Bash' ? bashDescription(record.input) : {}),
         ...(record.tool === ASK_TOOL ? askedQuestions(record.input) : {}),
+        ...(TASK_TOOLS.has(record.tool) ? { taskOps: [taskOp(record.tool, record.input)] } : {}),
       }
       return [{
         id: record.id,
@@ -1324,6 +1333,38 @@ function searchCaption(tool: string, input: unknown): { displayName: string; use
   return { displayName: tool, useSummary: parts.join(' · ') }
 }
 
+const TASK_TOOLS: ReadonlySet<string> = new Set(['TaskCreate', 'TaskUpdate', 'TaskList', 'TaskGet'])
+
+const STATUS_OPS: Readonly<Record<string, 'start' | 'complete' | 'delete'>> = {
+  in_progress: 'start',
+  completed: 'complete',
+  deleted: 'delete',
+}
+
+function taskOp(tool: string, input: unknown): TaskOp {
+  const value = typeof input === 'object' && input !== null ? input as { tasks?: unknown; taskId?: unknown; status?: unknown } : {}
+  // A session recorded before the batch shape holds one task at the top level.
+  if (tool === 'TaskCreate') return { kind: 'create', count: Array.isArray(value.tasks) ? value.tasks.length : 1 }
+  if (tool !== 'TaskUpdate') return { kind: 'view' }
+  const id = typeof value.taskId === 'string' ? value.taskId : ''
+  return { kind: (typeof value.status === 'string' ? STATUS_OPS[value.status] : undefined) ?? 'update', id }
+}
+
+function isTaskCall(item: TranscriptItem): boolean {
+  return item.kind === 'tool' && item.tool?.taskOps !== undefined
+}
+
+/** Two consecutive task calls as one row: the later call's result, both calls' ops. */
+function foldTaskCalls(first: TranscriptItem, next: TranscriptItem): TranscriptItem {
+  const { pending: _pending, failed: _failed, ...rest } = first
+  return {
+    ...rest,
+    ...(first.pending === true || next.pending === true ? { pending: true } : {}),
+    ...(first.failed === true || next.failed === true ? { failed: true } : {}),
+    tool: { ...first.tool!, ...next.tool!, taskOps: [...first.tool!.taskOps!, ...next.tool!.taskOps!] },
+  }
+}
+
 function bashDescription(input: unknown): { description?: string } {
   const value = typeof input === 'object' && input !== null ? (input as { description?: unknown }).description : undefined
   return typeof value === 'string' && value.trim().length > 0 ? { description: value.trim() } : {}
@@ -1441,6 +1482,11 @@ function buildTranscriptEntries(input: readonly TranscriptItem[]): TranscriptEnt
       continue
     }
     if (isRunItem(item)) {
+      const last = segment[segment.length - 1]
+      if (last !== undefined && isTaskCall(last) && isTaskCall(item)) {
+        segment[segment.length - 1] = foldTaskCalls(last, item)
+        continue
+      }
       segment.push(item)
       // The plan's row stays in the segment; its decision follows as a card.
       const decided = item.toolName === EXIT_PLAN_TOOL ? receiptOf(item) : undefined

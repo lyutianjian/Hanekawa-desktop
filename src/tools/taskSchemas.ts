@@ -2,11 +2,15 @@ import { z } from 'zod/v3'
 
 export const taskUpdateStatusSchema = z.enum(['pending', 'in_progress', 'completed', 'deleted'])
 
-export const taskCreateInputSchema = z.object({
+const newTaskSchema = z.object({
   subject: z.string().min(1).describe('A brief title for the task'),
   description: z.string().min(1).describe('What needs to be done'),
   activeForm: z.string().min(1).optional().describe('Present continuous form shown when in_progress'),
   metadata: z.record(z.string(), z.unknown()).optional().describe('Arbitrary metadata to attach to the task'),
+}).strict()
+
+export const taskCreateInputSchema = z.object({
+  tasks: z.array(newTaskSchema).min(1).describe('The tasks to create, in order'),
 }).strict()
 
 export const taskGetInputSchema = z.object({
@@ -26,4 +30,5 @@ export const taskUpdateInputSchema = z.object({
 }).strict()
 
 export type TaskCreateInput = z.infer<typeof taskCreateInputSchema>
+export type NewTaskInput = z.infer<typeof newTaskSchema>
 export type TaskUpdateInput = z.infer<typeof taskUpdateInputSchema>

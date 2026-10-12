@@ -125,3 +125,14 @@ test('MessageThread and AskCoordinator bodies are renamed onto their real parame
   })
   assert.deepEqual(normalizeToolInput('AskCoordinator', { message: 'why?' }), { question: 'why?' })
 })
+
+test('a single-task TaskCreate call becomes a one-item batch, and a batch passes through', () => {
+  const single = { subject: 'Add schema', description: 'Write the schema' }
+  const normalized = normalizeToolInput('TaskCreate', single)
+  assert.deepEqual(normalized, { tasks: [single] })
+  assert.equal(validateToolInput(tool('TaskCreate'), normalized).ok, true)
+
+  const batch = { tasks: [single, { subject: 'Wire view', description: 'Draw it' }] }
+  assert.equal(normalizeToolInput('TaskCreate', batch), batch)
+  assert.deepEqual(normalizeToolInput('TaskCreate', { todos: batch.tasks }), batch)
+})
