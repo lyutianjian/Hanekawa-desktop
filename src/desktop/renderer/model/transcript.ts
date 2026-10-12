@@ -611,7 +611,7 @@ export function formatMessageTime(createdAt: string | undefined): string | undef
  * breathing forever.
  */
 function closeThinkingSegments(items: readonly TranscriptItem[]): TranscriptItem[] {
-  return items.map((item) => (item.kind === 'thinking' && item.pending === true ? closeSegment(item) : item))
+  return items.map((item) => (item.kind === 'thinking' && (item.pending === true || item.startedAt !== undefined) ? closeSegment(item) : item))
 }
 
 function closeSegment(item: TranscriptItem): TranscriptItem {
@@ -660,7 +660,7 @@ function applyStream(state: TranscriptState, event: Extract<SessionEvent, { type
     case 'thinking_delta':
       return appendThinking(state, event.thinking, now)
     case 'thinking_stop':
-      return { ...state, isThinking: false, items: stampThinkingDuration(state, now) }
+      return { ...state, isThinking: false, items: pauseThinking(state, stampThinkingDuration(state, now)) }
     case 'message_start': {
       // One model request is one thinking segment (§4.2): a second request within
       // the turn — a tool round trip — closes the open segment and the next delta
@@ -758,8 +758,21 @@ function appendThinking(state: TranscriptState, text: string, now?: number): Tra
   }
   const items = [...state.items]
   const existing = items[index]!
-  items[index] = { ...existing, text: existing.text + text }
+  items[index] = { ...existing, text: existing.text + text, pending: true }
   return { ...state, isThinking: true, items }
+}
+
+/**
+ * A stop pauses the open segment: it is no longer arriving, but it stays the one
+ * the next delta of the same request extends — and resumes.
+ */
+function pauseThinking(state: TranscriptState, items: readonly TranscriptItem[]): readonly TranscriptItem[] {
+  const index = state.liveThinkingId === undefined ? -1 : indexOfItem(items, state.liveThinkingId)
+  if (index === -1 || items[index]!.pending !== true) return items
+  const { pending: _pending, ...paused } = items[index]!
+  const next = [...items]
+  next[index] = paused
+  return next
 }
 
 /**

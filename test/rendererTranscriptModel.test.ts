@@ -233,15 +233,12 @@ test('a record without thinkingBlocks keeps what streamed instead of deleting it
   ])
 })
 
-test('thinking_stop does not close the block, so the live face survives it', () => {
-  // This is what pins「活标签由 item.pending 驱动，不由 state.isThinking 驱动」:
-  // the flag goes false here while the very same block keeps arriving.
-  const { state } = fold([
-    thinkingDelta('a'),
-    { type: 'stream', event: { type: 'thinking_stop' } },
-    thinkingDelta('b'),
-  ])
+test('thinking_stop pauses the block; a later delta of the same request resumes it', () => {
+  const stop: SessionEvent = { type: 'stream', event: { type: 'thinking_stop' } }
+  const { state: paused } = fold([thinkingDelta('a'), stop])
+  assert.deepEqual(thinkingItems(paused).map((item) => [item.id, item.text, item.pending]), [['thinking-0', 'a', undefined]])
 
+  const { state } = fold([thinkingDelta('a'), stop, thinkingDelta('b')])
   assert.deepEqual(thinkingItems(state).map((item) => [item.id, item.text, item.pending]), [
     ['thinking-0', 'ab', true],
   ])
