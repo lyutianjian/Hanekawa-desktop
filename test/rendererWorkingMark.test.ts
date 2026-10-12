@@ -21,7 +21,14 @@ import { installDomStub } from './helpers/domStub.js'
  * play it (`dom/workingMarkView.ts`).
  */
 
-function call(toolName: string, id = toolName, extra: { pending?: boolean; awaitingApproval?: boolean } = {}): ActivityStep {
+interface CallExtra {
+  pending?: boolean
+  awaitingApproval?: boolean
+  useSummary?: string
+  description?: string
+}
+
+function call(toolName: string, id = toolName, extra: CallExtra = {}): ActivityStep {
   return {
     kind: 'tool',
     id,
@@ -29,9 +36,16 @@ function call(toolName: string, id = toolName, extra: { pending?: boolean; await
     toolName,
     pending: extra.pending ?? true,
     status: 'running',
-    tool: { displayName: toolName, useSummary: '', ...(extra.awaitingApproval ? { awaitingApproval: true } : {}) },
+    tool: {
+      displayName: toolName,
+      useSummary: extra.useSummary ?? '',
+      ...(extra.awaitingApproval ? { awaitingApproval: true } : {}),
+      ...(extra.description ? { description: extra.description } : {}),
+    },
   } as ActivityStep
 }
+
+const thinking = (pending: boolean): ActivityStep => ({ kind: 'thinking', id: 'th', text: '想想', pending })
 
 function run(...steps: ActivityStep[]): ActivityRun {
   return { id: 'run:1', turnId: 't1', steps, status: 'running', failedCount: 0 }
@@ -88,7 +102,9 @@ test('markSpecFor maps each running tool to its body', () => {
     TodoWrite: 'write', TaskCreate: 'write', TaskGet: 'write', TaskList: 'write', TaskUpdate: 'write',
     Config: 'write', EnterPlanMode: 'write', ExitPlanMode: 'write',
     Bash: 'code', KillShell: 'code',
-    Agent: 'default', SendMessage: 'default', Skill: 'default', AskUserQuestion: 'default', mcp__x__y: 'default',
+    Agent: 'default', Skill: 'default', AskUserQuestion: 'default', mcp__x__y: 'default',
+    // Unknown names read by their words.
+    SendMessage: 'write', ToolSearch: 'read', mcp__github__create_issue: 'write', mcp__db__runQuery: 'code', mcp__search__list_items: 'read',
   }
   for (const [tool, body] of Object.entries(table)) {
     assert.deepEqual(markSpecFor(run(call(tool))), { body, state: 'working' }, tool)
@@ -105,11 +121,44 @@ test('markSpecFor: a call awaiting approval outranks later calls and blocks the 
   assert.deepEqual(spec, { body: 'write', state: 'blocked' })
 })
 
-test('markSpecFor: no running call reads a pending thought as think, else default', () => {
-  const thinking = (pending: boolean): ActivityStep => ({ kind: 'thinking', id: 'th', text: '想想', pending })
-  assert.deepEqual(markSpecFor(run(call('Read', 'a', { pending: false }), thinking(true))), { body: 'think', state: 'working' })
-  assert.deepEqual(markSpecFor(run(thinking(false))), { body: 'default', state: 'working' })
-  assert.deepEqual(markSpecFor(undefined), { body: 'default', state: 'working' })
+test('markSpecFor: with nothing running the mark holds the latest step, and starts at think', () => {
+  const working = (body: MarkBody) => ({ body, state: 'working' })
+  assert.deepEqual(markSpecFor(run(call('Read', 'a', { pending: false }), thinking(true))), working('think'))
+  assert.deepEqual(markSpecFor(run(thinking(false))), working('think'))
+  assert.deepEqual(markSpecFor(run(thinking(false), call('Read', 'a', { pending: false }))), working('read'))
+  assert.deepEqual(markSpecFor(undefined), working('think'))
+})
+
+test('markSpecFor: Bash reads its description\'s verb', () => {
+  const bash = (description: string) => markSpecFor(run(call('Bash', 'b', { description }))).body
+  assert.equal(bash('List files in the repo'), 'read')
+  assert.equal(bash('Finding the config'), 'read')
+  assert.equal(bash('Creates the build dir'), 'write')
+  assert.equal(bash('Run the tests'), 'code')
+  assert.equal(bash('跑测试'), 'code')
+})
+
+test('markSpecFor: a running write to a document composes; settled, it writes', () => {
+  const write = (useSummary: string, pending = true) =>
+    markSpecFor(run(call('Write', 'w', { useSummary, pending }))).body
+  assert.equal(write('docs/guide.md'), 'compose')
+  assert.equal(write('notes.TXT'), 'compose')
+  assert.equal(write('src/a.ts'), 'write')
+  assert.equal(write('AGENTS.md'), 'write')
+  assert.equal(write('pkg/CLAUDE.local.md'), 'write')
+  assert.equal(write('.myagent/rules/style.md'), 'write')
+  assert.equal(write('docs/guide.md', false), 'write')
+})
+
+test('markSpecFor: the call whose arguments are streaming shows before its record', () => {
+  const draft = (name: string, input: string) => markSpecFor(run(thinking(false)), { name, input }).body
+  assert.equal(draft('Write', '{"filePath":"README.md","content":"# Hi'), 'compose')
+  assert.equal(draft('Write', '{"file_path":"src/a.ts"'), 'write')
+  assert.equal(draft('Write', '{"filePath":"READ'), 'write')
+  assert.equal(draft('Bash', '{"command":"ls","description":"List files"}'), 'read')
+  assert.equal(draft('Grep', '{"pat'), 'read')
+  // A recorded running call still outranks it.
+  assert.equal(markSpecFor(run(call('Bash')), { name: 'Read', input: '' }).body, 'code')
 })
 
 // ---- Sheet store -------------------------------------------------------------
@@ -141,7 +190,7 @@ test('the store decodes once the renderer is idle, the first bodies of a turn fi
   await settle()
   assert.equal(published.length, 2)
   const [first, second] = published
-  assert.deepEqual(first, { default: true, think: true, blocked: true, search: false, read: false, write: false, code: false })
+  assert.deepEqual(first, { default: true, think: true, blocked: true, search: false, read: false, write: false, compose: false, code: false })
   assert.ok(Object.values(second!).every(Boolean))
   assert.ok(store.resident?.has('grow'))
   assert.equal(store.resident?.url('code.loop'), 'sprites/code.loop.png')

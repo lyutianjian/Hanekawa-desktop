@@ -301,9 +301,10 @@ export async function streamWithTimeout(
     rejectTimeout = reject
   })
   const blockTypes = new Map<number, string>()
+  const toolNames = new Map<number, string>()
   const handleStreamEvent = (event: unknown) => {
     resetTimer()
-    for (const modelEvent of extractModelStreamEvents(event, blockTypes)) {
+    for (const modelEvent of extractModelStreamEvents(event, blockTypes, toolNames)) {
       if (modelEvent.type === 'text_delta') onTextDelta?.(modelEvent.text)
       onStreamEventCallback?.(modelEvent)
     }
@@ -343,6 +344,7 @@ export async function streamWithTimeout(
 function extractModelStreamEvents(
   event: unknown,
   blockTypes: Map<number, string>,
+  toolNames: Map<number, string>,
 ): ModelStreamEvent[] {
   if (!event || typeof event !== 'object') return []
   const events: ModelStreamEvent[] = []
@@ -351,6 +353,7 @@ function extractModelStreamEvents(
     index?: unknown
     content_block?: {
       type?: unknown
+      name?: unknown
     }
     delta?: {
       type?: unknown
@@ -374,6 +377,9 @@ function extractModelStreamEvents(
       ? typed.content_block.type
       : undefined
     if (index !== undefined && blockType) blockTypes.set(index, blockType)
+    if (index !== undefined && blockType === 'tool_use' && typeof typed.content_block?.name === 'string') {
+      toolNames.set(index, typed.content_block.name)
+    }
     if (blockType === 'thinking') {
       events.push({ type: 'thinking_start', index, redacted: false })
     } else if (blockType === 'redacted_thinking') {
@@ -391,14 +397,18 @@ function extractModelStreamEvents(
     } else if (typed.delta?.type === 'signature_delta' && typeof typed.delta.signature === 'string') {
       events.push({ type: 'thinking_signature', index, signature: typed.delta.signature })
     } else if (typed.delta?.type === 'input_json_delta' && typeof typed.delta.partial_json === 'string' && typed.delta.partial_json.length > 0) {
-      events.push({ type: 'tool_input_delta', index, partialJson: typed.delta.partial_json })
+      const name = index === undefined ? undefined : toolNames.get(index)
+      events.push({ type: 'tool_input_delta', index, ...(name === undefined ? {} : { name }), partialJson: typed.delta.partial_json })
     }
     return events
   }
 
   if (typed.type === 'content_block_stop') {
     const blockType = index === undefined ? undefined : blockTypes.get(index)
-    if (index !== undefined) blockTypes.delete(index)
+    if (index !== undefined) {
+      blockTypes.delete(index)
+      toolNames.delete(index)
+    }
     if (blockType === 'thinking' || blockType === 'redacted_thinking') {
       events.push({ type: 'thinking_stop', index })
     }

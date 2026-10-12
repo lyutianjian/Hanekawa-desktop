@@ -846,6 +846,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       ...(asking === undefined ? {} : { asking }),
       ...(taskCount === 0 ? {} : { backgroundTasks: taskCount }),
       ...(transcript.phase ? { phase: transcript.phase } : {}),
+      ...(transcript.draftCall ? { draftCall: transcript.draftCall } : {}),
     }, selectedSubagent, coordinator ? coordinatorWelcomeEl : undefined, threadChipEl)
     subagentList = undefined
     // Thumbnails arrive on demand, exactly as the composer's tiles do: the

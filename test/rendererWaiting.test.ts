@@ -163,15 +163,37 @@ test('the meta is seconds, then tokens beside them', () => {
 
 test('the working mark follows what the status is about', () => {
   const plain = { body: 'default', state: 'working' }
+  const think = { body: 'think', state: 'working' }
+  const code = { body: 'code', state: 'working' }
   assert.equal(activity([USER, DONE_BASH], false).mark, undefined)
-  assert.deepEqual(activity([USER, DRAFT('好的')], true, undefined).mark, plain)
-  assert.deepEqual(activity([USER], true, undefined).mark, plain)
-  assert.deepEqual(activity(turn([DONE_BASH])).mark, plain)
-  assert.deepEqual(activity(turn([THINKING])).mark, { body: 'think', state: 'working' })
-  assert.deepEqual(activity(turn([THINKING, RUNNING_BASH])).mark, { body: 'code', state: 'working' })
+  assert.deepEqual(activity([USER, DRAFT('好的')], true, undefined).mark, think)
+  assert.deepEqual(activity([USER], true, undefined).mark, think)
+  // The last call holds the mark through the gap and the text after it.
+  assert.deepEqual(activity(turn([DONE_BASH])).mark, code)
+  assert.deepEqual(activity(turn([DONE_BASH, DRAFT('测试通过了')])).mark, code)
+  assert.deepEqual(activity(turn([THINKING])).mark, think)
+  assert.deepEqual(activity(turn([THINKING, RUNNING_BASH])).mark, code)
   assert.deepEqual(activity(turn([asking, RUNNING_BASH])).mark, { body: 'write', state: 'blocked' })
+  assert.deepEqual(activity(turn([DONE_BASH]), true, TURN, { draftCall: { name: 'Write', input: '{"filePath":"a.md"' } }).mark,
+    { body: 'compose', state: 'working' })
   assert.deepEqual(activity(turn([RUNNING_BASH]), true, TURN, { phase: { kind: 'compacting' } }).mark, plain)
-  assert.deepEqual(activity(turn([RUNNING_BASH]), true, TURN, { asking: '数据库' }).mark, plain)
+  assert.deepEqual(activity(turn([RUNNING_BASH]), true, TURN, { asking: '数据库' }).mark, { body: 'default', state: 'blocked' })
+})
+
+test('the streaming call is remembered until its message lands', () => {
+  let state = createTranscriptState()
+  const apply = (event: Parameters<typeof applySessionEvent>[1]) => { state = applySessionEvent(state, event).state }
+  apply({ type: 'stream', event: { type: 'tool_input_delta', index: 1, name: 'Write', partialJson: '{"filePath":' } })
+  apply({ type: 'stream', event: { type: 'tool_input_delta', index: 1, name: 'Write', partialJson: '"a.md"' } })
+  assert.deepEqual(state.draftCall, { name: 'Write', index: 1, input: '{"filePath":"a.md"' })
+  apply({ type: 'stream', event: { type: 'tool_input_delta', index: 2, name: 'Bash', partialJson: '{"c' } })
+  assert.deepEqual(state.draftCall, { name: 'Bash', index: 2, input: '{"c' })
+  apply({ type: 'stream', event: { type: 'tool_input_delta', index: 2, name: 'Bash', partialJson: 'x'.repeat(5000) } })
+  const capped = state
+  apply({ type: 'stream', event: { type: 'tool_input_delta', index: 2, name: 'Bash', partialJson: 'more' } })
+  assert.equal(state, capped, 'past the peek a delta changes nothing')
+  apply({ type: 'record', record: { type: 'message', id: 'a1', role: 'assistant', content: [] } as never })
+  assert.equal(state.draftCall, undefined)
 })
 
 test('the label gate: a burst shows only its last word, once it has held', () => {

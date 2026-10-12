@@ -27,7 +27,8 @@ export type ModelStreamEvent =
   | { type: 'thinking_stop'; index?: number }
   | { type: 'redacted_thinking'; index?: number }
   | { type: 'text_delta'; index?: number; text: string }
-  | { type: 'tool_input_delta'; index?: number; partialJson: string }
+  /** `name` is the tool whose arguments these are, when the provider announced it. */
+  | { type: 'tool_input_delta'; index?: number; name?: string; partialJson: string }
   | { type: 'message_stop' }
   | { type: 'idle_warning'; idleMs: number }
   /** Attempt `attempt` failed for `reason`; the provider sleeps `delayMs` and sends again. */

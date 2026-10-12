@@ -322,7 +322,19 @@ export interface TranscriptState {
   readonly liveThinkingId?: string
   /** A wait the loop announced that no record shows: a compaction or a retry backoff (`model/waiting.ts`). */
   readonly phase?: TurnPhase
+  /** The tool call whose arguments are streaming in, before its record exists. */
+  readonly draftCall?: DraftCall
 }
+
+export interface DraftCall {
+  readonly name: string
+  readonly index?: number
+  /** The arguments' JSON so far, kept only up to `DRAFT_CALL_PEEK` characters. */
+  readonly input: string
+}
+
+/** Enough of the arguments to find a leading `filePath` or `description`. */
+const DRAFT_CALL_PEEK = 1024
 
 export type TurnPhase =
   | { readonly kind: 'compacting' }
@@ -438,8 +450,11 @@ export function applySessionEvent(
         },
       }
 
-    case 'record':
-      return { state: applyRecord(state, event.record, toolDisplays) }
+    case 'record': {
+      // The assistant message carries the call the arguments were streaming for.
+      const committed = event.record.type === 'message' && event.record.role !== 'user' && state.draftCall !== undefined
+      return { state: applyRecord(committed ? { ...state, draftCall: undefined } : state, event.record, toolDisplays) }
+    }
 
     case 'stream':
       return { state: applyStream(state, event.event, now) }
@@ -527,6 +542,7 @@ export function applySessionEvent(
           turnId: undefined,
           liveThinkingId: undefined,
           phase: undefined,
+          draftCall: undefined,
         },
       }
     }
@@ -613,15 +629,21 @@ function applyStream(state: TranscriptState, event: Extract<SessionEvent, { type
         draftCount: (state.draftCount ?? 0) + (fresh ? 1 : 0),
       }
     }
-    case 'tool_input_delta':
+    case 'tool_input_delta': {
       // The text has stopped; the model is now writing a tool call's arguments,
       // which can take as long as the file it is writing. The draft is no longer
       // arriving, so the status row comes back (`model/waiting.ts`).
-      return settleDraft(state)
+      const settled = settleDraft(state)
+      if (event.name === undefined) return settled
+      const prior = state.draftCall?.name === event.name && state.draftCall.index === event.index ? state.draftCall : undefined
+      if (prior && prior.input.length >= DRAFT_CALL_PEEK) return settled
+      const input = ((prior?.input ?? '') + event.partialJson).slice(0, DRAFT_CALL_PEEK)
+      return { ...settled, draftCall: { name: event.name, ...(event.index === undefined ? {} : { index: event.index }), input } }
+    }
     case 'retry':
       // A stream that failed partway leaves its draft pending; settled, so the
       // row can say the request is being sent again.
-      return { ...settleDraft(state), phase: { kind: 'retrying', attempt: event.attempt, reason: event.reason } }
+      return { ...settleDraft(state), draftCall: undefined, phase: { kind: 'retrying', attempt: event.attempt, reason: event.reason } }
     case 'compact': {
       if (event.phase === 'start') return { ...state, phase: { kind: 'compacting' } }
       const { phase: _phase, ...rest } = state
@@ -644,6 +666,7 @@ function applyStream(state: TranscriptState, event: Extract<SessionEvent, { type
         ...(phase?.kind === 'compacting' ? { phase } : {}),
         items: closeThinkingSegments(state.items.filter((item) => item.id !== DRAFT_ID)),
         liveThinkingId: undefined,
+        draftCall: undefined,
       }
     }
     default:

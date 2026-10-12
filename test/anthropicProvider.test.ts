@@ -231,6 +231,23 @@ test('Anthropic stream emits thinking events and resets idle timeout', async () 
   }
 })
 
+test('Anthropic stream names the tool whose arguments are streaming', async () => {
+  const stream = new FakeAnthropicStream()
+  const events: unknown[] = []
+  const responsePromise = streamWithTimeout(stream, undefined, 1000, undefined, (event) => events.push(event), 0)
+  const emit = (event: unknown) => (stream as unknown as { listeners: Set<(event: unknown) => void> }).listeners.forEach((listener) => listener(event))
+  emit({ type: 'content_block_start', index: 1, content_block: { type: 'tool_use', name: 'Write' } })
+  emit({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: '{"filePath"' } })
+  emit({ type: 'content_block_stop', index: 1 })
+  emit({ type: 'content_block_delta', index: 1, delta: { type: 'input_json_delta', partial_json: 'x' } })
+  stream.finish()
+  await responsePromise
+  assert.deepEqual(events, [
+    { type: 'tool_input_delta', index: 1, name: 'Write', partialJson: '{"filePath"' },
+    { type: 'tool_input_delta', index: 1, partialJson: 'x' },
+  ])
+})
+
 test('Anthropic stream idle warning does not abort the stream', async () => {
   mock.timers.enable({ apis: ['setTimeout'], now: 0 })
   try {

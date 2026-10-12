@@ -3,6 +3,7 @@ import {
   isAgentCall,
   toStep,
   type ActivityRun,
+  type DraftCall,
   type TranscriptEntry,
   type TranscriptItem,
   type TurnPhase,
@@ -42,6 +43,8 @@ export interface WaitingInput {
   readonly asking?: string
   /** Background tasks still running; the status line keeps a button for them, turn or no turn. */
   readonly backgroundTasks?: number
+  /** The tool call whose arguments are streaming in (`TranscriptState.draftCall`). */
+  readonly draftCall?: DraftCall
 }
 
 export interface WaitingRow {
@@ -59,6 +62,7 @@ export interface TurnActivity {
 }
 
 const IDLE: TurnActivity = { row: undefined, mark: undefined }
+const PLAIN: MarkSpec = { body: 'default', state: 'working' }
 
 /** How long the wait has to last before the counter is worth showing. */
 export const WAITING_CLOCK_AFTER_MS = 2_000
@@ -107,33 +111,46 @@ export function rowLabel(row: WaitingRow, now: number): string {
  */
 export function turnActivity(entries: readonly TranscriptEntry[], input: WaitingInput): TurnActivity {
   if (!input.isStreaming) return IDLE
-  const plain = markSpecFor(undefined)
   const row = (label: string, extra?: Partial<WaitingRow>): WaitingRow => ({ label, startedAt: input.startedAt, ...extra })
-  if (input.phase) return { row: row(phaseLabel(input.phase)), mark: plain }
+  if (input.phase) return { row: row(phaseLabel(input.phase)), mark: PLAIN }
   const asking = input.asking === undefined ? undefined : `${ASKING_LABEL} · ${input.asking}`
   const last = entries[entries.length - 1]
   const run = last?.kind === 'run' && last.run.status !== 'aborted' && input.turnId !== undefined && last.run.turnId === input.turnId
     ? last.run
     : undefined
-  if (asking !== undefined) return { row: row(asking), mark: plain }
+  if (asking !== undefined) return { row: row(asking), mark: { body: 'default', state: 'blocked' } }
   // A sub-agent is no run's step, so its own wait is named here.
   if (last?.kind === 'item' && last.item.pending === true && isAgentCall(last.item) && last.item.turnId === input.turnId) {
     const step = toStep(last.item) as CallStep
-    return { row: row(step.tool.awaitingApproval === true ? `等待确认 · ${callPhrase(step)}` : callPhrase(step)), mark: plain }
+    return step.tool.awaitingApproval === true
+      ? { row: row(`等待确认 · ${callPhrase(step)}`), mark: { body: 'default', state: 'blocked' } }
+      : { row: row(callPhrase(step)), mark: PLAIN }
   }
+  const mark = markSpecFor(run ?? latestRun(entries, input.turnId), input.draftCall)
   if (run) {
     const calls = run.steps.filter(isRunningCall)
     const waiting = calls.filter((step) => step.tool.awaitingApproval === true).at(-1)
-    if (waiting) return { row: row(`等待确认 · ${callPhrase(waiting)}`), mark: markSpecFor(run) }
-    if (calls.length > 0) return { row: row(batchPhrase(calls)), mark: markSpecFor(run) }
+    if (waiting) return { row: row(`等待确认 · ${callPhrase(waiting)}`), mark }
+    if (calls.length > 0) return { row: row(batchPhrase(calls)), mark }
     const thought = run.steps[run.steps.length - 1]
     if (thought?.kind === 'thinking' && thought.pending === true) {
-      return { row: row(WAITING_LABEL, { thinkingSince: thought.startedAt ?? input.startedAt }), mark: markSpecFor(run) }
+      return { row: row(WAITING_LABEL, { thinkingSince: thought.startedAt ?? input.startedAt }), mark }
     }
-    return { row: row(WAITING_LABEL), mark: plain }
+    return { row: row(WAITING_LABEL), mark }
   }
-  if (last?.kind === 'item' && isArriving(last.item)) return { row: row(WRITING_LABEL), mark: plain }
-  return { row: row(WAITING_LABEL), mark: plain }
+  if (last?.kind === 'item' && isArriving(last.item)) return { row: row(WRITING_LABEL), mark }
+  return { row: row(WAITING_LABEL), mark }
+}
+
+/** The turn's newest run, for the mark to hold once text has followed it. */
+function latestRun(entries: readonly TranscriptEntry[], turnId: string | undefined): ActivityRun | undefined {
+  if (turnId === undefined) return undefined
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index]!
+    if (entry.kind === 'run') return entry.run.turnId === turnId && entry.run.status !== 'aborted' ? entry.run : undefined
+    if (entry.item.kind === 'user') return undefined
+  }
+  return undefined
 }
 
 const RETRY_REASONS: Record<Extract<TurnPhase, { kind: 'retrying' }>['reason'], string> = {

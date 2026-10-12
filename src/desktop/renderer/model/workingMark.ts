@@ -1,4 +1,4 @@
-import type { ActivityRun } from './transcript.js'
+import type { ActivityRun, DraftCall } from './transcript.js'
 import type { CallStep } from './toolPhrases.js'
 
 /**
@@ -12,7 +12,7 @@ import type { CallStep } from './toolPhrases.js'
  * `TAIL_FRAMES` frames, so a switch need not wait the whole loop out.
  */
 
-export type MarkBody = 'default' | 'think' | 'search' | 'read' | 'write' | 'code' | 'blocked'
+export type MarkBody = 'default' | 'think' | 'search' | 'read' | 'write' | 'compose' | 'code' | 'blocked'
 export type MarkState = 'working' | 'blocked'
 
 export interface MarkSpec {
@@ -56,6 +56,9 @@ export const SHEETS: Readonly<Record<MarkClip, SheetInfo>> = {
   'write.in': { frames: 31, speed: SPEED },
   'write.loop': { frames: 60, speed: SPEED, rest: 36 },
   'write.out': { frames: 14, speed: SPEED },
+  'compose.in': { frames: 16, speed: SPEED },
+  'compose.loop': { frames: 62, speed: SPEED, rest: 49 },
+  'compose.out': { frames: 12, speed: SPEED },
   'code.in': { frames: 16, speed: SPEED },
   'code.loop': { frames: 75, speed: SPEED, seams: [18, 37, 56], rest: 74 },
   'code.out': { frames: 9, speed: SPEED },
@@ -64,7 +67,7 @@ export const SHEETS: Readonly<Record<MarkClip, SheetInfo>> = {
   'blocked.out': { frames: 16, speed: SPEED },
 }
 
-export const MARK_BODIES: readonly MarkBody[] = ['default', 'think', 'search', 'read', 'write', 'code', 'blocked']
+export const MARK_BODIES: readonly MarkBody[] = ['default', 'think', 'search', 'read', 'write', 'compose', 'code', 'blocked']
 
 /** A switch out of a loop plays only its last this-many frames. */
 export const TAIL_FRAMES = 20
@@ -131,22 +134,102 @@ const TOOL_BODIES: Readonly<Record<string, MarkBody>> = {
   KillShell: 'code',
 }
 
+// Claude Desktop's lexicon for a call no table names: a Bash description's
+// leading verb, or the words of a tool's name.
+const READ_WORDS = new Set(['read', 'view', 'get', 'list', 'fetch', 'search', 'find', 'query', 'retrieve', 'lookup', 'load', 'open', 'ls'])
+const WRITE_WORDS = new Set([
+  'write', 'edit', 'create', 'update', 'delete', 'remove', 'append', 'insert', 'replace',
+  'patch', 'send', 'post', 'add', 'save', 'upload', 'comment', 'artifacts',
+])
+const CODE_WORDS = new Set(['bash', 'exec', 'execute', 'run', 'shell', 'python', 'repl', 'script', 'eval', 'javascript'])
+
+/** The first word and its likely stems: `Listing` → listing, list, liste; `Files` → files, file, fil. */
+function verbForms(text: string): string[] {
+  const word = /^\s*([A-Za-z]+)/.exec(text)?.[1]?.toLowerCase()
+  if (word === undefined) return []
+  if (word.endsWith('ing') && word.length > 5) {
+    const stem = word.slice(0, -3)
+    return [word, stem, `${stem}e`, stem.replace(/([b-df-hj-np-tv-z])\1$/, '$1')]
+  }
+  if (word.endsWith('ies')) return [word, `${word.slice(0, -3)}y`]
+  return word.endsWith('s') && !word.endsWith('ss') && word.length > 3 ? [word, word.slice(0, -1), word.slice(0, -2)] : [word]
+}
+
+function bashBody(description: string | undefined): MarkBody {
+  for (const form of verbForms(description ?? '')) {
+    if (WRITE_WORDS.has(form)) return 'write'
+    if (READ_WORDS.has(form)) return 'read'
+  }
+  return 'code'
+}
+
+/** An MCP tool is named by its action, not its server: `mcp__github__create_issue` → create, issue. */
+function nameBody(name: string): MarkBody {
+  const action = name.startsWith('mcp__') ? name.split('__').at(-1)! : name
+  for (const word of action.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase().split(/[\s:_-]+/)) {
+    if (WRITE_WORDS.has(word)) return 'write'
+    if (CODE_WORDS.has(word)) return 'code'
+    if (READ_WORDS.has(word)) return 'read'
+  }
+  return 'default'
+}
+
+const DOC_FILE = /\.(md|mdx|txt|rst|docx|pdf)$/i
+/** Configuration and instructions are not documents being written. */
+const NOT_A_DOC = /(^|[\\/])\.myagent[\\/]|(^|[\\/])(AGENTS|CLAUDE)(\.local)?\.md$/i
+
+interface CallHints {
+  readonly path?: string
+  readonly description?: string
+}
+
+/** A running write to a document composes; settled, it is plain writing again. */
+function callBody(name: string | undefined, hints: CallHints, running: boolean): MarkBody {
+  if (!name) return 'default'
+  if (name === 'Bash') return bashBody(hints.description)
+  const body = TOOL_BODIES[name] ?? nameBody(name)
+  const doc = hints.path !== undefined && DOC_FILE.test(hints.path) && !NOT_A_DOC.test(hints.path)
+  return body === 'write' && running && doc ? 'compose' : body
+}
+
+function stepBody(step: CallStep, running: boolean): MarkBody {
+  return callBody(step.toolName, { path: step.tool.useSummary, description: step.tool.description }, running)
+}
+
+/** A string field the arguments have already closed. */
+function peekField(json: string, key: string): string | undefined {
+  const raw = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(json)?.[1]
+  if (raw === undefined) return undefined
+  try {
+    return JSON.parse(`"${raw}"`) as string
+  } catch {
+    return undefined
+  }
+}
+
 /**
- * What the mark shows for the live run; `undefined` when there is no run to read
- * (a compaction or retry, a pending question, the status line of its own).
+ * What the mark shows for the live run and the call whose arguments are still
+ * streaming.
  *
  * A call waiting on the user's approval outranks the others, and is the same
- * call `runActivity` names; otherwise the last running call decides, else a
- * pending thought.
+ * call `runActivity` names; then the last running call, then the call being
+ * written. With nothing running the mark holds the turn's latest step — the
+ * last call's body, or `think` after a thought — and starts at `think`.
  */
-export function markSpecFor(run: ActivityRun | undefined): MarkSpec {
-  if (run === undefined) return { body: 'default', state: 'working' }
-  const running = run.steps.filter((step): step is CallStep => (step.kind === 'tool' || step.kind === 'task') && step.pending === true)
+export function markSpecFor(run: ActivityRun | undefined, draft?: DraftCall): MarkSpec {
+  const running = (run?.steps ?? []).filter((step): step is CallStep => (step.kind === 'tool' || step.kind === 'task') && step.pending === true)
   const waiting = running.filter((step) => step.tool.awaitingApproval === true).at(-1)
   const call = waiting ?? running.at(-1)
-  if (call !== undefined) {
-    return { body: (call.toolName && TOOL_BODIES[call.toolName]) || 'default', state: waiting ? 'blocked' : 'working' }
+  if (call !== undefined) return { body: stepBody(call, true), state: waiting ? 'blocked' : 'working' }
+  if (draft !== undefined) {
+    const path = peekField(draft.input, 'filePath') ?? peekField(draft.input, 'file_path')
+    const hints = { path, description: peekField(draft.input, 'description') }
+    return { body: callBody(draft.name, hints, true), state: 'working' }
   }
-  const last = run.steps.at(-1)
-  return { body: last?.kind === 'thinking' && last.pending === true ? 'think' : 'default', state: 'working' }
+  for (const step of [...(run?.steps ?? [])].reverse()) {
+    if (step.kind === 'thinking') return { body: 'think', state: 'working' }
+    if (step.kind === 'tool' || step.kind === 'task') return { body: stepBody(step, false), state: 'working' }
+    if (step.kind === 'subagent') return { body: 'default', state: 'working' }
+  }
+  return { body: 'think', state: 'working' }
 }
