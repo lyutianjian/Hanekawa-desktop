@@ -177,7 +177,7 @@ export function createWelcomeView(
         return
       }
       if (!mounted) {
-        replace(container, head, pills, usageSlot)
+        replace(container, head, usageSlot, pills)
         mounted = true
       }
       title.textContent = view.title
