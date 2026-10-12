@@ -384,10 +384,21 @@ test('scrolling up reveals the float button and returning to the tail hides it',
   stub.dispatch(container, 'scroll')
   assert.equal(jump().hidden, false)
 
-  // Inside the 24px slack the reader counts as being at the tail.
-  scrolledUpBy(stub, container, 10)
+  stub.setMetrics(container, { scrollTop: 800 })
   stub.dispatch(container, 'scroll')
   assert.equal(jump().hidden, true)
+})
+
+test('a slow wheel inside the 24px slack is not pulled back to the tail', (t) => {
+  const { render, stub, container, jump } = mount(t)
+
+  stub.setMetrics(container, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 })
+  render(transcript([{ id: 'a', kind: 'assistant', text: 'x' }]))
+  scrolledUpBy(stub, container, 4)
+  stub.dispatch(container, 'scroll')
+  render(transcript([{ id: 'a', kind: 'assistant', text: 'xy' }]))
+  assert.equal(stub.inspect(container).scrollTop, 796)
+  assert.equal(jump().hidden, false)
 })
 
 test('a paint re-decides visibility, because the content can move the verdict', (t) => {
@@ -903,12 +914,12 @@ test('an edit step carries its patch counts in the head and a real diff below', 
   assert.equal(head?.attributes.get('aria-label'), '编辑 a.ts · +1 −1 · 完成')
   assert.deepEqual(head?.children[2]?.children.map((part) => [part.className, part.text]), [['stat-add', '+1'], ['stat-del', '−1']])
 
-  // The body is the same diff the permission dialog paints: gutters with both
-  // line numbers, and nothing else — the result summary is not repeated over it.
+  // The body is the file's full path over the same diff the permission dialog
+  // paints — the result summary is not repeated over it.
   const body = step?.children[1]
   assert.equal(body?.classes.includes('step-body'), true)
-  assert.equal(body?.children.length, 1)
-  const diff = body?.children[0]
+  assert.deepEqual(body?.children.map((child) => [child.className, child.className === 'diff' ? '' : child.text]), [['step-path', 'a.ts'], ['diff', '']])
+  const diff = body?.children[1]
   assert.equal(diff?.className, 'diff')
   assert.deepEqual(diff?.children.map((row) => row.classes), [
     ['diff-row', 'ctx'],
@@ -968,7 +979,7 @@ test('skipped lines draw as dashed rules with the count, never as glyphs', (t) =
   const view = mount(t)
   view.render(transcript([editStep({ detail: GAP_PATCH })]), opened('edit-1'))
 
-  const diff = rowOf(view)?.children[1]?.children[0]
+  const diff = rowOf(view)?.children[1]?.children[1]
   const elided = diff?.children.filter((row) => row.classes.includes('elided'))
   // Both the file head the first hunk skipped and the gap between the hunks.
   assert.deepEqual(elided?.map((row) => row.text), ['省略 9 行', '省略 27 行'])
@@ -995,6 +1006,8 @@ function bashStep(overrides: {
   errorCode?: ToolErrorCode
   content?: string
   detail?: string
+  description?: string
+  command?: string
 } = {}): TranscriptItem {
   return {
     id: 'bash-1',
@@ -1009,6 +1022,8 @@ function bashStep(overrides: {
       content: overrides.content ?? ANSI_OUTPUT,
       ...(overrides.detail === undefined ? {} : { detail: overrides.detail }),
       ...(overrides.errorCode === undefined ? {} : { errorCode: overrides.errorCode }),
+      ...(overrides.description === undefined ? {} : { description: overrides.description }),
+      ...(overrides.command === undefined ? {} : { command: overrides.command }),
       durationMs: 3200,
     },
   }
@@ -1063,6 +1078,44 @@ test('a failed Bash step with no output is one line, not an empty terminal', (t)
     body?.children.map((child) => [child.className, child.text]),
     [['step-error', '命令失败（非零退出），无输出']],
   )
+})
+
+test('a described Bash step puts the full command in its own bubble above the output, with a copy button', (t) => {
+  const view = mount(t)
+  const command = 'npm test \\\n  -- --grep "a long pattern"'
+  view.render(
+    transcript([bashStep({ description: 'Run the tests', command, failed: true, errorCode: 'command_failed' })]),
+    opened('bash-1'),
+  )
+
+  const body = rowOf(view)?.children[1]
+  assert.deepEqual(body?.children.map((child) => child.className), ['step-command', 'step-error', 'step-terminal'])
+  const bubble = body!.children[0]!
+  assert.equal(bubble.children[0]?.text, `$ ${command}`)
+  assert.equal(body!.children[2]?.text, 'ok 42 passed\n3 failed')
+  view.stub.click(bubble.children[1]!.node)
+  assert.deepEqual(view.copied, [command])
+})
+
+test('an undescribed Bash step names only its first word; the bubble holds the command, even while it runs', (t) => {
+  const view = mount(t)
+  view.render(transcript([bashStep({ command: 'npm test' })]), opened('bash-1'))
+  const step = rowOf(view)
+  assert.equal(step?.children[0]?.children[0]?.text, '运行 npm…')
+  assert.deepEqual(step?.children[1]?.children.map((child) => child.className), ['step-command', 'step-terminal'])
+
+  const running = bashStep({ command: 'npm test' })
+  view.render(transcript([{ ...running, pending: true, tool: { ...running.tool!, content: undefined } }]), opened('bash-1'))
+  assert.deepEqual(rowOf(view)?.children[1]?.children.map((child) => child.className), ['step-command'])
+})
+
+test('an edit step names the file and opens on its full path', (t) => {
+  const view = mount(t)
+  const detail = EDIT_PATCH.replaceAll('a/a.ts', 'a//repo/src/a.ts').replaceAll('b/a.ts', 'b//repo/src/a.ts')
+  view.render(transcript([editStep({ detail })]), opened('edit-1'))
+  const step = rowOf(view)
+  assert.equal(step?.children[0]?.children[0]?.text, '编辑 a.ts')
+  assert.equal(step?.children[1]?.children[0]?.text, '/repo/src/a.ts')
 })
 
 test('the terminal shows what the command printed, not the collapsed line’s extract', (t) => {
@@ -1666,7 +1719,7 @@ test('before the first step the status is a line of its own, at the tail', (t) =
     ['line-mark', 'line-meta line-elapsed', 'line-text'],
     'mark, counter, words — and the clock is painted on the first frame',
   )
-  assert.deepEqual(statusText(row), { label: '正在思考', meta: ['5s', '·', '1.2k tokens', '·'] })
+  assert.deepEqual(statusText(row), { label: '处理中', meta: ['5s', '·', '1.2k tokens', '·'] })
   // `.transcript` is `aria-live="polite"`: the words may be announced, the
   // counter must not be (it changes ten times a second), and neither is the mark.
   assert.equal(row.children[0]!.attributes.get('aria-hidden'), 'true')
@@ -1820,9 +1873,9 @@ test('the status words change only after the gate lets them, on the clock', asyn
     render(state, NO_DISCLOSURE, waiting(state, startedAt))
   }
   paint([user])
-  assert.equal(statusText(items().at(-1)!).label, '正在思考')
+  assert.equal(statusText(items().at(-1)!).label, '处理中')
   paint([user, tool])
-  assert.equal(statusText(items().at(-1)!).label, '正在思考', 'a new label is held back at first')
+  assert.equal(statusText(items().at(-1)!).label, '处理中', 'a new label is held back at first')
   await new Promise((resolve) => setTimeout(resolve, 800))
   assert.equal(statusText(items().at(-1)!).label, '读取 a.ts', 'and lands on the clock, with no further paint')
 })

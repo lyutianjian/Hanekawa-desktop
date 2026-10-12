@@ -91,7 +91,7 @@ export const editFileTool: Tool = {
       metadata: {
         display: {
           summary: label,
-          ...patchDetail(filePath, original, nextContent),
+          ...patchDetail(absolute, original, nextContent),
         },
       },
     }

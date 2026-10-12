@@ -1,5 +1,5 @@
 import { stripAnsi } from '../model/ansi.js'
-import { parseUnifiedPatch, type PatchRows } from '../model/diffRows.js'
+import { parseUnifiedPatch, patchPath, type PatchRows } from '../model/diffRows.js'
 import { parseSearchResults, searchStats, type SearchResults } from '../model/searchResults.js'
 import {
   EDIT_TOOLS,
@@ -302,8 +302,11 @@ export function createTranscriptView(
     if (['PageUp', 'Home', 'ArrowUp'].includes(event.key)) following = false
   })
 
+  // Re-arming takes the true end, not `isScrolledToBottom`'s 24px slack: a slow
+  // wheel moves a few px per tick, and the slack would re-arm the follow after
+  // each one, so the next paint snapped the reader straight back down.
   function atTail(): boolean {
-    if (isScrolledToBottom(container)) following = true
+    if (container.scrollHeight - container.scrollTop - container.clientHeight < 1) following = true
     return following
   }
 
@@ -1316,7 +1319,7 @@ function rowLabel(step: ToolLike): { readonly text: string; readonly parts: Chil
     const target = [step.tool.agentType, step.tool.useSummary].filter(Boolean).join(' · ')
     return { text: `${step.tool.displayName} ${target}${failed}`, parts: [step.tool.displayName, ' ', el('strong', '', target), failed] }
   }
-  const { verb, target, bare } = callParts(step, true)
+  const { verb, target, bare } = callParts(step, step.toolName === undefined || !EDIT_TOOLS.has(step.toolName))
   if (target.length === 0) return { text: `${verb}${failed}`, parts: [`${verb}${failed}`] }
   if (bare) return { text: `${target}${failed}`, parts: [target, failed] }
   return { text: `${verb} ${target}${failed}`, parts: [`${verb} `, el('strong', '', target), failed] }
@@ -1394,25 +1397,39 @@ function stepAccessibleName(step: ToolLike, label: { readonly text: string }, st
  */
 function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => HTMLElement) | undefined {
   if (step.kind === 'subagent') return () => el('div', 'step-body', step.text)
-  if (family.patch !== undefined) return () => el('div', 'step-body', diffNode(family.patch!.rows))
+  if (family.patch !== undefined) {
+    // The row names the file; the body gives its full path above the change.
+    const path = step.kind === 'tool' && step.tool.detail !== undefined ? patchPath(step.tool.detail) : undefined
+    return () => el('div', 'step-body', path === undefined ? undefined : el('div', 'step-path', path), diffNode(family.patch!.rows))
+  }
   if (family.found !== undefined) return () => el('div', 'step-body', searchBody(family.found!, painter))
   const terminal = shellOutput(step)
-  if (terminal !== undefined) {
+  const command = step.toolName === 'Bash' ? step.tool.command : undefined
+  if (terminal !== undefined || command !== undefined) {
     const { errorCode } = step.tool
     const error = errorCode === undefined ? undefined : TOOL_ERROR_LABELS[errorCode]
+    // The row says what the command is for, or only its first word; the whole command gets its own bubble.
+    const bubble = (): HTMLElement | undefined => command === undefined
+      ? undefined
+      : el(
+        'div',
+        'step-command',
+        el('pre', 'step-command-text', `$ ${command}`),
+        button('step-command-copy', '', '复制命令', () => painter.onCopy(command), { icon: 'copy' }),
+      )
+    // Still running: the command alone, so the abbreviated row can always be opened.
+    if (terminal === undefined) return () => el('div', 'step-body', bubble())
     // The shell's `(no output)` placeholder is not output: one line, no empty box.
     if (terminal.trim() === SHELL_NO_OUTPUT) {
-      return () => el('div', 'step-body', el('div', error === undefined ? 'step-body-head' : 'step-error',
+      return () => el('div', 'step-body', bubble(), el('div', error === undefined ? 'step-body-head' : 'step-error',
         error === undefined ? '无输出' : `${error}，无输出`))
     }
-    // The row says what the command is for; the command itself heads its output.
-    const { description, useSummary } = step.tool
-    const shown = description !== undefined && useSummary ? `$ ${useSummary}\n${terminal}` : terminal
     return () => el(
       'div',
       'step-body',
+      bubble(),
       error === undefined ? undefined : el('div', 'step-error', error),
-      el('pre', 'step-terminal', shown),
+      el('pre', 'step-terminal', terminal),
     )
   }
   if (family.rows !== undefined) {

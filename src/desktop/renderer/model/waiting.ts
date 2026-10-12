@@ -9,7 +9,8 @@ import {
   type TurnPhase,
 } from './transcript.js'
 import { batchPhrase, callPhrase, type CallStep } from './toolPhrases.js'
-import { markSpecFor, type MarkSpec } from './workingMark.js'
+import { EDIT_TOOLS } from './thinking.js'
+import { markSpecFor, peekField, type MarkSpec } from './workingMark.js'
 
 /**
  * What the turn is doing **right now**: one status line, the transcript's last,
@@ -17,13 +18,16 @@ import { markSpecFor, type MarkSpec } from './workingMark.js'
  *
  * Its words, by priority: a wait no record shows (compaction, retry backoff) >
  * a pending question > a call awaiting approval > the running calls > the thought
- * in progress > a draft arriving (「正在输出」) > 「正在思考」, the gap between steps.
+ * in progress > a call whose arguments are streaming (「正在编写 a.ts」) > a draft
+ * arriving (「正在输出」) > 「处理中」, the gap between steps.
  *
  * DOM-free, like every other `model/` unit: the clock and the timers live in the view.
  */
 
-/** 「正在思考」 — the label for 「the model is deciding」, wherever it is shown. */
+/** 「正在思考」 — only while a thought is actually streaming. */
 export const WAITING_LABEL = '正在思考'
+/** Any other wait: the request is out, or the model is between steps. */
+export const PROCESSING_LABEL = '处理中'
 
 const ASKING_LABEL = '正在提问'
 const WRITING_LABEL = '正在输出'
@@ -136,10 +140,18 @@ export function turnActivity(entries: readonly TranscriptEntry[], input: Waiting
     if (thought?.kind === 'thinking' && thought.pending === true) {
       return { row: row(WAITING_LABEL, { thinkingSince: thought.startedAt ?? input.startedAt }), mark }
     }
-    return { row: row(WAITING_LABEL), mark }
   }
+  if (input.draftCall !== undefined) return { row: row(draftLabel(input.draftCall)), mark }
   if (last?.kind === 'item' && isArriving(last.item)) return { row: row(WRITING_LABEL), mark }
-  return { row: row(WAITING_LABEL), mark }
+  return { row: row(PROCESSING_LABEL), mark }
+}
+
+/** A call the model is still writing: 「正在编写 a.ts」 for an edit, 「正在准备命令」 for the shell. */
+function draftLabel(draft: DraftCall): string {
+  if (draft.name === 'Bash') return '正在准备命令'
+  if (!EDIT_TOOLS.has(draft.name)) return PROCESSING_LABEL
+  const path = peekField(draft.input, 'filePath') ?? peekField(draft.input, 'file_path') ?? peekField(draft.input, 'notebook_path')
+  return path === undefined ? '正在编写文件' : `正在编写 ${path.split(/[\\/]/).pop()}`
 }
 
 /** The turn's newest run, for the mark to hold once text has followed it. */

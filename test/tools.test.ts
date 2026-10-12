@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -349,8 +349,8 @@ test('multiEdit applies multiple replacements atomically', async () => {
     assert.equal(
       result.metadata?.display?.detail,
       [
-        '--- a/a.txt',
-        '+++ b/a.txt',
+        `--- a/${path.join(await realpath(dir), 'a.txt')}`,
+        `+++ b/${path.join(await realpath(dir), 'a.txt')}`,
         '@@ -1,3 +1,3 @@',
         '-alpha',
         '+ALPHA',
@@ -535,8 +535,8 @@ test('editFile refuses stale files until they are read again', async () => {
     assert.equal(
       result.metadata?.display?.detail,
       [
-        '--- a/a.txt',
-        '+++ b/a.txt',
+        `--- a/${path.join(await realpath(dir), 'a.txt')}`,
+        `+++ b/${path.join(await realpath(dir), 'a.txt')}`,
         '@@ -1,1 +1,1 @@',
         '-hello world',
         '+hello there',
@@ -557,8 +557,8 @@ test('writeFile creates parent directories', async () => {
     assert.equal(
       result.metadata?.display?.detail,
       [
-        '--- a/nested/a.txt',
-        '+++ b/nested/a.txt',
+        `--- a/${path.join(await realpath(dir), 'nested', 'a.txt')}`,
+        `+++ b/${path.join(await realpath(dir), 'nested', 'a.txt')}`,
         '@@ -0,0 +1,1 @@',
         '+hello',
         '\\ No newline at end of file',
@@ -611,8 +611,8 @@ test('writeFile overwrites fresh reads and updates read state', async () => {
     assert.equal(
       result.metadata?.display?.detail,
       [
-        '--- a/a.txt',
-        '+++ b/a.txt',
+        `--- a/${path.join(await realpath(dir), 'a.txt')}`,
+        `+++ b/${path.join(await realpath(dir), 'a.txt')}`,
         '@@ -1,1 +1,1 @@',
         '-hello',
         '\\ No newline at end of file',

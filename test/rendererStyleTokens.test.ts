@@ -1591,26 +1591,27 @@ test('activity lines carry one running mark, which moves and stays readable', ()
   }
 })
 
-test("the shell family's terminal block is a card-shelled output block that reddens whole on failure", () => {
-  // §6.2/T14: a Bash step opens into the command's own output, on the same
-  // card-and-hairline content shell a fenced block or a diff gets, scrolling
-  // inside itself so a long log never turns the group into a scroll window.
-  // Failure turns the whole block's text to the danger colour — the output of a
-  // failed command reads as the error it is — and the error code above it is
-  // danger on its own, because the only step that shows one is a failed step.
+test("the shell family's command bubble is card-shelled and its output reddens whole on failure", () => {
+  // §6.2/T14: a Bash step opens into the command in a bubble on the same
+  // card-and-hairline content shell a fenced block or a diff gets, and the
+  // output bare beneath it, scrolling inside itself so a long log never turns
+  // the group into a scroll window. Failure turns the whole output to the
+  // danger colour, and the error code above it is danger on its own, because
+  // the only step that shows one is a failed step.
+  const bubble = blockFor('.step-command')
+  assert.ok(
+    declares(bubble, 'background', 'var(--surface-card)'),
+    'the command bubble sits on the card surface (§6.2)',
+  )
+  assert.ok(
+    declares(bubble, 'border', '1px solid var(--border-subtle)'),
+    'the command bubble carries the content hairline',
+  )
+  assert.ok(
+    declares(bubble, 'border-radius', 'var(--radius-md)'),
+    'the command bubble joins the fenced block and the diff on their radius rung, not a third one',
+  )
   const terminal = blockFor('.step-terminal')
-  assert.ok(
-    declares(terminal, 'background', 'var(--surface-card)'),
-    'the terminal block sits on the card surface (§6.2)',
-  )
-  assert.ok(
-    declares(terminal, 'border', '1px solid var(--border-subtle)'),
-    'the terminal block carries the content hairline',
-  )
-  assert.ok(
-    declares(terminal, 'border-radius', 'var(--radius-md)'),
-    'the terminal block joins the fenced block and the diff on their radius rung, not a third one',
-  )
   assert.ok(
     declares(terminal, 'overflow-y', 'auto'),
     'a long output scrolls inside the block, never the group (§6.2 块内滚动) — vertically only',

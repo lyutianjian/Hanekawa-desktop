@@ -79,7 +79,7 @@ export const writeFileTool: Tool = {
       metadata: {
         display: {
           summary: exists ? `Overwrote ${filePath}` : `Created ${filePath}`,
-          ...(previousContent !== undefined ? patchDetail(filePath, previousContent, content) : {}),
+          ...(previousContent !== undefined ? patchDetail(absolute, previousContent, content) : {}),
         },
       },
     }

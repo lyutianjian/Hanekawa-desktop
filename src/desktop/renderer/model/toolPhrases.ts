@@ -56,8 +56,8 @@ const TARGET_MAX = 40
 /**
  * A call as a verb and what it acts on. `bare` marks a shell command the model
  * described: 「检查工作目录」 already says everything, and 「运行 检查工作目录」 would
- * only add a word. Without a description the command itself is the target, and
- * keeps its verb.
+ * only add a word. Without a description the command's first word is the target,
+ * and keeps its verb.
  */
 export function callParts(step: CallStep, fullPath = false): { readonly verb: string; readonly target: string; readonly bare: boolean } {
   if (step.tool.taskOps !== undefined) return { verb: taskPhrase(step.tool.taskOps), target: '', bare: false }
@@ -70,8 +70,15 @@ export function callParts(step: CallStep, fullPath = false): { readonly verb: st
   // Grep and Glob caption as `pattern · glob · path`; the pattern is the target.
   const raw = step.tool.description ?? step.tool.useSummary.split(' · ')[0] ?? ''
   const oneLine = raw.replace(/\s+/g, ' ').trim()
-  const target = phrase.target === 'file' && !fullPath ? oneLine.split(/[\\/]/).pop()! : oneLine
+  const target = phrase.target === 'file' && !fullPath ? oneLine.split(/[\\/]/).pop()! : bashWord(step, oneLine)
   return { verb: phrase.verb, target, bare: step.toolName === 'Bash' && !!step.tool.description?.trim() }
+}
+
+/** An undescribed command reads as its first word, 「运行 sed…」; the whole command is in the body. */
+function bashWord(step: CallStep, target: string): string {
+  if (step.toolName !== 'Bash' || step.tool.description?.trim()) return target
+  const [word = '', ...rest] = target.split(' ')
+  return rest.length > 0 ? `${word}…` : word
 }
 
 const TASK_VERBS = { start: '开始', complete: '完成', update: '更新', delete: '删除' } as const

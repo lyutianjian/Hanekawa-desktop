@@ -64,12 +64,13 @@ test('an idle session says nothing at all', () => {
 
 test('what the status reads, by priority', () => {
   const cases: Array<[string, string | undefined, readonly TranscriptItem[], Partial<WaitingInput>?, boolean?]> = [
-    ['before the first step', '正在思考', [USER], {}, true],
+    ['before the first step', '处理中', [USER], {}, true],
     ['a thought in progress', '正在思考', turn([THINKING])],
-    ['between two tools', '正在思考', turn([DONE_BASH])],
-    ['after a paragraph', '正在思考', turn([DONE_BASH, said])],
+    ['between two tools', '处理中', turn([DONE_BASH])],
+    ['after a paragraph', '处理中', turn([DONE_BASH, said])],
+    ['a finished thought', '处理中', turn([{ ...THINKING, pending: false }])],
     ['a running call, in words', '跑测试', turn([THINKING, RUNNING_BASH])],
-    ['a bare command keeps its verb', '运行 npm test', turn([bare])],
+    ['a bare command keeps its verb and only its first word', '运行 npm…', turn([bare])],
     ['one tool in parallel is counted', '读取 3 个文件', turn([read('r1', 'a.ts'), read('r2', 'b.ts'), read('r3', 'c.ts')])],
     ['a mix names the last', '读取 a.ts 等 2 项', turn([RUNNING_BASH, read('r1', 'a.ts')])],
     ['an unknown tool falls back to its name', '调用 x - y', turn([mcp])],
@@ -78,8 +79,8 @@ test('what the status reads, by priority', () => {
     ['a compaction outranks a question', '正在压缩上下文', turn([RUNNING_BASH]), { asking: '数据库', phase: { kind: 'compacting' } }],
     ['a retry names its ordinal', '服务过载 · 第 2 次重试', turn([RUNNING_BASH]), { phase: { kind: 'retrying', attempt: 2, reason: 'overload' } }],
     ['a draft that is arriving', '正在输出', [USER, DRAFT('好的')], {}, true],
-    ['an empty draft is still the gap', '正在思考', [USER, DRAFT('')], {}, true],
-    ['a whitespace draft is still the gap', '正在思考', [USER, DRAFT('  \n')], {}, true],
+    ['an empty draft is still the gap', '处理中', [USER, DRAFT('')], {}, true],
+    ['a whitespace draft is still the gap', '处理中', [USER, DRAFT('  \n')], {}, true],
   ]
   for (const [name, want, items, extra, noTurn] of cases) {
     assert.equal(activity(items, true, noTurn ? undefined : TURN, extra).row?.label, want, name)
@@ -89,20 +90,29 @@ test('what the status reads, by priority', () => {
 test('the status is there only while the turn is running, and an old run is not this turn’s', () => {
   const earlier: TranscriptItem = { ...DONE_BASH, id: 'call-0', turnId: 't0' }
   const next = [{ ...USER, turnId: 't0' }, earlier, { id: 'u2', kind: 'user', text: '再来' } as TranscriptItem]
-  assert.equal(activity(next, true, undefined).row?.label, '正在思考')
+  assert.equal(activity(next, true, undefined).row?.label, '处理中')
   // Even before the new turn stamps its records, an old run at the tail is not its run.
-  assert.equal(activity(turn([{ ...RUNNING_BASH, turnId: 't0' }]), true, TURN).row?.label, '正在思考')
+  assert.equal(activity(turn([{ ...RUNNING_BASH, turnId: 't0' }]), true, TURN).row?.label, '处理中')
   const interrupted: TranscriptItem = { id: 'stop', kind: 'notice', text: 'Interrupted.', turnId: TURN, interrupt: true }
-  assert.equal(activity(turn([DONE_BASH, interrupted])).row?.label, '正在思考')
+  assert.equal(activity(turn([DONE_BASH, interrupted])).row?.label, '处理中')
 })
 
-test('a draft that moved on to a tool call’s arguments is the gap again', () => {
+test('a draft that moved on to a tool call’s arguments names the call being written', () => {
   let state = createTranscriptState()
   const apply = (event: Parameters<typeof applySessionEvent>[1]) => { state = applySessionEvent(state, event).state }
+  const label = () => activity([USER, ...state.items], true, undefined, state.draftCall ? { draftCall: state.draftCall } : {}).row?.label
   apply({ type: 'stream', event: { type: 'text_delta', text: '先读一下文件' } })
-  assert.equal(activity([USER, ...state.items], true, undefined).row?.label, '正在输出')
+  assert.equal(label(), '正在输出')
   apply({ type: 'stream', event: { type: 'tool_input_delta', partialJson: '{"file' } })
-  assert.equal(activity([USER, ...state.items], true, undefined).row?.label, '正在思考')
+  assert.equal(label(), '处理中')
+  apply({ type: 'stream', event: { type: 'tool_input_delta', name: 'Edit', partialJson: '{"filePath":' } })
+  assert.equal(label(), '正在编写文件')
+  apply({ type: 'stream', event: { type: 'tool_input_delta', name: 'Edit', partialJson: '"/repo/src/a.ts","oldString":"x' } })
+  assert.equal(label(), '正在编写 a.ts')
+  apply({ type: 'stream', event: { type: 'tool_input_delta', name: 'Bash', index: 1, partialJson: '{"command":"ls' } })
+  assert.equal(label(), '正在准备命令')
+  apply({ type: 'stream', event: { type: 'tool_input_delta', name: 'Read', index: 2, partialJson: '{"filePath":"a.ts"' } })
+  assert.equal(label(), '处理中')
 })
 
 test('a retry backoff and a compaction are over when their event says so', () => {
@@ -112,7 +122,7 @@ test('a retry backoff and a compaction are over when their event says so', () =>
   apply({ type: 'stream', event: { type: 'compact', phase: 'start' } })
   assert.equal(label(), '正在压缩上下文')
   apply({ type: 'stream', event: { type: 'compact', phase: 'end' } })
-  assert.equal(label(), '正在思考')
+  assert.equal(label(), '处理中')
   apply({ type: 'stream', event: { type: 'text_delta', text: '先读' } })
   apply({ type: 'stream', event: { type: 'retry', attempt: 2, reason: 'overload', delayMs: 2000 } })
   assert.equal(label(), '服务过载 · 第 2 次重试')
@@ -166,8 +176,8 @@ test('the working mark follows what the status is about', () => {
   const think = { body: 'think', state: 'working' }
   const code = { body: 'code', state: 'working' }
   assert.equal(activity([USER, DONE_BASH], false).mark, undefined)
-  assert.deepEqual(activity([USER, DRAFT('好的')], true, undefined).mark, think)
-  assert.deepEqual(activity([USER], true, undefined).mark, think)
+  assert.deepEqual(activity([USER, DRAFT('好的')], true, undefined).mark, plain)
+  assert.deepEqual(activity([USER], true, undefined).mark, plain)
   // The last call holds the mark through the gap and the text after it.
   assert.deepEqual(activity(turn([DONE_BASH])).mark, code)
   assert.deepEqual(activity(turn([DONE_BASH, DRAFT('测试通过了')])).mark, code)

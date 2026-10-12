@@ -197,7 +197,7 @@ function stepBody(step: CallStep, running: boolean): MarkBody {
 }
 
 /** A string field the arguments have already closed. */
-function peekField(json: string, key: string): string | undefined {
+export function peekField(json: string, key: string): string | undefined {
   const raw = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(json)?.[1]
   if (raw === undefined) return undefined
   try {
@@ -213,8 +213,8 @@ function peekField(json: string, key: string): string | undefined {
  *
  * A call waiting on the user's approval outranks the others, and is the same
  * call `runActivity` names; then the last running call, then the call being
- * written. With nothing running the mark holds the turn's latest step — the
- * last call's body, or `think` after a thought — and starts at `think`.
+ * written. With nothing running the mark holds the turn's latest call's body;
+ * `think` only while a thought is streaming, and `default` otherwise.
  */
 export function markSpecFor(run: ActivityRun | undefined, draft?: DraftCall): MarkSpec {
   const running = (run?.steps ?? []).filter((step): step is CallStep => (step.kind === 'tool' || step.kind === 'task') && step.pending === true)
@@ -227,9 +227,9 @@ export function markSpecFor(run: ActivityRun | undefined, draft?: DraftCall): Ma
     return { body: callBody(draft.name, hints, true), state: 'working' }
   }
   for (const step of [...(run?.steps ?? [])].reverse()) {
-    if (step.kind === 'thinking') return { body: 'think', state: 'working' }
+    if (step.kind === 'thinking') return { body: step.pending === true ? 'think' : 'default', state: 'working' }
     if (step.kind === 'tool' || step.kind === 'task') return { body: stepBody(step, false), state: 'working' }
     if (step.kind === 'subagent') return { body: 'default', state: 'working' }
   }
-  return { body: 'think', state: 'working' }
+  return { body: 'default', state: 'working' }
 }

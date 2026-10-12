@@ -128,7 +128,7 @@ export const multiEditTool: Tool = {
       metadata: {
         display: {
           summary: `Applied ${edits.length} edit${edits.length === 1 ? '' : 's'} to ${filePath}`,
-          ...patchDetail(filePath, originalContent, nextContent),
+          ...patchDetail(absolute, originalContent, nextContent),
         },
       },
     }

@@ -73,6 +73,13 @@ const PATCH_ELISION = /^… (\d+) more lines? not shown$/
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
 
+/** The file a unified patch names on its `+++ b/…` header, or `undefined` without one. */
+export function patchPath(patch: string): string | undefined {
+  const header = patch.split('\n', 3).find((line) => line.startsWith('+++ '))
+  const path = header?.slice(4).replace(/^b\//, '').trim()
+  return path ? path : undefined
+}
+
 /**
  * The unified patch the editing tools ship in `ToolResultDisplay.detail` (T12),
  * turned into the same rows the permission preview paints — line gutters

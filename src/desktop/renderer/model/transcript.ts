@@ -156,6 +156,8 @@ export interface ToolStepDetail {
   readonly awaitingApproval?: boolean
   /** `Bash` only: the model's own words for what the command does (`input.description`). */
   readonly description?: string
+  /** `Bash` only: the full command (`input.command`), untruncated, for the body and its copy button. */
+  readonly command?: string
   /** The Agent family: the task the parent handed the sub-agent (`input.task`). */
   readonly task?: string
   /** The Agent family: the sub-agent run's own facts (§6.2 Agent). */
@@ -961,7 +963,7 @@ function recordItems(record: SessionRecord, context: ItemContext = {}): Transcri
         ...(context.approved?.has(record.id) === true ? {} : { awaitingApproval: true }),
         ...(dto ? { captioned: true } : {}),
         ...(record.tool === AGENT_TOOL ? agentTask(record.input) : {}),
-        ...(record.tool === 'Bash' ? bashDescription(record.input) : {}),
+        ...(record.tool === 'Bash' ? bashInput(record.input) : {}),
         ...(record.tool === ASK_TOOL ? askedQuestions(record.input) : {}),
         ...(TASK_TOOLS.has(record.tool) ? { taskOps: [taskOp(record.tool, record.input)] } : {}),
       }
@@ -1378,9 +1380,14 @@ function foldTaskCalls(first: TranscriptItem, next: TranscriptItem): TranscriptI
   }
 }
 
-function bashDescription(input: unknown): { description?: string } {
-  const value = typeof input === 'object' && input !== null ? (input as { description?: unknown }).description : undefined
-  return typeof value === 'string' && value.trim().length > 0 ? { description: value.trim() } : {}
+function bashInput(input: unknown): { description?: string; command?: string } {
+  const { description, command } = typeof input === 'object' && input !== null
+    ? input as { description?: unknown; command?: unknown }
+    : {}
+  return {
+    ...(typeof description === 'string' && description.trim().length > 0 ? { description: description.trim() } : {}),
+    ...(typeof command === 'string' && command.trim().length > 0 ? { command: command.trim() } : {}),
+  }
 }
 
 function toolCallDetail(input: unknown): string {

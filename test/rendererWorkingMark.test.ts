@@ -121,12 +121,12 @@ test('markSpecFor: a call awaiting approval outranks later calls and blocks the 
   assert.deepEqual(spec, { body: 'write', state: 'blocked' })
 })
 
-test('markSpecFor: with nothing running the mark holds the latest step, and starts at think', () => {
+test('markSpecFor: with nothing running the mark holds the latest call; think only while a thought streams', () => {
   const working = (body: MarkBody) => ({ body, state: 'working' })
   assert.deepEqual(markSpecFor(run(call('Read', 'a', { pending: false }), thinking(true))), working('think'))
-  assert.deepEqual(markSpecFor(run(thinking(false))), working('think'))
+  assert.deepEqual(markSpecFor(run(thinking(false))), working('default'))
   assert.deepEqual(markSpecFor(run(thinking(false), call('Read', 'a', { pending: false }))), working('read'))
-  assert.deepEqual(markSpecFor(undefined), working('think'))
+  assert.deepEqual(markSpecFor(undefined), working('default'))
 })
 
 test('markSpecFor: Bash reads its description\'s verb', () => {

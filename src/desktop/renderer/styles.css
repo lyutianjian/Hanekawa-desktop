@@ -2363,12 +2363,43 @@ body.settings-open #browser-resizer { display: none; }
    matches the fallback body's, and the block's own margin belongs to the
    dialog's padding. */
 .step-body .diff { max-height: 320px; margin: 0; }
+.step-path { margin-bottom: var(--space-2); overflow-wrap: anywhere; }
 
-/* The shell family's body (T14) is a terminal block: the command's own output
-   on the same card-and-hairline content shell a fenced block or a diff gets,
-   scrolling inside itself so a long log never turns the group into a scroll
-   window (§6.2). The output is ANSI-stripped by the view before it gets here;
-   this rule owns the look — monospace, card surface, capped height. */
+/* The shell family's body (T14): the command in a bubble of its own — the
+   card-and-hairline content shell, with a copy button — and the output bare
+   beneath it, scrolling inside itself so a long log never turns the group into
+   a scroll window (§6.2). The output is ANSI-stripped by the view. */
+.step-command {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+.step-command-text {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.step-command-copy {
+  display: inline-flex;
+  flex: none;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.step-command-copy:hover { color: var(--text-secondary); }
+.step-command-copy:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.step-command-copy .icon { width: 13px; height: 13px; }
 .step-terminal {
   max-height: 320px;
   margin: 0;
@@ -2378,10 +2409,6 @@ body.settings-open #browser-resizer { display: none; }
      horizontal scrollbar is `.diff`, whose columns have to line up. */
   overflow-y: auto;
   overflow-x: clip;
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
   font-family: var(--font-mono);
   white-space: pre-wrap;
   /* A single unbroken token — a long path, a base64 blob — is the one thing
