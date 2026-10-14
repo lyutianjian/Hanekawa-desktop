@@ -2762,7 +2762,7 @@ body.settings-open #browser-resizer { display: none; }
 #canvas:has(#suggestions:not([inert])) .welcome { opacity: 0; }
 .welcome-head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); }
 .welcome-usage { max-width: 520px; }
-.welcome-mark { width: 20px; height: 20px; color: var(--accent-brand-strong); }
+.welcome-mark { width: 26px; height: 26px; color: var(--accent-brand-strong); }
 .welcome-title {
   margin: 0;
   font-family: var(--font-serif);

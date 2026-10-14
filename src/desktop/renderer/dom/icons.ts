@@ -62,6 +62,8 @@ export type IconName =
   | 'database'
   // --- the composer's model chip, once the row is too narrow for its name ---
   | 'model'
+  // --- the welcome page's mark ---
+  | 'cat'
   // --- 概览: the canvas header button, the welcome's chip and the panel's empty state ---
   | 'overview'
   // --- a running sub-agent's capsule ---
@@ -232,6 +234,7 @@ const ICONS = {
   // already reads as "the model", and the one shape in the row that is not a
   // control's own affordance.
   model: { paths: ['M8 2.4 9.5 6.5 13.6 8 9.5 9.5 8 13.6 6.5 9.5 2.4 8 6.5 6.5Z'] },
+  cat: { paths: ['M2.25 12.05V3.95l3.1 2.6c1.73-.72 3.6-.72 5.3 0l3.1-2.6v8.1', 'M1.2 12.05h13.6', 'M6.05 9.25h.01', 'M9.95 9.25h.01'] },
   overview: { paths: ['M3 4.5h.01', 'M3 8h.01', 'M3 11.5h.01', 'M6 4.5h7', 'M6 8h7', 'M6 11.5h7'] },
 } as const satisfies Record<IconName, IconSpec>
 

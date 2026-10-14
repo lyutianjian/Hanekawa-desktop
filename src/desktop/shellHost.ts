@@ -1334,7 +1334,7 @@ export class ShellHost<
       case 'new-coordinator-project': {
         const { onPickDirectory } = this.deps
         if (command.path === undefined && !onPickDirectory) throw new Error('The shell cannot open projects.')
-        const target = command.path ?? (await onPickDirectory!({ title: '新建项目', buttonLabel: '新建' }))
+        const target = command.path ?? (await onPickDirectory!({ title: '新建调度', buttonLabel: '新建' }))
         if (target === undefined) return { cancelled: true } satisfies WireShellNewCoordinatorProjectResult
         return this.openCoordinator(target, { opening: true })
       }

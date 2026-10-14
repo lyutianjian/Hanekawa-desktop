@@ -879,7 +879,7 @@ export interface WireThreadInfo {
 export interface WireCoordinationThreads {
   projectRoot: string
   coordinatorSessionId?: string
-  /** The survey thread a project created by 新建项目 opened with. */
+  /** The survey thread a project created by 新建调度 opened with. */
   openingThreadId?: string
   /** The project has had a coordinator, even if its session was since deleted. */
   started?: true

@@ -30,7 +30,7 @@ export function createProjectsPageView(root: HTMLElement, handlers: ProjectsPage
   let drawn: string | undefined
 
   const newButton = (canCreate: boolean): HTMLButtonElement =>
-    button('projects-new', PROJECTS_NEW_LABEL, canCreate ? '选择一个文件夹作为新项目' : CREATE_BLOCKED_HINT, () => handlers.onNew(), {
+    button('projects-new', PROJECTS_NEW_LABEL, canCreate ? '选择一个文件夹开始调度' : CREATE_BLOCKED_HINT, () => handlers.onNew(), {
       icon: 'plus',
       enabled: canCreate,
     })

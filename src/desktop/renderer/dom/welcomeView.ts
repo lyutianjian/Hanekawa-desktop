@@ -61,7 +61,7 @@ export function createWelcomeView(
   // --- the scaffolding, built once ------------------------------------------
 
   const title = el('h1', 'welcome-title')
-  const head = el('div', 'welcome-head', icon('model', 'icon welcome-mark'), title)
+  const head = el('div', 'welcome-head', icon('cat', 'icon welcome-mark'), title)
   const usage = createUsageCard()
   const usageSlot = el('div', 'welcome-usage')
   const pills = el('div', 'welcome-pills')

@@ -649,7 +649,7 @@ test('the first-level actions are rows under the search box', (t) => {
   render(viewOf())
 
   const nav = region(root(), 'sidebar-nav')
-  assert.deepEqual(nav.children.map((child) => child.text), ['新建会话', '打开项目…', '项目', '最近'])
+  assert.deepEqual(nav.children.map((child) => child.text), ['新建会话', '打开项目…', '项目调度', '最近'])
   // Rows, not the bordered pills they used to be: they belong to the same column
   // of destinations the session rows are in.
   assert.deepEqual(nav.children.map((child) => child.classes), [

@@ -113,7 +113,7 @@ export function formatWakeMessage(input: WakeMessageInput): string {
   ].join('\n')
 }
 
-/** The survey the app starts as a thread for a coordinator created by 新建项目. */
+/** The survey the app starts as a thread for a coordinator created by 新建调度. */
 export const OPENING_THREAD: StartThreadRequest = {
   title: '了解项目',
   brief: [

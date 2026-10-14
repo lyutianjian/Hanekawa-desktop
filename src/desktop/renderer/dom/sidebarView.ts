@@ -732,8 +732,8 @@ export function createSidebarView(
         ),
         button(
           `sidebar-nav-item${view.projectsOpen ? ' on' : ''}`,
-          '项目',
-          view.projectsOpen ? '回到会话' : '查看所有项目',
+          PROJECTS_PAGE_TITLE,
+          view.projectsOpen ? '回到会话' : '查看所有项目调度',
           () => onIntent({ kind: 'toggle-projects' }),
           { icon: 'folder' },
         ),
