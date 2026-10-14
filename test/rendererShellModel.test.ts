@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { completionAcceptMode, resolveKey, type ShellState } from '../src/desktop/renderer/model/keymap.js'
+import { completionAcceptMode, resolveKey, type ShellState, type WindowLayers } from '../src/desktop/renderer/model/keymap.js'
 import {
   classifyInput,
   commandEffectToIntent,
@@ -82,6 +82,30 @@ test('a blocking dialog outranks the rewind panel, which outranks everything els
   assert.equal(resolveKey({ key: '1' }, open), 'rewind')
   assert.equal(resolveKey({ key: 'Tab' }, shell({ hasRewind: true, completions: 'command' })), 'rewind')
   assert.equal(resolveKey({ key: 'Enter' }, shell({ hasRewind: true, hasSurface: true, inputEmpty: true })), 'rewind')
+})
+
+const layers = (open: Partial<WindowLayers>): WindowLayers => ({ viewer: false, screen: false, popover: false, ...open })
+
+test('Escape unwinds the window top-down: viewer, dialog, rewind, popover, screen, then the turn', () => {
+  const everything = { hasOverlay: true, hasRewind: true, hasSurface: true, completions: 'command' as const, isStreaming: true }
+  const all = layers({ viewer: true, popover: true, screen: true })
+  assert.equal(resolveKey({ key: 'Escape' }, shell(everything), all), 'close-viewer')
+  assert.equal(resolveKey({ key: 'Escape' }, shell(everything), layers({ popover: true, screen: true })), 'overlay')
+  assert.equal(resolveKey({ key: 'Escape' }, shell({ ...everything, hasOverlay: false }), layers({ popover: true })), 'rewind')
+  assert.equal(
+    resolveKey({ key: 'Escape' }, shell({ isStreaming: true, hasSurface: true, completions: 'command' }), layers({ popover: true, screen: true })),
+    'close-popover',
+    'a popover floating over a streaming composer is closed before the turn is interrupted',
+  )
+  assert.equal(resolveKey({ key: 'Escape' }, shell({ isStreaming: true }), layers({ screen: true })), 'close-screen')
+  assert.equal(resolveKey({ key: 'Escape' }, shell({ isStreaming: true }), layers({})), 'interrupt')
+})
+
+test('only Escape reads the window layers', () => {
+  const open = layers({ viewer: true, popover: true, screen: true })
+  assert.equal(resolveKey({ key: 'Enter' }, shell(), open), 'submit')
+  assert.equal(resolveKey({ key: 'Enter' }, shell({ isStreaming: true }), open), 'enqueue')
+  assert.equal(resolveKey({ key: 'ArrowDown' }, shell({ hasSurface: true, inputEmpty: true }), open), 'move-surface-down')
 })
 
 test('Escape while the rewind panel is open never interrupts the turn', () => {
@@ -221,6 +245,8 @@ test('the dropdown wraps, and accepting rewrites the composer', () => {
 
 test('all three command effects map to something the view can do', () => {
   assert.deepEqual(commandEffectToIntent({ kind: 'write-line', text: 'hi' }), { kind: 'write-line', text: 'hi' })
+  // A failure keeps its tone, so the transcript draws it as one.
+  assert.deepEqual(commandEffectToIntent({ kind: 'write-line', text: 'no', tone: 'error' }), { kind: 'write-line', text: 'no', tone: 'error' })
   assert.deepEqual(commandEffectToIntent({ kind: 'open-surface', surface: 'model-picker' }),
     { kind: 'open-surface', surface: 'model-picker' })
 

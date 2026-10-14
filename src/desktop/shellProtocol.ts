@@ -3,6 +3,10 @@ import type { SessionRecord } from '../harness/types.js'
 import type { ToolDisplays, WirePaneInfo } from '../runtime/protocol/wire.js'
 import type { McpServerConfig } from '../services/mcp/types.js'
 import type { EffortLevel } from '../config/effort.js'
+import type { EndpointProbeResult } from '../config/providers/probe.js'
+import type { SupportedProviderName } from '../config/providers/registry.js'
+
+export type { EndpointProbeFailure, ProbedModel } from '../config/providers/probe.js'
 
 export type { McpServerConfig }
 
@@ -118,6 +122,21 @@ export type ShellCommand =
    * project-lookup / save / reload / fan-out choreography.
    */
   | { type: 'settings-change'; id: string; projectRoot: string; change: SettingsChange }
+  /**
+   * Lists an endpoint's models — the settings screen's connection test. With
+   * `endpointName` and no `apiKey` the key saved for that endpoint is used: the
+   * renderer only ever holds its mask. Never rejects for a failed connection;
+   * the reason is in the answer.
+   */
+  | {
+      type: 'probe-endpoint'
+      id: string
+      projectRoot: string
+      provider: SupportedProviderName
+      baseUrl?: string
+      apiKey?: string
+      endpointName?: string
+    }
   /**
    * Retitles a session. `sessionId` may be a prefix — the host resolves it,
    * for the same reason `delete-session` does.
@@ -707,6 +726,8 @@ export interface WireSessionSummary {
   title?: string
   updatedAt: string
   messageCount: number
+  /** The session's last turn ended on an error. */
+  failed?: boolean
   /** The session's coordination role, when it belongs to a project's coordination. */
   coordinationRole?: 'coordinator' | 'thread'
 }
@@ -791,6 +812,8 @@ export interface WireShellSettingsChangeResult {
   /** How many live lanes of that project rebuilt their runtime. */
   rebuiltLanes: number
 }
+
+export type WireShellProbeEndpointResult = EndpointProbeResult
 
 export interface WireShellRenameSessionResult {
   ok: true

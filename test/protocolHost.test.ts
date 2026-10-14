@@ -860,7 +860,8 @@ test('an unknown command is handled, and explains itself as a written line', asy
   assert.deepEqual(reply.result, { handled: true })
   const effect = harness.received.find((event) => event.type === 'command-effect')
   assert.ok(effect?.type === 'command-effect' && effect.effect.kind === 'write-line')
-  assert.match(effect.effect.text, /Unknown command: \/nosuchthing/)
+  assert.match(effect.effect.text, /未知命令：\/nosuchthing/)
+  assert.equal(effect.effect.tone, 'error')
   harness.dispose()
 })
 
@@ -905,7 +906,8 @@ test('a command that throws is reported through a written line, not a fail', asy
 
   const effect = harness.received.find((event) => event.type === 'command-effect')
   assert.ok(effect?.type === 'command-effect' && effect.effect.kind === 'write-line')
-  assert.match(effect.effect.text, /Command error: Ambiguous subagent id abc/)
+  assert.match(effect.effect.text, /命令出错：Ambiguous subagent id abc/)
+  assert.equal(effect.effect.tone, 'error')
   harness.dispose()
 })
 
@@ -933,7 +935,7 @@ test('/model with an unknown argument writes a line and leaves the runtime alone
   assert.deepEqual(harness.calls.defaultModels, [])
   const effect = harness.received.find((event) => event.type === 'command-effect')
   assert.ok(effect?.type === 'command-effect' && effect.effect.kind === 'write-line')
-  assert.match(effect.effect.text, /Unknown model: nope/)
+  assert.match(effect.effect.text, /未知模型：nope/)
   harness.dispose()
 })
 

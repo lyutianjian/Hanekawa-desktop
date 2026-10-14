@@ -5,6 +5,7 @@ import { rm } from 'node:fs/promises'
 import { maskKey } from '../config/maskKey.js'
 import { VALID_EFFORT_LEVELS, normalizeSupportedEfforts } from '../config/effort.js'
 import { resolveImageCapability, SUPPORTED_PROVIDER_NAMES } from '../config/providers/registry.js'
+import { probeEndpoint } from '../config/providers/probe.js'
 import { carryJsonOnlyModelFields } from '../config/service.js'
 import type { Config, ModelConfig } from '../config/service.js'
 import type { Endpoint, Routing } from '../config/routing.js'
@@ -64,6 +65,7 @@ import {
   type WireShellDeleteSessionResult,
   type WireShellOpenInEditorResult,
   type WireShellSetWindowThemeResult,
+  type WireShellProbeEndpointResult,
   type WireShellPickImagesResult,
   type WireBrowserRect,
   type WireBrowserTabInfo,
@@ -702,6 +704,17 @@ const SHELL_COMMAND_SCHEMAS = {
       change: settingsChangeSchema,
     })
     .strict(),
+  'probe-endpoint': z
+    .object({
+      type: z.literal('probe-endpoint'),
+      id: commandId,
+      projectRoot: z.string(),
+      provider: z.enum(SUPPORTED_PROVIDER_NAMES),
+      baseUrl: z.string().optional(),
+      apiKey: z.string().optional(),
+      endpointName: z.string().optional(),
+    })
+    .strict(),
   'rename-session': z
     .object({
       type: z.literal('rename-session'),
@@ -920,7 +933,7 @@ function resolveProjectFile(cwd: string, target: WireEditorTarget): { path: stri
   const root = path.resolve(cwd)
   const absolute = path.resolve(root, target.path)
   if (absolute !== root && !absolute.startsWith(root + path.sep)) {
-    throw new Error(`Refusing to open "${target.path}": it is outside the project`)
+    throw new Error(`拒绝打开「${target.path}」：它在项目目录之外`)
   }
   return { path: absolute, ...(target.line === undefined ? {} : { line: target.line }) }
 }
@@ -1269,6 +1282,8 @@ export class ShellHost<
         return this.getSettings(command.projectRoot)
       case 'settings-change':
         return this.applySettingsChange(command.projectRoot, command.change)
+      case 'probe-endpoint':
+        return this.probeEndpoint(command)
       case 'rename-session':
         return this.renameSession(command.projectRoot, command.sessionId, command.title)
       case 'open-in-editor':
@@ -1543,7 +1558,7 @@ export class ShellHost<
     if (cwd === undefined) throw new Error(`No project is open at ${projectRoot}`)
     // The global workspace is not a registry member, so there is nothing to
     // forget and nowhere for its sessions to go. Rejecting is the honest answer.
-    if (isGlobalWorkspaceRoot(cwd)) throw new Error('The global workspace cannot be removed.')
+    if (isGlobalWorkspaceRoot(cwd)) throw new Error('「最近」工作区不能移除。')
 
     const lanes = [...this.lanes.entries()]
       .filter(([, held]) => held.project === entry)
@@ -1777,6 +1792,20 @@ export class ShellHost<
     change: SettingsChange,
   ): Promise<WireShellSettingsChangeResult> {
     return this.withProjectEntry(projectRoot, (entry) => this.applySettingsChangeTo(entry, change))
+  }
+
+  private async probeEndpoint(
+    command: Extract<ShellCommand, { type: 'probe-endpoint' }>,
+  ): Promise<WireShellProbeEndpointResult> {
+    const apiKey = command.apiKey ?? (command.endpointName === undefined
+      ? undefined
+      : await this.withProjectEntry(command.projectRoot, async (entry) =>
+        entry.project.config.get().endpoints?.[command.endpointName!]?.apiKey))
+    return probeEndpoint({
+      provider: command.provider,
+      ...(command.baseUrl === undefined ? {} : { baseUrl: command.baseUrl }),
+      ...(apiKey === undefined ? {} : { apiKey }),
+    })
   }
 
   private async applySettingsChangeTo(
@@ -2200,7 +2229,7 @@ function assertNever(value: never): never {
 }
 
 /**
- * A session index row → the four fields a sidebar row reads. Field by field,
+ * A session index row → the fields a sidebar row reads. Field by field,
  * never a spread: `SessionMeta` gains entries (`checkpoints` per turn) that
  * nothing downstream of this command reads, and the
  * registry peek's narrower rows satisfy the same shape.
@@ -2210,6 +2239,7 @@ function summarize(session: {
   updatedAt: string
   messageCount: number
   title?: string
+  lastTurnFailed?: boolean
   coordination?: { role: 'coordinator' | 'thread' }
 }): WireSessionSummary {
   const summary: WireSessionSummary = {
@@ -2218,6 +2248,7 @@ function summarize(session: {
     messageCount: session.messageCount,
   }
   if (session.title !== undefined) summary.title = session.title
+  if (session.lastTurnFailed === true) summary.failed = true
   if (session.coordination !== undefined) summary.coordinationRole = session.coordination.role
   return summary
 }

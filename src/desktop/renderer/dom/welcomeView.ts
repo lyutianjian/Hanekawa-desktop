@@ -12,7 +12,7 @@ import { createUsageCard } from './usageCardView.js'
 import type { WireUsageDay } from '../../shellProtocol.js'
 import { el, reconcile, replace, show } from './dom.js'
 import { button } from './controls.js'
-import { onPressOutside } from './dismiss.js'
+import { dismissable } from './dismiss.js'
 import { icon } from './icons.js'
 import { finishPresenceWithin } from './presence.js'
 
@@ -42,6 +42,7 @@ export interface WelcomeDom {
   focusBranchPicker(): void
   /** The same, for the project popover. */
   focusProjectPicker(): void
+  dispose(): void
 }
 
 export interface WelcomeHandlers {
@@ -75,7 +76,8 @@ export function createWelcomeView(
    * slot of its own because the popover is the anchor's other child, and
    * swapping the pill around it must not touch it.
    */
-  const pillAnchor = (kind: WelcomePill['kind'], close: () => void) => {
+  const unregister: Array<() => void> = []
+  const pillAnchor = (kind: WelcomePill['kind'], isOpen: () => boolean, close: () => void) => {
     const anchor = el('div', `welcome-${kind}-anchor welcome-pill-anchor`)
     const slot = el('div', `welcome-${kind}-slot welcome-pill-slot`)
     anchor.appendChild(slot)
@@ -86,8 +88,9 @@ export function createWelcomeView(
     //
     // Scoped to the anchor — the popover *and* the pill that opens it — rather
     // than to the pill row around them: closing on a press on the trigger would
-    // let its own `click` re-open the popover the user was shutting.
-    onPressOutside([anchor], close)
+    // let its own `click` re-open the popover the user was shutting. The pill
+    // closes it itself, as a toggle.
+    unregister.push(dismissable([anchor], { isOpen, close }))
     // The second of the three ways every popover closes. `relatedTarget === null`
     // is this view's own repaint rather than the user leaving, and answering it
     // with a close would shut the popover on the paint that drew it.
@@ -100,35 +103,42 @@ export function createWelcomeView(
     return { anchor, slot }
   }
 
-  const branch = pillAnchor('branch', () => handlers.onBranchIntent({ kind: 'close' }))
+  /** Whether each popover was drawn open: what a press outside may dismiss. */
+  let branchOpen = false
+  let projectOpen = false
+
+  const branch = pillAnchor('branch', () => branchOpen, () => handlers.onBranchIntent({ kind: 'close' }))
   const branchPicker: BranchPickerDom = createBranchPickerView(
     branch.anchor,
     handlers.onBranchIntent,
     handlers.onBranchKey,
   )
-  const project = pillAnchor('project', () => handlers.onProjectIntent({ kind: 'close' }))
+  const project = pillAnchor('project', () => projectOpen, () => handlers.onProjectIntent({ kind: 'close' }))
   const projectPicker: ProjectPickerDom = createProjectPickerView(
     project.anchor,
     handlers.onProjectIntent,
     handlers.onProjectKey,
   )
 
-  /** Which switcher a pill opens, and what its control says it does. */
-  const opener = (kind: WelcomePill['kind']): { label: string; open: () => void } =>
-    kind === 'branch'
-      ? { label: BRANCH_PICKER_LABEL, open: () => handlers.onBranchIntent({ kind: 'open' }) }
-      : { label: PROJECT_PICKER_LABEL, open: () => handlers.onProjectIntent({ kind: 'open' }) }
+  /** Which switcher a pill toggles, and what its control says it does. */
+  const opener = (kind: WelcomePill['kind'], open: boolean): { label: string; toggle: () => void } => {
+    const kindOfIntent = open ? 'close' : 'open'
+    return kind === 'branch'
+      ? { label: BRANCH_PICKER_LABEL, toggle: () => handlers.onBranchIntent({ kind: kindOfIntent }) }
+      : { label: PROJECT_PICKER_LABEL, toggle: () => handlers.onProjectIntent({ kind: kindOfIntent }) }
+  }
 
-  const pillNode = (pill: WelcomePill): HTMLElement => {
+  const pillNode = (pill: WelcomePill, open: boolean): HTMLElement => {
     if (!pill.interactive) {
       const node = el('span', `welcome-pill ${pill.kind}`)
       node.appendChild(icon(pill.icon))
       node.appendChild(el('span', 'welcome-pill-label', pill.label))
       return node
     }
-    const { label, open } = opener(pill.kind)
-    const node = button(`welcome-pill ${pill.kind}`, pill.label, label, open, { icon: pill.icon })
+    const { label, toggle } = opener(pill.kind, open)
+    const node = button(`welcome-pill ${pill.kind}`, pill.label, label, toggle, { icon: pill.icon })
     node.setAttribute('aria-haspopup', 'dialog')
+    node.setAttribute('aria-expanded', String(open))
     return node
   }
 
@@ -146,10 +156,19 @@ export function createWelcomeView(
     const mine = ++request
     void handlers.loadUsage().then(
       (days) => { if (mine === request) usage.setDays(days) },
-      () => { if (mine === request) usage.setDays([]) },
+      () => {
+        if (mine !== request) return
+        usage.setUnavailable(() => {
+          usage.setDays(undefined)
+          refreshUsage()
+        })
+      },
     )
   }
   return {
+    dispose() {
+      for (const stop of unregister) stop()
+    },
     focusBranchPicker() {
       branchPicker.focusPanel()
     },
@@ -160,6 +179,8 @@ export function createWelcomeView(
       const signature = welcomeRenderSignature(view)
       if (signature === drawn) return
       drawn = signature
+      branchOpen = view.branchPicker.open
+      projectOpen = view.projectPicker.open
       show(container, view.visible)
       if (!view.visible) {
         // The contents go, the scaffolding stays: an invisible page must not
@@ -192,7 +213,7 @@ export function createWelcomeView(
       const rendered: HTMLElement[] = []
       for (const pill of view.pills) {
         const home = pill.kind === 'branch' ? branch : project
-        replace(home.slot, pillNode(pill))
+        replace(home.slot, pillNode(pill, pill.kind === 'branch' ? branchOpen : projectOpen))
         rendered.push(home.anchor)
       }
       // `reconcile`, not `replace`: the anchors are in this list, and detaching

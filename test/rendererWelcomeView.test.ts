@@ -88,12 +88,13 @@ interface Rendered {
   readonly loads: { count: number }
   view(): StubView
   rerender(next?: WelcomeView): void
+  dispose(): void
 }
 
 function render(
   t: { after(fn: () => void): void },
   initial = welcomeViewFixture(),
-  usage: Promise<readonly WireUsageDay[]> = new Promise(() => {}),
+  usage: Promise<readonly WireUsageDay[]> | (() => Promise<readonly WireUsageDay[]>) = new Promise(() => {}),
 ): Rendered {
   const stub = installDomStub()
   t.after(() => stub.uninstall())
@@ -108,7 +109,7 @@ function render(
     onProjectKey: () => false,
     loadUsage: () => {
       loads.count += 1
-      return usage
+      return typeof usage === 'function' ? usage() : usage
     },
   })
   dom.render(initial)
@@ -120,6 +121,7 @@ function render(
     loads,
     view: () => stub.inspect(container),
     rerender: (next = initial) => dom.render(next),
+    dispose: () => dom.dispose(),
   }
 }
 
@@ -204,16 +206,11 @@ test('a branch that cannot be switched is a plain span again', (t) => {
 })
 
 test('a switchable project pill opens its own popover and lists the added projects', (t) => {
-  const { view, stub, intents, projectIntents } = render(
-    t,
-    welcomeViewFixture({
-      pills: [
-        { kind: 'project', label: 'Hanekawa-main', icon: 'folder', interactive: true },
-        { kind: 'branch', label: 'master', icon: 'branch', interactive: true },
-      ],
-      projectPicker: projectFixture({ open: true }),
-    }),
-  )
+  const pills = [
+    { kind: 'project', label: 'Hanekawa-main', icon: 'folder', interactive: true },
+    { kind: 'branch', label: 'master', icon: 'branch', interactive: true },
+  ] as const
+  const { view, stub, intents, projectIntents, rerender } = render(t, welcomeViewFixture({ pills }))
 
   const trigger = child(view(), 'welcome-project-slot').children[0]
   assert.ok(trigger)
@@ -224,6 +221,7 @@ test('a switchable project pill opens its own popover and lists the added projec
   assert.deepEqual(projectIntents, [{ kind: 'open' }])
   assert.deepEqual(intents, [])
 
+  rerender(welcomeViewFixture({ pills, projectPicker: projectFixture({ open: true }) }))
   const rows = child(view(), 'project-picker-body').children
   assert.deepEqual(rows.map((row) => row.text), ['Hanekawa-main', 'side'])
   assert.deepEqual(rows.map((row) => row.classes.includes('current')), [true, false])
@@ -237,23 +235,57 @@ test('a switchable project pill opens its own popover and lists the added projec
   ])
 })
 
-test('the two popovers are separate anchors: a press in one does not close the other', (t) => {
+test('a pill whose popover is open collapses it when pressed again', (t) => {
+  const pills = [
+    { kind: 'project', label: 'Hanekawa-main', icon: 'folder', interactive: true },
+    { kind: 'branch', label: 'master', icon: 'branch', interactive: true },
+  ] as const
   const { view, stub, intents, projectIntents } = render(
     t,
-    welcomeViewFixture({
-      pills: [
-        { kind: 'project', label: 'Hanekawa-main', icon: 'folder', interactive: true },
-        { kind: 'branch', label: 'master', icon: 'branch', interactive: true },
-      ],
-      projectPicker: projectFixture({ open: true }),
-    }),
+    welcomeViewFixture({ pills, branchPicker: pickerFixture({ open: true }), projectPicker: projectFixture({ open: true }) }),
   )
 
-  // A press inside the project anchor is outside the branch one, so the branch
-  // picker hears a close and the project picker does not.
-  stub.dispatchDocument('pointerdown', { target: child(view(), 'project-picker-row').node })
+  const project = child(view(), 'welcome-project-slot').children[0]!
+  const branch = child(view(), 'welcome-branch-slot').children[0]!
+  assert.equal(project.attributes.get('aria-expanded'), 'true')
+  assert.equal(branch.attributes.get('aria-expanded'), 'true')
+
+  stub.click(project.node)
+  stub.click(branch.node)
+
+  assert.deepEqual(projectIntents, [{ kind: 'close' }])
+  assert.deepEqual(intents, [{ kind: 'close' }])
+})
+
+test('the two popovers are separate anchors: a press in one closes only an open other', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const pills = [
+    { kind: 'project', label: 'Hanekawa-main', icon: 'folder', interactive: true },
+    { kind: 'branch', label: 'master', icon: 'branch', interactive: true },
+  ] as const
+  const { view, stub, intents, projectIntents, rerender } = render(
+    t,
+    welcomeViewFixture({ pills, projectPicker: projectFixture({ open: true }) }),
+  )
+
+  // The branch popover is shut, so a press in the project anchor has nothing to
+  // close there and is not eaten.
+  const closed = stub.dispatchDocument('pointerdown', { target: child(view(), 'project-picker-row').node })
+  assert.deepEqual(projectIntents, [])
+  assert.deepEqual(intents, [])
+  assert.equal(closed.propagationStopped, false)
+
+  // With both open, a press in the project anchor is outside the branch one: that
+  // hears a close, the project picker does not, and the press is eaten.
+  rerender(
+    welcomeViewFixture({ pills, branchPicker: pickerFixture({ open: true }), projectPicker: projectFixture({ open: true }) }),
+  )
+  const open = stub.dispatchDocument('pointerdown', { target: child(view(), 'project-picker-row').node })
   assert.deepEqual(projectIntents, [])
   assert.deepEqual(intents, [{ kind: 'close' }])
+  assert.equal(open.propagationStopped, true)
+  stub.dispatchDocument('pointerup')
+  t.mock.timers.tick(1)
 })
 
 test('an invisible screen is hidden and holds no focusable node', (t) => {
@@ -369,6 +401,13 @@ test('a press outside the branch anchor closes the popover; inside it does not',
   assert.deepEqual(intents, [{ kind: 'close' }])
 })
 
+test('a disposed welcome page leaves presses alone, even with a popover drawn open', (t) => {
+  const { stub, intents, dispose } = render(t, welcomeViewFixture({ branchPicker: pickerFixture({ open: true }) }))
+  dispose()
+  stub.dispatchDocument('pointerdown', { target: stub.createContainer('transcript-area') })
+  assert.deepEqual(intents, [])
+})
+
 test('focus leaving the popover closes it, but a repaint does not', (t) => {
   const { view, stub, intents } = render(
     t,
@@ -466,6 +505,25 @@ test('the card shows a skeleton until the stats arrive, then the numbers', async
   assert.equal(card.classes.includes('loading'), false)
   assert.deepEqual(cellValues(card), ['2.5 万', '3', '1'])
   assert.equal(child(card, 'usage-footnote').text, '你用掉的 token 大约相当于 0.1 本《三体》')
+})
+
+test('a failed read says so and offers 重试; it never draws zeros for a history it could not read', async (t) => {
+  let attempt = 0
+  const { view, stub, loads } = render(t, welcomeViewFixture(), () => (++attempt === 1 ? Promise.reject(new Error('disk')) : Promise.resolve(DAYS)))
+  await Promise.resolve()
+  await Promise.resolve()
+
+  const card = child(view(), 'usage-card')
+  assert.equal(card.classes.includes('loading'), false)
+  assert.equal(find(card, 'usage-cells'), undefined, 'no figures')
+  assert.ok(child(card, 'usage-empty').text.includes('无法读取使用统计'))
+
+  stub.click(child(view(), 'usage-retry').node)
+  assert.ok(child(view(), 'usage-card').classes.includes('loading'), 'the retry shows the skeleton again')
+  await Promise.resolve()
+  await Promise.resolve()
+  assert.equal(loads.count, 2)
+  assert.deepEqual(cellValues(child(view(), 'usage-card')), ['2.5 万', '3', '1'])
 })
 
 test('an empty history draws zeros and dashes', async (t) => {

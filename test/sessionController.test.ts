@@ -67,6 +67,8 @@ async function createHarness(options: {
   usableContextWindow?: number
   /** What the side model answers when asked to name the session. */
   titleReply?: string
+  /** The model key the loop is on; differs from the runtime's after a fallback. */
+  activeModelKey?: string
 } = {}): Promise<Harness> {
   const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-controller-'))
   const store = new SessionStore(cwd)
@@ -87,7 +89,7 @@ async function createHarness(options: {
     }),
     getActiveModel: () => ({
       model: 'test-model',
-      modelKey: 'main',
+      modelKey: options.activeModelKey ?? 'main',
       ...(options.imageCapable === false ? {} : { supportsImageInput: true }),
     }),
     // The real submission rule, so the pre-turn-start gate is exercised the
@@ -114,7 +116,12 @@ async function createHarness(options: {
     session,
     existingRecords: [],
     recordProxy: proxy,
-    getSession: () => ({ loop } as unknown as AgentSession),
+    getSession: () => ({
+      loop,
+      modelKey: 'main',
+      modelConfig: { model: 'test-model', baseUrl: 'https://llm.example/v1' },
+      providerName: 'stub',
+    } as unknown as AgentSession),
     createFileHistoryService: () => fileHistoryService,
   })
 
@@ -173,18 +180,35 @@ test('a successful turn emits turn-start before the loop runs and turn-end after
   assert.deepEqual(snapshot.usage.total, usage(10, 5))
 })
 
-test('a failed turn reports the error but is not aborted, so the duration summary still renders', async () => {
+function failureRecord(harness: Harness) {
+  const event = harness.events.find((candidate) => candidate.type === 'record' && candidate.record.type === 'turn_failure')
+  return event?.type === 'record' && event.record.type === 'turn_failure' ? event.record : undefined
+}
+
+test('a failed turn persists why it stopped but is not aborted, so the duration summary still renders', async () => {
   const harness = await createHarness({
-    run: async () => { throw new Error('provider exploded') },
+    run: async () => {
+      throw Object.assign(new Error('provider exploded'), {
+        status: 429,
+        cause: { cause: { code: 'ECONNREFUSED' } },
+      })
+    },
   })
 
   await harness.controller.submit({ text: 'hello' })
 
-  const notice = harness.events.find((event) => event.type === 'notice')
-  assert.equal(notice?.type, 'notice')
-  if (notice?.type !== 'notice') return
-  assert.equal(notice.level, 'error')
-  assert.equal(notice.content, 'provider exploded')
+  const start = harness.events.find((event) => event.type === 'turn-start')
+  const failure = failureRecord(harness)
+  assert.equal(failure?.error, 'provider exploded')
+  assert.equal(failure?.status, 429)
+  assert.equal(failure?.code, 'ECONNREFUSED')
+  assert.equal(failure?.model, 'test-model')
+  assert.equal(failure?.baseUrl, 'https://llm.example/v1')
+  assert.equal(failure?.userMessageId, start?.type === 'turn-start' ? start.messageId : undefined)
+  assert.equal(harness.events.some((event) => event.type === 'notice'), false)
+  // The record is on disk, so a reopened session still says why it stopped.
+  const stored = await harness.store.loadRecords(harness.session.id)
+  assert.deepEqual(stored.filter((record) => record.type === 'turn_failure').map((record) => record.id), [failure?.id])
 
   const end = harness.events.at(-1)
   assert.equal(end?.type, 'turn-end')
@@ -192,21 +216,62 @@ test('a failed turn reports the error but is not aborted, so the duration summar
   // `aborted` mirrors the signal, not "did it throw" — this is what keeps the
   // "Worked for Xs" line on failed turns.
   assert.equal(end.aborted, false)
+  assert.equal(end.failed, true)
   assert.equal(end.usage, undefined)
 })
 
-test('a mid-turn image block reaches the notice with its exit; other failures keep their words', async () => {
+test('a stop that surfaces as a provider error of its own is an interruption, not a failure', async () => {
+  let controller!: SessionController
+  const harness = await createHarness({
+    run: async () => {
+      controller.interrupt()
+      // What the OpenAI SDK throws for a cancelled request: not named `AbortError`.
+      throw Object.assign(new Error('Request was aborted.'), { name: 'APIUserAbortError' })
+    },
+  })
+  controller = harness.controller
+
+  await controller.submit({ text: 'hello' })
+
+  assert.equal(failureRecord(harness), undefined)
+  const end = harness.events.at(-1)
+  assert.equal(end?.type === 'turn-end' ? end.failed : 'missing', false)
+})
+
+test('a failure after the session fell back to another model does not blame the primary endpoint', async () => {
+  const harness = await createHarness({
+    run: async () => { throw new Error('fallback down') },
+    activeModelKey: 'fallback',
+  })
+
+  await harness.controller.submit({ text: 'hello' })
+
+  const failure = failureRecord(harness)
+  assert.equal(failure?.baseUrl, undefined)
+  assert.equal(failure?.providerName, undefined)
+})
+
+test('a failure that cannot be written still reaches the user as a notice', async () => {
+  const harness = await createHarness({ run: async () => { throw new Error('provider exploded') } })
+  mock.method(harness.store, 'appendRecord', async () => { throw new Error('disk full') })
+
+  await harness.controller.submit({ text: 'hello' })
+
+  const notice = harness.events.find((event) => event.type === 'notice')
+  assert.equal(notice?.type === 'notice' ? notice.level : undefined, 'error')
+  assert.equal(notice?.type === 'notice' ? notice.content : undefined, 'provider exploded')
+})
+
+test('a mid-turn image block reaches the record with its exit; other failures keep their words', async () => {
   // S24: a fallback or plan route onto a text-only model fails inside the run,
-  // where the notice is the only trace the user gets.
+  // where the persisted failure is the only trace the user gets.
   const blocked = await createHarness({
     run: async () => {
       throw new TurnImageBlockError('model-not-capable', [], 'Model text-only does not accept image input.')
     },
   })
   await blocked.controller.submit({ text: 'look' })
-  const notice = blocked.events.find((event) => event.type === 'notice')
-  assert.equal(notice?.type === 'notice' ? notice.level : undefined, 'error')
-  const content = notice?.type === 'notice' ? notice.content : ''
+  const content = failureRecord(blocked)?.error ?? ''
   assert.ok(content.startsWith('Model text-only does not accept image input.'), content)
   assert.ok(content.endsWith(imageErrorCopy('model-not-capable')!.action), content)
 

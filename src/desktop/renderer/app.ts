@@ -41,7 +41,7 @@ import { ShellClient } from './shellClient.js'
 import { SHELL_LANE } from '../shellProtocol.js'
 import { DEFAULT_PANE_LIMIT, selectEvictions, type PaneBudgetEntry } from '../paneBudget.js'
 import { createLaneMux } from '../../runtime/protocol/laneChannel.js'
-import { resolveKey, type ShellState } from './model/keymap.js'
+import { NO_LAYERS, resolveKey, type ShellState, type WindowLayers } from './model/keymap.js'
 import {
   createSidebarState,
   moveSelection,
@@ -76,8 +76,9 @@ import {
   settingsView,
   type PendingMutation,
   type SettingsIntent,
+  type SettingsProbeRequest,
 } from './model/settings.js'
-import type { SettingsChange } from '../shellProtocol.js'
+import type { SettingsChange, WireShellProbeEndpointResult } from '../shellProtocol.js'
 import {
   THEME_STORAGE_KEY,
   parseThemePreference,
@@ -89,7 +90,7 @@ import { canvasHeaderView, type CanvasHeaderMenuItem } from './model/canvasHeade
 import { el, replace, required, show } from './dom/dom.js'
 import { icon } from './dom/icons.js'
 import { button } from './dom/controls.js'
-import { onPressOutside } from './dom/dismiss.js'
+import { closeAllDismissables, closeTopDismissable, hasOpenDismissable, onPressOutside } from './dom/dismiss.js'
 import { createCanvasHeaderView } from './dom/canvasHeaderView.js'
 import { createSettingsView } from './dom/settingsView.js'
 import { createProjectsPageView } from './dom/projectsPageView.js'
@@ -151,11 +152,15 @@ import { threadPage, type ThreadSelection } from './model/threadDetail.js'
 import { createThreadPanelView } from './dom/threadPanelView.js'
 import { createThreadDetailView } from './dom/threadDetailView.js'
 import { createMergeBarView } from './dom/mergeBarView.js'
+import { createToastHost } from './dom/toastView.js'
+import { showStartupFailure } from './dom/startupFailureView.js'
+import { errorPlace, errorText, type ErrorPlace, type ErrorSite } from './model/errorReport.js'
+import { TOAST_LIFETIME_MS } from './model/toasts.js'
 import { sheetStore } from './dom/workingMarkView.js'
 
 const bridge = window.hanekawa
 if (!bridge) {
-  document.body.textContent = 'Preload script not loaded; please reinstall the app.'
+  document.body.textContent = '没有加载到预加载脚本，请重新安装应用。'
   throw new Error('Preload bridge is missing')
 }
 
@@ -291,10 +296,26 @@ const rewindPanel = createRewindView(required('rewind'), required('rewind-panel'
 // The fullscreen image viewer. Window-level like the two above and routed the
 // same way — but fixed over the whole window rather than inside `#canvas`,
 // because an image at full size has nothing to do with one lane.
-const imageViewer = createImageViewerView(required('lightbox'), {
+let imageViewerOpen = false
+const imageViewerView = createImageViewerView(required('lightbox'), {
   onZoom: (zoom) => activePane()?.setViewerZoom(zoom),
-  onClose: () => activePane()?.onViewerClosed(),
+  onClose: () => {
+    imageViewerOpen = false
+    renderBrowser()
+    activePane()?.onViewerClosed()
+  },
 })
+// The browser page is a native view above the document, so the viewer has to
+// tell it to stop painting or the page shows through the scrim.
+const imageViewer: typeof imageViewerView = {
+  ...imageViewerView,
+  show(state) {
+    imageViewerView.show(state)
+    if (imageViewerOpen) return
+    imageViewerOpen = true
+    renderBrowser()
+  },
+}
 
 // --- the pane sessions ----------------------------------------------------------
 
@@ -387,7 +408,7 @@ function attachPaneSession(lane: string): void {
       // other lane, and `window.close()` would take them all down.
       const paneId = session.client.getSession()?.id
       if (paneId !== undefined) {
-        void session.client.closePane(paneId).catch((error) => session.note(describe(error), 'error'))
+        void session.client.closePane(paneId).catch((error) => reportError({ action: '关闭会话' }, error))
       }
     },
     // 「选择图片」 (S11): the OS picker over the Electron boundary. The paths
@@ -442,9 +463,7 @@ function attachPaneSession(lane: string): void {
   })
 
   session.client.subscribe(() => openModelSetupIfNeeded())
-  void session.start().then(() => openModelSetupIfNeeded()).catch((error) => {
-    session.note(`Failed to start: ${describe(error)}`, 'error')
-  })
+  void session.start().then(() => openModelSetupIfNeeded()).catch((error) => reportError({ action: '启动会话' }, error))
 }
 
 function activateLane(lane: string): void {
@@ -559,6 +578,51 @@ function applyPaneBudget(): void {
       // The pane may already be gone; the `lanes` diff is the source of truth.
       evicting.delete(lane)
     })
+  }
+}
+
+// --- reporting errors -----------------------------------------------------------
+
+const toastHost = createToastHost(required('toasts'))
+const OPEN_COORDINATOR: ErrorSite = { action: '打开项目调度', place: 'projects-page' }
+const OPEN_IN_EDITOR: ErrorSite = { action: '在编辑器中打开' }
+/** Whether the thread list and the merge bar are on screen: the two places, besides the projects page, an error can sit beside its source. */
+let threadListShown = false
+let mergeBarShown = false
+
+function visibleErrorPlaces(): ReadonlySet<ErrorPlace> {
+  const places = new Set<ErrorPlace>()
+  if (projectsOpen) places.add('projects-page')
+  // Both sit in the canvas, which the settings and projects screens cover.
+  const canvasShown = !settingsState.open && !projectsOpen
+  if (threadListShown && canvasShown) places.add('thread-panel')
+  if (mergeBarShown && canvasShown) places.add('merge-bar')
+  return places
+}
+
+/**
+ * A failed action says so beside its source when that is on screen, and in a
+ * toast otherwise. Never in a transcript: the pane that would hold the note may
+ * be behind another screen, or not the one the user is looking at.
+ */
+function reportError(site: ErrorSite, error: unknown): void {
+  const text = errorText(site, describe(error))
+  switch (errorPlace(site, visibleErrorPlaces())) {
+    case 'projects-page':
+      projectsError = text
+      renderProjects()
+      return
+    case 'thread-panel':
+      showThreadNotice(text, 'error')
+      return
+    case 'merge-bar': {
+      const sessionId = activeLaneInfo()?.sessionId
+      if (sessionId !== undefined) mergeError = { sessionId, text }
+      renderMergeBar()
+      return
+    }
+    case 'toast':
+      toastHost.push('error', text)
   }
 }
 
@@ -704,7 +768,7 @@ async function refreshSessions(): Promise<void> {
   } catch (error) {
     // Keep the last good list: a sidebar that empties itself on a transient
     // failure looks like the sessions were deleted.
-    activePane()?.note(`Failed to list sessions: ${describe(error)}`, 'error')
+    reportError({ action: '读取会话列表' }, error)
   } finally {
     sessionsInFlight = false
   }
@@ -714,7 +778,7 @@ function closeLane(lane: string): void {
   const session = paneSessions.get(lane)
   const paneId = session?.client.getSession()?.id
   if (!session || paneId === undefined) return
-  void session.client.closePane(paneId).catch((error) => session.note(describe(error), 'error'))
+  void session.client.closePane(paneId).catch((error) => reportError({ action: '关闭会话' }, error))
 }
 
 function runSidebarIntent(intent: SidebarIntent): void {
@@ -727,7 +791,7 @@ function runSidebarIntent(intent: SidebarIntent): void {
     case 'open':
       void shellClient
         .openSession({ sessionId: intent.sessionId, projectRoot: intent.projectRoot })
-        .catch((error) => activePane()?.note(describe(error), 'error'))
+        .catch((error) => reportError({ action: '打开会话' }, error))
       return
     case 'close':
       closeLane(intent.lane)
@@ -758,13 +822,13 @@ function runSidebarIntent(intent: SidebarIntent): void {
       // the active pane's project.
       void shellClient
         .openSession(intent.projectRoot !== undefined ? { projectRoot: intent.projectRoot } : {})
-        .catch((error) => activePane()?.note(describe(error), 'error'))
+        .catch((error) => reportError({ action: '新建会话' }, error))
       return
     }
     case 'open-project':
       // The shell puts up a native directory picker; the new project's first
       // lane arrives as a `lanes` event once it is up.
-      void shellClient.openProject().catch((error) => activePane()?.note(describe(error), 'error'))
+      void shellClient.openProject().catch((error) => reportError({ action: '打开项目' }, error))
       return
     case 'open-settings':
       leaveProjects()
@@ -821,9 +885,7 @@ function runSidebarIntent(intent: SidebarIntent): void {
     case 'open-coordinator':
       projectMenu = undefined
       renderSidebar()
-      void shellClient.openCoordinator(intent.projectRoot).catch((error) => {
-        activePane()?.note(`Failed to open coordinator: ${describe(error)}`, 'error')
-      })
+      void shellClient.openCoordinator(intent.projectRoot).catch((error) => reportError(OPEN_COORDINATOR, error))
       return
     case 'confirm-remove-project':
       void removeProject(intent.projectRoot)
@@ -893,7 +955,7 @@ async function deleteSession(projectRoot: string, sessionId: string): Promise<vo
   try {
     await shellClient.deleteSession(projectRoot, sessionId)
   } catch (error) {
-    activePane()?.note(`Failed to delete session: ${describe(error)}`, 'error')
+    reportError({ action: '删除会话' }, error)
   } finally {
     // The list below is the truth either way: on success the session is gone
     // from it, and on failure the row comes back on its own.
@@ -922,7 +984,7 @@ async function removeProject(projectRoot: string): Promise<void> {
   try {
     await shellClient.removeProject(projectRoot)
   } catch (error) {
-    activePane()?.note(`Failed to remove project: ${describe(error)}`, 'error')
+    reportError({ action: '移除项目' }, error)
   } finally {
     removingProjects.delete(projectRoot)
   }
@@ -980,7 +1042,7 @@ function runThreadCommand(projectRoot: string, threadId: string, kind: 'stop' | 
   renderSubagents()
   const request = kind === 'stop' ? shellClient.threadStop(projectRoot, threadId) : shellClient.threadResolve(projectRoot, threadId)
   void request
-    .catch((error) => activePane()?.note(`Failed to ${kind} thread: ${describe(error)}`, 'error'))
+    .catch((error) => reportError({ action: kind === 'stop' ? '停止线程' : '结案线程', place: 'thread-panel' }, error))
     .finally(() => {
       pendingThreads.delete(threadId)
       renderSubagents()
@@ -1006,9 +1068,7 @@ function runThreadPanelIntent(intent: ThreadPanelIntent): void {
       return
     case 'stop-all':
       if (root === undefined) return
-      void shellClient.stopAllCoordination(root).catch((error) => {
-        activePane()?.note(`Failed to stop threads: ${describe(error)}`, 'error')
-      })
+      void shellClient.stopAllCoordination(root).catch((error) => reportError({ action: '停止全部线程', place: 'thread-panel' }, error))
       return
     case 'toggle-fold': {
       const next = new Set(threadFolds)
@@ -1034,6 +1094,8 @@ let mergeTimer: ReturnType<typeof setTimeout> | undefined
 let mergeExpanded = false
 /** Thread ids whose merge, resolve or dismiss is in flight. */
 const pendingMerges = new Set<string>()
+/** The last merge action that failed, said in the bar of the session it was pressed in. */
+let mergeError: { readonly sessionId: string; readonly text: string } | undefined
 
 /**
  * Pulls the merges after a 200ms quiet period. `pendingMerges` runs git per
@@ -1087,7 +1149,8 @@ function renderMergeBar(): void {
   // A paint can remove the button the user just pressed (a merge that landed
   // takes its row with it). Focus goes back to the composer, after the paint.
   const hadFocus = mergeBarNode.contains(document.activeElement)
-  mergeBar.render(view)
+  mergeBarShown = view.kind !== 'hidden'
+  mergeBar.render(view, info !== undefined && mergeError?.sessionId === info.sessionId ? mergeError.text : undefined)
   if (hadFocus && !mergeBarNode.contains(document.activeElement)) composer.focus()
 }
 
@@ -1101,14 +1164,22 @@ function runMergeIntent(intent: MergeBarIntent): void {
   const threadId = intent.threadId
   if (root === undefined || pendingMerges.has(threadId)) return
   pendingMerges.add(threadId)
+  mergeError = undefined
   renderMergeBar()
+  const origin = activeLaneInfo()?.sessionId
+  // Said in the bar the button was in; if the user has moved to another session
+  // since, that bar is not this one's to speak in, and the toast says it.
+  const site = (action: string, bare = false): ErrorSite => ({
+    action,
+    bare,
+    ...(activeLaneInfo()?.sessionId === origin ? { place: 'merge-bar' as const } : {}),
+  })
   const run = async (): Promise<void> => {
     switch (intent.kind) {
       case 'merge': {
         const result = await shellClient.mergeThread(root, threadId)
-        if (result.kind !== 'merged') {
-          activePane()?.note(result.message ?? `合并未完成（${result.kind}）`, result.kind === 'conflict' || result.kind === 'error' ? 'error' : 'system')
-        }
+        // Every outcome but a landed merge is a refusal the user has to act on.
+        if (result.kind !== 'merged') reportError(site('合并线程', true), result.message ?? '合并未完成')
         return
       }
       case 'resolve':
@@ -1122,7 +1193,7 @@ function runMergeIntent(intent: MergeBarIntent): void {
     }
   }
   void run()
-    .catch((error) => activePane()?.note(describe(error), 'error'))
+    .catch((error) => reportError(site(intent.kind === 'resolve' ? '让线程解决冲突' : intent.kind === 'dismiss' ? '隐藏提醒' : '合并线程'), error))
     .finally(() => {
       pendingMerges.delete(threadId)
       renderMergeBar()
@@ -1257,7 +1328,7 @@ const canvasHeader = createCanvasHeaderView(required('canvas-header'), {
       .renameSession(lane.projectRoot, lane.sessionId, title)
       // The lanes broadcast that follows is what repaints the title, here and in
       // the sidebar; nothing is written locally in the meantime.
-      .catch((error) => activePane()?.note(`Failed to rename: ${describe(error)}`, 'error'))
+      .catch((error) => reportError({ action: '重命名会话' }, error))
   },
   onCancelRename: () => {
     if (!headerRenaming) return
@@ -1270,14 +1341,12 @@ const canvasHeader = createCanvasHeaderView(required('canvas-header'), {
     if (!lane) return
     void shellClient
       .openInEditor(lane.projectRoot)
-      .catch((error) => activePane()?.note(describe(error), 'error'))
+      .catch((error) => reportError(OPEN_IN_EDITOR, error))
   },
   onBackToCoordinator: () => {
     const lane = activeLaneInfo()
     if (!lane) return
-    void shellClient.openCoordinator(lane.projectRoot).catch((error) => {
-      activePane()?.note(`Failed to open coordinator: ${describe(error)}`, 'error')
-    })
+    void shellClient.openCoordinator(lane.projectRoot).catch((error) => reportError(OPEN_COORDINATOR, error))
   },
   onStopThread: () => {
     const lane = activeLaneInfo()
@@ -1300,18 +1369,13 @@ projectsNode.tabIndex = -1
 const projectsPage = createProjectsPageView(projectsNode, {
   onOpen: (projectRoot) => {
     projectsError = undefined
-    void shellClient.openCoordinator(projectRoot).catch(showProjectsError)
+    void shellClient.openCoordinator(projectRoot).catch((error) => reportError(OPEN_COORDINATOR, error))
   },
   onNew: () => {
     projectsError = undefined
-    void shellClient.newCoordinatorProject().catch(showProjectsError)
+    void shellClient.newCoordinatorProject().catch((error) => reportError({ action: '新建项目', place: 'projects-page' }, error))
   },
 })
-
-function showProjectsError(error: unknown): void {
-  projectsError = describe(error)
-  renderProjects()
-}
 
 function renderProjects(): void {
   projectsNode.hidden = !projectsOpen
@@ -1325,6 +1389,7 @@ function renderProjects(): void {
 
 function openProjects(): void {
   leaveSettings()
+  closeAllDismissables()
   projectsOpen = true
   projectsError = undefined
   renderSidebar()
@@ -1382,7 +1447,7 @@ function renderSettings(): void {
 function openModelSetupIfNeeded(): void {
   if (modelSetupOpened || activePane()?.client.getRuntimeSnapshot()?.status !== 'needs_configuration') return
   modelSetupOpened = true
-  if (!settingsState.open) runSettingsIntent({ kind: 'open', category: 'provider' })
+  if (!settingsState.open) runSettingsIntent({ kind: 'open', category: 'provider', setup: true })
 }
 
 /**
@@ -1402,6 +1467,9 @@ function runSettingsIntent(intent: SettingsIntent): void {
   const wasOpen = settingsState.open
   const outcome = applySettingsIntent(settingsState, intent)
   settingsState = outcome.state
+  // The screen replaces the window's content: a menu left open behind it would
+  // swallow the first press made on the screen.
+  if (!wasOpen && settingsState.open) closeAllDismissables()
   renderSettings()
   if (wasOpen && !settingsState.open) composer.focus()
   if (outcome.themePreference) {
@@ -1410,9 +1478,22 @@ function runSettingsIntent(intent: SettingsIntent): void {
     applyResolvedTheme(themePreference)
   }
   if (outcome.load) void loadSettingsNow()
+  if (outcome.probe) void runProbeNow(outcome.probe)
   // The pending batch, not the raw changes: the rows are already drawn as though
   // they landed, and `runSettingsChanges` retires them by id as the replies come.
   if (outcome.pending) void runSettingsChangesNow(outcome.pending)
+}
+
+async function runProbeNow({ seq, ...request }: SettingsProbeRequest): Promise<void> {
+  let result: WireShellProbeEndpointResult
+  try {
+    const projectRoot = settingsState.projectRoot
+    if (projectRoot === undefined) throw new Error('No project is open.')
+    result = await shellClient.probeEndpoint({ projectRoot, ...request })
+  } catch (error) {
+    result = { ok: false, reason: 'other', detail: error instanceof Error ? error.message : String(error) }
+  }
+  runSettingsIntent({ kind: 'probe-result', seq, result })
 }
 
 async function loadSettingsNow(): Promise<void> {
@@ -1598,8 +1679,9 @@ let selectedSubagent: string | undefined
 /** Which tab each lane last had on screen, so switching back restores it. */
 const browserActiveTab = new Map<string, string>()
 
+/** The browser panel's own banner shrinks the native view, so its failures are toasts. */
 function noteBrowserError(error: unknown): void {
-  activePane()?.note(describe(error), 'error')
+  reportError({ action: '浏览器操作' }, error)
 }
 
 const browserPanel = createBrowserPanelView(browserPanelNodes(), {
@@ -1635,9 +1717,9 @@ function renderBrowser(): void {
     lane,
     activeTabId,
     open: browserPanelShown(),
-    // The settings screen fills the canvas and owns the window; a page painted
-    // beside it would be the one thing on screen it does not cover.
-    occluded: settingsState.open || projectsOpen,
+    // The settings screen and the image viewer own the window; a page painted
+    // beside them would be the one thing on screen they do not cover.
+    occluded: settingsState.open || projectsOpen || imageViewerOpen,
   })
   renderSubagents()
 }
@@ -1659,8 +1741,9 @@ const subagentPanel = createSubagentPanelView(required('subagent-view'), {
   onStop: (id) => {
     const client = activePane()?.client
     const task = client?.getBackgroundTasks().find((candidate) => candidate.toolUseId === id && candidate.status === 'running')
-    if (task) void client!.killTask(task.id).catch(() => {})
+    if (task) void client!.killTask(task.id).catch((error) => reportError({ action: '停止子代理' }, error))
   },
+  onError: (message) => toastHost.push('error', message),
 })
 const planPanel = createPlanPanelView(required('plan-view'))
 const threadView = required('thread-view')
@@ -1679,15 +1762,16 @@ const threadDetail = createThreadDetailView(threadDetailHost, {
     const root = activeLaneInfo()?.projectRoot
     if (root !== undefined) runThreadCommand(root, threadId, 'stop')
   },
-  loadTranscript: (threadId, since) => viewedThread === undefined ? Promise.reject(new Error('No thread on screen')) : shellClient.threadTranscript(viewedThread.projectRoot, threadId, since),
+  loadTranscript: (threadId, since) => viewedThread === undefined ? Promise.reject(new Error('没有打开的线程')) : shellClient.threadTranscript(viewedThread.projectRoot, threadId, since),
   onOpenPath: (path, line) => {
     if (activeLane !== undefined) openInEditor(activeLane, path, line)
   },
+  onError: (message) => toastHost.push('error', message),
 })
 /** The thread on its own page in the 概览 tab; `undefined` is the list. */
 let viewedThread: ThreadSelection | undefined
 /** Why the page the user was on went back to the list; gone after a few seconds. */
-let threadNotice: string | undefined
+let threadNotice: { readonly text: string; readonly tone?: 'error' } | undefined
 let threadNoticeTimer: ReturnType<typeof setTimeout> | undefined
 /** The strip's last paint, so a stream delta does not rebuild buttons under the pointer. */
 let sideTabsDrawn: string | undefined
@@ -1711,6 +1795,21 @@ function sectionNode(id: SideSection): SectionNode {
     renderSubagents()
   })
   return { section, head, title, count, body: required(`side-section-${id}-body`) }
+}
+
+/** A line above the thread list, gone after a few seconds (an error's stays longer). */
+function armThreadNotice(text: string, tone?: 'error'): void {
+  threadNotice = tone === undefined ? { text } : { text, tone }
+  clearTimeout(threadNoticeTimer)
+  threadNoticeTimer = setTimeout(() => {
+    threadNotice = undefined
+    renderSubagents()
+  }, tone === 'error' ? TOAST_LIFETIME_MS.error : 4000)
+}
+
+function showThreadNotice(text: string, tone?: 'error'): void {
+  armThreadNotice(text, tone)
+  renderSubagents()
 }
 
 function renderSubagents(): void {
@@ -1790,15 +1889,11 @@ function renderSubagents(): void {
   if (page?.kind === 'list' && page.clear) {
     viewedThread = undefined
     if (page.notice !== undefined) {
-      threadNotice = page.notice
-      clearTimeout(threadNoticeTimer)
-      threadNoticeTimer = setTimeout(() => {
-        threadNotice = undefined
-        renderSubagents()
-      }, 4000)
+      armThreadNotice(page.notice)
     }
   }
-  show(threadView, onThreads && detail === undefined)
+  threadListShown = onThreads && detail === undefined
+  show(threadView, threadListShown)
   show(threadDetailHost, onThreads && detail !== undefined)
   threadDetail.render(onThreads ? detail : undefined)
   if (onThreads && detail === undefined) {
@@ -1808,7 +1903,7 @@ function renderSubagents(): void {
       activeSessionId: activeLaneInfo()?.sessionId,
       expanded: threadFolds,
       pending: pendingThreads,
-      notice: threadNotice,
+      ...(threadNotice === undefined ? {} : { notice: threadNotice.text, ...(threadNotice.tone === undefined ? {} : { noticeTone: threadNotice.tone }) }),
     }))
   }
   // A folded section keeps its selection: unfolding brings the same page back.
@@ -2097,10 +2192,13 @@ browserResizer.addEventListener('dblclick', () => {
  */
 onPressOutside([form], () => {
   const pane = activePane()
-  if (!pane) return
+  // The composer is covered by these screens, so nothing of it is on show to dismiss.
+  if (!pane || settingsState.open || projectsOpen) return false
   const state = pane.shellState()
+  const hasSurface = state.hasSurface || state.hasCommandView
   if (state.completions !== 'none') pane.closeCompletions()
-  if (state.hasSurface || state.hasCommandView) pane.hideSurface()
+  if (hasSurface) pane.hideSurface()
+  return state.completions !== 'none' || hasSurface
 })
 
 // --- the global key handler -------------------------------------------------------
@@ -2117,6 +2215,15 @@ const EMPTY_SHELL_STATE: ShellState = {
 }
 
 const composerInput = required<HTMLTextAreaElement>('input')
+
+/** What is open above the conversation, for the one decision that needs it: what Escape closes. */
+function windowLayers(): WindowLayers {
+  return {
+    viewer: imageViewerOpen,
+    screen: settingsState.open || projectsOpen,
+    popover: hasOpenDismissable(),
+  }
+}
 
 /**
  * A key the focused control answers itself: anything typed into a field other
@@ -2171,13 +2278,7 @@ document.addEventListener('keydown', (event) => {
   }
 
   const pane = activePane()
-  const action = resolveKey(chord, pane?.shellState() ?? EMPTY_SHELL_STATE)
-  // The page hides its lane, so Escape closes it instead of interrupting that lane's turn.
-  if (projectsOpen && chord.key === 'Escape' && action !== 'overlay' && action !== 'rewind' && !ownedByTarget(event)) {
-    event.preventDefault()
-    leaveProjects()
-    return
-  }
+  const action = resolveKey(chord, pane?.shellState() ?? EMPTY_SHELL_STATE, chord.key === 'Escape' ? windowLayers() : NO_LAYERS)
   // A blocking prompt and the rewind panel still take every key, wherever focus is.
   if (action !== 'overlay' && action !== 'rewind' && ownedByTarget(event)) return
   switch (action) {
@@ -2187,6 +2288,26 @@ document.addEventListener('keydown', (event) => {
     case 'rewind':
       event.preventDefault()
       if (pane?.rewind) pane.handleRewindIntent(rewindKeyToIntent(chord, pane.rewind))
+      return
+    case 'close-viewer':
+      event.preventDefault()
+      imageViewer.close()
+      return
+    case 'close-popover':
+      event.preventDefault()
+      closeTopDismissable()
+      return
+    case 'close-screen':
+      // The key a focused screen would have handled itself: the settings screen
+      // unwinds one layer at a time, and the page hides its lane instead of
+      // interrupting that lane's turn.
+      event.preventDefault()
+      if (settingsState.open) {
+        const intent = settingsKeyToIntent(chord, settingsState)
+        if (intent.kind !== 'none') runSettingsIntent(intent)
+      } else {
+        leaveProjects()
+      }
       return
     case 'accept-completion':
       event.preventDefault()
@@ -2331,7 +2452,7 @@ shellClient.onBrowserState((tabs) => {
   renderBrowser()
 })
 
-void (async () => {
+async function pullTopology(): Promise<void> {
   // Pull the topology rather than trusting early pushes: anything main posted
   // before the bridge listener existed was dropped by Electron, so a pane
   // created before this point reaches the renderer only through this call.
@@ -2350,9 +2471,13 @@ void (async () => {
   if (first) activateLane(first.lane)
   renderSidebar()
   renderCanvasHeader()
-})().catch((error) => {
-  document.body.textContent = `Failed to start: ${describe(error)}`
-})
+}
+
+/** The first pull. A failure puts up a page whose 「重试」 runs it again. */
+function start(): void {
+  pullTopology().catch((error) => showStartupFailure(document.body, describe(error), start))
+}
+start()
 
 /** A path a tool printed, relative to the lane's project, opened in the user's editor. */
 function openInEditor(lane: string, path: string, line: number | undefined): void {
@@ -2360,7 +2485,7 @@ function openInEditor(lane: string, path: string, line: number | undefined): voi
   if (root === undefined) return
   void shellClient
     .openInEditor(root, { path, ...(line === undefined ? {} : { line }) })
-    .catch((error) => activePane()?.note(describe(error), 'error'))
+    .catch((error) => reportError(OPEN_IN_EDITOR, error))
 }
 
 function describe(error: unknown): string {

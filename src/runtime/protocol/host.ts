@@ -700,15 +700,15 @@ export class SessionHost implements CoordinationLaneControl {
           // block is keyed to the runtime, so switching models releases it, and
           // `canPumpQueue` releases it on its own once the head changes.
           this.queueBlock = { messageId: outcome.message.id, session: this.runtimeSlot.current }
-          this.postQueueNotice(`Queued message paused: ${outcome.reason}`)
+          this.postQueueNotice(`排队的消息已暂停：${outcome.reason}`)
         } else if (outcome.kind === 'failed') {
-          this.postQueueNotice(`Failed to send queued message: ${outcome.reason}`)
+          this.postQueueNotice(`排队的消息发送失败：${outcome.reason}`)
         }
       } catch (error) {
         // Synthesized rather than routed through the controller: the message
         // never became a turn, so there is no turn to attach a notice to. Same
         // shape `applySessionSwitch` posts for its startup notices.
-        this.postQueueNotice(`Failed to send queued message: ${error instanceof Error ? error.message : String(error)}`)
+        this.postQueueNotice(`排队的消息发送失败：${error instanceof Error ? error.message : String(error)}`)
       } finally {
         this.pumping = false
         // More may be waiting, and the turn that just ended already fired its
@@ -1195,14 +1195,16 @@ export class SessionHost implements CoordinationLaneControl {
     if (command && (command.name === 'clear' || command.name === 'resume') && sessionSwitchBlocked(this.scope.role)) {
       this.emitCommandEffect({
         kind: 'write-line',
-        text: `/${command.name} is not available in a ${this.scope.role} session.`,
+        text: `/${command.name} 在${this.scope.role === 'coordinator' ? '调度' : '线程'}会话里不可用。`,
+        tone: 'error',
       })
       return { handled: true }
     }
     if (!command) {
       this.emitCommandEffect({
         kind: 'write-line',
-        text: `Unknown command: /${name}. Type /help for available commands.`,
+        text: `未知命令：/${name}。输入 /help 查看可用命令。`,
+        tone: 'error',
       })
       return { handled: true }
     }
@@ -1212,7 +1214,8 @@ export class SessionHost implements CoordinationLaneControl {
     } catch (error) {
       this.emitCommandEffect({
         kind: 'write-line',
-        text: `Command error: ${error instanceof Error ? error.message : String(error)}`,
+        text: `命令出错：${error instanceof Error ? error.message : String(error)}`,
+        tone: 'error',
       })
     }
     return { handled: true }

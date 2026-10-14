@@ -44,7 +44,7 @@ export function activateModelKey(deps: ModelSwitchDeps, modelKey: string): SetMo
   if (!deps.availableModelKeys.includes(modelKey)) {
     return {
       ok: false,
-      message: `Unknown model: ${modelKey}`,
+      message: `未知模型：${modelKey}`,
       availableModels: availableModels(deps),
     }
   }
@@ -96,7 +96,7 @@ export function switchModel(deps: ModelSwitchDeps, input: string): SetModelResul
       ok: false,
       message: input.trim().toLowerCase() === 'inherit'
         ? '/model inherit is not supported. inherit is only valid in routing/subagent settings.'
-        : `Unknown model: ${input}`,
+        : `未知模型：${input}`,
       availableModels: availableModels(deps),
     }
   }

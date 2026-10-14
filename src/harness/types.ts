@@ -357,6 +357,28 @@ export interface TurnInterruptionRecord {
   turnId?: string
 }
 
+/**
+ * A turn that ended on a provider or network error. Persisted so a reopened
+ * session still says why its last turn stopped; the renderer classifies
+ * `error`/`status`/`code` into words.
+ */
+export interface TurnFailureRecord {
+  id: string
+  type: 'turn_failure'
+  userMessageId: string
+  /** The thrown error's message, verbatim. */
+  error: string
+  /** HTTP status of a provider error. */
+  status?: number
+  /** The SDK's or Node's machine code, e.g. `insufficient_quota` or `ECONNREFUSED`. */
+  code?: string
+  model?: string
+  providerName?: string
+  baseUrl?: string
+  createdAt: string
+  turnId?: string
+}
+
 /** Who drove a turn: the user, a coordinator session, or an automatic wake. */
 export type TurnOrigin = 'user' | 'coordinator' | 'wake'
 
@@ -425,6 +447,7 @@ export type SessionRecord =
   | PlanModeRequestRecord
   | PlanModeOutcomeRecord
   | TurnInterruptionRecord
+  | TurnFailureRecord
   | MessageQueueRecord
 
 export interface TaskItem {

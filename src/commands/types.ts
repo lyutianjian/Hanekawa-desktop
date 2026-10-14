@@ -99,7 +99,8 @@ export type CommandView =
 export interface CommandContext {
   cwd: string
   sessionId: string
-  writeLine: (msg: string) => void
+  /** `tone: 'error'` draws the line as a failure rather than as information. */
+  writeLine: (msg: string, tone?: 'error') => void
   openCommandView?: (view: CommandView) => void
   clearMessages: () => void | Promise<void>
   clearCachedSections?: () => void

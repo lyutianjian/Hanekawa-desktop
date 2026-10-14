@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
 import { createComposerView, type ComposerView } from '../src/desktop/renderer/dom/composerView.js'
+import { closeTopDismissable } from '../src/desktop/renderer/dom/dismiss.js'
 import { createDockedCard } from '../src/desktop/renderer/dom/dockedCard.js'
 import { createPlanCardView } from '../src/desktop/renderer/dom/planCardView.js'
 import { createPlanPanelView } from '../src/desktop/renderer/dom/planPanelView.js'
@@ -290,6 +291,48 @@ test('Escape and focus leaving both close the menu; focus moving inside does not
   assert.deepEqual(r.menuItems(), [])
 })
 
+test('the permission menu opens on the mode in force and the arrows rove it', (t) => {
+  const r = render(t)
+  r.composer.renderRuntime(runtime({ permissionMode: 'auto' }))
+
+  r.stub.click(r.els.chipPermission)
+  const items = r.menuItems()
+  assert.equal(r.stub.activeElement(), items[2]!.node, 'the keyboard starts where the menu says it is')
+
+  const arrow = (from: number, key: string) =>
+    r.stub.dispatch(r.els.permissionShell, 'keydown', { key, target: items[from]!.node })
+  assert.equal(arrow(2, 'ArrowDown').defaultPrevented, true)
+  assert.equal(r.stub.activeElement(), items[3]!.node)
+  arrow(3, 'ArrowDown')
+  assert.equal(r.stub.activeElement(), items[0]!.node, 'wraps')
+  arrow(0, 'End')
+  assert.equal(r.stub.activeElement(), items[3]!.node)
+
+  const menu = r.stub.inspect(r.els.permissionShell).children.find((child) => child.classes.includes('composer-menu'))!
+  r.stub.dispatch(menu.node, 'mousemove', { target: items[1]!.node })
+  assert.equal(r.stub.activeElement(), items[1]!.node, 'hover and keyboard share one row')
+})
+
+test('ArrowDown on the closed permission pill opens its menu', (t) => {
+  const r = render(t)
+  r.composer.renderRuntime(runtime())
+
+  r.stub.dispatch(r.els.permissionShell, 'keydown', { key: 'ArrowDown', target: r.els.chipPermission })
+
+  assert.equal(r.menuItems().length, 4)
+})
+
+test('Escape from the document closes whatever popover the composer has open', (t) => {
+  // Focus falls to `<body>` when a repaint destroys the focused node, and then no
+  // shell keydown listener hears the key.
+  const r = render(t)
+  r.composer.renderRuntime(runtime())
+  r.stub.click(r.els.chipPermission)
+
+  assert.equal(closeTopDismissable(), true)
+  assert.deepEqual(r.menuItems(), [])
+})
+
 test('a press outside the pill closes the permission menu; inside it does not', (t) => {
   const r = render(t)
   r.composer.renderRuntime(runtime())
@@ -516,6 +559,29 @@ test('a level the model does not support explains itself instead of being pickab
   assert.equal(over[0]!.disabled, true)
   r.stub.click(over[0]!.node)
   assert.deepEqual(r.ran, [], 'a disabled row is drawn to explain itself, not to be picked')
+})
+
+test('the keyboard walks the two rows, enters a flyout on the value in force and walks it', (t) => {
+  const r = render(t)
+  r.composer.renderRuntime(runtime())
+  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'ArrowDown', target: r.els.chipRuntime })
+  assert.deepEqual(r.menuRequests, [1], 'ArrowDown on the closed chip asks for the rows')
+  r.composer.showRuntimeMenu(menuView())
+
+  const [model, effort] = r.chipRows()
+  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'ArrowDown', target: model!.node })
+  assert.equal(r.stub.activeElement(), effort!.node)
+
+  // Enter and ArrowRight both open the flyout, and focus follows into it: the
+  // level in force, so the arrows start from where the menu says it is.
+  r.stub.dispatch(effort!.node, 'keydown', { key: 'Enter' })
+  const levels = r.flyoutItems()
+  assert.equal(r.stub.activeElement(), levels[2]!.node, 'high is the level in force')
+
+  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'ArrowDown', target: levels[2]!.node })
+  assert.equal(r.stub.activeElement(), levels[3]!.node, 'the arrows walk the flyout, not the rows')
+  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'Home', target: levels[3]!.node })
+  assert.equal(r.stub.activeElement(), levels[0]!.node)
 })
 
 test('Escape closes the flyout first and the popover second', (t) => {
@@ -966,6 +1032,19 @@ test('the + menu closes three ways and never while clicking inside it', (t) => {
   assert.deepEqual(r.attachMenuItems(), [], 'a background pane cannot leave it hanging over the next one')
 })
 
+test('the + menu opens on its first entrance and the arrows rove it', (t) => {
+  const r = render(t)
+  r.stub.dispatch(r.attachShell, 'keydown', { key: 'ArrowDown', target: r.els.attach })
+  assert.equal(r.attachMenuItems().length, 2, 'ArrowDown on the closed trigger opens it')
+
+  const [pick, mention] = r.attachMenuItems()
+  assert.equal(r.stub.activeElement(), pick!.node)
+  r.stub.dispatch(r.attachShell, 'keydown', { key: 'ArrowDown', target: pick!.node })
+  assert.equal(r.stub.activeElement(), mention!.node)
+  r.stub.dispatch(r.attachShell, 'keydown', { key: 'ArrowDown', target: mention!.node })
+  assert.equal(r.stub.activeElement(), pick!.node, 'wraps')
+})
+
 test('the grid draws every state, with remove and retry wired per tile', (t) => {
   const r = render(t)
   r.composer.renderAttachments(stripView())
@@ -987,14 +1066,25 @@ test('the grid draws every state, with remove and retry wired per tile', (t) => 
   r.stub.click(ready.children[0]!.node)
   assert.deepEqual(r.previewedDrafts, ['d1'])
 
+  // Failed: the 64px box with its controls, and the reason beside it in words
+  // — a hover tooltip is not where a refusal should live.
   const failed = tiles[2]!
-  assert.equal(failed.children[0]?.classes.includes('attachment-placeholder'), true, 'a failed tile has no picture to show')
-  const retry = failed.children.find((child) => child.classes.includes('attachment-retry'))
+  const picture = failed.children[0]!
+  assert.equal(picture.classes.includes('attachment-picture'), true)
+  assert.equal(picture.children[0]?.classes.includes('attachment-placeholder'), true, 'a failed tile has no picture to show')
+  const retry = picture.children.find((child) => child.classes.includes('attachment-retry'))
   assert.ok(retry, 'a failed tile offers 重试')
   r.stub.click(retry.node)
   assert.deepEqual(r.retriedDrafts, ['d3'])
-  r.stub.click(failed.children.find((child) => child.classes.includes('attachment-remove'))!.node)
+  r.stub.click(picture.children.find((child) => child.classes.includes('attachment-remove'))!.node)
   assert.deepEqual(r.removedDrafts, ['d3'])
+  assert.equal(failed.children[1]?.classes.includes('attachment-reason'), true)
+  assert.equal(failed.children[1]?.text, '失败：not decodable')
+  assert.equal(
+    tiles.flatMap((tile) => tile.children.filter((child) => child.classes.includes('attachment-reason'))).length,
+    1,
+    'only a failed tile draws a reason',
+  )
 
   const importing = tiles[1]!
   assert.equal(importing.children.find((child) => child.classes.includes('attachment-retry')), undefined)

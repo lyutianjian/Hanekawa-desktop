@@ -1,0 +1,120 @@
+import assert from 'node:assert/strict'
+import test from 'node:test'
+
+import { copyText } from '../src/desktop/renderer/dom/clipboard.js'
+import { markdownNode } from '../src/desktop/renderer/dom/markdownView.js'
+import { createPlanPanelView } from '../src/desktop/renderer/dom/planPanelView.js'
+import { showStartupFailure } from '../src/desktop/renderer/dom/startupFailureView.js'
+import { installDomStub, type StubView } from './helpers/domStub.js'
+
+/**
+ * Actions whose result used to be assumed: a copy button that said 「已复制」
+ * whether or not the clipboard took the text, and the startup page that was a
+ * line of text with nothing to press. Checked by `tsconfig.domtest.json`.
+ */
+
+const REAL_NAVIGATOR = Object.getOwnPropertyDescriptor(globalThis, 'navigator')
+test.afterEach(() => {
+  if (REAL_NAVIGATOR) Object.defineProperty(globalThis, 'navigator', REAL_NAVIGATOR)
+  else delete (globalThis as { navigator?: unknown }).navigator
+})
+
+/** Stands in for `navigator.clipboard`; `undefined` is a window with none. Restored after each test. */
+function withClipboard(writeText: ((text: string) => Promise<void>) | undefined): string[] {
+  const written: string[] = []
+  Object.defineProperty(globalThis, 'navigator', {
+    configurable: true,
+    value: writeText === undefined ? {} : { clipboard: { writeText: (text: string) => { written.push(text); return writeText(text) } } },
+  })
+  return written
+}
+
+const descendants = (view: StubView): StubView[] => [view, ...view.children.flatMap(descendants)]
+const flush = () => new Promise<void>((resolve) => setImmediate(resolve))
+
+test('copyText says whether the text reached the clipboard', async (t) => {
+  const written = withClipboard(async () => {})
+  assert.equal(await copyText('a'), true)
+  assert.deepEqual(written, ['a'])
+
+  withClipboard(async () => { throw new Error('denied') })
+  assert.equal(await copyText('a'), false, 'a refused write')
+
+  withClipboard(undefined)
+  assert.equal(await copyText('a'), false, 'no clipboard at all')
+})
+
+test('the plan\'s 复制 reads 已复制 only when the clipboard took it', async (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const container = stub.createContainer('plan')
+  const view = createPlanPanelView(container)
+  view.render({ planContent: '# 计划', planFilePath: '/tmp/plan.md' })
+  const label = (): string => descendants(stub.inspect(container)).find((node) => node.classes.includes('plan-panel-copy'))!.text
+  const copy = (): unknown => descendants(stub.inspect(container)).find((node) => node.classes.includes('plan-panel-copy'))!.node
+
+  withClipboard(async () => {})
+  stub.click(copy())
+  await flush()
+  assert.equal(label(), '已复制')
+  t.mock.timers.tick(1500)
+  assert.equal(label(), '复制')
+
+  withClipboard(async () => { throw new Error('denied') })
+  stub.click(copy())
+  await flush()
+  assert.equal(label(), '复制失败', 'a copy that did not happen is not 已复制')
+  t.mock.timers.tick(1500)
+  assert.equal(label(), '复制')
+
+  withClipboard(undefined)
+  stub.click(copy())
+  await flush()
+  assert.equal(label(), '复制失败', 'no clipboard is a failure too')
+})
+
+test('a code block\'s copy button marks a failed copy instead of staying silent', async (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const block = markdownNode('```ts\nlet a = 1\n```')
+  // Looked up afresh each time: an inspected view is a snapshot.
+  const find = (): StubView => descendants(stub.inspect(block)).find((node) => node.classes.includes('md-code-copy'))!
+  const copy = find()
+
+  withClipboard(async () => {})
+  stub.click(copy.node)
+  await flush()
+  assert.equal(find().classes.includes('failed'), false)
+  assert.equal(find().attributes.get('aria-label'), '复制代码')
+
+  withClipboard(async () => { throw new Error('denied') })
+  stub.click(copy.node)
+  await flush()
+  assert.equal(find().classes.includes('failed'), true)
+  assert.equal(find().attributes.get('aria-label'), '复制失败')
+  t.mock.timers.tick(1200)
+  assert.equal(find().classes.includes('failed'), false, 'the mark clears with the receipt')
+  assert.equal(find().attributes.get('aria-label'), '复制代码')
+})
+
+test('the startup failure page names the failure and 重试 lifts it and asks again', (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const body = stub.createContainer('body')
+  let retries = 0
+  showStartupFailure(body, 'Connection refused', () => { retries += 1 })
+
+  const page = stub.inspect(body).children[0]!
+  assert.equal(page.attributes.get('role'), 'alert')
+  const text = descendants(page).map((node) => node.classes.find((cls) => cls.startsWith('startup-failure-')) === undefined ? '' : node.text)
+  assert.ok(text.includes('启动失败'))
+  assert.ok(text.includes('Connection refused'))
+
+  const retry = descendants(page).find((node) => node.classes.includes('startup-failure-retry'))!
+  assert.equal(retry.text, '重试')
+  stub.click(retry.node)
+  assert.equal(retries, 1)
+  assert.equal(stub.inspect(body).children.length, 0, 'the page is gone before the second attempt')
+})

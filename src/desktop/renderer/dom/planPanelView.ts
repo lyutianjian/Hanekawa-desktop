@@ -1,5 +1,6 @@
 import type { ExitDialogInput } from '../../../harness/planModeManager.js'
 import { button } from './controls.js'
+import { copyText } from './clipboard.js'
 import { el, replace } from './dom.js'
 import { markdownNode } from './markdownView.js'
 
@@ -32,10 +33,12 @@ export function createPlanPanelView(container: HTMLElement): PlanPanelView {
       }
       const empty = plan.planContent.trim().length === 0
       const copy = button('plan-panel-copy', '复制', '复制计划', () => {
-        void navigator.clipboard?.writeText(plan.planContent).catch(() => {})
-        setLabel('已复制')
-        clearTimeout(timer)
-        timer = setTimeout(() => setLabel('复制'), COPIED_MS)
+        // The label follows the write: 「已复制」 for a copy that did not happen is worse than no label.
+        void copyText(plan.planContent).then((ok) => {
+          setLabel(ok ? '已复制' : '复制失败')
+          clearTimeout(timer)
+          timer = setTimeout(() => setLabel('复制'), COPIED_MS)
+        })
       }, { icon: 'copy', enabled: !empty })
       const setLabel = (text: string): void => { copy.lastElementChild!.textContent = text }
       const path = el('span', 'plan-panel-path', plan.planFilePath)

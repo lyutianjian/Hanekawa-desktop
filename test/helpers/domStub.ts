@@ -58,6 +58,7 @@ interface StubEvent {
    *  also what a view's own `replace()` produces — handlers must tell them apart. */
   readonly relatedTarget: unknown
   readonly key: string
+  readonly shiftKey: boolean
   /** `transitionend`'s property. The sidebar's fold listens for `flex-basis`. */
   readonly propertyName: string
   readonly animationName: string
@@ -73,8 +74,12 @@ interface StubEvent {
   /** `paste`'s payload, when the test supplies one through `dispatch`. */
   readonly clipboardData: { readonly files: readonly unknown[] } | undefined
   defaultPrevented: boolean
+  /** Set by `stopPropagation` or `stopImmediatePropagation`; there is no bubbling to cut, so tests read it. */
+  propagationStopped: boolean
+  immediateStopped: boolean
   preventDefault(): void
   stopPropagation(): void
+  stopImmediatePropagation(): void
 }
 
 /** What `dispatch` may override on the synthetic event. */
@@ -82,6 +87,7 @@ export interface StubEventInit {
   readonly target?: unknown
   readonly relatedTarget?: unknown
   readonly key?: string
+  readonly shiftKey?: boolean
   readonly propertyName?: string
   readonly animationName?: string
   readonly button?: number
@@ -254,6 +260,10 @@ class StubElement {
 
   get firstElementChild(): StubElement | null {
     return this.childNodes.find((child): child is StubElement => child instanceof StubElement) ?? null
+  }
+
+  get lastElementChild(): StubElement | null {
+    return this.children.at(-1) ?? null
   }
 
   /** The small selector surface used by lifecycle cleanup and kept controls. */
@@ -437,18 +447,34 @@ class StubElement {
       target: init.target ?? this,
       relatedTarget: init.relatedTarget ?? null,
       key: init.key ?? '',
+      shiftKey: init.shiftKey ?? false,
       propertyName: init.propertyName ?? '',
       animationName: init.animationName ?? '',
       button: init.button ?? 0,
       deltaY: init.deltaY ?? 0,
       clipboardData: init.clipboardData,
       defaultPrevented: false,
+      propagationStopped: false,
+      immediateStopped: false,
       preventDefault() {
         event.defaultPrevented = true
       },
-      stopPropagation() {},
+      stopPropagation() {
+        event.propagationStopped = true
+      },
+      stopImmediatePropagation() {
+        event.propagationStopped = true
+        event.immediateStopped = true
+      },
     }
-    for (const listener of this.listeners.get(type) ?? []) listener(event)
+    // A snapshot, as `dispatchEvent` takes one: a listener added mid-dispatch (the
+    // dismissal swallow arms itself from inside a press) does not hear the event
+    // that armed it, and one removed before its turn is skipped.
+    for (const listener of [...(this.listeners.get(type) ?? [])]) {
+      if (!this.listeners.get(type)?.includes(listener)) continue
+      listener(event)
+      if (event.immediateStopped) break
+    }
     return event
   }
 }
@@ -479,6 +505,13 @@ export interface StubView {
   readonly node: unknown
 }
 
+/** What the handlers left on a dispatched event. */
+export interface StubDispatchResult {
+  readonly defaultPrevented: boolean
+  /** `stopPropagation` or `stopImmediatePropagation` was called. */
+  readonly propagationStopped: boolean
+}
+
 export interface DomStub {
   /** A mount point, typed for the view factories' `HTMLElement` parameter. */
   createContainer(className?: string): HTMLElement
@@ -495,7 +528,7 @@ export interface DomStub {
    * observable difference between a listener that suppressed the browser's own
    * behaviour and one that did not.
    */
-  dispatch(node: unknown, type: string, init?: StubEventInit): { readonly defaultPrevented: boolean }
+  dispatch(node: unknown, type: string, init?: StubEventInit): StubDispatchResult
   /**
    * Fires an event on `document` itself, where the window's global listeners
    * live: the keydown that carries the chords, and the `pointerdown` every
@@ -504,7 +537,7 @@ export interface DomStub {
    * There is no bubbling here, so `init.target` is the whole of what a
    * dismissal handler reads — it is the node the user pressed, not this one.
    */
-  dispatchDocument(type: string, init?: StubEventInit): { readonly defaultPrevented: boolean }
+  dispatchDocument(type: string, init?: StubEventInit): StubDispatchResult
   /** Moves focus, so `activeElement` can be asserted after a keyboard intent. */
   focus(node: unknown): void
   /**
@@ -718,10 +751,10 @@ export function installDomStub(): DomStub {
     click(node: unknown): void {
       asElement(node).dispatch('click')
     },
-    dispatch(node: unknown, type: string, init: StubEventInit = {}): { readonly defaultPrevented: boolean } {
+    dispatch(node: unknown, type: string, init: StubEventInit = {}): StubDispatchResult {
       return asElement(node).dispatch(type, init)
     },
-    dispatchDocument(type: string, init: StubEventInit = {}): { readonly defaultPrevented: boolean } {
+    dispatchDocument(type: string, init: StubEventInit = {}): StubDispatchResult {
       return documentNode.dispatch(type, init)
     },
     focus(node: unknown): void {

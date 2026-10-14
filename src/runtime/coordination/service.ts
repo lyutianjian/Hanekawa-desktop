@@ -242,7 +242,7 @@ export class CoordinationService implements CoordinationHost {
         // A thread that never started leaves no row; the tool error tells the coordinator why.
         await store.removeThreadsBySession([meta.id])
         if (worktree) await removeThreadWorktree(cwd, worktree)
-        throw new Error(`The brief could not be delivered: ${errorMessage(error)}`)
+        throw new Error(`任务说明没能送达：${errorMessage(error)}`)
       }
 
       return { threadId, sessionId: meta.id, ...(worktree ? { branch: worktree.branch } : {}) }
@@ -464,18 +464,18 @@ export class CoordinationService implements CoordinationHost {
   async mergeThread(cwd: string, threadId: string): Promise<ThreadMergeResult> {
     const thread = await this.findThread(cwd, threadId)
     const wt = thread.worktree
-    if (!wt) return { kind: 'no-worktree', message: 'This thread has no branch of its own.' }
+    if (!wt) return { kind: 'no-worktree', message: '这个线程没有自己的分支。' }
     if (thread.status === 'running' || thread.status === 'needs-you') {
-      return { kind: 'running', message: 'The thread is still running; merge once it has finished.' }
+      return { kind: 'running', message: '线程还在运行，结束后才能合并。' }
     }
     const store = this.coordinationStore(cwd)
     const result = await mergeBranch(cwd, wt.branch)
     switch (result.kind) {
       case 'dirty':
-        return { kind: 'dirty', message: 'The project directory has uncommitted changes. Commit or stash them, then merge again.' }
+        return { kind: 'dirty', message: '项目目录里有未提交的改动。请先提交或暂存，再合并。' }
       case 'conflict':
         await store.patchThread(threadId, { merge: { ...thread.merge, conflict: true } })
-        return { kind: 'conflict', message: `Merging ${wt.branch} conflicts with the current branch; the merge was undone.` }
+        return { kind: 'conflict', message: `${wt.branch} 与当前分支冲突，合并已撤销。` }
       case 'merged':
         await removeThreadWorktree(cwd, wt)
         await store.patchThread(threadId, {
@@ -502,7 +502,7 @@ export class CoordinationService implements CoordinationHost {
   /** Asks the thread to bring its branch up to date with the project's branch and resolve the conflict. */
   async resolveConflictViaThread(cwd: string, threadId: string): Promise<void> {
     const thread = await this.findThread(cwd, threadId)
-    if (!thread.worktree) throw new CoordinationError('THREAD_NOT_FOUND', 'This thread has no branch of its own.')
+    if (!thread.worktree) throw new CoordinationError('THREAD_NOT_FOUND', '这个线程没有自己的分支。')
     const current = await readGitBranch(cwd)
     const target = current ? `the project's current branch (${current})` : "the project's current branch"
     await this.deliver(cwd, threadId, [

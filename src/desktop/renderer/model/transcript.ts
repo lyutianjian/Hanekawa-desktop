@@ -3,6 +3,7 @@ import type { SessionEvent, SubagentActivity } from '../../../runtime/sessionCon
 import type { ImageAttachmentRef } from '../../../media/types.js'
 import type { ToolDisplayDto } from '../../../runtime/protocol/wire.js'
 import { parseCoordinationUpdate, parseThreadNoteMessage, type ThreadNotesData } from './threadNotes.js'
+import { turnFailureCard, type TurnFailureCard } from './turnFailure.js'
 
 /**
  * The transcript as data: a list of items plus whatever is still in flight.
@@ -78,6 +79,7 @@ export type TranscriptItemKind =
   | 'duration'
   | 'thread-notes'
   | 'receipt'
+  | 'turn-failure'
 
 /**
  * How the host captions a `tool_use` record, by record id.
@@ -247,6 +249,8 @@ export interface TranscriptItem {
   readonly threadNotes?: ThreadNotesData
   /** On a `receipt` item, which `groupTranscript` derives from a settled tool step. */
   readonly receipt?: Receipt
+  /** On a `turn-failure` item: the error card's words and whether it offers 重试. */
+  readonly failure?: TurnFailureCard
 }
 
 /** One step inside an activity run. `text` is the body; heads are the view's job. */
@@ -426,6 +430,39 @@ export function withQueuedMessages(
       queuedMessageId: message.id,
     }))],
   }
+}
+
+/**
+ * Marks the newest turn failure as retryable: nothing has been sent since, and
+ * the message it failed on is still on screen to be sent again. Any later user
+ * message — a retry included — retires the buttons.
+ */
+export function withFailureActions(state: TranscriptState): TranscriptState {
+  let index = -1
+  for (let i = state.items.length - 1; i >= 0; i -= 1) {
+    const kind = state.items[i]!.kind
+    if (kind === 'user') return state
+    if (kind === 'turn-failure') {
+      index = i
+      break
+    }
+  }
+  const failure = state.items[index]?.failure
+  if (failure === undefined || !state.items.some((item) => item.kind === 'user' && item.id === failure.userMessageId)) return state
+  return {
+    ...state,
+    items: state.items.map((item, i) => (i === index ? { ...item, failure: { ...failure, retryable: true } } : item)),
+  }
+}
+
+/** What 「重试」 sends again: the failed turn's own message, words and pictures. */
+export function failedTurnInput(
+  state: TranscriptState,
+  userMessageId: string,
+): { readonly text: string; readonly imageIds: string[] } | undefined {
+  const message = state.items.find((item) => item.kind === 'user' && item.id === userMessageId)
+  if (message === undefined) return undefined
+  return { text: message.text, imageIds: message.images?.map((image) => image.id) ?? [] }
 }
 
 export function applySessionEvent(
@@ -1074,11 +1111,16 @@ function recordItems(record: SessionRecord, context: ItemContext = {}): Transcri
     case 'turn_interruption':
       return [{ id: record.id, kind: 'notice', text: 'Interrupted.', interrupt: true, ...stamp }]
 
+    case 'turn_failure': {
+      const failure = turnFailureCard(record)
+      return [{ id: record.id, kind: 'turn-failure', text: failure.reason, failure, ...stamp }]
+    }
+
     case 'compact_boundary':
-      return [{ id: record.id, kind: 'notice', text: 'Context compacted.', ...stamp }]
+      return [{ id: record.id, kind: 'notice', text: '上下文已压缩', ...stamp }]
 
     case 'compact_attempt_failed':
-      return [{ id: record.id, kind: 'error', text: `Compaction failed: ${record.error}`, ...stamp }]
+      return [{ id: record.id, kind: 'error', text: `压缩上下文失败：${record.error}`, ...stamp }]
 
     default:
       // tool_approval, at_mention_context, tool_use_summary, tool_result_trim,

@@ -95,7 +95,7 @@ test('/thinking off turns the switch off, and a bad word changes nothing', async
 
   await thinkingCommand.run('sometimes', context)
   assert.deepEqual(calls, [false])
-  assert.match(lines.join('\n'), /Invalid value/)
+  assert.match(lines.join('\n'), /无效的值/)
 })
 
 test('parseThinkingArgument accepts the usual spellings', () => {

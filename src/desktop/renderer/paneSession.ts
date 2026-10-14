@@ -48,6 +48,7 @@ import type { SurfacePanel } from './dom/surfaceView.js'
 import type { ProcessStripView } from './dom/processStripView.js'
 import type { TaskPanelDom } from './dom/taskPanelView.js'
 import { append, el, show } from './dom/dom.js'
+import { copyText } from './dom/clipboard.js'
 import { finishPresenceWithin } from './dom/presence.js'
 import { createRepaint } from './frame.js'
 import { createTranscriptView, type TranscriptView } from './dom/transcriptView.js'
@@ -98,6 +99,8 @@ import {
   groupTranscript,
   presentationTranscript,
   withQueuedMessages,
+  withFailureActions,
+  failedTurnInput,
   type ToolDisplayLookup,
   type TranscriptState,
 } from './model/transcript.js'
@@ -145,6 +148,7 @@ import {
   effortPickerView,
   initialSurfaceSelection,
   isSupportedSurface,
+  SURFACE_LABEL,
   modelPickerView,
   moveSurfaceSelection as stepSurfaceSelection,
   resumePickerView,
@@ -181,7 +185,7 @@ import {
   type AttachmentDrafts,
   type AttachmentImportSource,
 } from './model/composerAttachments.js'
-import { formatImageFailure } from '../../media/imageErrors.js'
+import { formatImageFailure, imageBlockReasonOf } from '../../media/imageErrors.js'
 import {
   beginPreviewLoad,
   failPreviewLoad,
@@ -444,6 +448,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     onOpenSubagent: (id) => deps.onOpenSubagent?.(id),
     onOpenBackgroundTasks: toggleBackgroundTasks,
     onOpenThread: (id) => deps.onOpenThread?.(id),
+    ...(deps.onOpenProviderSettings ? { onOpenProviderSettings: deps.onOpenProviderSettings } : {}),
+    onRetryTurn: (id) => { void retryTurn(id) },
     // The panel is a singleton the active pane drives, so a background pane
     // cannot reach it — and cannot be clicked either, since it does not paint.
     onTaskStep: () => {
@@ -470,9 +476,12 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     imageThumbUrl: (imageId) => previewDataUrl(previewCache, imageId),
     // The clipboard lives here rather than in the view: `navigator` is a host
     // object, and `dom/transcriptView.ts` is the half of this that runs against a
-    // hand-written DOM stub in tests. A rejected write is swallowed — the button
-    // is a convenience beside text the user can still select.
-    onCopy: (text) => { void navigator.clipboard?.writeText(text).catch(() => {}) },
+    // hand-written DOM stub in tests.
+    onCopy: (text) => {
+      void copyText(text).then((ok) => {
+        if (!ok) note('复制失败：无法写入剪贴板。', 'error')
+      })
+    },
     onRewind: (messageId) => { void openRewindPanel(messageId) },
   })
   const welcome = createWelcomeView(welcomeEl, {
@@ -509,6 +518,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    * would fold a step in a session the user never touched.
    */
   let disclosure: DisclosureState = NO_DISCLOSURE
+  /** A 「重试」 between its press and the turn it starts. */
+  let retrying = false
   /**
    * The checklist above the composer, or `undefined` for no panel at all.
    *
@@ -781,10 +792,12 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // counter, so `thinking-0` can be minted again and would inherit the answer a
     // different block left behind — and an absolute answer would not even be
     // corrected by the default.
-    const shown = withQueuedMessages(transcript, queued)
+    const { isStreaming, turnOutputTokens } = client.getSnapshot()
+    const queuedShown = withQueuedMessages(transcript, queued)
+    // No 「重试」 while a turn runs or a retry is on its way: a second press would send it twice.
+    const shown = isStreaming || retrying ? queuedShown : withFailureActions(queuedShown)
     const presented = presentationTranscript(shown)
     disclosure = pruneDisclosure(groupTranscript(presented.items), disclosure)
-    const { isStreaming, turnOutputTokens } = client.getSnapshot()
     // A pane can find itself mid-turn without having seen `turn-start` — it was
     // resumed, or the turn began while this pane was in the background — and a
     // row counting from `undefined` would have no clock at all. Noticing the
@@ -1076,7 +1089,13 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // store, and landing it in the new draft list would hang a ref the new
     // session's submits cannot resolve.
     const sessionId = client.getSession()?.id
-    const settled = await client.importAttachment(source)
+    // A rejected request settles the draft as failed like any other refusal;
+    // left unsettled it would read 「导入中…」 for good, with no way to retry.
+    const settled = await client.importAttachment(source).catch((error: unknown) => ({
+      ok: false as const,
+      reason: imageBlockReasonOf(error) ?? 'import-failed',
+      message: describe(error),
+    }))
     if (sessionId === undefined || sessionId !== client.getSession()?.id) return
     const outcome = settled.ok
       ? { ok: true as const, ref: settled.attachment.ref, ...(settled.attachment.animated ? { animated: true } : {}) }
@@ -1092,7 +1111,12 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     const sources: AttachmentImportSource[] = []
     for (const file of files) {
       if (!file.type.startsWith('image/')) continue
-      sources.push({ kind: 'bytes', name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })
+      try {
+        sources.push({ kind: 'bytes', name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })
+      } catch (error) {
+        // Nothing to retry from: the bytes were never read.
+        note(`无法读取图片 ${file.name}：${describe(error)}`, 'error')
+      }
     }
     await importSources(sources)
   }
@@ -1107,7 +1131,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       const paths = await deps.onPickImages()
       if (paths !== undefined) await importImagesFromPaths(paths)
     } catch (error) {
-      note(describe(error), 'error')
+      note(`选择图片失败：${describe(error)}`, 'error')
     }
   }
 
@@ -1121,7 +1145,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     } catch (error) {
       // A released-but-unheld id is idempotent host-side; only a dead lane
       // reaches here, and the files still fall to the retention window.
-      note(describe(error), 'error')
+      note(`移除图片失败：${describe(error)}`, 'error')
     }
   }
 
@@ -1141,7 +1165,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       const result = await client.openAttachment(entry.ref.id)
       if (!result.ok) note(formatImageFailure(result.reason, result.message), 'error')
     } catch (error) {
-      note(describe(error), 'error')
+      note(`打开图片失败：${describe(error)}`, 'error')
     }
   }
 
@@ -1583,7 +1607,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     const intent = commandEffectToIntent(effect)
     switch (intent.kind) {
       case 'write-line':
-        note(intent.text)
+        note(intent.text, intent.tone ?? 'system')
         return
       case 'show-view':
         surfaceView = undefined
@@ -1662,7 +1686,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       surfaceIndex = initialSurfaceSelection(view)
       renderSurface()
     } catch (error) {
-      note(`Could not open ${name}: ${describe(error)}`, 'error')
+      note(`无法打开${SURFACE_LABEL[name]}：${describe(error)}`, 'error')
     }
   }
 
@@ -1701,7 +1725,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     try {
       models = await client.listModels()
     } catch (error) {
-      note(`Could not list models: ${describe(error)}`, 'error')
+      note(`无法读取模型列表：${describe(error)}`, 'error')
     }
     if (!active) return
     deps.composer.showRuntimeMenu(runtimeMenuView({ runtime: client.getRuntimeSnapshot(), models }))
@@ -1716,7 +1740,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     if (action.kind === 'arm-kill' || action.kind === 'kill-task') {
       armedKillId = action.kind === 'arm-kill' ? action.taskId : undefined
       refreshTasksSurface()
-      if (action.kind === 'kill-task') await client.killTask(action.taskId).catch((error: unknown) => note(describe(error), 'error'))
+      if (action.kind === 'kill-task') await client.killTask(action.taskId).catch((error: unknown) => note(`停止任务失败：${describe(error)}`, 'error'))
       return
     }
     hideSurface()
@@ -1731,14 +1755,14 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
           return
         case 'peek-task': {
           const output = await client.peekTaskOutput(action.taskId)
-          note(output.trim().length > 0 ? output : 'No new output.')
+          note(output.trim().length > 0 ? output : '没有新的输出。')
           return
         }
         default:
           return assertNever(action)
       }
     } catch (error) {
-      note(describe(error), 'error')
+      note(`操作失败：${describe(error)}`, 'error')
     }
   }
 
@@ -1899,11 +1923,38 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       // typing while the submit round-tripped owns the newer draft, and the
       // attachment restore follows the same rule for the same reason.
       if (deps.composer.value() === '') deps.composer.setValue(sentText, sentText.length)
-      note(`Failed: ${describe(error)}`, 'error')
+      note(`发送失败：${describe(error)}`, 'error')
       draftImages = restoreDraftImages(sentDrafts)
       renderAttachments()
     } finally {
       deps.composer.focus()
+    }
+  }
+
+  /**
+   * 「重试」 on a failed turn: its message goes through the same door it came in
+   * by, so a slash input runs as a command again. The failed attempt stays in
+   * the history, followed by the new one.
+   */
+  async function retryTurn(userMessageId: string): Promise<void> {
+    const input = failedTurnInput(transcript, userMessageId)
+    if (input === undefined || retrying || client.getSnapshot().isStreaming) return
+    const classified = classifyInput(input.text)
+    retrying = true
+    renderTranscript()
+    try {
+      if (classified.kind === 'command') {
+        const result = await client.runCommand(classified.line)
+        if (result.exit) deps.onExit()
+        return
+      }
+      deps.onUserMessage?.()
+      await client.submit(classified.kind === 'prompt' ? classified.text : '', input.imageIds.length > 0 ? { imageIds: input.imageIds } : {})
+    } catch (error) {
+      note(`重试失败：${describe(error)}`, 'error')
+    } finally {
+      retrying = false
+      renderTranscript()
     }
   }
 
@@ -1942,7 +1993,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       await client.enqueueMessage(text, imageIds.length > 0 ? { imageIds } : {})
     } catch (error) {
       if (deps.composer.value() === '') deps.composer.setValue(text, text.length)
-      note(`Failed to queue: ${describe(error)}`, 'error')
+      note(`排队失败：${describe(error)}`, 'error')
       draftImages = restoreDraftImages(queuedDrafts)
       renderAttachments()
     } finally {
@@ -2004,6 +2055,14 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   function deactivate(): void {
     if (!active) return
     draftText = deps.composer.value()
+    // Shut while still active so the welcome page repaints them closed: a hidden
+    // pane's popover still counts as open for `dom/dismiss.ts`.
+    if (branchPicker.open || projectPickerOpen) {
+      branchPicker = createBranchPickerState()
+      projectPickerOpen = false
+      projectSelectedIndex = -1
+      renderTranscript()
+    }
     active = false
     show(paneEl, false)
     // Clear the *paint* this pane left on the singleton panels, not the state:
@@ -2051,6 +2110,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   function dispose(): void {
     if (active) closeImageViewer()
     if (taskClock) clearInterval(taskClock)
+    welcome.dispose()
     transcriptView.dispose()
     streamRepaint.cancel()
     statusRepaint.cancel()
@@ -2184,7 +2244,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     try {
       await client.interrupt('user-cancel')
     } catch (error) {
-      note(describe(error), 'error')
+      note(`停止失败：${describe(error)}`, 'error')
     }
   }
 
@@ -2201,7 +2261,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     try {
       await client.setPermissionMode(mode)
     } catch (error) {
-      note(describe(error), 'error')
+      note(`切换权限模式失败：${describe(error)}`, 'error')
     }
   }
 

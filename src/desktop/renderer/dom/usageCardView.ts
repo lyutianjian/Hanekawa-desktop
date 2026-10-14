@@ -2,6 +2,7 @@ import type { WireUsageDay } from '../../shellProtocol.js'
 import {
   USAGE_NO_MODELS,
   USAGE_RANGES,
+  USAGE_UNAVAILABLE,
   USAGE_TABS,
   usageCardView,
   type UsageCardView,
@@ -24,10 +25,13 @@ export interface UsageCardDom {
   element: HTMLElement
   /** `undefined` draws the skeleton; an array (possibly empty) draws the numbers. */
   setDays(days: readonly WireUsageDay[] | undefined): void
+  /** The read failed: the body says so, with 重试 — never zeros, which would read as an empty history. */
+  setUnavailable(retry: () => void): void
 }
 
 export function createUsageCard(now: () => Date = () => new Date()): UsageCardDom {
   let days: readonly WireUsageDay[] | undefined
+  let retry: (() => void) | undefined
   let tab: UsageTab = 'overview'
   let range: UsageRange = 'all'
 
@@ -95,11 +99,15 @@ export function createUsageCard(now: () => Date = () => new Date()): UsageCardDo
 
   function paint(): void {
     const view = usageCardView(days, tab, range, now())
-    element.classList.toggle('loading', view.loading)
+    element.classList.toggle('loading', view.loading && retry === undefined)
     for (const segment of segments) {
       const active = segment.active()
       segment.node.classList.toggle('active', active)
       segment.node.setAttribute('aria-pressed', String(active))
+    }
+    if (retry !== undefined) {
+      replace(body, el('div', 'usage-empty', USAGE_UNAVAILABLE, button('usage-retry', '重试', '重新读取使用统计', retry)))
+      return
     }
     replace(body, ...(tab === 'overview' ? overview(view) : models(view)))
   }
@@ -109,6 +117,12 @@ export function createUsageCard(now: () => Date = () => new Date()): UsageCardDo
     element,
     setDays(next) {
       days = next
+      retry = undefined
+      paint()
+    },
+    setUnavailable(onRetry) {
+      days = undefined
+      retry = onRetry
       paint()
     },
   }

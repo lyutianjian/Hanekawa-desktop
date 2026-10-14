@@ -64,6 +64,9 @@ export function createThreadPanelView(root: HTMLElement, onIntent: (intent: Thre
     )
   }
 
+  const noticeNode = (view: ThreadPanelView): HTMLElement | undefined =>
+    view.notice === undefined ? undefined : el('div', view.noticeTone === 'error' ? 'thread-panel-notice error' : 'thread-panel-notice', view.notice)
+
   function panel(view: ThreadPanelView): HTMLElement {
     const stopAll = button('thread-panel-stop-all', '全部停止', '停止所有运行中的线程', () => onIntent({ kind: 'stop-all' }), {
       enabled: view.active.some((item) => item.canStop),
@@ -71,7 +74,7 @@ export function createThreadPanelView(root: HTMLElement, onIntent: (intent: Thre
     return el(
       'div',
       'thread-panel',
-      view.notice === undefined ? undefined : el('div', 'thread-panel-notice', view.notice),
+      noticeNode(view),
       el('div', 'thread-panel-head', stopAll),
       el('div', 'thread-panel-active', ...view.active.map(row)),
       fold('quiet', view.quiet),
@@ -90,7 +93,7 @@ export function createThreadPanelView(root: HTMLElement, onIntent: (intent: Thre
       const signature = JSON.stringify(view)
       if (signature === drawn) return
       drawn = signature
-      if (!view.available) replace(root, view.notice === undefined ? undefined : el('div', 'thread-panel-notice', view.notice), emptyState())
+      if (!view.available) replace(root, noticeNode(view), emptyState())
       else replace(root, panel(view))
     },
   }

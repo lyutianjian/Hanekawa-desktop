@@ -551,7 +551,7 @@ test('bookkeeping records render nothing, and the visible ones read plainly', ()
     { type: 'record', record: { type: 'compact_boundary', id: 'cb1', summary: 's', preTokens: 10, createdAt: 'now' } },
   ])
 
-  assert.deepEqual(state.items.map((item) => item.text), ['Interrupted.', 'Context compacted.'])
+  assert.deepEqual(state.items.map((item) => item.text), ['Interrupted.', '上下文已压缩'])
 })
 
 test('a system-reminder user record is hidden from the transcript', () => {

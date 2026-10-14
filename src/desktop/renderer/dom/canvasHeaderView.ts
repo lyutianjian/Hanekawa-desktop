@@ -2,7 +2,8 @@ import type { CanvasHeaderMenuItem, CanvasHeaderView } from '../model/canvasHead
 import { renameCommit } from '../model/canvasHeader.js'
 import { append, el, reconcile, show } from './dom.js'
 import { button } from './controls.js'
-import { onPressOutside } from './dismiss.js'
+import { dismissable } from './dismiss.js'
+import { followPointer, rovingFocus } from './focus.js'
 import { createPresence } from './presence.js'
 
 /**
@@ -94,6 +95,12 @@ export function createCanvasHeaderView(
   let menuWasOpen = false
   /** The current menu's first item; where the keyboard lands on opening. */
   let firstMenuItem: HTMLElement | undefined
+  /**
+   * Where focus goes when the item holding it is replaced by the next step of the
+   * menu — the confirmation's first item is the destructive one, so it is the
+   * non-danger item (取消), never the first.
+   */
+  let safeMenuItem: HTMLElement | undefined
 
   titleInput.addEventListener('keydown', (event) => {
     if (event.key === 'Escape') {
@@ -120,7 +127,17 @@ export function createCanvasHeaderView(
   // here and re-opened by the click that follows.
   //
   // Scoped to the persistent menu and its trigger, never the entire header.
-  onPressOutside(['.canvas-menu', '.canvas-menu-trigger'], () => actions.onCloseMenu())
+  dismissable(['.canvas-menu', '.canvas-menu-trigger'], {
+    isOpen: () => menuWasOpen,
+    close: () => actions.onCloseMenu(),
+  })
+  menuShell.addEventListener('keydown', (event) => rovingFocus(
+    event,
+    Array.from(menu.children) as HTMLElement[],
+    menuWasOpen,
+    actions.onToggleMenu,
+  ))
+  followPointer(menu, '.canvas-menu-item')
   container.addEventListener('focusout', (event) => {
     const next = (event as FocusEvent).relatedTarget
     // `null` is focus going *nowhere*, which is this view's own repaint and not
@@ -171,16 +188,22 @@ export function createCanvasHeaderView(
         seededTitle = undefined
         menuWasOpen = false
         firstMenuItem = undefined
+        safeMenuItem = undefined
         return
       }
 
       trigger.setAttribute('aria-expanded', view.menuOpen ? 'true' : 'false')
+      const heldMenuFocus = view.menuOpen && menu.contains(document.activeElement)
       if (view.menuOpen) updateMenu(view.menuItems)
+      const lostMenuFocus = heldMenuFocus && !menu.contains(document.activeElement)
       const returnFocus = !view.menuOpen && menu.contains(document.activeElement)
       menuPresence.set(view.menuOpen)
       if (title.textContent !== view.title) title.textContent = view.title
-      const titleSlot = view.renaming ? titleInput : view.breadcrumb ? crumb : title
-      reconcile(identity, [titleSlot, menuShell])
+      // The field floats over the title instead of replacing it: the title keeps
+      // its width, so the menu trigger and everything right of it stay put.
+      identity.classList.toggle('renaming', view.renaming)
+      const shown = view.breadcrumb ? crumb : title
+      reconcile(identity, view.renaming ? [shown, titleInput, menuShell] : [shown, menuShell])
 
       const startingRename = view.renaming && seededTitle === undefined
       if (view.renaming) {
@@ -227,12 +250,14 @@ export function createCanvasHeaderView(
       menuWasOpen = view.menuOpen
       if (opening) firstMenuItem?.focus()
       else if (startingRename) titleInput.focus()
+      else if (lostMenuFocus) safeMenuItem?.focus()
       else if (returnFocus) trigger.focus()
     },
   }
 
   function updateMenu(items: readonly CanvasHeaderMenuItem[]): void {
     firstMenuItem = undefined
+    safeMenuItem = undefined
     const nodes = items.map((item) => {
       let kept = menuItems.get(item.id)
       if (!kept) {
@@ -248,6 +273,7 @@ export function createCanvasHeaderView(
       kept.node.setAttribute('aria-label', item.label)
       if (kept.label.textContent !== item.label) kept.label.textContent = item.label
       firstMenuItem ??= kept.node
+      if (item.danger !== true) safeMenuItem ??= kept.node
       return kept.node
     })
     reconcile(menu, nodes)

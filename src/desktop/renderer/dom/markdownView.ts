@@ -4,6 +4,9 @@ import type { MdBlock, MdInline, MdListItem } from '../model/markdown.js'
 import { parseMarkdownBlocks, parseMarkdownSegments } from '../model/markdown.js'
 import { REDUCED_MOTION_QUERY } from '../model/reducedMotion.js'
 import { el, append } from './dom.js'
+import { button } from './controls.js'
+import { copyText } from './clipboard.js'
+import { icon } from './icons.js'
 
 /**
  * `MdBlock[]` to nodes. Every decision — what is a link, what is literal text —
@@ -167,6 +170,7 @@ function blockNode(block: MdBlock): HTMLElement {
       const wrapper = el('div', 'md-code')
       if (block.lang) wrapper.appendChild(el('div', 'md-code-lang', block.lang))
       wrapper.appendChild(el('pre', undefined, el('code', undefined, block.text)))
+      wrapper.appendChild(copyButton(block.text))
       return wrapper
     }
 
@@ -246,6 +250,33 @@ function listItemNode(item: MdListItem): HTMLElement {
   append(node, blocks.map(blockNode))
   return node
 }
+
+/**
+ * Copies the fence's text; the glyph turns into a tick for a moment as the
+ * receipt — or into a cross, with the failure as its name, when nothing was
+ * copied.
+ */
+function copyButton(text: string): HTMLButtonElement {
+  let reset: ReturnType<typeof setTimeout> | undefined
+  const node = button('md-code-copy', '', '复制代码', () => {
+    void copyText(text).then((ok) => {
+      node.replaceChildren(icon(ok ? 'check' : 'close'))
+      node.setAttribute('aria-label', ok ? '复制代码' : '复制失败')
+      node.title = ok ? '复制代码' : '复制失败'
+      node.classList.toggle('failed', !ok)
+      clearTimeout(reset)
+      reset = setTimeout(() => {
+        node.replaceChildren(icon('copy'))
+        node.setAttribute('aria-label', '复制代码')
+        node.title = '复制代码'
+        node.classList.remove('failed')
+      }, COPY_RECEIPT_MS)
+    })
+  }, { icon: 'copy' })
+  return node
+}
+
+const COPY_RECEIPT_MS = 1200
 
 function tableNode(block: Extract<MdBlock, { kind: 'table' }>): HTMLElement {
   const head = el('thead', undefined, el(

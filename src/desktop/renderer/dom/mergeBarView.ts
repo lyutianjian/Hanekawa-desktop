@@ -12,7 +12,8 @@ import { button } from './controls.js'
  */
 
 export interface MergeBarDom {
-  render(view: MergeBarView): void
+  /** `error` is a failed action's message, drawn under the bar's rows. */
+  render(view: MergeBarView, error?: string): void
 }
 
 export function createMergeBarView(
@@ -78,9 +79,15 @@ export function createMergeBarView(
     return node
   }
 
+  function errorNode(message: string): HTMLElement {
+    const node = el('div', 'merge-bar-error', message)
+    node.setAttribute('role', 'alert')
+    return node
+  }
+
   return {
-    render(view) {
-      const signature = JSON.stringify(view)
+    render(view, error) {
+      const signature = JSON.stringify([view, error])
       if (signature === lastSignature) return
       lastSignature = signature
       show(container, view.kind !== 'hidden')
@@ -88,8 +95,9 @@ export function createMergeBarView(
         reconcile(container, [])
         return
       }
+      const errorLine = error === undefined ? undefined : errorNode(error)
       if (view.kind === 'single') {
-        reconcile(container, [row(view.entry)])
+        reconcile(container, [row(view.entry), errorLine])
         return
       }
       const toggle = button(
@@ -102,7 +110,7 @@ export function createMergeBarView(
       const list = view.expanded
         ? el('ul', 'merge-bar-list', ...view.entries.map((entry) => el('li', 'merge-bar-item', row(entry))))
         : undefined
-      reconcile(container, [toggle, list])
+      reconcile(container, [toggle, list, errorLine])
     },
   }
 }

@@ -40,13 +40,14 @@ function mount(t: { after(fn: () => void): void; mock: { timers: { enable(option
   const root = stub.createContainer('thread-detail')
   const loads: Array<string | undefined> = []
   const calls: string[] = []
-  const reply: { next: WireShellThreadTranscriptResult } = { next: { unchanged: false, token: '1', records: [] } }
+  const reply: { next: WireShellThreadTranscriptResult; fail?: Error } = { next: { unchanged: false, token: '1', records: [] } }
   const view = createThreadDetailView(root, {
     onBack: () => calls.push('back'),
     onOpen: (sessionId) => calls.push(`open:${sessionId}`),
     onStop: (threadId) => calls.push(`stop:${threadId}`),
     loadTranscript: async (_threadId, since) => {
       loads.push(since)
+      if (reply.fail) throw reply.fail
       return reply.next
     },
     onOpenPath: () => {},
@@ -79,6 +80,37 @@ test('a running thread is re-read on the timer with the last token; leaving the 
   t.mock.timers.tick(5000)
   await flush()
   assert.equal(m.loads.length, 2, 'no read after the page is gone')
+})
+
+test('a failed read says so with a way to ask again, instead of leaving the page blank', async (t) => {
+  const m = mount(t)
+  m.reply.fail = new Error('文件被占用')
+  m.view.render(page({ poll: false, canStop: false }))
+  await flush()
+
+  const [failure] = m.find('thread-detail-error')
+  assert.equal(failure?.hidden, false)
+  assert.equal(failure?.text, '无法读取线程对话：文件被占用重试')
+  assert.equal(m.find('subagent-empty')[0]?.hidden, true, 'a thread that could not be read is not an empty one')
+
+  m.reply.fail = undefined
+  m.stub.click(m.find('thread-detail-retry')[0]!.node)
+  await flush()
+  assert.equal(m.loads.length, 2)
+  assert.equal(m.find('thread-detail-error')[0]?.hidden, true, 'a good read withdraws it')
+  assert.equal(m.find('thread-detail-retry').length, 0)
+})
+
+test('a failure that repeats on the timer keeps the same button under the pointer', async (t) => {
+  const m = mount(t)
+  m.reply.fail = new Error('x')
+  m.view.render(page())
+  await flush()
+  const before = m.find('thread-detail-retry')[0]!.node
+  t.mock.timers.tick(1500)
+  await flush()
+  assert.equal(m.loads.length, 2)
+  assert.equal(m.find('thread-detail-retry')[0]!.node, before)
 })
 
 test('a settled thread is read once and has no timer', async (t) => {

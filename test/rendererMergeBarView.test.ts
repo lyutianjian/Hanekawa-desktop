@@ -21,7 +21,7 @@ function render(t: { after(fn: () => void): void }) {
   const container = stub.createContainer('merge-bar')
   const intents: MergeBarIntent[] = []
   const bar = createMergeBarView(container, (intent) => intents.push(intent))
-  const paint = (role: 'thread' | 'coordinator', merges: WireThreadMerge[], options: { expanded?: boolean; pending?: string[] } = {}) => {
+  const paint = (role: 'thread' | 'coordinator', merges: WireThreadMerge[], options: { expanded?: boolean; pending?: string[]; error?: string } = {}) => {
     const view: MergeBarView = mergeBarView({
       role,
       threadId: 't1',
@@ -30,7 +30,7 @@ function render(t: { after(fn: () => void): void }) {
       expanded: options.expanded ?? false,
       pending: new Set(options.pending ?? []),
     })
-    bar.render(view)
+    bar.render(view, options.error)
   }
   return { stub, container, intents, paint }
 }
@@ -137,4 +137,21 @@ test('an unchanged view does not rebuild the rows', (t) => {
   const before = rowOf(r.stub.inspect(r.container)).node
   r.paint('thread', [merge()])
   assert.equal(rowOf(r.stub.inspect(r.container)).node, before)
+})
+
+test('a refused or failed merge is said under the row, and leaves with the next action', (t) => {
+  const r = render(t)
+  const errorLines = (): StubView[] => r.stub.inspect(r.container).children.filter((c) => c.classes.includes('merge-bar-error'))
+
+  r.paint('thread', [merge()], { error: '项目目录里有未提交的改动。请先提交或暂存，再合并。' })
+  assert.deepEqual(errorLines().map((line) => line.text), ['项目目录里有未提交的改动。请先提交或暂存，再合并。'])
+  assert.equal(errorLines()[0]!.attributes.get('role'), 'alert')
+  assert.equal(r.stub.inspect(r.container).children[0]!.classes.includes('merge-bar-row'), true, 'the row stays first')
+
+  r.paint('thread', [merge()])
+  assert.deepEqual(errorLines(), [])
+
+  // The summary form carries it too, under its list.
+  r.paint('coordinator', [merge(), merge({ threadId: 't2' })], { expanded: true, error: '合并失败' })
+  assert.deepEqual(errorLines().map((line) => line.text), ['合并失败'])
 })

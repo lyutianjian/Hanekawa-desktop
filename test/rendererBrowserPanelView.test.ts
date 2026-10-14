@@ -329,6 +329,25 @@ test('Enter in the address bar navigates, and refuses what is not an address', (
   assert.equal(r.navigated.length, 1, 'a non-http address is not a navigation')
 })
 
+test('Escape in the address bar takes back what was typed, then leaves the field', (t) => {
+  const r = render(t)
+  r.paint()
+  const field = r.stub.inspect(r.nodes.address).children
+    .find((child) => child.classes.includes('browser-url'))!.node as HTMLInputElement
+  const shown = field.value
+  r.stub.focus(field)
+
+  field.value = 'half-typed.example'
+  const first = r.stub.dispatch(field, 'keydown', { key: 'Escape' })
+  assert.equal(field.value, shown, 'the current address is back')
+  assert.equal(r.stub.activeElement(), field, 'the first Escape keeps the field')
+  assert.equal(first.defaultPrevented && first.propagationStopped, true, 'and never interrupts the turn')
+
+  r.stub.dispatch(field, 'keydown', { key: 'Escape' })
+  assert.equal(r.stub.activeElement(), undefined, 'with nothing to take back it leaves')
+  assert.deepEqual(r.navigated, [])
+})
+
 test('back and forward are disabled until the page says otherwise', (t) => {
   const r = render(t)
   r.paint()

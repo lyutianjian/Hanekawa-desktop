@@ -1,5 +1,6 @@
 import { el, reconcile } from './dom.js'
 import { createPresence } from './presence.js'
+import { followPointer, rovingFocus } from './focus.js'
 import { icon, type IconName } from './icons.js'
 
 /**
@@ -69,6 +70,8 @@ export function textField(options: {
   mono?: boolean
   live?: boolean
   onCommit: (value: string) => void
+  /** Runs after the Enter commit: a dialog's fields submit it. */
+  onEnter?: () => void
 }): HTMLInputElement {
   const node = el('input', options.className ?? 'settings-input')
   node.type = 'text'
@@ -88,6 +91,7 @@ export function textField(options: {
     event.preventDefault()
     event.stopPropagation()
     options.onCommit(node.value)
+    options.onEnter?.()
   })
   return node
 }
@@ -212,6 +216,7 @@ function menuField(options: MenuFieldOptions, owner?: HTMLElement): HTMLElement 
     let items: HTMLButtonElement[] = []
     shell.appendChild(trigger)
     shell.addEventListener('keydown', (event) => rovingFocus(event, items, current.open, current.onToggle))
+    followPointer(menu, '.settings-menu-item')
     update = (next) => {
       const returning = current.open && !next.open && menu.contains(document.activeElement)
       current = next
@@ -285,47 +290,4 @@ export function pillSelect(options: {
 }, owner?: HTMLElement): HTMLElement {
   const summary = options.choices.find((choice) => choice.value === options.value)?.label ?? options.value
   return menuField({ ...options, summary, selected: [options.value], multiple: false, onSelect: options.onChange }, owner)
-}
-
-/**
- * Arrow/Home/End movement across an open menu's items. Shared by the two
- * dropdowns above, which differ only in what a click does.
- */
-function rovingFocus(
-  event: KeyboardEvent,
-  items: readonly HTMLButtonElement[],
-  open: boolean,
-  onOpen: () => void,
-): void {
-  const { key } = event
-  if (key !== 'ArrowDown' && key !== 'ArrowUp' && key !== 'Home' && key !== 'End') return
-  if (!open) {
-    // ArrowDown only opens: the menu does not exist yet, so focusing its first
-    // item waits for the render this toggle causes — which is what `onFirstItem`
-    // is for. Nothing here can do it, and nothing did until that existed: the
-    // trigger this keydown came from is *replaced* by that render, so focus fell
-    // to `<body>` and every later arrow key missed this listener entirely.
-    if (key !== 'ArrowDown') return
-    event.preventDefault()
-    event.stopPropagation()
-    onOpen()
-    return
-  }
-  if (items.length === 0) return
-  // `event.target` rather than `document.activeElement`: the keydown fires on
-  // the focused item and bubbles here, so the target *is* the position.
-  const at = items.indexOf(event.target as HTMLButtonElement)
-  const next =
-    key === 'Home'
-      ? 0
-      : key === 'End'
-        ? items.length - 1
-        : at < 0
-          ? key === 'ArrowDown'
-            ? 0
-            : items.length - 1
-          : (at + (key === 'ArrowDown' ? 1 : -1) + items.length) % items.length
-  event.preventDefault()
-  event.stopPropagation()
-  items[next]?.focus()
 }

@@ -436,6 +436,43 @@ body {
   border-left-width: 6px;
 }
 
+/* --- keyboard focus ---
+   Chromium's own ring is the platform accent drawn as a thick halo, which on a
+   menu row reads as an error state. The base is the brand hairline, at zero
+   specificity so every rule below that draws its own ring still wins; rows
+   inside a menu or list take the hover fill instead of any ring, because the
+   menu's own frame is already the outline. */
+:where(button, a, [role="button"], [role="option"], [role="menuitem"], [role="switch"], [tabindex]):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+.titlebar-menu-item:focus-visible,
+.canvas-menu-item:focus-visible,
+.project-menu-item:focus-visible,
+.composer-menu-item:focus-visible,
+.chip-menu-row:focus-visible,
+.chip-flyout-item:focus-visible,
+.settings-menu-item:focus-visible,
+.branch-picker-row:focus-visible,
+.project-picker-row:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+}
+/* One highlight per menu. `followPointer` (`dom/focus.ts`) gives focus to the row
+   under a moving pointer, so a row the pointer is on is the focused one; what is
+   left is a pointer that is merely resting on a row while the keyboard has moved
+   on, which must not paint beside the keyboard's row. The rows that carry their
+   own state fill (`.active`, `.open`) keep it. */
+.titlebar-menu:has(:focus-visible) .titlebar-menu-item:hover:not(:focus-visible),
+.canvas-menu:has(:focus-visible) .canvas-menu-item:hover:not(:focus-visible),
+.project-menu:has(:focus-visible) .project-menu-item:hover:not(:focus-visible),
+.composer-menu:has(:focus-visible) .composer-menu-item:hover:not(:focus-visible):not(.active),
+.chip-menu:has(:focus-visible) .chip-menu-row:hover:not(:focus-visible):not(.open),
+.chip-flyout:has(:focus-visible) .chip-flyout-item:hover:not(:focus-visible),
+.settings-menu:has(:focus-visible) .settings-menu-item:hover:not(:focus-visible):not(.active) {
+  background: transparent;
+}
+
 /* --- title bar ---
    Native buttons occupy the left on macOS and normally the right elsewhere.
    Window Controls Overlay supplies those insets in CSS pixels, including page
@@ -506,7 +543,10 @@ body:has(#sidebar.collapsed) #titlebar::before {
   left: 0;
   transition: left var(--motion-layout) var(--ease-exit);
 }
-body.settings-open #titlebar::before { display: none; }
+/* Settings covers the sidebar too, so the strip spans the window, and the two
+   rail toggles have nothing on screen to toggle. */
+body.settings-open #titlebar::before { left: 0; transition: none; }
+body.settings-open .titlebar-rail { visibility: hidden; }
 body.resizing .titlebar-lead,
 body.resizing #titlebar::before { transition: none; }
 .titlebar-rail {
@@ -572,7 +612,7 @@ body.resizing #titlebar::before { transition: none; }
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   padding: var(--space-2);
   font: inherit;
   font-size: var(--type-ui);
@@ -609,6 +649,7 @@ body.resizing #titlebar::before { transition: none; }
 }
 #canvas-header[hidden] { display: none; }
 .canvas-identity {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -634,7 +675,21 @@ body.resizing #titlebar::before { transition: none; }
   font-size: var(--type-ui);
   min-width: 16rem;
 }
-.canvas-title-input:focus { outline: 1px solid var(--focus-ring); }
+.canvas-title-input:focus { outline: none; border-color: var(--focus-ring); }
+/* While renaming, the field floats over the title it edits. The title stays in
+   the flow, hidden, so the menu trigger and the controls to its right do not
+   move when the field is wider than the name. */
+.canvas-identity.renaming .canvas-title,
+.canvas-identity.renaming .canvas-breadcrumb { visibility: hidden; }
+.canvas-identity.renaming .canvas-title-input {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  translate: 0 -50%;
+  z-index: 5;
+  width: max(100%, 16rem);
+  max-width: 28rem;
+}
 /* Positioned so the menu hangs off the trigger; `overflow` stays visible here,
    unlike the settings rows, because the header is not inside a scroller. */
 .canvas-menu-shell { position: relative; display: inline-flex; }
@@ -671,7 +726,7 @@ body.resizing #titlebar::before { transition: none; }
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
   font: inherit;
   font-size: var(--type-ui);
@@ -993,7 +1048,7 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   font: inherit;
   font-size: var(--type-meta);
   padding: var(--space-1) var(--space-4);
-  cursor: default;
+  cursor: pointer;
 }
 .browser-error-retry:hover { background: var(--surface-active); }
 #browser-tabs {
@@ -1024,7 +1079,7 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   color: var(--text-secondary);
   font: inherit;
   font-size: var(--type-meta);
-  cursor: default;
+  cursor: pointer;
 }
 .browser-tab:hover { background: var(--surface-hover); }
 .browser-tab.active { background: var(--surface-card); color: var(--text-primary); }
@@ -1072,7 +1127,7 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   font: inherit;
   font-size: var(--type-meta);
   padding: 0 var(--space-1);
-  cursor: default;
+  cursor: pointer;
 }
 .browser-tab-close:hover,
 .browser-tab-new:hover { background: var(--surface-active); color: var(--text-primary); }
@@ -1092,7 +1147,7 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   color: var(--text-secondary);
   font: inherit;
   padding: 0 var(--space-1);
-  cursor: default;
+  cursor: pointer;
 }
 .browser-nav:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
 .browser-nav:disabled { color: var(--text-tertiary); }
@@ -1197,7 +1252,7 @@ body.settings-open #browser-resizer { display: none; }
   font: inherit;
   font-size: var(--type-meta);
   padding: var(--space-1) var(--space-2);
-  cursor: default;
+  cursor: pointer;
 }
 .side-tab:hover { background: var(--surface-hover); }
 .side-tab.active { background: var(--surface-active); color: var(--text-primary); }
@@ -1210,7 +1265,7 @@ body.settings-open #browser-resizer { display: none; }
   font: inherit;
   font-size: var(--type-meta);
   padding: var(--space-1) var(--space-2);
-  cursor: default;
+  cursor: pointer;
 }
 .side-tab-close:hover { background: var(--surface-active); color: var(--text-primary); }
 /* The overview: sections stacked in one scroller, hairlines between them. A
@@ -1241,7 +1296,7 @@ body.settings-open #browser-resizer { display: none; }
   font-size: var(--type-ui);
   font-weight: 500;
   text-align: left;
-  cursor: default;
+  cursor: pointer;
 }
 #side-sections > .side-section:not([hidden]):first-child .side-section-head { padding-right: 40px; }
 .side-section-head .icon { width: 14px; height: 14px; color: var(--text-tertiary); transition: transform var(--motion-micro) var(--ease-out); }
@@ -1340,7 +1395,7 @@ body.settings-open #browser-resizer { display: none; }
   font: inherit;
   font-size: var(--type-meta);
   padding: var(--space-1) var(--space-2);
-  cursor: default;
+  cursor: pointer;
 }
 .subagent-back:hover { background: var(--surface-hover); color: var(--text-primary); }
 .subagent-stop:hover { background: var(--surface-hover); color: var(--text-danger); }
@@ -1480,6 +1535,7 @@ body.settings-open #browser-resizer { display: none; }
 .sidebar-list:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
 .sidebar-empty { color: var(--text-secondary); font-size: var(--type-meta); padding: var(--space-2) var(--space-3); }
 .sidebar-footer {
+  position: relative;
   flex: 0 0 auto;
   padding: var(--space-2) var(--space-3);
   border-top: 1px solid var(--border-subtle);
@@ -1487,17 +1543,41 @@ body.settings-open #browser-resizer { display: none; }
   flex-direction: column;
   gap: var(--space-1);
 }
-/* The chord list, behind the footer's `?`. Present only while it is open, so
-   there is no permanently-on wall of 10px text under the footer. */
+/* The chord list, behind the footer's `?`: a popover floating above the
+   footer, so opening it moves no row. */
 .sidebar-hint {
-  color: var(--text-secondary);
-  font-size: var(--type-micro);
-  line-height: 1.4;
-  padding: var(--space-2) var(--space-3);
-  margin-bottom: var(--space-1);
+  position: absolute;
+  left: var(--space-2);
+  right: var(--space-2);
+  bottom: calc(100% + var(--space-1));
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2);
   background: var(--surface-card);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+  font-size: var(--type-meta);
+}
+.sidebar-hint-title { padding: 0 var(--space-1) var(--space-1); color: var(--text-tertiary); font-size: var(--type-micro); }
+.sidebar-hint-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 3px var(--space-1);
+  color: var(--text-secondary);
+}
+.sidebar-hint-chord {
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  line-height: 18px;
 }
 .sidebar-footer-row { display: flex; align-items: center; gap: var(--space-1); }
 .sidebar-help {
@@ -1631,14 +1711,22 @@ body.settings-open #browser-resizer { display: none; }
 }
 .project-new:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
 .project-new:disabled { color: var(--border-strong); cursor: default; }
-/* The heading's context menu. Same card as `.titlebar-menu`, but *in flow*
-   rather than absolute: `.sidebar-list` is the scroller, so an absolutely
-   positioned popover here would be clipped by its `overflow` the moment the
-   group sat near the bottom — the one thing the dropdown rule forbids. A menu
-   that pushes the rows down for as long as it is open cannot be cut off. */
+/* The heading's context menu. Same card as `.titlebar-menu`. `.sidebar-list` is
+   the scroller, so an absolutely positioned popover here would be clipped by its
+   `overflow`; a fixed one is not, and anchoring it to the heading row keeps it
+   on that row through a scroll and flips it above the row when there is no room
+   below. It floats, so opening it does not move the sessions beneath. The name is
+   scoped to the group, since every group has a heading row. */
+.project-group { anchor-scope: --project-menu; }
+.project-row { anchor-name: --project-menu; }
 .project-menu {
+  position: fixed;
+  top: anchor(--project-menu bottom);
+  left: anchor(--project-menu left);
+  position-try-fallbacks: flip-block;
+  z-index: 5;
   /* Hung under the project's *name*, the same left edge the session titles use. */
-  margin: 0 var(--space-2) 2px calc(var(--space-2) + var(--space-3) + 14px + var(--space-2));
+  margin: 2px var(--space-2) 2px calc(var(--space-2) + var(--space-3) + 14px + var(--space-2));
   min-width: 10rem;
   display: flex;
   flex-direction: column;
@@ -1654,7 +1742,7 @@ body.settings-open #browser-resizer { display: none; }
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   padding: var(--space-2);
   font: inherit;
   font-size: var(--type-ui);
@@ -1837,6 +1925,7 @@ body.settings-open #browser-resizer { display: none; }
 }
 .session-badge.running .icon path { stroke-width: 2; }
 .session-badge.awaiting-input { color: var(--accent-warn); gap: 4px; }
+.session-badge.failed { color: var(--text-danger); gap: 4px; }
 /* "Waiting for you", in words. The permission request is drawn in one lane's
    composer now, so a request parked on a background session has nothing on
    screen anywhere else — and an 8px dot is only findable by someone already
@@ -1890,6 +1979,8 @@ body.settings-open #browser-resizer { display: none; }
 }
 .session-confirm-yes { color: var(--text-danger); border-color: var(--text-danger); }
 .session-confirm-no { color: var(--text-secondary); }
+.session-confirm-yes:hover,
+.session-confirm-no:hover { background: var(--surface-hover); }
 
 /* --- transcript ---
    One subtree per pane: switching panes toggles visibility, so scroll
@@ -1898,7 +1989,7 @@ body.settings-open #browser-resizer { display: none; }
 /* Scrolled down: what passes under the title bar fades out instead of being cut
    at the scroller's edge. `transcriptView` sets the class from `scrollTop`. */
 .transcript.scrolled {
-  mask-image: linear-gradient(to bottom, transparent, currentColor 32px);
+  mask-image: linear-gradient(to bottom, transparent, currentColor 12px);
 }
 #transcript-area {
   flex: 1 1 auto;
@@ -2640,6 +2731,47 @@ body.settings-open #browser-resizer { display: none; }
 .transcript .item.notice { color: var(--text-secondary); font-style: italic; }
 .transcript .item.notice.interrupt { font-style: normal; }
 .transcript .item.error { color: var(--text-danger); }
+/* A turn that ended on a provider error: the reason is the card's title, the
+   provider's own message sits under it clamped. */
+.transcript .item.turn-failure {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.failure-reason { color: var(--text-danger); font-weight: 600; overflow-wrap: anywhere; }
+.failure-target { color: var(--text-tertiary); font-size: var(--type-meta); overflow-wrap: anywhere; }
+.failure-hint { color: var(--text-secondary); overflow-wrap: anywhere; }
+.failure-detail {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: var(--type-meta);
+  overflow-wrap: anywhere;
+}
+.failure-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1); }
+.failure-action {
+  padding: 3px var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-meta);
+  cursor: pointer;
+}
+.failure-action:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
+.failure-action:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.failure-action.primary { color: var(--text-primary); border-color: var(--border-strong); }
 /* The receipt a settled question or plan leaves: a thin-bordered card, quiet
    type. A question lists what was asked (grey) over the answer (primary); a plan
    is one line that opens the plan tab. */
@@ -2753,7 +2885,7 @@ body.settings-open #browser-resizer { display: none; }
   width: 100%;
   max-width: calc(var(--reading-measure) + 2 * var(--reading-gutter));
   margin: 0 auto;
-  padding: var(--space-7) calc(var(--reading-gutter) - var(--composer-overhang)) var(--space-2);
+  padding: var(--space-7) max(var(--space-3), calc(var(--reading-gutter) - var(--composer-overhang))) var(--space-2);
 }
 /* While the completion list is up it covers the lower half of the page, and the
    upper half peeking out above it reads as a rendering fault. The block steps
@@ -2824,6 +2956,17 @@ body.settings-open #browser-resizer { display: none; }
 .usage-heat.level-4 { background: color-mix(in srgb, var(--accent-info) 90%, transparent); }
 .usage-footnote { font-size: var(--type-micro); color: var(--text-tertiary); }
 .usage-empty { padding: var(--space-5) 0; font-size: var(--type-meta); color: var(--text-tertiary); text-align: center; }
+.usage-retry {
+  margin-left: var(--space-2);
+  padding: 2px var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.usage-retry:hover { color: var(--text-primary); background: var(--surface-hover); }
 .usage-shares { display: flex; flex-direction: column; gap: var(--space-3); }
 .usage-share { display: flex; flex-direction: column; gap: 5px; }
 .usage-share-head { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--type-meta); }
@@ -2860,15 +3003,15 @@ body.settings-open #browser-resizer { display: none; }
   padding: 4px 12px;
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-pill);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: var(--type-meta);
 }
 .welcome-pill-label,
 .welcome-pill .btn-label { white-space: nowrap; }
 button.welcome-pill {
   font: inherit;
-  font-size: 12px;
+  font-size: var(--type-meta);
   cursor: pointer;
 }
 button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-primary); }
@@ -3028,9 +3171,9 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-float);
-  padding: var(--space-1) 0;
+  padding: var(--space-1);
 }
-#suggestions .suggestion { display: flex; gap: var(--space-2); padding: 3px var(--space-3); font-size: var(--type-ui); cursor: pointer; }
+#suggestions .suggestion { display: flex; gap: var(--space-2); padding: 4px var(--space-2); border-radius: var(--radius-sm); font-size: var(--type-ui); cursor: pointer; }
 /* Hover is only an affordance: it says the row is clickable, it does not move the
    selection. The keyboard's own row stays `.selected` under the pointer. */
 #suggestions .suggestion:hover { background: var(--surface-hover); }
@@ -3050,7 +3193,10 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   /* `.transcript`'s gutter, less the overhang: the capsule reaches closer to the
      canvas edge than the transcript does, so the text inside it still lands on
      the transcript's axis at every window width. */
-  padding: 0 calc(var(--reading-gutter) - var(--composer-overhang)) 0;
+  /* Never flush: the overhang cancels the gutter at its 16px floor, and a
+     capsule touching the canvas edge reads as clipped (the browser panel open,
+     a narrow window). */
+  padding: 0 max(var(--space-3), calc(var(--reading-gutter) - var(--composer-overhang))) var(--space-1);
 }
 /* The composer's half of the reading column; kept in step with
    `.transcript-column`, so a question and its answer share one axis — one
@@ -3316,6 +3462,27 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   width: 64px;
   height: 64px;
 }
+/* A failed tile is the 64px box plus the reason beside it; the controls hang off the box. */
+.attachment-tile.failed {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: auto;
+  max-width: 100%;
+}
+.attachment-picture { position: relative; flex: 0 0 auto; width: 64px; height: 64px; }
+.attachment-reason {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  min-width: 0;
+  max-width: 28em;
+  color: var(--text-danger);
+  font-size: var(--type-meta);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
 /* The thumbnail (S12): a size-capped data URL fetched on demand — never part
    of a snapshot, so a streaming turn does not re-send it per frame. The alt
    text carries the facts until the load settles, and the box is the tile's, so
@@ -3353,7 +3520,9 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   color: var(--text-danger);
+  cursor: pointer;
 }
+.attachment-retry:hover { background: var(--surface-hover); }
 /* The corner ✕. Hidden until the tile is hovered or holds focus: ten tiles each
    wearing a permanent badge is noise, and the affordance is one hover away —
    `:focus-within` is what keeps it reachable from the keyboard. */
@@ -3524,6 +3693,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   left: 0;
   z-index: 5;
   min-width: 8rem;
+  max-width: calc(100cqw - var(--space-4));
   display: flex;
   flex-direction: column;
   padding: var(--space-1);
@@ -3537,7 +3707,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
   font: inherit;
   font-size: var(--type-ui);
@@ -3744,7 +3914,9 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   bottom: var(--space-6);
   right: 0;
   z-index: 5;
-  min-width: 15rem;
+  /* Bounded by the composer bar it hangs from (`100cqw`), not by the window: in a
+     narrow canvas — the browser panel open — a fixed 15rem ran off the edge. */
+  min-width: min(15rem, calc(100cqw - var(--space-4)));
   display: flex;
   flex-direction: column;
   padding: var(--space-1);
@@ -3763,7 +3935,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   padding: var(--space-2);
   font: inherit;
   font-size: var(--type-ui);
@@ -3786,8 +3958,9 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
      shrink-to-fit width had nothing to fit into and collapsed to its min-width,
      wrapping a long model name and stacking 「视觉」 one glyph per line. */
   width: max-content;
-  min-width: 13rem;
-  max-width: 24rem;
+  min-width: 10rem;
+  /* What is left of the bar beside the popover, never less than the floor above. */
+  max-width: min(24rem, max(10rem, calc(100cqw - 15rem - var(--space-4))));
   max-height: 50vh;
   overflow-y: auto;
   display: flex;
@@ -3812,7 +3985,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   padding: var(--space-1) var(--space-2);
   font: inherit;
   font-size: var(--type-ui);
@@ -3846,6 +4019,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    `requestSubmit()` swallow the click. */
 #submit { background: var(--accent-brand-strong); color: var(--on-brand); }
 #submit.idle { background: var(--surface-hover); color: var(--text-secondary); }
+#submit:hover { filter: brightness(1.08); }
+#submit.idle:hover { filter: none; background: var(--surface-active); color: var(--text-primary); }
 #stop { background: transparent; color: var(--text-primary); }
 #stop:hover { background: var(--surface-hover); }
 #stop .icon { width: 22px; height: 22px; }
@@ -4264,8 +4439,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 #rewind-panel {
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
-  border-top-width: 3px;
-  border-top-color: var(--accent-warn);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-modal);
   max-width: 44rem;
@@ -4285,7 +4458,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 #rewind-panel .subtitle { color: var(--text-secondary); font-size: 12px; }
 #rewind-panel .error { color: var(--text-danger); margin: 8px 0; }
 #rewind-panel .rows { margin: 10px 0 6px; }
-#rewind-panel .row { display: flex; gap: 10px; padding: 3px 6px; margin: 0 -6px; border-radius: 6px; cursor: pointer; }
+#rewind-panel .row { display: flex; gap: 10px; padding: 4px 8px; margin: 0 -8px; border-radius: var(--radius-sm); cursor: pointer; }
 #rewind-panel .row:hover { background: var(--surface-hover); }
 #rewind-panel .row.selected { background: var(--surface-active); }
 #rewind-panel .row.selected .label { color: var(--text-primary); }
@@ -4346,6 +4519,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font-size: 0.92em;
 }
 .md .md-code {
+  position: relative;
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
@@ -4356,10 +4530,37 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 .md .md-code-lang {
   color: var(--text-tertiary);
-  font-size: 11px;
-  padding: 2px 8px;
+  font-family: var(--font-ui);
+  font-size: var(--type-micro);
+  line-height: 28px;
+  padding: 0 40px 0 12px;
   border-bottom: 1px solid var(--border-subtle);
 }
+/* Top right, on the label's line when there is one; shown while the block is
+   hovered or the button itself holds focus. */
+.md .md-code-copy {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-micro) var(--ease-out), color var(--motion-micro) var(--ease-out), background-color var(--motion-micro) var(--ease-out);
+}
+.md .md-code:hover .md-code-copy,
+.md .md-code-copy:focus-visible { opacity: 1; }
+.md .md-code-copy:hover { color: var(--text-primary); background: var(--surface-hover); }
+.md .md-code-copy .icon { width: 13px; height: 13px; }
+.md .md-code-copy.failed { color: var(--text-danger); opacity: 1; }
 /* Wrapped, not scrolled sideways. A fence used to be `white-space: pre` over
    `overflow-x: auto`, which put a scrollbar under every long line — and inside a
    step body, where the fence is one row among many, that is a second axis the
@@ -4368,7 +4569,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    covers the one thing `pre-wrap` will not fold, a single unbroken token. */
 .md .md-code pre {
   margin: 0;
-  padding: 6px 8px;
+  padding: 10px 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: inherit;
@@ -4378,14 +4579,28 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    own cells' max-content, so one wide row widened the reading column and took
    the transcript's horizontal scrollbar with it. Fixed divides the measure it
    has and the cells wrap inside it. */
-.md .md-table { border-collapse: collapse; margin: 0 0 8px; width: 100%; table-layout: fixed; }
-.md .md-table th, .md .md-table td {
+/* `separate` with no spacing, because a collapsed table ignores `border-radius`:
+   the outer frame is the table's own border and every inner rule is a cell's
+   top or left edge, so the corners round like every other block in a turn. */
+.md .md-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  margin: 0 0 8px;
+  width: 100%;
+  table-layout: fixed;
   border: 1px solid var(--border-subtle);
-  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+}
+.md .md-table th, .md .md-table td {
+  padding: 5px 10px;
   text-align: left;
   overflow-wrap: anywhere;
 }
-.md .md-table th { color: var(--text-primary); font-weight: 600; }
+.md .md-table tbody td { border-top: 1px solid var(--border-subtle); }
+.md .md-table th + th, .md .md-table td + td { border-left: 1px solid var(--border-subtle); }
+.md .md-table th { color: var(--text-primary); font-weight: 600; background: var(--surface-card); }
+.md .md-table th:first-child { border-top-left-radius: calc(var(--radius-sm) - 1px); }
+.md .md-table th:last-child { border-top-right-radius: calc(var(--radius-sm) - 1px); }
 /* --- maths ---
    Position and colour only; the glyph metrics belong to `katex.css`, which is
    linked separately for the same reason `fonts.css` is — this sheet is parsed
@@ -4515,7 +4730,7 @@ body.projects-open #browser-resizer,
 
 .settings-nav {
   display: flex;
-  flex: 0 0 176px;
+  flex: 0 0 196px;
   flex-direction: column;
   gap: 2px;
   min-height: 0;
@@ -4524,11 +4739,12 @@ body.projects-open #browser-resizer,
 
 .settings-search {
   flex: 0 0 auto;
+  height: 30px;
   margin-bottom: var(--space-3);
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  background: var(--surface-canvas);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
   color: var(--text-primary);
   font: inherit;
   font-size: var(--type-meta);
@@ -4563,9 +4779,8 @@ body.projects-open #browser-resizer,
 
 .settings-nav-group-label {
   padding: var(--space-1) var(--space-3);
-  color: var(--text-secondary);
-  font-size: var(--type-micro);
-  font-weight: 600;
+  color: var(--text-tertiary);
+  font-size: var(--type-meta);
 }
 
 .settings-nav-item,
@@ -4573,9 +4788,9 @@ body.projects-open #browser-resizer,
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
+  padding: 6px var(--space-3);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--text-primary);
   font: inherit;
@@ -4584,13 +4799,11 @@ body.projects-open #browser-resizer,
 }
 
 /* The way out, and the first thing in the column — this screen covers the whole
-   window now, so it has to carry its own exit where the eye starts rather than
-   at the foot of a list the user may have scrolled. Secondary, unlike the
-   categories: it is not one of them. */
+   window, so it carries its own exit where the eye starts rather than at the
+   foot of a list the user may have scrolled. Secondary: it is not a category. */
 .settings-nav-close {
   margin-bottom: var(--space-2);
   color: var(--text-secondary);
-  font-size: var(--type-ui);
 }
 
 .settings-nav-item:hover:enabled,
@@ -4617,33 +4830,25 @@ body.projects-open #browser-resizer,
   /* Reserved whether or not this page scrolls, so switching between a long
      page and a short one does not shift the column sideways. */
   scrollbar-gutter: stable;
-  padding: var(--space-4) var(--space-5) var(--space-7);
+  padding: var(--space-5) var(--space-6) var(--space-7);
 }
 
-/* The settings reading column (todo V7). Wider than the transcript's 760px on
-   purpose: a settings row is label-left/control-right, and at 760 the control
-   crowds the label it belongs to — the same measure that fixes a paragraph's
-   line length makes a two-end row worse. At 1200px+ without it the control sat
-   a thousand pixels from its own name, which is what "strictly right-aligned"
-   turns into on a wide window.
+/* The settings reading column. A row is label-left/control-right, so the
+   measure is what keeps a control near its name on a wide window.
 
    The scroller stays `.settings-body`, full width, so its scrollbar keeps to the
-   canvas edge — the same split as `.transcript-column` inside its scroller.
-   Deliberately no `overflow` here: a row's pill dropdown opens downward and this
-   node is now on its ancestor chain (see `.settings-card` below, and the
-   "no clipping ancestor" test). */
-.settings-column { max-width: 880px; margin: 0 auto; }
+   canvas edge. Deliberately no `overflow` here: a row's dropdown opens downward
+   and this node is on its ancestor chain (the "no clipping ancestor" test). */
+.settings-column { max-width: 760px; margin: 0 auto; }
 
 .settings-header {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: var(--space-3);
-  padding-bottom: var(--space-4);
+  padding-bottom: var(--space-5);
 }
 
-/* The page's H1 (design_guidance 六.5). It reads as a heading, not as another
-   card title — which is what 15px made it, since the card titles are 14px. */
 .settings-title {
   color: var(--text-primary);
   font-size: var(--type-title);
@@ -4656,63 +4861,44 @@ body.projects-open #browser-resizer,
   font-size: var(--type-meta);
 }
 
-/* A group is a card, and what says where it ends is the `--space-5` of paper
-   after it, not a rule around it (design_guidance 六.5). The hairline came off
-   with that change: the card keeps its own surface and its 20px corners, and the
-   rules *inside* it — each row's `border-top` — are the only lines left, so a
-   group reads as one block of rows rather than as a boxed form.
-
-   No `overflow: hidden` here, deliberately: a row's pill dropdown is absolutely
-   positioned against `.settings-menu-shell` and opens *below* its row, so a card
-   that clips would swallow the menu whole — the 外观 page's theme card is one row
-   tall and every option landed outside it. The corners are clipped by the last
-   child instead (below), which is the only thing that needed the card's overflow. */
+/* A group is a heading over rows divided by hairlines, with no box around it:
+   the space after it is what says where it ends. No `overflow` either — a row's
+   dropdown is positioned against `.settings-menu-shell` and opens below it. */
 .settings-card {
-  margin-bottom: var(--space-5);
-  border-radius: var(--radius-lg);
-  background: var(--surface-card);
+  margin-bottom: var(--space-6);
 }
 
-/* The card's bottom corners, moved onto whatever ends up last — a row (its
-   `:hover` fill is what would square them off), a footer, or the empty note.
-   Same device as `.md > :last-child` above. The top two corners need nothing:
-   `cardNode`/`formNode` always open with `.settings-card-title`, which paints
-   no background of its own. */
-.settings-card > :last-child {
-  border-bottom-left-radius: var(--radius-lg);
-  border-bottom-right-radius: var(--radius-lg);
-}
-
-/* What separates one group from the next now that the card has no border. The
-   size is the page's own title rung — the H1 above is the only thing larger.
-   The UI face, not the serif: these titles mix Latin into Chinese (「MCP 服务器」),
-   and the serif set those letters apart from the sans CJK beside them. */
+/* One rung under the page title. The UI face, not the serif: these titles mix
+   Latin into Chinese (「MCP 服务器」). */
 .settings-card-title {
-  padding: var(--space-3) var(--space-4) var(--space-2);
+  padding-bottom: var(--space-1);
   color: var(--text-primary);
   font-family: var(--font-ui);
-  font-size: var(--type-title);
+  font-size: var(--type-body);
   font-weight: 600;
 }
 
 .settings-card-note {
-  padding: 0 var(--space-4) var(--space-3);
+  padding-bottom: var(--space-2);
   color: var(--text-secondary);
   font-size: var(--type-meta);
 }
 
-/* The separator is the row's own top border, so the rule under the card title
-   and the rules between rows are the same line and cannot drift apart. */
+/* The separator is the row's own top border, so the rules between rows cannot
+   drift apart; the first row under the heading needs none. */
 .settings-row {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
+  gap: var(--space-4);
+  min-height: 52px;
+  box-sizing: border-box;
+  padding: var(--space-2) 0;
   border-top: 1px solid var(--border-subtle);
 }
 
-.settings-row:hover {
-  background: var(--surface-hover);
+.settings-card-title + .settings-row,
+.settings-card-note + .settings-row {
+  border-top: 0;
 }
 
 .settings-row-label {
@@ -4725,6 +4911,7 @@ body.projects-open #browser-resizer,
 }
 
 .settings-row-desc {
+  margin-top: 2px;
   color: var(--text-secondary);
   font-size: var(--type-meta);
 }
@@ -4748,11 +4935,19 @@ body.projects-open #browser-resizer,
   font-size: var(--type-meta);
 }
 
+/* A change to the row above failed: the row has already snapped back, and this
+   is the reason, where the eye still is. */
+.settings-row-error {
+  padding-bottom: var(--space-3);
+  color: var(--text-danger);
+  font-size: var(--type-meta);
+}
+
 .settings-row-control {
   display: flex;
   flex: 0 0 auto;
   align-items: center;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .settings-row-value {
@@ -4766,25 +4961,37 @@ body.projects-open #browser-resizer,
 .settings-card-footer {
   display: flex;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
+  padding-top: var(--space-3);
   border-top: 1px solid var(--border-subtle);
+}
+
+.settings-card-title + .settings-card-footer,
+.settings-card-note + .settings-card-footer {
+  border-top: 0;
+  padding-top: var(--space-1);
 }
 
 .settings-input,
 .settings-select {
+  box-sizing: border-box;
+  height: 30px;
   min-width: 200px;
-  padding: var(--space-1) var(--space-2);
+  padding: 0 var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: var(--surface-base);
   color: var(--text-primary);
   font: inherit;
 }
 
+.settings-input::placeholder {
+  color: var(--text-tertiary);
+}
+
 .settings-input:focus,
 .settings-select:focus {
-  outline: 1px solid var(--focus-ring);
-  outline-offset: -1px;
+  border-color: var(--focus-ring);
+  outline: none;
 }
 
 /* Keys, base URLs and model ids are read character by character. The
@@ -4793,7 +5000,11 @@ body.projects-open #browser-resizer,
 .settings-input.mono {
   min-width: 34ch;
   font-family: var(--font-mono);
+  font-variant-ligatures: none;
 }
+
+/* The value is read character by character; the hint is a sentence, often Chinese. */
+.settings-input.mono::placeholder { font-family: var(--font-ui); }
 
 .settings-editor-page {
   display: flex;
@@ -4807,17 +5018,17 @@ body.projects-open #browser-resizer,
   min-height: 420px;
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-md);
   background: var(--surface-base);
   color: var(--text-primary);
   font: inherit;
   line-height: 1.6;
-  resize: vertical;
+  resize: none;
 }
 
 .settings-textarea:focus {
-  outline: 1px solid var(--focus-ring);
-  outline-offset: -1px;
+  border-color: var(--focus-ring);
+  outline: none;
 }
 
 .settings-editor-actions {
@@ -4828,17 +5039,12 @@ body.projects-open #browser-resizer,
 
 .settings-project {
   min-width: 140px;
-  border-radius: var(--radius-pill);
-  padding: var(--space-1) var(--space-3);
 }
 
-/* The pill dropdown for row-level choices. The menu is positioned against the
-   shell rather than the row: `.settings-body` scrolls, so a menu anchored to a
-   non-positioned ancestor is clipped, and making the row itself the containing
-   block would silently do the same for anything else that lands in it later.
-   A row near the bottom therefore extends the scroll area instead of flipping
-   upward — flipping needs measured coordinates, and only `height` may be set
-   inline. */
+/* The row dropdown: a ghost trigger — the value and a chevron, no box until it
+   is pointed at. The menu is positioned against the shell rather than the row:
+   `.settings-body` scrolls, so a menu anchored to a non-positioned ancestor is
+   clipped. A menu on a low row opens below the fold and is scrolled into view. */
 .settings-menu-shell {
   position: relative;
   display: inline-flex;
@@ -4848,28 +5054,31 @@ body.projects-open #browser-resizer,
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  min-width: 140px;
-  padding: var(--space-1) var(--space-3);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
-  background: var(--surface-canvas);
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--type-meta);
   text-align: left;
   cursor: pointer;
 }
 
-/* Same as `.project-heading`: the label takes the pill's width so the trailing
-   `⌵` lands on the right edge rather than beside the text. */
-.settings-pill .btn-label { flex: 1 1 auto; }
+.settings-pill .icon { color: var(--text-tertiary); }
 
 .settings-pill:hover:enabled {
   background: var(--surface-hover);
 }
 
 .settings-pill.open {
-  border-color: var(--focus-ring);
+  background: var(--surface-active);
+}
+
+.settings-pill:disabled {
+  color: var(--text-tertiary);
+  cursor: default;
 }
 
 .settings-menu {
@@ -4894,13 +5103,12 @@ body.projects-open #browser-resizer,
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 8px;
+  padding: 6px 8px;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
-  font-size: 12px;
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
@@ -4916,9 +5124,8 @@ body.projects-open #browser-resizer,
 }
 
 /* A multi-select item reserves the check's column whether or not it is checked,
-   so every label starts at the same x and the list reads as one row of names
-   rather than two ragged ones. The icon is positioned into that gutter instead
-   of laid out in the flex flow, which is what keeps the two states identical. */
+   so every label starts at the same x. The icon is positioned into that gutter
+   instead of laid out in the flex flow, which keeps the two states identical. */
 .settings-menu-item.checkable {
   position: relative;
   padding-left: 26px;
@@ -4964,6 +5171,8 @@ body.projects-open #browser-resizer,
   background: var(--accent-brand);
 }
 
+.settings-toggle:not(.on):hover:enabled { background: var(--surface-hover); }
+
 .settings-toggle:focus-visible {
   outline: 1px solid var(--focus-ring);
   outline-offset: 1px;
@@ -4995,34 +5204,63 @@ body.projects-open #browser-resizer,
 }
 
 .settings-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 5px 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  background: none;
-  color: var(--text-secondary);
+  height: 30px;
+  box-sizing: border-box;
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-primary);
   font: inherit;
+  white-space: nowrap;
   cursor: pointer;
 }
 
 .settings-btn:hover:enabled {
+  background: var(--surface-active);
+}
+
+/* An icon alone is a square. */
+.settings-btn:not(:has(.btn-label)) {
+  width: 30px;
+  padding: 0;
+}
+
+/* A row's own actions recede until pointed at: three filled buttons on every
+   row of a list read as a toolbar, not as the row's controls. */
+.settings-row .settings-btn {
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.settings-row .settings-btn:hover:enabled {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
 
-.settings-btn.danger {
-  border-color: var(--border-subtle);
+.settings-btn.danger,
+.settings-row .settings-btn.danger {
+  background: transparent;
   color: var(--text-danger);
+}
+
+.settings-btn.danger:hover:enabled {
+  background: var(--surface-hover);
 }
 
 /* The one high-contrast fill on the screen, and it is neutral — an accent fill
    is exactly what the 95%-neutral rule excludes. */
 .settings-btn.primary {
-  border-color: var(--text-primary);
   background: var(--text-primary);
   color: var(--surface-base);
+}
+
+.settings-btn.primary:hover:enabled {
+  background: var(--text-secondary);
 }
 
 .settings-btn:disabled {
@@ -5030,83 +5268,222 @@ body.projects-open #browser-resizer,
   cursor: default;
 }
 
+.settings-btn.primary:disabled {
+  background: var(--surface-active);
+}
+
 .settings-confirm {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 14px;
-  padding: 10px 14px;
+  gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+}
+
+.settings-confirm-text {
+  flex: 1 1 auto;
+  color: var(--text-primary);
+}
+
+/* A change about this row is in flight. Dimmed rather than removed — a toggle
+   or an edit still has something to show — and its controls are already
+   `disabled`, so this only has to say so visually. */
+.settings-row.pending {
+  opacity: 0.55;
+}
+
+.settings-error {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-color: color-mix(in srgb, var(--accent-danger) 45%, var(--border-subtle));
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  color: var(--text-danger);
+  font-size: var(--type-meta);
+}
+/* With no form open and no row to sit under, the error is pinned to the bottom
+   of the scroller: in view however far the page is scrolled. */
+.settings-error.banner {
+  position: sticky;
+  bottom: var(--space-4);
+  z-index: 2;
+  box-shadow: var(--shadow-float);
+}
+
+.settings-empty {
+  padding: var(--space-2) 0 var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--type-meta);
+}
+
+/* --- the form dialog ---
+   Over the whole window, title bar included, with the settings screen `inert`
+   behind it. `fixed` resolves against the viewport because `#settings` has no
+   transform while it is open; above the row menus (5) in its stacking context,
+   which already sits above the title bar's. The body scrolls, so a field's
+   dropdown opens inside it and is scrolled into view when it opens. */
+.settings-dialog:focus { outline: none; }
+
+.settings-dialog-layer {
+  /* Fixed so the scrim also covers the title bar; the stack is #settings's,
+     so it only needs to clear the page's own popovers. */
+  position: fixed;
+  inset: 0;
+  -webkit-app-region: no-drag;
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-5);
+}
+
+.settings-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(520px, 100%);
+  max-height: 100%;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-modal);
 }
 
-/* Drawn inside the card it is about now, not stacked at the top of the column:
-   the answer to a click belongs where the click was. The thin border is what
-   separates it from the ordinary rows above and below it — no second shadow or
-   radius rung, which is the depth rule (`--shadow-float` is for popovers). */
-.settings-card > .settings-confirm,
-.settings-card > .settings-form {
-  margin: 0 var(--space-4) var(--space-3);
+.settings-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-4) var(--space-2) var(--space-5);
 }
 
-.settings-card > .settings-form {
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-base);
+.settings-dialog-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: var(--type-body);
+  font-weight: 600;
 }
 
-.mcp-form-container {
+.settings-dialog-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.settings-dialog-close:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.settings-dialog-body {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  padding: var(--space-4);
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--space-2) var(--space-5) var(--space-4);
 }
 
-.mcp-form-header {
+.settings-dialog > .settings-error {
+  margin: 0 var(--space-5) var(--space-3);
+}
+
+.settings-dialog-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5) var(--space-4);
+}
+
+.settings-dialog-prompt {
+  flex: 1 1 auto;
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+}
+
+/* A field is its label over its control, the control full width: a form read
+   top to bottom, not a column of right-aligned boxes of different widths. */
+.settings-field,
+.mcp-form-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 6px;
 }
 
-.mcp-form-header > .settings-card-title {
-  padding: 0;
+.settings-field-label,
+.mcp-form-label {
+  color: var(--text-primary);
+  font-size: var(--type-meta);
+  font-weight: 500;
+}
+
+.settings-field-note {
+  color: var(--text-tertiary);
+  font-size: var(--type-meta);
+}
+
+/* An on/off field: the words on the left, the switch on the right. */
+.settings-field.switch {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.settings-field-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-field .settings-input,
+.settings-field .settings-select,
+.mcp-form-card > .settings-input {
+  width: 100%;
+  min-width: 0;
+  background: var(--surface-canvas);
+}
+
+/* Inside a form a dropdown is a field like the others: boxed and full width. */
+.settings-field .settings-menu-shell { display: flex; }
+
+.settings-field .settings-pill {
+  flex: 1 1 auto;
+  justify-content: space-between;
+  /* The chevron lines up with the native selects' beside it. */
+  padding-right: var(--space-1);
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-canvas);
+}
+
+.settings-field .settings-menu {
+  left: 0;
 }
 
 .mcp-form-doc-link {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  color: var(--text-tertiary);
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
   font-size: var(--type-meta);
   text-decoration: none;
   cursor: pointer;
-  width: fit-content;
 }
 
 .mcp-form-doc-link:hover {
+  background: var(--surface-hover);
   color: var(--text-primary);
-  text-decoration: underline;
-}
-
-.mcp-form-card {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-  padding: var(--space-3) var(--space-4);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-}
-
-.mcp-form-card > .settings-input {
-  width: 100%;
-  box-sizing: border-box;
-}
-
-.mcp-form-label {
-  color: var(--text-primary);
-  font-size: var(--type-meta);
-  font-weight: 500;
 }
 
 .mcp-type-row {
@@ -5120,15 +5497,15 @@ body.projects-open #browser-resizer,
   display: inline-flex;
   padding: 2px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  background: var(--surface-base);
+  border-radius: var(--radius-sm);
+  background: var(--surface-canvas);
   gap: 2px;
 }
 
 .mcp-segmented-btn {
   padding: 3px 12px;
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: 6px;
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -5141,9 +5518,8 @@ body.projects-open #browser-resizer,
 }
 
 .mcp-segmented-btn.active {
-  background: var(--surface-hover);
+  background: var(--surface-active);
   color: var(--text-primary);
-  font-weight: 600;
 }
 
 .mcp-form-list {
@@ -5161,13 +5537,11 @@ body.projects-open #browser-resizer,
 .mcp-form-row > .settings-input {
   flex: 1 1 auto;
   min-width: 0;
-  box-sizing: border-box;
+  background: var(--surface-canvas);
 }
 
 .mcp-env-row > .settings-input {
   flex: 1 1 50%;
-  min-width: 0;
-  box-sizing: border-box;
 }
 
 .mcp-btn-trash {
@@ -5191,15 +5565,14 @@ body.projects-open #browser-resizer,
 }
 
 .mcp-form-add-btn {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
   gap: var(--space-1);
-  width: 100%;
-  padding: var(--space-2);
-  border: 1px dashed var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-base);
+  align-self: flex-start;
+  padding: var(--space-1) var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-secondary);
   font: inherit;
   font-size: var(--type-meta);
@@ -5207,45 +5580,184 @@ body.projects-open #browser-resizer,
 }
 
 .mcp-form-add-btn:hover:enabled {
-  border-color: var(--border-strong);
   background: var(--surface-hover);
   color: var(--text-primary);
 }
 
-.mcp-form-footer {
-  display: flex;
-  justify-content: flex-end;
+/* The footer's lead action (测试连接) sits apart from the closing pair. */
+.settings-dialog-foot > .settings-btn.lead { margin-right: auto; }
+
+/* The new-endpoint wizard: service cards, two to a row. */
+.settings-presets {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-2);
-  padding: var(--space-3) 0 0;
-  border-top: 0;
 }
 
-/* A change about this row is in flight. Dimmed rather than removed — a toggle
-   or an edit still has something to show — and its controls are already
-   `disabled`, so this only has to say so visually. */
-.settings-row.pending {
-  opacity: 0.55;
-}
-
-.settings-confirm-text {
-  flex: 1 1 auto;
-  color: var(--text-primary);
-}
-
-.settings-error {
-  margin-bottom: 12px;
-  padding: 9px 14px;
+.settings-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--space-3);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  background: var(--surface-card);
-  color: var(--text-danger);
-  font-size: 12px;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
-.settings-empty {
-  padding: 10px 14px;
-  border-top: 1px solid var(--border-subtle);
+.settings-preset:hover,
+.settings-preset.selected {
+  background: var(--surface-hover);
+}
+
+.settings-preset.selected { border-color: var(--border-strong); }
+
+.settings-preset-label {
+  font-size: var(--type-ui);
+  font-weight: 600;
+}
+
+.settings-preset-note {
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: var(--type-meta);
+}
+
+.settings-probe {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+}
+
+.settings-probe > svg {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+}
+
+.settings-probe.running > svg { animation: spin var(--motion-running) linear infinite; }
+.settings-probe.ok { color: var(--text-success); }
+.settings-probe.failed { color: var(--text-danger); }
+
+.settings-probe-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-probe-skip {
+  flex: 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.settings-probe-skip:hover { color: var(--text-primary); }
+
+.settings-model-summary {
+  color: var(--text-tertiary);
+  font-size: var(--type-meta);
+}
+
+.settings-model-list {
+  display: flex;
+  flex-direction: column;
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-canvas);
+}
+
+/* A checkable row, laid out like the multi-select's items: the check keeps its
+   gutter whether or not it is drawn, so every id starts at the same x. */
+.settings-model-row {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-model-row:hover { background: var(--surface-hover); color: var(--text-primary); }
+.settings-model-row.picked { color: var(--text-primary); }
+
+.settings-model-check {
+  display: inline-flex;
+  flex: 0 0 14px;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+}
+
+.settings-model-row.picked .settings-model-check {
+  border-color: var(--text-primary);
+  background: var(--text-primary);
+  color: var(--surface-base);
+}
+
+.settings-model-check > svg { width: 11px; height: 11px; }
+
+.settings-model-id {
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: var(--type-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-model-meta {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-model-empty {
+  padding: var(--space-3);
+  color: var(--text-tertiary);
+  font-size: var(--type-meta);
+}
+
+.settings-model-manual {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.settings-model-manual > .settings-input,
+.settings-dialog-body > .settings-input {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  background: var(--surface-canvas);
 }
 
 /* --- motion -----------------------------------------------------------------
@@ -5307,6 +5819,8 @@ body.projects-open #browser-resizer,
 .mcp-segmented-btn,
 .mcp-btn-trash,
 .mcp-form-add-btn,
+.settings-preset,
+.settings-model-row,
 #surface .row,
 #suggestions .suggestion,
 #rewind-panel .row,
@@ -5465,7 +5979,7 @@ body.projects-open #browser-resizer,
 }
 
 /* --- coordination: sidebar, canvas header, thread panel, merge bar, note cards ---
-   Every colour here is a token. The four thread tones are one vocabulary
+   Every colour here is a token. The five thread tones are one vocabulary
    (`ThreadTone` in model/coordinationStatus.ts) shared by the canvas crumb,
    the thread rows and the note cards; each state gets the
    same rung wherever it appears. Text carries the state through its own name
@@ -5477,6 +5991,8 @@ body.projects-open #browser-resizer,
 .canvas-status.tone-attention,
 .thread-status.tone-attention,
 .thread-note-status.tone-attention { color: var(--text-warn); }
+.canvas-status.tone-danger,
+.thread-status.tone-danger,
 .thread-note-status.tone-danger { color: var(--text-danger); }
 .canvas-status.tone-neutral,
 .thread-status.tone-neutral,
@@ -5594,6 +6110,30 @@ body.projects-open #browser-resizer,
   color: var(--text-secondary);
   font-size: var(--type-meta);
 }
+.thread-panel-notice.error { color: var(--text-danger); }
+.thread-detail-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-danger);
+  font-size: var(--type-meta);
+}
+.thread-detail-error[hidden] { display: none; }
+.thread-detail-error-text { min-width: 0; overflow-wrap: anywhere; }
+.thread-detail-retry {
+  flex: none;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+.thread-detail-retry:hover { color: var(--text-primary); background: var(--surface-hover); }
 .thread-panel-active { display: flex; flex-direction: column; padding: var(--space-1); }
 .thread-panel-empty {
   display: flex;
@@ -5761,6 +6301,72 @@ body.projects-open #browser-resizer,
 .merge-bar-list { display: flex; flex-direction: column; gap: var(--space-1); margin: 0; padding: 0; list-style: none; }
 .merge-bar-item { min-width: 0; }
 
+/* A merge the host refused, or that failed, said where the button was. */
+.merge-bar-error {
+  padding: var(--space-1) var(--space-3);
+  color: var(--text-danger);
+  font-size: var(--type-meta);
+  overflow-wrap: anywhere;
+}
+
+/* --- toasts ---
+   The window's one stack for outcomes with no place of their own. It lives in
+   `#canvas` (the browser panel is a native view beside it), above the rewind
+   layer so an error is never hidden by the dialog that caused it, and below the
+   image viewer. The host lets pointer events through; each toast takes its own. */
+#toasts {
+  position: absolute;
+  top: var(--space-3);
+  inset-inline: 0;
+  margin-inline: auto;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: min(480px, calc(100% - var(--space-6)));
+  pointer-events: none;
+}
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  box-shadow: var(--shadow-float);
+  color: var(--text-primary);
+  font-size: var(--type-meta);
+  line-height: 1.5;
+  pointer-events: auto;
+}
+.toast.error .toast-text { color: var(--text-danger); }
+.toast-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-top: 2px;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.toast-repeats { flex: none; padding-top: 2px; color: var(--text-tertiary); font-size: var(--type-micro); }
+.toast-repeats:empty { display: none; }
+.toast-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.toast-close:hover { color: var(--text-primary); background: var(--surface-hover); }
+.toast-close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
 /* The coordinator's fixed welcome above the first entry. */
 .coordinator-welcome { margin-bottom: var(--space-5); color: var(--text-primary); line-height: 1.7; }
 .coordinator-welcome p { margin: 0 0 var(--space-3); }
@@ -5913,3 +6519,33 @@ body.projects-open #browser-resizer,
 
 .projects-empty .projects-new { align-self: center; }
 .projects-error { color: var(--text-danger); font-size: var(--type-meta); }
+
+/* The window's first pull from the host failed: a page over the body, last in
+   it and so over every unlayered view, with a way to ask again. The title bar
+   keeps its own layer, so the window can still be dragged. */
+.startup-failure {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-3);
+  padding: var(--space-6);
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  text-align: center;
+}
+.startup-failure-title { margin: 0; font-size: var(--type-title); font-weight: 600; }
+.startup-failure-detail { margin: 0; max-width: 36em; color: var(--text-secondary); font-size: var(--type-ui); line-height: 1.6; overflow-wrap: anywhere; }
+.startup-failure-retry {
+  padding: var(--space-1) var(--space-4);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.startup-failure-retry:hover { background: var(--surface-hover); }
+.startup-failure-retry:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }

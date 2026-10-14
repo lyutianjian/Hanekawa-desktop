@@ -10,6 +10,7 @@ import type {
   WireShellRenameSessionResult,
   WireShellOpenInEditorResult,
   WireShellSetWindowThemeResult,
+  WireShellProbeEndpointResult,
   WireShellPickImagesResult,
   SettingsChange,
   WireShellOpenProjectResult,
@@ -207,6 +208,12 @@ export class ShellClient {
       projectRoot,
       ...(target === undefined ? {} : { target }),
     }) as Promise<WireShellOpenInEditorResult>
+  }
+
+  async probeEndpoint(
+    request: Omit<Extract<ShellCommand, { type: 'probe-endpoint' }>, 'type' | 'id'>,
+  ): Promise<WireShellProbeEndpointResult> {
+    return this.send({ type: 'probe-endpoint', id: crypto.randomUUID(), ...request }) as Promise<WireShellProbeEndpointResult>
   }
 
   /**

@@ -678,6 +678,7 @@ const COMMAND_SAMPLES = {
     change: { scope: 'provider', kind: 'set-routing', role: 'main', value: 'inherit' },
   },
   'rename-session': { type: 'rename-session', id: 'h', projectRoot: 'r', sessionId: 's1', title: 'T' },
+  'probe-endpoint': { type: 'probe-endpoint', id: 'w', projectRoot: 'r', provider: 'openai', endpointName: 'main' },
   'open-in-editor': { type: 'open-in-editor', id: 'i', projectRoot: 'r' },
   'set-window-theme': { type: 'set-window-theme', id: 'j', theme: 'light' },
   'pick-images': { type: 'pick-images', id: 'l', projectRoot: 'r' },
@@ -826,6 +827,7 @@ test('every shell command variant round-trips through its schema', () => {
       'open-session',
       'panes',
       'pick-images',
+      'probe-endpoint',
       'remove-project',
       'rename-session',
       'set-window-theme',
@@ -1388,7 +1390,7 @@ test('remove-project refuses the global workspace and roots it never saw', async
 
   await assert.rejects(
     h.client.removeProject(projectRootKey(home)),
-    /global workspace cannot be removed/,
+    /「最近」工作区不能移除/,
   )
   await assert.rejects(
     h.client.removeProject(fixturePath('repo', 'never-opened')),
@@ -2808,11 +2810,11 @@ test('a target outside the project is refused before it reaches the editor', asy
 
   await assert.rejects(
     h.client.openInEditor(h.entry.root, { path: path.join('..', 'outside.txt') }),
-    /outside the project/,
+    /在项目目录之外/,
   )
   await assert.rejects(
     h.client.openInEditor(h.entry.root, { path: fixturePath('other', 'root', 'a.ts') }),
-    /outside the project/,
+    /在项目目录之外/,
   )
   assert.deepEqual(h.editorRequests, [], 'a refused path must not reach the editor at all')
 })

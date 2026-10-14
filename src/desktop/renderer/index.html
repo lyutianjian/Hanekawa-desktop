@@ -198,6 +198,13 @@
         <div id="rewind" hidden role="dialog" aria-label="回退">
           <div id="rewind-panel"></div>
         </div>
+        <!--
+          The toast stack, in the canvas rather than the window: the browser
+          panel is a native view beside it, so nothing here can sit under that
+          view. After the rewind layer, and above it (z-index 10), so an error
+          is never hidden by the dialog that caused it.
+        -->
+        <div id="toasts"></div>
       </main>
     </div>
     </div>

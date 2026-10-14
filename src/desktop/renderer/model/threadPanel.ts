@@ -46,6 +46,8 @@ export interface ThreadPanelView {
   readonly resolved: ThreadPanelFold
   /** A line above the list, e.g. why the page the user was reading is gone. */
   readonly notice?: string
+  /** `error`: the line reports a failure, not a fact. */
+  readonly noticeTone?: 'error'
 }
 
 export interface ThreadPanelInput {
@@ -57,6 +59,7 @@ export interface ThreadPanelInput {
   /** Thread ids with a stop or resolve in flight. */
   readonly pending: ReadonlySet<string>
   readonly notice?: string | undefined
+  readonly noticeTone?: 'error' | undefined
 }
 
 const STOPPABLE: ReadonlySet<WireThreadStatus> = new Set(['running', 'needs-you', 'awaiting-coordinator'])
@@ -92,7 +95,7 @@ export function threadPanelView(input: ThreadPanelInput): ThreadPanelView {
     active,
     quiet: { count: quiet.length, expanded: input.expanded.has('quiet'), rows: quiet },
     resolved: { count: resolved.length, expanded: input.expanded.has('resolved'), rows: resolved },
-    ...(input.notice ? { notice: input.notice } : {}),
+    ...(input.notice ? { notice: input.notice, ...(input.noticeTone ? { noticeTone: input.noticeTone } : {}) } : {}),
   }
 }
 

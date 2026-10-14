@@ -216,23 +216,26 @@ test('/model prints the image-impact notice on its own', async () => {
 
 test('/model reports available models when switch target is unknown', async () => {
   let output = ''
+  let tone: string | undefined
   let cleared = false
   await modelCommand.run('missing', createContext({
-    writeLine: (message) => {
+    writeLine: (message, lineTone) => {
       output = message
+      tone = lineTone
     },
     clearCachedSections: () => {
       cleared = true
     },
     setModel: () => ({
       ok: false,
-      message: 'Unknown model: missing',
+      message: '未知模型：missing',
       availableModels: ['claude', 'openai-compatible'],
     }),
   }))
 
-  assert.match(output, /Unknown model: missing/)
-  assert.match(output, /Available models: claude, openai-compatible/)
+  assert.match(output, /未知模型：missing/)
+  assert.match(output, /可用模型：claude、openai-compatible/)
+  assert.equal(tone, 'error')
   assert.equal(cleared, false)
 })
 

@@ -147,6 +147,11 @@ function findOne(view: StubView, className: string): StubView {
   return all[0]!
 }
 
+/** The form dialog, which lives beside the page rather than in it. */
+function dialogOf(root: StubView): StubView {
+  return child(child(root, 'settings-dialog-layer'), 'settings-dialog')
+}
+
 // --- the nav column ----------------------------------------------------------
 
 test('the nav draws one section per group, labelled, in order', (t) => {
@@ -256,11 +261,11 @@ test('the body scrolls and the column inside it holds the reading measure', (t) 
   assert.ok(findAll(column, 'settings-header').length === 1)
   assert.ok(findAll(column, 'settings-card').length > 0, 'the cards render inside the column')
 
-  // Still true after a render that replaces the region, and for a form page.
+  // Still true with a form open: the form is a dialog, not part of the page.
   apply({ kind: 'new-model' })
   const after = child(view(), 'settings-body')
   assert.deepEqual(after.children.map((node) => node.className), ['settings-column'])
-  assert.equal(findAll(after.children[0]!, 'settings-form').length, 1)
+  assert.equal(findAll(after, 'settings-field').length, 0)
 
   // Non-vacuity: a class no rule ever mentions would make the node decorative.
   const widths = rulesFor('settings-column').flatMap((block) =>
@@ -309,7 +314,7 @@ test('the header project picker and the single-choice form fields stay native se
   apply({ kind: 'select-category', category: 'provider' })
 
   apply({ kind: 'new-model' })
-  const form = findOne(child(view(), 'settings-body'), 'settings-form')
+  const form = dialogOf(view())
   const selects = findAll(form, 'settings-select')
   assert.ok(selects.length > 0, 'the model form has choice fields')
   assert.deepEqual(new Set(selects.map((node) => node.tagName)), new Set(['SELECT']))
@@ -318,10 +323,30 @@ test('the header project picker and the single-choice form fields stay native se
   assert.equal(findAll(form, 'settings-pill').length, 1)
 })
 
+test('an error sits in the open form, under its row, or pins to the screen', (t) => {
+  const { view, apply } = mount(t)
+  apply({ kind: 'new-model' })
+  apply({ kind: 'submit-draft' })
+  assert.equal(findAll(dialogOf(view()), 'settings-error').length, 1, 'the error is drawn away from its form')
+  assert.equal(findAll(child(view(), 'settings-body'), 'settings-error').length, 0)
+
+  const { view: anchored } = mount(t, stateOf({ category: 'general', error: '上下文窗口必须是数字。', errorRows: ['context:contextWindow'] }))
+  const card = cardTitled(child(anchored(), 'settings-body'), '上下文管理')
+  const at = card.children.findIndex((kid) => kid.classes.includes('settings-row-error'))
+  assert.ok(at > 0, 'the error is not inside the card it is about')
+  assert.match(card.children[at - 1]!.text, /上下文窗口/)
+  assert.equal(findAll(child(anchored(), 'settings-body'), 'settings-error').length, 0)
+
+  const { view: bare } = mount(t, stateOf({ error: '保存失败。' }))
+  const banner = findAll(child(bare(), 'settings-body'), 'settings-error')
+  assert.equal(banner.length, 1)
+  assert.ok(banner[0]!.classes.includes('banner'), 'a formless error must stay in view however far the page is scrolled')
+})
+
 test('the effort field is a checkable listbox that stays open while picking', (t) => {
   const { view, apply, stub, intents } = mount(t)
   apply({ kind: 'new-model' })
-  const closed = findOne(child(view(), 'settings-body'), 'settings-form')
+  const closed = dialogOf(view())
   const trigger = findOne(closed, 'settings-pill')
   assert.equal(trigger.attributes.get('aria-expanded'), 'false')
   assert.match(trigger.text, /全部/)
@@ -331,7 +356,7 @@ test('the effort field is a checkable listbox that stays open while picking', (t
 
   apply({ kind: 'toggle-menu', menu: EFFORT_MENU_ID })
   apply({ kind: 'model-toggle-effort', level: 'high' })
-  const form = findOne(child(view(), 'settings-body'), 'settings-form')
+  const form = dialogOf(view())
   const menu = findOne(form, 'settings-menu')
   assert.equal(menu.attributes.get('role'), 'listbox')
   // The whole point of the control: more than one option may be marked, and the
@@ -615,6 +640,13 @@ test('a press on the page closes an open pill; nothing open costs nothing', (t) 
   assert.deepEqual(intents, [{ kind: 'close-menu' }])
 })
 
+test('a dropdown open when the screen closed stops claiming presses', (t) => {
+  const { stub, intents, render } = mount(t, stateOf({ openMenu: 'row:routing:main' }))
+  render(stateOf({ open: false, openMenu: 'row:routing:main' }))
+  stub.dispatchDocument('pointerdown', { target: stub.createContainer('transcript') })
+  assert.deepEqual(intents, [], 'the press belongs to the window behind, not a menu nobody can see')
+})
+
 test('a closing settings page is inert and can reverse before it is hidden', (t) => {
   const { view, render, stub, container } = mount(t)
   render(stateOf({ open: false }))
@@ -682,17 +714,15 @@ test('a repaint keeps the card and row nodes rather than rebuilding them', (t) =
 test('typing in a form field keeps that input node, so the caret survives', (t) => {
   const { view, apply } = mount(t)
   apply({ kind: 'new-model' })
-  const form = findOne(child(view(), 'settings-body'), 'settings-form')
-  const first = findAll(form, 'settings-input')[0]
+  const first = findAll(dialogOf(view()), 'settings-input')[0]
   assert.ok(first)
 
   // Exactly what `live` commit does, once per keystroke.
   apply({ kind: 'draft-field', field: 'key', value: 'b' })
   apply({ kind: 'draft-field', field: 'key', value: 'bi' })
 
-  const after = findOne(child(view(), 'settings-body'), 'settings-form')
   assert.equal(
-    findAll(after, 'settings-input')[0]?.node,
+    findAll(dialogOf(view()), 'settings-input')[0]?.node,
     first.node,
     'a rebuilt input drops the caret on every character typed',
   )
@@ -701,18 +731,17 @@ test('typing in a form field keeps that input node, so the caret survives', (t) 
 test('typing in a form field keeps the caret, because the cell around it is kept too', (t) => {
   const { view, apply, stub } = mount(t)
   apply({ kind: 'new-model' })
-  const form = findOne(child(view(), 'settings-body'), 'settings-form')
+  const form = dialogOf(view())
   const input = findAll(form, 'settings-input')[0]
-  const cell = findAll(form, 'settings-row-control')[0]
+  const cell = findAll(form, 'settings-field')[0]
   assert.ok(input && cell)
   stub.focus(input.node)
 
   apply({ kind: 'draft-field', field: 'key', value: 'b' })
   apply({ kind: 'draft-field', field: 'key', value: 'bi' })
 
-  const after = findOne(child(view(), 'settings-body'), 'settings-form')
   assert.equal(
-    findAll(after, 'settings-row-control')[0]?.node,
+    findAll(dialogOf(view()), 'settings-field')[0]?.node,
     cell.node,
     'a rebuilt cell re-parents the kept input, and re-parenting detaches it',
   )
@@ -726,9 +755,7 @@ test('typing in a form field keeps the caret, because the cell around it is kept
 test('typing a new name for an existing endpoint keeps the field, and the form', (t) => {
   const { view, apply, stub } = mount(t)
   apply({ kind: 'edit-endpoint', name: 'main' })
-  const body = child(view(), 'settings-body')
-  const form = findOne(body, 'settings-form')
-  const name = findAll(form, 'settings-input')[0]
+  const name = findAll(dialogOf(view()), 'settings-input')[0]
   assert.ok(name)
   stub.focus(name.node)
 
@@ -736,15 +763,14 @@ test('typing a new name for an existing endpoint keeps the field, and the form',
   apply({ kind: 'draft-field', field: 'name', value: 'mai' })
   apply({ kind: 'draft-field', field: 'name', value: 'ma' })
 
-  const after = findOne(child(view(), 'settings-body'), 'settings-form')
-  assert.equal(findAll(after, 'settings-input')[0]?.node, name.node, 'the field was rebuilt mid-word')
+  assert.equal(findAll(dialogOf(view()), 'settings-input')[0]?.node, name.node, 'the field was rebuilt mid-word')
   assert.equal(stub.activeElement(), name.node, 'the caret was thrown out of the field')
 })
 
 test('a live field commits on input alone, so a blur cannot fire a second one', (t) => {
   const { view, apply, intents, stub } = mount(t)
   apply({ kind: 'new-model' })
-  const input = findAll(findOne(child(view(), 'settings-body'), 'settings-form'), 'settings-input')[0]
+  const input = findAll(dialogOf(view()), 'settings-input')[0]
   assert.ok(input)
   ;(input.node as { value: string }).value = 'b'
 
@@ -757,21 +783,125 @@ test('a live field commits on input alone, so a blur cannot fire a second one', 
   assert.equal(intents.length, 1, 'the blur committed a second time')
 })
 
-test('a form is drawn inside the card it belongs to, not above every card', (t) => {
+test('a form opens as a dialog over the screen, and the page behind it goes inert', (t) => {
   const { view, apply } = mount(t)
+  assert.equal(child(view(), 'settings-dialog-layer').hidden, true)
   apply({ kind: 'new-model' })
-  const body = child(view(), 'settings-body')
+  assert.equal(child(view(), 'settings-dialog-layer').hidden, false)
+  assert.equal(dialogOf(view()).attributes.get('aria-modal'), 'true')
+  assert.equal(findOne(dialogOf(view()), 'settings-dialog-title').text, '新增模型')
+  for (const region of ['settings-nav', 'settings-body']) {
+    assert.ok(child(view(), region).attributes.has('inert'), `.${region} is still reachable behind the dialog`)
+  }
+  apply({ kind: 'cancel-draft' })
+  for (const region of ['settings-nav', 'settings-body']) {
+    assert.equal(child(view(), region).attributes.has('inert'), false)
+  }
+})
 
-  assert.equal(findAll(body, 'settings-form').length, 1)
-  const models = cardTitled(body, '模型')
-  assert.equal(
-    findAll(models, 'settings-form').length,
-    1,
-    'the form belongs to the list it is about to grow',
-  )
-  // And the column itself no longer stacks one above the cards.
-  const column = child(body, 'settings-column')
-  assert.equal(column.children.some((kid) => kid.classes.includes('settings-form')), false)
+test('the dialog takes focus on its first field and hands it back to the button that opened it', (t) => {
+  const { view, apply, stub } = mount(t)
+  const opener = findAll(child(view(), 'settings-body'), 'settings-btn').find((btn) => btn.text === '新增模型')
+  assert.ok(opener)
+  stub.focus(opener.node)
+  apply({ kind: 'new-model' })
+  assert.equal(stub.activeElement(), findAll(dialogOf(view()), 'settings-input')[0]?.node)
+
+  apply({ kind: 'cancel-draft' })
+  const back = stub.activeElement() as { getAttribute(name: string): string | null } | undefined
+  assert.equal(back?.getAttribute('aria-label'), opener.attributes.get('aria-label'))
+})
+
+test('Enter in a field submits; the backdrop dismisses; a press inside does not', (t) => {
+  const { view, apply, stub, intents } = mount(t)
+  apply({ kind: 'new-model' })
+  const input = findAll(dialogOf(view()), 'settings-input')[0]!
+  stub.dispatch(input.node, 'keydown', { key: 'Enter' })
+  assert.deepEqual(intents.map((intent) => intent.kind), ['draft-field', 'submit-draft'])
+
+  intents.length = 0
+  const layer = child(view(), 'settings-dialog-layer')
+  stub.dispatch(layer.node, 'pointerdown', { target: dialogOf(view()).node })
+  assert.deepEqual(intents, [], 'a press inside the dialog dismissed it')
+  stub.dispatch(layer.node, 'pointerdown', { target: layer.node })
+  assert.deepEqual(intents, [{ kind: 'cancel-draft' }])
+})
+
+test('an edited form asks before it is discarded, with the safe answer focused', (t) => {
+  const { view, apply, stub } = mount(t)
+  apply({ kind: 'new-model' })
+  apply({ kind: 'draft-field', field: 'key', value: 'h' })
+  apply({ kind: 'cancel-draft' })
+  const foot = findOne(dialogOf(view()), 'settings-dialog-foot')
+  assert.match(foot.text, /放弃未保存的修改/)
+  const keep = findAll(foot, 'settings-btn').find((btn) => btn.text === '继续编辑')
+  assert.equal(stub.activeElement(), keep?.node)
+})
+
+test('on/off fields are switches and the key field is a password box', (t) => {
+  const { view, apply, stub, intents } = mount(t)
+  apply({ kind: 'edit-endpoint', name: 'main' })
+  const inputs = findAll(dialogOf(view()), 'settings-input')
+  const key = inputs.find((input) => input.attributes.get('aria-label') === 'API key')
+  assert.equal((key?.node as { type: string } | undefined)?.type, 'password')
+
+  apply({ kind: 'cancel-draft' })
+  apply({ kind: 'new-model' })
+  const toggle = findAll(dialogOf(view()), 'settings-toggle')[0]!
+  stub.click(toggle.node)
+  assert.deepEqual(intents.at(-1), { kind: 'draft-field', field: 'longContext1m', value: 'on' })
+})
+
+test('the wizard draws service cards, then the connection with its test line, then a model list', (t) => {
+  const { view, apply, stub, intents } = mount(t)
+  apply({ kind: 'new-endpoint' })
+  const cards = findAll(dialogOf(view()), 'settings-preset')
+  assert.ok(cards.length >= 8)
+  assert.equal(stub.activeElement(), cards[0]!.node, 'the first card takes focus')
+  const foot = (): string[] => findAll(findOne(dialogOf(view()), 'settings-dialog-foot'), 'settings-btn').map((btn) => btn.text)
+  assert.deepEqual(foot(), ['取消'])
+  stub.click(cards[2]!.node)
+  assert.deepEqual(intents.at(-1), { kind: 'pick-preset', preset: 'deepseek' })
+
+  apply({ kind: 'pick-preset', preset: 'deepseek' })
+  assert.equal(findOne(dialogOf(view()), 'settings-dialog-title').text, '连接 DeepSeek')
+  const address = findAll(dialogOf(view()), 'settings-input')[0]!
+  assert.equal(stub.activeElement(), address.node, 'a new page focuses its first field')
+  assert.deepEqual(foot(), ['上一步', '下一步'])
+
+  apply({ kind: 'submit-draft' })
+  assert.deepEqual(foot(), ['上一步', '连接中…'])
+  assert.equal(findOne(dialogOf(view()), 'settings-probe').attributes.get('role'), 'status')
+
+  apply({ kind: 'probe-result', seq: 1, result: { ok: false, reason: 'unreachable', detail: 'x' } })
+  const line = findOne(dialogOf(view()), 'settings-probe')
+  assert.ok(line.classes.includes('failed'))
+  assert.match(line.text, /连不上这个地址/)
+  stub.click(findOne(line, 'settings-probe-skip').node)
+  assert.deepEqual(intents.at(-1), { kind: 'skip-test' })
+
+  apply({ kind: 'submit-draft' })
+  apply({ kind: 'probe-result', seq: 2, result: { ok: true, latencyMs: 80, models: [{ id: 'deepseek-chat', contextWindow: 128000 }] } })
+  assert.equal(findOne(dialogOf(view()), 'settings-dialog-title').text, '选择模型')
+  const row = findOne(dialogOf(view()), 'settings-model-row')
+  assert.equal(row.attributes.get('role'), 'checkbox')
+  assert.equal(row.attributes.get('aria-checked'), 'false')
+  assert.match(row.text, /128k 上下文/)
+  apply({ kind: 'toggle-picked-model', id: 'deepseek-chat' })
+  assert.equal(findOne(dialogOf(view()), 'settings-model-row').attributes.get('aria-checked'), 'true')
+  assert.deepEqual(foot(), ['上一步', '完成'])
+})
+
+test('an edited endpoint offers 测试连接 at the foot and reports beside the fields', (t) => {
+  const { view, apply } = mount(t)
+  apply({ kind: 'edit-endpoint', name: 'main' })
+  const foot = findOne(dialogOf(view()), 'settings-dialog-foot')
+  const test = findAll(foot, 'settings-btn').find((btn) => btn.text === '测试连接')
+  assert.ok(test?.classes.includes('lead'))
+  assert.equal(findAll(dialogOf(view()), 'settings-probe').length, 0, 'nothing to report before a test')
+  apply({ kind: 'test-endpoint' })
+  apply({ kind: 'probe-result', seq: 1, result: { ok: true, latencyMs: 42, models: [{ id: 'a' }] } })
+  assert.match(findOne(dialogOf(view()), 'settings-probe').text, /已连接 · 42 ms · 找到 1 个模型/)
 })
 
 test('a delete confirmation is drawn under the row it is about', (t) => {
@@ -791,15 +921,13 @@ test('an mcp-server form renders in the MCP card with custom cards, doc link and
   const { view, apply } = mount(t)
   apply({ kind: 'select-category', category: 'extensions' })
   apply({ kind: 'new-mcp-server' })
-  const body = child(view(), 'settings-body')
-  const mcp = cardTitled(body, 'MCP 服务器')
-  const form = findOne(mcp, 'mcp-form-container')
-  assert.ok(form, 'the mcp form container rendered inside the MCP card')
+  const form = dialogOf(view())
+  assert.equal(findOne(form, 'settings-dialog-title').text, '连接至自定义 MCP')
 
   // Header doc link
   const docLink = findOne(form, 'mcp-form-doc-link')
-  assert.equal(docLink.text, '文档 🌐')
-  assert.equal(docLink.attributes.get('href'), 'https://modelcontextprotocol.io')
+  assert.equal(docLink.text, '文档')
+  assert.equal((docLink.node as { href?: string }).href, 'https://modelcontextprotocol.io')
 
   // Segmented control
   const segBtns = findAll(form, 'mcp-segmented-btn')
@@ -812,15 +940,15 @@ test('an mcp-server form renders in the MCP card with custom cards, doc link and
   // Inputs and buttons
   const inputs = findAll(form, 'settings-input')
   const placeholders = inputs.map((inp) => (inp.node as any).placeholder ?? inp.attributes.get('placeholder'))
-  assert.ok(placeholders.includes('MCP server name'))
-  assert.ok(placeholders.includes('openai-dev-mcp serve-sqlite'))
+  assert.ok(placeholders.includes('例如 sqlite'))
+  assert.ok(placeholders.includes('npx -y @modelcontextprotocol/server-sqlite'))
   assert.ok(placeholders.includes('~/code'))
 
   const addBtns = findAll(form, 'mcp-form-add-btn')
   const addBtnLabels = addBtns.map((b) => b.text)
-  assert.ok(addBtnLabels.includes('+ 添加参数'))
-  assert.ok(addBtnLabels.includes('+ 添加环境变量'))
-  assert.ok(addBtnLabels.includes('+ 添加变量'))
+  assert.ok(addBtnLabels.includes('添加参数'))
+  assert.ok(addBtnLabels.includes('添加环境变量'))
+  assert.ok(addBtnLabels.includes('添加变量'))
 })
 
 test('switching transport in mcp form toggles between command and url cards', (t) => {
@@ -828,14 +956,14 @@ test('switching transport in mcp form toggles between command and url cards', (t
   apply({ kind: 'select-category', category: 'extensions' })
   apply({ kind: 'new-mcp-server' })
 
-  let form = findOne(child(view(), 'settings-body'), 'mcp-form-container')
+  let form = dialogOf(view())
   const sseBtn = findAll(form, 'mcp-segmented-btn')[1]
   assert.ok(sseBtn)
   stub.dispatch(sseBtn.node, 'click')
   assert.deepEqual(intents, [{ kind: 'draft-field', field: 'transport', value: 'sse' }])
   apply(intents.pop()!)
 
-  form = findOne(child(view(), 'settings-body'), 'mcp-form-container')
+  form = dialogOf(view())
   const segBtns = findAll(form, 'mcp-segmented-btn')
   assert.ok(segBtns[1]?.classes.includes('active'), 'SSE button is now active')
   assert.ok(!segBtns[0]?.classes.includes('active'), 'STDIO button is now inactive')
@@ -843,15 +971,15 @@ test('switching transport in mcp form toggles between command and url cards', (t
   const inputs = findAll(form, 'settings-input')
   const placeholders = inputs.map((inp) => (inp.node as any).placeholder ?? inp.attributes.get('placeholder'))
   assert.ok(placeholders.includes('http://localhost:3000/sse'), 'URL input is rendered')
-  assert.ok(!placeholders.includes('openai-dev-mcp serve-sqlite'), 'Command input is gone')
+  assert.ok(!placeholders.includes('npx -y @modelcontextprotocol/server-sqlite'), 'Command input is gone')
   assert.ok(!placeholders.includes('~/code'), 'CWD input is gone')
 
   // Headers replace the environment: nothing this process puts in an environment
   // can follow an HTTP request, so offering `env` here would collect dead values.
   const addBtnLabels = findAll(form, 'mcp-form-add-btn').map((btn) => btn.text)
-  assert.ok(addBtnLabels.includes('+ 添加请求头'))
-  assert.ok(!addBtnLabels.includes('+ 添加环境变量'))
-  assert.ok(!addBtnLabels.includes('+ 添加变量'), 'passthrough is stdio-only too')
+  assert.ok(addBtnLabels.includes('添加请求头'))
+  assert.ok(!addBtnLabels.includes('添加环境变量'))
+  assert.ok(!addBtnLabels.includes('添加变量'), 'passthrough is stdio-only too')
 })
 
 test('typing in mcp form fields keeps input nodes, preserving carets', (t) => {
@@ -859,14 +987,14 @@ test('typing in mcp form fields keeps input nodes, preserving carets', (t) => {
   apply({ kind: 'select-category', category: 'extensions' })
   apply({ kind: 'new-mcp-server' })
 
-  const form = findOne(child(view(), 'settings-body'), 'mcp-form-container')
+  const form = dialogOf(view())
   const nameInput = findAll(form, 'settings-input')[0]
   assert.ok(nameInput)
 
   apply({ kind: 'draft-field', field: 'name', value: 's' })
   apply({ kind: 'draft-field', field: 'name', value: 'sq' })
 
-  const after = findOne(child(view(), 'settings-body'), 'mcp-form-container')
+  const after = dialogOf(view())
   const afterName = findAll(after, 'settings-input')[0]
   assert.equal(afterName?.node, nameInput.node, 'the name input element was kept across typing')
 })

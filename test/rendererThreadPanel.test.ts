@@ -105,3 +105,24 @@ test('a fold reports its expansion and always carries its rows', () => {
   assert.equal(open.quiet.expanded, false)
   assert.equal(open.resolved.expanded, true)
 })
+
+test('a failed thread reads 失败 in the danger tone, still with its reason line', () => {
+  const view = threadPanelView({
+    state: state([thread('failed')]),
+    now: Date.parse('2026-10-10T12:00:00Z'),
+    activeSessionId: undefined,
+    expanded: new Set(),
+    pending: new Set(),
+  })
+  const row = view.active[0]!
+  assert.equal(row.statusLabel, '失败')
+  assert.equal(row.tone, 'danger')
+  assert.equal(row.statusLine, '上一回合出错')
+})
+
+test('the notice carries its tone only when it has one', () => {
+  const input = { state: state([thread('idle')]), now: 0, activeSessionId: undefined, expanded: new Set<never>(), pending: new Set<string>() }
+  assert.deepEqual([threadPanelView({ ...input, notice: 'a' }).notice, threadPanelView({ ...input, notice: 'a' }).noticeTone], ['a', undefined])
+  assert.equal(threadPanelView({ ...input, notice: 'a', noticeTone: 'error' }).noticeTone, 'error')
+  assert.equal(threadPanelView({ ...input, noticeTone: 'error' }).noticeTone, undefined, 'no notice, no tone')
+})

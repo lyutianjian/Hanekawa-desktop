@@ -11,6 +11,7 @@ import {
 } from '../model/imageViewer.js'
 import { button } from './controls.js'
 import { el, replace } from './dom.js'
+import { trapTab } from './focus.js'
 import { createModalPresence, type Presence } from './presence.js'
 
 /**
@@ -60,6 +61,9 @@ export function createImageViewerView(
   container.appendChild(stage)
   container.appendChild(caption)
   container.appendChild(zoomBar)
+  // A press on the picture or the caption lands focus on the layer itself, not on
+  // `<body>`, so the Tab trap below still hears the next key.
+  container.tabIndex = -1
 
   let presence: Presence | undefined
   let current: ImageViewerState | undefined
@@ -167,6 +171,9 @@ export function createImageViewerView(
     close()
   })
   container.addEventListener('keydown', (event) => {
+    // A modal: Tab cycles through its own controls instead of walking out to the
+    // page behind the scrim.
+    trapTab(container, event as KeyboardEvent)
     if ((event as KeyboardEvent).key !== 'Escape') return
     // Consumed here, so Escape over the viewer does not also reach the global
     // key map and interrupt the turn behind it.

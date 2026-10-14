@@ -19,14 +19,14 @@ export const compactCommand: CommandDefinition = {
     try {
       await context.resetCompactFailureCount()
     } catch (error) {
-      context.writeLine(`Failed to reset compact failure count: ${error instanceof Error ? error.message : String(error)}`)
+      context.writeLine(`重置压缩失败计数失败：${error instanceof Error ? error.message : String(error)}`, 'error')
       return
     }
 
     try {
       context.clearCachedSections?.()
     } catch (error) {
-      context.writeLine(`Failed to clear cached sections: ${error instanceof Error ? error.message : String(error)}`)
+      context.writeLine(`清除缓存段落失败：${error instanceof Error ? error.message : String(error)}`, 'error')
       return
     }
 

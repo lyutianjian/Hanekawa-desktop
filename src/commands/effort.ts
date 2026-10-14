@@ -30,7 +30,7 @@ export const effortCommand: CommandDefinition = {
 
     // Validate
     if (!(VALID_EFFORT_LEVELS as readonly string[]).includes(level)) {
-      context.writeLine(`Invalid effort: "${level}". Valid: ${VALID_EFFORT_LEVELS.join(', ')}`)
+      context.writeLine(`无效的强度 "${level}"，可选：${VALID_EFFORT_LEVELS.join('、')}`, 'error')
       return
     }
 

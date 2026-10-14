@@ -153,6 +153,7 @@ export interface PeekedSession {
   updatedAt: string
   title?: string
   messageCount: number
+  lastTurnFailed?: boolean
   /** Only the role: the marker a closed project's rows show. */
   coordination?: { role: 'coordinator' | 'thread' }
 }
@@ -174,6 +175,7 @@ export async function peekSessions(root: string): Promise<PeekedSession[]> {
       messageCount: typeof entry.messageCount === 'number' ? entry.messageCount : 0,
     }
     if (typeof entry.title === 'string' && entry.title.length > 0) row.title = entry.title
+    if (entry.lastTurnFailed === true) row.lastTurnFailed = true
     const role = (entry.coordination as { role?: unknown } | undefined)?.role
     if (role === 'coordinator' || role === 'thread') row.coordination = { role }
     rows.push(row)

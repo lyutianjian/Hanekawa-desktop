@@ -217,7 +217,7 @@ test('merge refuses a dirty tree and aborts a conflict', async (t) => {
   await writeFile(path.join(s.cwd, 'a.txt'), 'dirty\n')
   const dirty = await s.service.mergeThread(s.cwd, started.threadId)
   assert.equal(dirty.kind, 'dirty')
-  assert.match(dirty.message!, /uncommitted/)
+  assert.match(dirty.message!, /未提交/)
 
   s.git('checkout', '--', 'a.txt')
   await commitIn(s.cwd, 'a.txt', 'ours\n')

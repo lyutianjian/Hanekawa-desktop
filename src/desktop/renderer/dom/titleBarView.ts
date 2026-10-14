@@ -8,8 +8,9 @@ import {
   type TitleBarView,
 } from '../model/titleBar.js'
 import { button } from './controls.js'
-import { onPressOutside } from './dismiss.js'
+import { dismissable } from './dismiss.js'
 import { el, reconcile } from './dom.js'
+import { followPointer, rovingFocus } from './focus.js'
 import { createPresence } from './presence.js'
 
 /**
@@ -51,9 +52,9 @@ export function createTitleBarView(
   // `toggleMenu` and swap them rather than be answered here as a close, and a
   // press on the bar's own blank strip has to shut whatever is open — which a
   // bar-wide scope treated as "inside" and left standing.
-  onPressOutside(['.titlebar-menu-shell'], () => {
-    if (openMenu === undefined) return
-    onOpenMenu(undefined)
+  dismissable(['.titlebar-menu-shell'], {
+    isOpen: () => openMenu !== undefined,
+    close: () => onOpenMenu(undefined),
   })
 
   container.addEventListener('focusout', (event) => {
@@ -97,7 +98,13 @@ export function createTitleBarView(
     list.setAttribute('role', 'menu')
     const presence = createPresence(list, { direction: 'drop' })
     reconcile(shell, [trigger, list])
-    return { menu, shell, trigger, list, presence, items: [] as HTMLElement[] }
+    // Disabled items cannot take focus, so the arrow keys skip them.
+    const enabled = (): HTMLElement[] => entry.items.filter((node) => !(node as HTMLButtonElement).disabled)
+    shell.addEventListener('keydown', (event) => rovingFocus(event, enabled(), openMenu === menu.id,
+      () => onOpenMenu(toggleMenu(openMenu, menu.id))))
+    followPointer(list, '.titlebar-menu-item')
+    const entry = { menu, shell, trigger, list, presence, items: [] as HTMLElement[] }
+    return entry
   }
   let menuSource: readonly TitleBarMenu[] | undefined
   let menus: ReturnType<typeof menuNode>[] = []

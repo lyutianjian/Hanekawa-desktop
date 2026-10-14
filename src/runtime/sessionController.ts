@@ -8,6 +8,7 @@ import type {
   TaskDisplaySnapshot,
   TokenUsage,
   ToolProgressEvent,
+  TurnFailureRecord,
   TurnOrigin,
 } from '../harness/types.js'
 import { getRecordsAfterLastCompact } from '../harness/requestPrep.js'
@@ -138,6 +139,17 @@ export interface SessionControllerDeps {
   getSession: () => AgentSession
   /** Seam for tests; production backs up real files under `~/.myagent`. */
   createFileHistoryService?: (cwd: string, sessionId: string) => FileHistoryService
+}
+
+/** The machine code of an error or of what caused it: `insufficient_quota`, `ECONNREFUSED`. */
+function errorCodeOf(err: unknown): string | undefined {
+  let current = err
+  for (let depth = 0; depth < 4 && typeof current === 'object' && current !== null; depth += 1) {
+    const { code, cause } = current as { code?: unknown; cause?: unknown }
+    if (typeof code === 'string' && code !== '') return code
+    current = cause
+  }
+  return undefined
 }
 
 /** The latest tool a subagent run started, for the parent `Agent` call that owns the run. */
@@ -379,7 +391,8 @@ export class SessionController {
       }
       this.publish()
     } catch (err: unknown) {
-      if (err instanceof Error && (err.name === 'AbortError' || (err as Error & { aborted?: boolean }).aborted)) {
+      // The OpenAI SDK reports a cancelled request as `APIUserAbortError`, not `AbortError`.
+      if (ac.signal.aborted || (err instanceof Error && (err.name === 'AbortError' || (err as Error & { aborted?: boolean }).aborted))) {
         const restored = await this.tryRestoreInterruptedPrompt(ac.signal, messageId, input)
         if (restored) {
           this.didRollback = true
@@ -392,16 +405,7 @@ export class SessionController {
         }
       } else {
         failed = true
-        // A mid-turn image block (a fallback or plan route onto a text-only
-        // model, the provider's final check) leaves the notice as its only
-        // trace, so it arrives with its exit attached (design §13, S24). A
-        // provider HTTP error, a bad endpoint, or an outage passes through
-        // word for word: labelling those as an image problem would be a lie.
-        this.emit({
-          type: 'notice',
-          level: 'error',
-          content: describeImageBlockError(err),
-        })
+        await this.recordTurnFailure(err, messageId, agentSession)
       }
     } finally {
       this.emit({ type: 'active-model', model: loop.getActiveModel() })
@@ -430,6 +434,40 @@ export class SessionController {
 
   interrupt(reason: unknown = 'user-cancel'): void {
     this.abortController?.abort(reason)
+  }
+
+  /**
+   * Persists why a turn stopped, so a reopened session still says so.
+   *
+   * A mid-turn image block (a fallback or plan route onto a text-only model,
+   * the provider's final check) arrives with its exit attached (design §13,
+   * S24). A provider HTTP error, a bad endpoint, or an outage passes through
+   * word for word: labelling those as an image problem would be a lie. A write
+   * that fails must not hide the failure itself, so it falls back to a notice.
+   */
+  private async recordTurnFailure(err: unknown, userMessageId: string, agentSession: AgentSession): Promise<void> {
+    const active = agentSession.loop.getActiveModel()
+    // After a fallback the runtime's endpoint is no longer the one that failed.
+    const endpoint = active.modelKey === agentSession.modelKey ? agentSession.modelConfig.baseUrl : undefined
+    const status = (err as { status?: unknown } | null)?.status
+    const code = errorCodeOf(err)
+    const record: TurnFailureRecord = {
+      id: randomUUID(),
+      type: 'turn_failure',
+      userMessageId,
+      error: describeImageBlockError(err),
+      ...(typeof status === 'number' ? { status } : {}),
+      ...(code !== undefined ? { code } : {}),
+      model: active.model,
+      ...(endpoint !== undefined ? { providerName: agentSession.providerName, baseUrl: endpoint } : {}),
+      createdAt: new Date().toISOString(),
+    }
+    try {
+      await this.store.appendRecord(this.session.id, record)
+      this.handleRecord(record)
+    } catch {
+      this.emit({ type: 'notice', level: 'error', content: record.error })
+    }
   }
 
   /** Reloads records from disk (after truncation or a rewind) and rebuilds the view. */

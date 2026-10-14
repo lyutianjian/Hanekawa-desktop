@@ -52,6 +52,8 @@ export interface SessionMeta {
   title?: string
   messageCount: number
   compactFailureCount?: number
+  /** The last turn ended on a provider or network error; absent once a newer message is sent. */
+  lastTurnFailed?: boolean
   checkpoints?: CheckpointMapping[]
   /** Set when the session belongs to a project's coordination (see `services/coordination/`). */
   coordination?: SessionCoordination
@@ -1067,6 +1069,7 @@ export class SessionStore {
       messageCount: messages.length,
       ...(existing?.checkpoints ? { checkpoints: existing.checkpoints } : {}),
       ...(existing?.compactFailureCount ? { compactFailureCount: existing.compactFailureCount } : {}),
+      ...(failedAfterLastUserMessage(records) ? { lastTurnFailed: true } : {}),
       ...(existing?.coordination ? { coordination: existing.coordination } : {}),
     }
   }
@@ -1074,11 +1077,15 @@ export class SessionStore {
   private deriveMetaAfterAppend(current: SessionMeta, record: SessionRecord, updatedAt: string): SessionMeta {
     const isMessage = record.type === 'message'
     const title = current.title ?? deriveSessionTitle(record)
+    const { lastTurnFailed, ...rest } = current
+    const failed = record.type === 'turn_failure'
+      || (lastTurnFailed === true && !(record.type === 'message' && record.role === 'user'))
     return {
-      ...current,
+      ...rest,
       updatedAt,
       title,
       messageCount: current.messageCount + (isMessage ? 1 : 0),
+      ...(failed ? { lastTurnFailed: true } : {}),
     }
   }
 
@@ -1247,6 +1254,16 @@ export function deriveSessionTitle(record: SessionRecord): string | undefined {
   }
   const image = record.images?.find((candidate) => candidate.name.length > 0)
   return image ? `图片：${image.name}`.slice(0, SESSION_TITLE_LENGTH) : undefined
+}
+
+/** Whether the newest turn — everything after the last user message — ended on a failure. */
+function failedAfterLastUserMessage(records: readonly SessionRecord[]): boolean {
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    const record = records[index]!
+    if (record.type === 'turn_failure') return true
+    if (record.type === 'message' && record.role === 'user') return false
+  }
+  return false
 }
 
 /** How much of the first message names the session. */

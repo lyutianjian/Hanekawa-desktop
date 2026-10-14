@@ -34,7 +34,7 @@ export const thinkingCommand: CommandDefinition = {
 
     const enabled = parseThinkingArgument(args)
     if (enabled === undefined) {
-      context.writeLine(`Invalid value: "${args.trim()}". Use on or off.`)
+      context.writeLine(`无效的值 "${args.trim()}"，请用 on 或 off。`, 'error')
       return
     }
 

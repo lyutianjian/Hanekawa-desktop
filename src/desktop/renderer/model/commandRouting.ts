@@ -35,7 +35,7 @@ export function classifyInput(raw: string): InputClass {
 // --- effects ----------------------------------------------------------------
 
 export type CommandIntent =
-  | { kind: 'write-line'; text: string }
+  | { kind: 'write-line'; text: string; tone?: 'error' }
   | { kind: 'show-view'; view: CommandView; rows: readonly CommandViewRow[] }
   | { kind: 'open-surface'; surface: CommandSurface }
 
@@ -49,7 +49,7 @@ export type CommandIntent =
 export function commandEffectToIntent(effect: CommandEffect): CommandIntent {
   switch (effect.kind) {
     case 'write-line':
-      return { kind: 'write-line', text: effect.text }
+      return { kind: 'write-line', text: effect.text, ...(effect.tone ? { tone: effect.tone } : {}) }
     case 'open-command-view':
       return { kind: 'show-view', view: effect.view, rows: commandViewRows(effect.view) }
     case 'open-surface':

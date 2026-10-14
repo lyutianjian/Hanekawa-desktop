@@ -46,6 +46,7 @@ import {
 import { callParts } from '../model/toolPhrases.js'
 import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
 import type { ThreadNoteCard } from '../model/threadNotes.js'
+import type { TurnFailureCard } from '../model/turnFailure.js'
 import type { WireThreadStatus } from '../../shellProtocol.js'
 import { button } from './controls.js'
 import { diffNode } from './diffView.js'
@@ -162,6 +163,10 @@ export interface TranscriptHandlers {
   onRewind?(messageId: string): void
   /** A thread note card's 查看: open that thread's session. Absent draws the button inert. */
   onOpenThread?(threadId: string): void
+  /** A failed turn's 「打开服务商设置」. Absent (the sub-agent panel) draws no button. */
+  onOpenProviderSettings?(): void
+  /** A failed turn's 「重试」: send `userMessageId`'s message again. Absent draws no button. */
+  onRetryTurn?(userMessageId: string): void
 }
 
 export function createTranscriptView(
@@ -812,6 +817,8 @@ function createPainter(
     onCopy: handlers.onCopy,
     onRewind: handlers.onRewind,
     onOpenThread: handlers.onOpenThread,
+    onOpenProviderSettings: handlers.onOpenProviderSettings,
+    onRetryTurn: handlers.onRetryTurn,
     node(key, className, signature, fill, create) {
       filling.at(-1)?.push(key)
       const cached = cache.get(key)
@@ -1576,6 +1583,7 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
   }
   if (item.kind === 'thread-notes' && item.threadNotes) return threadNotesNode(painter, item, classes, key)
   if (item.kind === 'receipt' && item.receipt) return receiptNode(painter, item.receipt, classes, key)
+  if (item.kind === 'turn-failure' && item.failure) return turnFailureNode(painter, item.failure, classes, key)
   if (isAgentCall(item)) {
     const row = toolRow(painter, toStep(item) as ToolLike)
     return painter.node(`agent:${item.id}`, 'run agent-entry', [row], () => [row])
@@ -1619,6 +1627,40 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
   // finished turn says 「已处理 …」.
   const text = item.interrupt === true ? '已中断' : item.text
   return painter.node(key, item.interrupt === true ? `${classes.join(' ')} interrupt` : classes.join(' '), [text], () => [text])
+}
+
+/**
+ * A turn that ended on a provider error: what went wrong in plain words, which
+ * model and endpoint were involved, what to try, and the provider's own message
+ * underneath (clamped; the card is not the place for a stack trace).
+ *
+ * The buttons are the newest failure's alone (`retryable`): an older one's
+ * message has long since been answered or re-sent.
+ */
+function turnFailureNode(painter: Painter, failure: TurnFailureCard, classes: string[], key: string): HTMLElement {
+  const { onRetryTurn, onOpenProviderSettings } = painter
+  const retry = failure.retryable && onRetryTurn !== undefined
+  return painter.node(
+    key,
+    classes.join(' '),
+    [failure.reason, failure.hint, failure.target, failure.detail, retry, onOpenProviderSettings !== undefined],
+    () => [
+      el('div', 'failure-reason', failure.reason),
+      failure.target === undefined ? undefined : el('div', 'failure-target', failure.target),
+      el('div', 'failure-hint', failure.hint),
+      failure.detail === '' ? undefined : el('div', 'failure-detail', failure.detail),
+      retry || onOpenProviderSettings !== undefined
+        ? el(
+          'div',
+          'failure-actions',
+          onOpenProviderSettings === undefined
+            ? undefined
+            : button('failure-action', '打开服务商设置', '打开服务商设置', () => onOpenProviderSettings()),
+          retry ? button('failure-action primary', '重试', '重试这条消息', () => onRetryTurn(failure.userMessageId)) : undefined,
+        )
+        : undefined,
+    ],
+  )
 }
 
 /**

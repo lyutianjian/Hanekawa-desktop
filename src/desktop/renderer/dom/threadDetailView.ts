@@ -6,10 +6,12 @@
  */
 
 import { button } from './controls.js'
+import { copyText } from './clipboard.js'
 import { icon } from './icons.js'
 import { el, replace, show } from './dom.js'
 import { createTranscriptView, isScrolledToBottom, type TranscriptView } from './transcriptView.js'
 import type { WireShellThreadTranscriptResult } from '../../shellProtocol.js'
+import { describeError } from '../model/errorReport.js'
 import type { ThreadPage } from '../model/threadDetail.js'
 import { createTranscriptState, type ToolDisplayLookup, type TranscriptState } from '../model/transcript.js'
 
@@ -23,6 +25,8 @@ export interface ThreadDetailHandlers {
   /** `since` is the token of the last copy; the reply says whether the file moved on. */
   loadTranscript(threadId: string, since: string | undefined): Promise<WireShellThreadTranscriptResult>
   onOpenPath(path: string, line: number | undefined): void
+  /** A failure with no place of its own in the page (a copy that did not happen). */
+  onError?(message: string): void
 }
 
 export interface ThreadDetailView {
@@ -37,9 +41,15 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
   const timeline = el('div', 'transcript thread-detail-transcript')
   const empty = el('p', 'subagent-empty', '这个线程还没有对话')
   const floatHost = el('div', 'subagent-float')
+  // Why the conversation could not be read, with a way to ask again. Without it
+  // a failed first read leaves the page blank, which reads as an empty thread.
+  const failure = el('div', 'thread-detail-error')
+  failure.setAttribute('role', 'alert')
+  show(failure, false)
   // The head stays put; only the conversation under it scrolls.
-  const body = el('div', 'thread-detail-body', timeline, empty, floatHost)
+  const body = el('div', 'thread-detail-body', failure, timeline, empty, floatHost)
   let drawn: string | undefined
+  let failureShown: string | undefined
   let current: { threadId: string; view: TranscriptView; token: string | undefined; busy: boolean; again: boolean } | undefined
   let state: TranscriptState | undefined
   let manual = new Map<string, boolean>()
@@ -54,6 +64,15 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
     current.view.render(state, disclosure)
   }
 
+  function showFailure(message: string | undefined): void {
+    // A poll that fails the same way again must not rebuild the button under the pointer.
+    if (message === failureShown) return
+    failureShown = message
+    show(failure, message !== undefined)
+    if (message === undefined) replace(failure)
+    else replace(failure, el('span', 'thread-detail-error-text', `无法读取线程对话：${message}`), button('thread-detail-retry', '重试', '重新读取线程对话', fetchRecords))
+  }
+
   function fetchRecords(): void {
     const page = current
     if (page === undefined) return
@@ -63,7 +82,9 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
     }
     page.busy = true
     void handlers.loadTranscript(page.threadId, page.token).then((result) => {
-      if (current !== page || result.unchanged) return
+      if (current !== page) return
+      showFailure(undefined)
+      if (result.unchanged) return
       page.token = result.token
       const displays: ToolDisplayLookup = (recordId) => result.toolDisplays?.[recordId]
       state = createTranscriptState(result.records, displays)
@@ -73,7 +94,9 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
       const following = isScrolledToBottom(body)
       paint()
       if (following) body.scrollTop = body.scrollHeight
-    }).catch(() => {}).finally(() => {
+    }).catch((error: unknown) => {
+      if (current === page) showFailure(describeError(error))
+    }).finally(() => {
       page.busy = false
       if (page.again && current === page) {
         page.again = false
@@ -94,6 +117,7 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
     state = undefined
     manual = new Map()
     drawn = undefined
+    showFailure(undefined)
   }
 
   function open(threadId: string): void {
@@ -117,7 +141,9 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
         onOpenPath: handlers.onOpenPath,
         onViewImage: () => {},
         imageThumbUrl: () => undefined,
-        onCopy: (text) => { void navigator.clipboard?.writeText(text).catch(() => {}) },
+        onCopy: (text) => {
+          void copyText(text).then((ok) => { if (!ok) handlers.onError?.('复制失败：无法写入剪贴板。') })
+        },
         onOpenSubagent: () => {},
       }),
     }

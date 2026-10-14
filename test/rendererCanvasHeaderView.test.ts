@@ -4,6 +4,7 @@ import test from 'node:test'
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
 import { trackAnimationStarts, trackIdentity } from './helpers/motion.js'
 import { createCanvasHeaderView, type CanvasHeaderDom } from '../src/desktop/renderer/dom/canvasHeaderView.js'
+import { closeTopDismissable } from '../src/desktop/renderer/dom/dismiss.js'
 import {
   canvasHeaderView,
   type CanvasHeaderMenuItem,
@@ -84,6 +85,9 @@ interface Rendered {
   threadsButton(): StubView | undefined
 }
 
+const find = (view: StubView | undefined, className: string): StubView | undefined =>
+  view?.children.find((child) => child.classes.includes(className))
+
 function render(t: { after(fn: () => void): void }): Rendered {
   const stub = installDomStub()
   t.after(() => stub.uninstall())
@@ -105,9 +109,6 @@ function render(t: { after(fn: () => void): void }): Rendered {
 
   const identity = () =>
     stub.inspect(container).children.find((child) => child.classes.includes('canvas-identity'))!
-  const find = (view: StubView | undefined, className: string): StubView | undefined =>
-    view?.children.find((child) => child.classes.includes(className))
-
   return {
     stub,
     header,
@@ -128,12 +129,11 @@ function render(t: { after(fn: () => void): void }): Rendered {
       }))
     },
     identity,
+    // The field when it is on screen, else the title or crumb it floats over.
     titleNode: () =>
+      find(identity(), 'canvas-title-input') ??
       identity().children.find(
-        (child) =>
-          child.classes.includes('canvas-title') ||
-          child.classes.includes('canvas-title-input') ||
-          child.classes.includes('canvas-breadcrumb'),
+        (child) => child.classes.includes('canvas-title') || child.classes.includes('canvas-breadcrumb'),
       ),
     menuItems: () => {
       const shell = find(identity(), 'canvas-menu-shell')
@@ -269,6 +269,52 @@ test('opening the menu puts the keyboard on its first item, once', (t) => {
   assert.equal(r.stub.activeElement(), composer, 'a repaint is not a re-open')
 })
 
+test('the arrow keys rove the open menu, and open it from the closed trigger', (t) => {
+  const r = render(t)
+  r.paint({})
+  const shell = find(r.identity(), 'canvas-menu-shell')!
+
+  r.stub.dispatch(shell.node, 'keydown', { key: 'ArrowDown', target: find(shell, 'canvas-menu-trigger')!.node })
+  assert.deepEqual(r.events, ['toggle-menu'], 'ArrowDown on the closed trigger asks to open it')
+
+  r.paint({ menuOpen: true })
+  const [first, second] = r.menuItems()
+  assert.equal(r.stub.activeElement(), first!.node)
+  r.stub.dispatch(shell.node, 'keydown', { key: 'ArrowDown', target: first!.node })
+  assert.equal(r.stub.activeElement(), second!.node)
+  r.stub.dispatch(shell.node, 'keydown', { key: 'ArrowDown', target: second!.node })
+  assert.equal(r.stub.activeElement(), first!.node, 'wraps')
+  r.stub.dispatch(shell.node, 'keydown', { key: 'End', target: first!.node })
+  assert.equal(r.stub.activeElement(), second!.node)
+
+  // The pointer takes focus along, so hover and keyboard cannot paint two rows.
+  r.stub.dispatch(find(shell, 'canvas-menu')!.node, 'mousemove', { target: first!.node })
+  assert.equal(r.stub.activeElement(), first!.node)
+})
+
+test('asking to confirm a delete leaves focus on 取消, not on the destructive item', (t) => {
+  // The item that held focus is replaced by the next step, and Chromium fires no
+  // blur for a removed node: without this the keyboard falls to `<body>`, where
+  // Escape interrupts the turn instead of backing out of the question.
+  const r = render(t)
+  r.paint({ menuOpen: true })
+  r.stub.focus(r.menuItems()[1]!.node)
+
+  r.paint({ menuOpen: true, pendingDelete: 's1' })
+
+  const [confirm, cancel] = r.menuItems()
+  assert.deepEqual([confirm!.text, cancel!.text], ['确认删除', '取消'])
+  assert.equal(r.stub.activeElement(), cancel!.node)
+})
+
+test('Escape closes an open menu from the document when focus has fallen to the body', (t) => {
+  const r = render(t)
+  r.paint({ menuOpen: true })
+
+  assert.equal(closeTopDismissable(), true)
+  assert.deepEqual(r.events, ['close-menu'])
+})
+
 test('a press outside the header closes the menu', (t) => {
   // The gap `focusout` alone leaves. The trigger is rebuilt by the paint that
   // opens the menu, so by the user's next click there is nothing focused inside
@@ -391,13 +437,33 @@ test('the crumb keeps its nodes across streamed repaints', (t) => {
   assert.equal(r.crumb()!.children.find((child) => child.classes.includes('canvas-status'))!.classes.includes('tone-attention'), true)
 })
 
-test('renaming a thread session swaps the crumb for the field, and back', (t) => {
+test('renaming floats the field over the title instead of replacing it', (t) => {
+  // The title keeps its place in the flow (hidden by the stylesheet), so a field
+  // wider than the name cannot push the menu trigger or the controls to its right.
+  const r = render(t)
+  r.paint({})
+  const title = r.identity().children.find((child) => child.classes.includes('canvas-title'))!.node
+  r.paint({ renaming: true })
+  assert.equal(r.identity().classes.includes('renaming'), true)
+  assert.deepEqual(
+    r.identity().children.map((child) => child.classes[0]),
+    ['canvas-title', 'canvas-title-input', 'canvas-menu-shell'],
+  )
+  assert.equal(r.identity().children[0]!.node, title, 'the same title node stays')
+  r.paint({})
+  assert.equal(r.identity().classes.includes('renaming'), false)
+  assert.deepEqual(r.identity().children.map((child) => child.classes[0]), ['canvas-title', 'canvas-menu-shell'])
+})
+
+test('renaming a thread session keeps the crumb under the field, and back', (t) => {
   const r = render(t)
   r.paint({ role: 'thread', thread })
+  const crumb = r.crumb()!.node
   r.paint({ role: 'thread', thread, renaming: true })
   assert.equal(r.titleNode()?.classes.includes('canvas-title-input'), true)
+  assert.equal(r.crumb()?.node, crumb)
   r.paint({ role: 'thread', thread })
-  assert.equal(r.titleNode()?.node, r.crumb()!.node)
+  assert.equal(r.titleNode()?.node, crumb)
 })
 
 test('the 概览 button is shown for either coordination role and toggles the overview', (t) => {

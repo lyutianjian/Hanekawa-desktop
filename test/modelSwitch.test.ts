@@ -116,7 +116,7 @@ test('activateModelKey leaves the runtime alone for a key that is not configured
   const result = activateModelKey(deps, 'ghost')
 
   assert.equal(result.ok, false)
-  assert.ok(!result.ok && result.message.includes('Unknown model: ghost'))
+  assert.ok(!result.ok && result.message.includes('未知模型：ghost'))
   // Only configured keys are offerable; the tier names are gone.
   assert.deepEqual(!result.ok && result.availableModels, ['current', 'other', 'fastModel'])
   assert.deepEqual(calls.replaced, [])
@@ -172,7 +172,7 @@ test('switchModel explains inherit rather than calling it unknown', () => {
   assert.ok(!result.ok && result.message.includes('only valid in routing/subagent settings'))
 
   const other = switchModel(deps, 'sonnet-9')
-  assert.ok(!other.ok && other.message.includes('Unknown model: sonnet-9'))
+  assert.ok(!other.ok && other.message.includes('未知模型：sonnet-9'))
 })
 
 // --- image impact of a manual switch (S21, design §9.1) ----------------------

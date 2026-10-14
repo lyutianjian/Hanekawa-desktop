@@ -305,12 +305,15 @@ test('the scrims are positioned against the canvas and stack above every popover
   assert.equal(decl('#rewind', 'position'), 'absolute', '#rewind is not absolute')
   assert.equal(decl('#rewind', 'inset'), '0', '#rewind does not fill the canvas')
   const fixed = blocks.filter((block) => block.decls.some((d) => d.prop === 'position' && d.value === 'fixed'))
-  // The two that resolve against the viewport, and the reason each does: the
-  // settings page replaces the window's work area, and the image viewer covers
-  // the window because a picture at full size belongs to no single lane.
+  // The four that resolve against the viewport, and the reason each does: the
+  // settings page replaces the window's work area, its form dialog's scrim
+  // covers the title bar above that area too, the image viewer covers the
+  // window because a picture at full size belongs to no single lane, and a
+  // project heading's menu hangs off a row inside the sidebar's scroller, whose
+  // `overflow` would crop an absolutely positioned popover.
   assert.deepEqual(
     fixed.map((block) => block.selector).sort(),
-    ['#lightbox', '#settings'],
+    ['#lightbox', '#settings', '.project-menu', '.settings-dialog-layer'],
     'only the window-wide screens use the viewport',
   )
 
@@ -330,8 +333,12 @@ test('the scrims are positioned against the canvas and stack above every popover
   // three of them, so it cannot trap anyone.
   const lightbox = at('#lightbox')
   assert.ok(lightbox !== undefined && lightbox > rewind, `#lightbox ${lightbox} must sit over #rewind ${rewind}`)
+  // The toast stack is the other exception: an error must not be hidden by the
+  // dialog that caused it, and the viewer still covers it.
+  const toasts = at('#toasts')
+  assert.ok(toasts !== undefined && toasts > rewind && toasts < lightbox, `#toasts ${toasts} sits between #rewind and #lightbox`)
   for (const layer of layers) {
-    if (layer.selector === '#rewind' || layer.selector === '#lightbox') continue
+    if (layer.selector === '#rewind' || layer.selector === '#lightbox' || layer.selector === '#toasts') continue
     assert.ok(layer.value < rewind, `${layer.selector} (${layer.value}) would draw over a modal`)
   }
   // `#canvas` deliberately declares no z-index: that would make it a stacking

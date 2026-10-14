@@ -9,6 +9,7 @@
  */
 
 import { button } from './controls.js'
+import { copyText } from './clipboard.js'
 import { el, replace, show, type Child } from './dom.js'
 import { markdownChildren } from './markdownView.js'
 import { createTranscriptView, type TranscriptView } from './transcriptView.js'
@@ -29,6 +30,8 @@ export interface SubagentPanelHandlers {
   onOpenPath(path: string, line: number | undefined): void
   /** Stops the run started by this `Agent` call; the parent's turn goes on. */
   onStop(id: string): void
+  /** A failure with no place of its own in the page (a copy that did not happen). */
+  onError?(message: string): void
 }
 
 export interface SubagentPanelView {
@@ -181,7 +184,9 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
         onOpenPath: handlers.onOpenPath,
         onViewImage: () => {},
         imageThumbUrl: () => undefined,
-        onCopy: (text) => { void navigator.clipboard?.writeText(text).catch(() => {}) },
+        onCopy: (text) => {
+          void copyText(text).then((ok) => { if (!ok) handlers.onError?.('复制失败：无法写入剪贴板。') })
+        },
         onOpenSubagent: () => {},
       }),
     }

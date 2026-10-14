@@ -55,11 +55,35 @@ export interface ShellState {
   readonly inputEmpty: boolean
 }
 
+/**
+ * What the window itself has open, beside the active pane's {@link ShellState}.
+ *
+ * These are window-level because none belongs to one pane: a popover hangs off
+ * the sidebar or the composer, a screen replaces the canvas, and the viewer
+ * covers everything. They matter to Escape only — and only when focus is not
+ * inside the layer, since a focused layer handles its own Escape. Focus falls to
+ * `<body>` whenever a repaint destroys the focused node, which is how Escape
+ * used to reach "interrupt the turn" with a menu still open.
+ */
+export interface WindowLayers {
+  /** The fullscreen image viewer, drawn over every other layer. */
+  readonly viewer: boolean
+  /** The settings screen or the projects page, each replacing the canvas. */
+  readonly screen: boolean
+  /** A menu, picker or confirmation (`dom/dismiss.ts`). */
+  readonly popover: boolean
+}
+
+export const NO_LAYERS: WindowLayers = { viewer: false, screen: false, popover: false }
+
 export type KeyAction =
   /** Hand the chord to the dialog's own key map. */
   | 'overlay'
   /** Hand the chord to the rewind panel's own key map. */
   | 'rewind'
+  | 'close-viewer'
+  | 'close-popover'
+  | 'close-screen'
   | 'close-surface'
   | 'move-surface-up'
   | 'move-surface-down'
@@ -88,7 +112,11 @@ export function completionAcceptMode(state: ShellState): 'accept' | 'submit' {
   return state.isStreaming || state.completions === 'file' ? 'accept' : 'submit'
 }
 
-export function resolveKey(chord: KeyChord, state: ShellState): KeyAction {
+export function resolveKey(chord: KeyChord, state: ShellState, layers: WindowLayers = NO_LAYERS): KeyAction {
+  // 0. The viewer is the topmost layer on screen, a blocking request's card
+  //    included, so Escape closes it before anything beneath it hears the key.
+  if (chord.key === 'Escape' && layers.viewer) return 'close-viewer'
+
   // 1. A blocking request first, always. See the note above.
   if (state.hasOverlay) return 'overlay'
 
@@ -98,6 +126,14 @@ export function resolveKey(chord: KeyChord, state: ShellState): KeyAction {
   //    every one of its options is destructive, so a keystroke must not fall
   //    through to the composer while a confirm screen is up.
   if (state.hasRewind) return 'rewind'
+
+  // 2b. Escape unwinds the window's layers top-down before it can mean anything
+  //     below: a popover floats above a screen, a screen replaces the composer
+  //     and so everything the composer owns (3–6).
+  if (chord.key === 'Escape') {
+    if (layers.popover) return 'close-popover'
+    if (layers.screen) return 'close-screen'
+  }
 
   // 3. The completion dropdown, which owns Tab/arrows/Enter while it is open.
   if (state.completions !== 'none') {

@@ -137,7 +137,7 @@ export function createHostCommandContext(deps: HostCommandContextDeps): CommandC
       return deps.getSession().id
     },
 
-    writeLine: (text) => deps.emit({ kind: 'write-line', text }),
+    writeLine: (text, tone) => deps.emit({ kind: 'write-line', text, ...(tone ? { tone } : {}) }),
     openCommandView: (view) => deps.emit({ kind: 'open-command-view', view }),
     openModelPicker: () => deps.emit({ kind: 'open-surface', surface: 'model-picker' }),
     openEffortPicker: () => deps.emit({ kind: 'open-surface', surface: 'effort-picker' }),

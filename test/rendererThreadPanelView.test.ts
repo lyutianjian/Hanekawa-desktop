@@ -183,3 +183,20 @@ test('an unchanged view keeps the same nodes; a changed one rebuilds', (t) => {
   assert.notEqual(r.panel()!.node, before)
   assert.equal(r.button('thread-row-title').text, '新标题')
 })
+
+test('an error notice is drawn in the error tone; a plain one is not', (t) => {
+  const r = mount(t)
+  const noticeOf = (): StubView => {
+    const found = r.buttons('thread-panel-notice')[0]
+    assert.ok(found, 'a notice line')
+    return found
+  }
+  const base = { state: { projectRoot: '/repo', threads: [thread('idle')] }, now: NOW, activeSessionId: undefined, expanded: new Set<never>(), pending: new Set<string>() }
+
+  r.render(threadPanelView({ ...base, notice: '这个线程已被删除' }))
+  assert.equal(noticeOf().classes.includes('error'), false)
+
+  r.render(threadPanelView({ ...base, notice: '停止线程失败：boom', noticeTone: 'error' }))
+  assert.equal(noticeOf().text, '停止线程失败：boom')
+  assert.equal(noticeOf().classes.includes('error'), true)
+})

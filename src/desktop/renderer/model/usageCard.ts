@@ -16,6 +16,8 @@ export const USAGE_RANGES: readonly { id: UsageRange; label: string }[] = [
 
 export const USAGE_EMPTY = '—'
 export const USAGE_NO_MODELS = '这段时间还没有使用记录'
+/** The history could not be read: not the same thing as an empty one. */
+export const USAGE_UNAVAILABLE = '无法读取使用统计'
 
 export interface UsageCell {
   label: string

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
+import { closeTopDismissable, hasOpenDismissable } from '../src/desktop/renderer/dom/dismiss.js'
 import { createTitleBarView } from '../src/desktop/renderer/dom/titleBarView.js'
 import { bindWindowChrome } from '../src/desktop/renderer/dom/windowChrome.js'
 import type { TitlebarArea } from '../src/desktop/renderer/model/windowChrome.js'
@@ -186,6 +187,43 @@ test('Escape closes an open menu and only then', (t) => {
 
   render(viewOf({ openMenu: 'view' }))
   stub.dispatch(container, 'keydown', { key: 'Escape' })
+  assert.deepEqual(menuRequests, [undefined])
+})
+
+test('the arrow keys open a menu and rove its enabled items, which hover then shares', (t) => {
+  const { render, root, stub, menuRequests } = mount(t)
+  render(viewOf({ canCreate: false }))
+  const shell = shells(root())[0]!
+
+  stub.dispatch(shell.node, 'keydown', { key: 'ArrowDown', target: shell.children[0]!.node })
+  assert.deepEqual(menuRequests, ['file'], 'ArrowDown on the closed trigger asks to open it')
+
+  render(viewOf({ openMenu: 'file', canCreate: false }))
+  const items = openList(root())!.children
+  assert.equal(stub.activeElement(), items[2]!.node, 'opening lands on the first item that can take focus')
+  assert.equal(items[0]!.disabled, true)
+
+  const down = stub.dispatch(shell.node, 'keydown', { key: 'ArrowDown', target: items[2]!.node })
+  assert.equal(down.defaultPrevented, true)
+  assert.equal(stub.activeElement(), items[2]!.node, 'the disabled items are skipped, so the only stop wraps onto itself')
+
+  render(viewOf({ openMenu: 'file' }))
+  stub.dispatch(shell.node, 'keydown', { key: 'End', target: items[2]!.node })
+  stub.dispatch(shell.node, 'keydown', { key: 'ArrowDown', target: items[2]!.node })
+  assert.equal(stub.activeElement(), items[0]!.node, 'ArrowDown wraps past the last item')
+
+  // The pointer takes focus along, so a resting pointer and the keyboard cannot
+  // each paint a row.
+  stub.dispatch(openList(root())!.node, 'mousemove', { target: items[1]!.node })
+  assert.equal(stub.activeElement(), items[1]!.node)
+})
+
+test('Escape closes an open menu from the document too, when focus has fallen to the body', (t) => {
+  const { render, menuRequests } = mount(t)
+  render(viewOf({ openMenu: 'view' }))
+
+  assert.equal(hasOpenDismissable(), true)
+  assert.equal(closeTopDismissable(), true)
   assert.deepEqual(menuRequests, [undefined])
 })
 

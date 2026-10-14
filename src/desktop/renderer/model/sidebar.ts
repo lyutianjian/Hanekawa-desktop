@@ -26,6 +26,8 @@ import { desktopShortcut } from './desktopShortcuts.js'
  *    come from the pane's own `SessionClient` snapshot and its unanswered
  *    blocking requests, both of which the renderer already has. No wire field
  *    was added for them, so nothing can go stale between the host and the row.
+ *    `failed` is the exception: a session nobody has open must still say that
+ *    its last turn failed, so it rides the history row (`WireSessionSummary`).
  * 2. **There are two key entry points, and they are not interchangeable.**
  *    `sidebarChordToIntent` runs *before* the global keymap and therefore must
  *    answer `'none'` for anything without ctrl/meta — an unmodified key that
@@ -55,20 +57,22 @@ export const SIDEBAR_EMPTY_TEXT = '还没有会话。'
 export const SIDEBAR_EMPTY_RECENT_TEXT = '还没有无项目会话。'
 export const SIDEBAR_NO_MATCHES_TEXT = '没有匹配的会话。'
 
-export function sidebarHint(platform: DesktopPlatform): string {
+/** The `?` panel's rows: what each chord does, and the chord. */
+export function sidebarHint(platform: DesktopPlatform): Array<{ label: string; chord: string }> {
   return [
-    `[${desktopShortcut(platform, 'switch-session')}] 切换`,
-    `[${desktopShortcut(platform, 'new-session')}] 新会话`,
-    `[${desktopShortcut(platform, 'close-session')}] 关闭`,
-    `[${desktopShortcut(platform, 'toggle-sidebar')}] 收起侧栏`,
-    `[${desktopShortcut(platform, 'open-project')}] 打开项目`,
-  ].join('  ')
+    { label: '新建会话', chord: desktopShortcut(platform, 'new-session') },
+    { label: '切换会话', chord: desktopShortcut(platform, 'switch-session') },
+    { label: '关闭会话', chord: desktopShortcut(platform, 'close-session') },
+    { label: '收起侧栏', chord: desktopShortcut(platform, 'toggle-sidebar') },
+    { label: '打开项目', chord: desktopShortcut(platform, 'open-project') },
+    { label: '打开设置', chord: desktopShortcut(platform, 'open-settings') },
+  ]
 }
 
 // --- the view ----------------------------------------------------------------
 
 /** What a row says about the pane behind it, if there is one. */
-export type SidebarBadge = 'none' | 'running' | 'awaiting-input'
+export type SidebarBadge = 'none' | 'running' | 'awaiting-input' | 'failed'
 
 export interface SidebarRow {
   readonly sessionId: string
@@ -419,16 +423,15 @@ function touchedAt(updatedAt: string): number {
   return Number.isFinite(touched) ? touched : 0
 }
 
-function badgeFor(lane: string | undefined, state: SidebarState): SidebarBadge {
-  if (lane === undefined) return 'none'
-  const status = state.laneStatus.get(lane)
-  if (!status) return 'none'
+function badgeFor(lane: string | undefined, state: SidebarState, failed: boolean): SidebarBadge {
+  const status = lane === undefined ? undefined : state.laneStatus.get(lane)
   // Awaiting input outranks running: a turn parked on a permission prompt is
   // technically still streaming, and "waiting for you" is the actionable half.
-  if (status.blocked) return 'awaiting-input'
+  if (status?.blocked) return 'awaiting-input'
   // "Running" is the agent loop *or* a process it left behind — a backgrounded
   // command keeps the session busy after the turn ends.
-  return status.streaming || status.processes ? 'running' : 'none'
+  if (status?.streaming || status?.processes) return 'running'
+  return failed ? 'failed' : 'none'
 }
 
 /**
@@ -706,7 +709,7 @@ function rowFor(
       : {}),
     projectRoot,
     ...(lane !== undefined ? { lane } : {}),
-    badge: badgeFor(lane, state),
+    badge: badgeFor(lane, state, session.failed === true),
     active: session.id === activePaneId,
     updatedAt: session.updatedAt,
     messageCount: session.messageCount,

@@ -701,6 +701,44 @@ test('SessionStore persists and clears compact failure count in metadata', async
   }
 })
 
+test('SessionStore marks a session whose last turn failed until a newer message is sent', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  try {
+    const store = new SessionStore(dir)
+    await store.init()
+
+    const session = await store.create()
+    const user = (id: string): SessionRecord => ({
+      type: 'message', id, role: 'user', content: id, createdAt: '2026-06-01T00:00:00.000Z',
+    })
+    const assistant: SessionRecord = {
+      type: 'message', id: 'a-1', role: 'assistant', content: 'half', createdAt: '2026-06-01T00:00:01.000Z',
+    }
+    const failure: SessionRecord = {
+      type: 'turn_failure', id: 'f-1', userMessageId: 'u-1', error: 'boom', createdAt: '2026-06-01T00:00:02.000Z',
+    }
+
+    await store.appendRecord(session.id, user('u-1'))
+    assert.equal((await store.load(session.id))?.lastTurnFailed, undefined)
+    await store.appendRecord(session.id, failure)
+    assert.equal((await store.load(session.id))?.lastTurnFailed, true)
+    // A late assistant record from the same turn does not clear it.
+    await store.appendRecord(session.id, assistant)
+    assert.equal((await store.load(session.id))?.lastTurnFailed, true)
+    assert.equal((await store.list())[0]?.lastTurnFailed, true)
+
+    // Rebuilding the row from the records reaches the same answer.
+    const truncated = await store.truncateBeforeMessage(session.id, 'a-1')
+    assert.equal(truncated.success, true)
+    assert.equal((await store.load(session.id))?.lastTurnFailed, true)
+
+    await store.appendRecord(session.id, user('u-2'))
+    assert.equal((await store.load(session.id))?.lastTurnFailed, undefined)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('SessionStore repairs orphan tool protocol records in JSONL sessions', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
   try {

@@ -85,6 +85,14 @@ export const SUPPORTED_SURFACES: readonly SupportedSurface[] = [
   'resume-picker',
 ] as const
 
+/** What each surface is called in a sentence about its failure to open. */
+export const SURFACE_LABEL: Readonly<Record<SupportedSurface, string>> = {
+  'model-picker': '模型列表',
+  'effort-picker': '思考强度列表',
+  'background-tasks': '后台任务列表',
+  'resume-picker': '会话列表',
+}
+
 /** A predicate, so the caller's switch over the four is exhaustive. */
 export function isSupportedSurface(surface: CommandSurface): surface is SupportedSurface {
   return (SUPPORTED_SURFACES as readonly CommandSurface[]).includes(surface)

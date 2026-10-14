@@ -14,7 +14,10 @@ import {
   type WireSettingsSnapshot,
   type WireShellSettingsChangeResult,
   type WireShellSettingsResult,
+  type ProbedModel,
+  type WireShellProbeEndpointResult,
 } from '../../shellProtocol.js'
+import { PLACEHOLDER_KEY, PROVIDER_PRESETS, presetById, providerLabel, type ProviderPreset } from './providerPresets.js'
 import { DEFAULT_THEME_PREFERENCE, THEME_PREFERENCES, type ThemePreference } from './theme.js'
 import { EFFORT_LABELS } from './composer.js'
 import { agentDescription } from './builtinLabels.js'
@@ -76,16 +79,20 @@ export type SettingsDraft =
        */
       readonly keyTouched: boolean
       /**
-       * The first model, offered only when the endpoint is new.
-       *
-       * An endpoint on its own routes nothing — every model names one — so
-       * creating them separately made the useful act two forms long. Both empty
-       * means "just the endpoint"; both filled adds the model in the same submit.
+       * The wizard's page, set only for a new endpoint. An endpoint on its own
+       * routes nothing — every model names one — so the wizard ends by creating
+       * the endpoint's models in the same submit.
        */
-      readonly modelKey: string
-      readonly modelId: string
-      /** `'on'` or `''` — the first model's image-input switch, same as the model form's. */
-      readonly modelSupportsImageInput: string
+      readonly step?: 'preset' | 'connect' | 'models'
+      readonly preset?: string
+      /** The user typed a name, so picking another service no longer renames it. */
+      readonly nameTouched?: boolean
+      /** What the last successful connection test listed. */
+      readonly listed?: readonly ProbedModel[]
+      /** Model ids to create with the endpoint, listed or typed in. */
+      readonly picked?: readonly string[]
+      readonly modelFilter?: string
+      readonly manualModel?: string
     }
   | {
       readonly kind: 'model'
@@ -143,6 +150,21 @@ export interface PendingMutation {
   readonly change: SettingsChange
 }
 
+export type SettingsProbe =
+  /** `advance`: started by 下一步, so a success moves the wizard on by itself. */
+  | { readonly seq: number; readonly status: 'running'; readonly advance: boolean }
+  | { readonly seq: number; readonly status: 'done'; readonly result: WireShellProbeEndpointResult }
+
+/** A connection test for the caller to run; its answer comes back as `probe-result`. */
+export interface SettingsProbeRequest {
+  readonly seq: number
+  readonly provider: 'anthropic' | 'openai'
+  readonly baseUrl?: string
+  readonly apiKey?: string
+  /** No key typed while editing: the host tests with the one it has saved. */
+  readonly endpointName?: string
+}
+
 export interface SettingsState {
   readonly open: boolean
   readonly category: SettingsCategory
@@ -152,12 +174,29 @@ export interface SettingsState {
   readonly pending: readonly PendingMutation[]
   /** Mints `PendingMutation.id`, so the reducer stays a pure function. */
   readonly pendingSeq: number
+  /** Mints `SettingsProbe.seq`; a reply whose seq is not the current probe's is stale. */
+  readonly probeSeq: number
+  /** The open endpoint form's connection test. */
+  readonly probe?: SettingsProbe
+  /** First-run setup: once the snapshot shows no endpoint, the wizard opens by itself. */
+  readonly setupWizard?: boolean
   readonly projectRoot?: string
   readonly snapshot?: WireSettingsSnapshot
   readonly projects: ReadonlyArray<{ projectRoot: string; projectName: string }>
   readonly draft?: SettingsDraft
+  /** The user changed something in the open form, so dismissing it asks first. */
+  readonly draftEdited?: boolean
+  /** Esc or the backdrop was pressed on an edited form; the dialog asks before discarding it. */
+  readonly discardArmed?: boolean
+  /**
+   * The pending id of the submitted form's first change. The form stays open
+   * until that batch answers: closed on success, kept with the error on failure.
+   */
+  readonly draftSubmit?: number
   readonly confirmingRemove?: { readonly kind: 'endpoint' | 'model' | 'mcp-server'; readonly name: string }
   readonly error?: string
+  /** The rows the error is about, so the view can draw it under them. */
+  readonly errorRows?: readonly string[]
   /** Renderer-local theme preference; `app.ts` seeds it from `localStorage`. */
   readonly themePref: ThemePreference
   /** The search box. Filters the nav and the selected page; never the wire. */
@@ -178,6 +217,7 @@ export function createSettingsState(): SettingsState {
     busy: false,
     pending: [],
     pendingSeq: 0,
+    probeSeq: 0,
     projects: [],
     themePref: DEFAULT_THEME_PREFERENCE,
     query: '',
@@ -344,7 +384,11 @@ export interface SettingsFormField {
   readonly value: string
   readonly placeholder?: string
   readonly mono?: boolean
+  /** Typed into a password field: an API key is not read back over a shoulder. */
+  readonly secret?: boolean
   readonly choices?: ReadonlyArray<{ value: string; label: string }>
+  /** An on/off field, drawn as a switch; `value` is `'on'` or `''`. */
+  readonly toggle?: boolean
   /** A second line under the label, for the caveat a switch's copy needs. */
   readonly note?: string
   /**
@@ -371,13 +415,9 @@ export interface SettingsFormMultiField {
 }
 
 /**
- * Where a form or a confirmation is drawn.
- *
- * Both used to be stacked at the top of the column, above every card. That put
- * 「新增模型」's form off-screen for anyone who had scrolled down to the button
- * that opened it — the screen answered a click somewhere the user was not
- * looking. An anchor names the card that owns it, and a row when there is one:
- * an edit belongs directly under the thing being edited.
+ * What a form or a confirmation is about: the card that owns it, and a row
+ * when there is one. A confirmation is drawn there; a form is a dialog, and
+ * its anchor is the identity its kept nodes are keyed by.
  */
 export interface SettingsAnchor {
   readonly cardId: string
@@ -391,6 +431,20 @@ export type SettingsForm =
       readonly fields: readonly SettingsFormField[]
       readonly submitLabel: string
       readonly anchor: SettingsAnchor
+      /** An endpoint being edited: the footer offers 测试连接 and this is its outcome. */
+      readonly probe?: SettingsProbeView
+    }
+  | {
+      readonly kind: 'endpoint-wizard'
+      readonly title: string
+      /** The connect page's fields; empty on the other two. */
+      readonly fields: readonly SettingsFormField[]
+      readonly submitLabel: string
+      readonly anchor: SettingsAnchor
+      readonly step: 'preset' | 'connect' | 'models'
+      readonly presets: readonly SettingsPresetChoice[]
+      readonly probe: SettingsProbeView
+      readonly picker?: SettingsModelPicker
     }
   | {
       readonly kind: 'mcp-server'
@@ -401,6 +455,39 @@ export type SettingsForm =
       readonly draft: Extract<SettingsDraft, { kind: 'mcp-server' }>
     }
 
+export interface SettingsProbeView {
+  readonly status: 'idle' | 'running' | 'ok' | 'failed'
+  readonly message?: string
+  /** The wizard's way past a failed test: some services list no models. */
+  readonly skippable?: boolean
+}
+
+export interface SettingsPresetChoice {
+  readonly id: string
+  readonly label: string
+  readonly note: string
+  readonly selected: boolean
+}
+
+export interface SettingsModelPicker {
+  /** The filter box's text; absent while the list is short enough to scan. */
+  readonly filter?: string
+  readonly rows: ReadonlyArray<{ readonly id: string; readonly meta?: string; readonly picked: boolean }>
+  readonly summary?: string
+  /** In place of rows: nothing was listed, or nothing matches the filter. */
+  readonly empty?: string
+  readonly manual: string
+  readonly manualPlaceholder: string
+}
+
+/** The open form's dialog state, beside what `draftForm` builds. */
+export interface SettingsFormStatus {
+  /** Esc or the backdrop hit an edited form; the footer asks before discarding. */
+  readonly confirmDiscard: boolean
+  /** Sent and unanswered: the dialog waits for the reply before closing. */
+  readonly submitting: boolean
+}
+
 export interface SettingsViewModel {
   readonly open: boolean
   readonly navGroups: readonly SettingsNavGroup[]
@@ -409,8 +496,10 @@ export interface SettingsViewModel {
   /** The subtitle's hover text: the file path it stands for. */
   readonly subtitleHint?: string
   readonly cards: readonly SettingsCard[]
-  readonly form?: SettingsForm
+  readonly form?: SettingsForm & SettingsFormStatus
   readonly error?: string
+  /** The rows the error is about; absent or off-page means it has no row to sit under. */
+  readonly errorRows?: readonly string[]
   readonly busy: boolean
   readonly projectChoices: ReadonlyArray<{ value: string; label: string }>
   readonly projectValue: string
@@ -869,6 +958,7 @@ export function settingsView(state: SettingsState): SettingsViewModel {
     projectValue: state.projectRoot ?? '',
     ...(state.openMenu !== undefined ? { openMenu: state.openMenu } : {}),
     ...(state.error !== undefined ? { error: state.error } : {}),
+    ...(state.errorRows !== undefined ? { errorRows: state.errorRows } : {}),
     ...(state.confirmingRemove && state.snapshot
       ? {
           confirming: {
@@ -936,7 +1026,15 @@ export function settingsView(state: SettingsState): SettingsViewModel {
       ? { subtitle: SAVED_GLOBAL, subtitleHint: projected.saveTarget }
       : {}),
     ...filterCards(cards, state.query),
-    ...(state.draft ? { form: draftForm(state.draft, projected, state.openMenu) } : {}),
+    ...(state.draft
+      ? {
+          form: {
+            ...draftForm(state.draft, projected, state.openMenu, state.probe),
+            confirmDiscard: state.discardArmed === true,
+            submitting: state.draftSubmit !== undefined,
+          },
+        }
+      : {}),
   }
 }
 
@@ -1104,7 +1202,7 @@ function endpointsCard(snapshot: WireSettingsSnapshot): SettingsCard {
 }
 
 function endpointDetail(endpoint: WireEndpointInfo): string {
-  const parts = [endpoint.provider]
+  const parts = [providerLabel(endpoint.provider)]
   if (endpoint.baseUrl) parts.push(endpoint.baseUrl)
   parts.push(endpoint.apiKeyMasked ? `key ${endpoint.apiKeyMasked}` : '未设置 key')
   return parts.join(' · ')
@@ -1816,6 +1914,7 @@ function draftForm(
   draft: SettingsDraft,
   snapshot: WireSettingsSnapshot,
   openMenu: string | undefined,
+  probe: SettingsProbe | undefined,
 ): SettingsForm {
   if (draft.kind === 'mcp-server') {
     return {
@@ -1837,15 +1936,6 @@ function draftForm(
       anchor: { cardId: `permissions:${draft.behavior}` },
       fields: [
         {
-          id: 'behavior',
-          label: '行为',
-          value: draft.behavior,
-          choices: (['allow', 'ask', 'deny'] as const).map((behavior) => ({
-            value: behavior,
-            label: BEHAVIOR_LABELS[behavior],
-          })),
-        },
-        {
           id: 'entry',
           label: '规则',
           value: draft.entry,
@@ -1855,66 +1945,37 @@ function draftForm(
       ],
     }
   }
+  if (draft.kind === 'endpoint' && draft.isNew) return wizardForm(draft, probe)
   if (draft.kind === 'endpoint') {
     return {
       // `originalName`, never the live `name`: both of these key the form's kept
       // nodes, and a title or an anchor that moves per keystroke rebuilds the
       // form around the field being typed in — which blurs it and, once the
       // anchor matches no row, throws the whole form to the top of the column.
-      title: draft.isNew ? '新增接入点' : `编辑接入点 ${draft.originalName ?? draft.name}`,
+      title: `编辑接入点 ${draft.originalName ?? draft.name}`,
       submitLabel: '保存',
       anchor: {
         cardId: 'endpoints',
         ...(draft.originalName === undefined ? {} : { rowId: `endpoint:${draft.originalName}` }),
       },
+      probe: probeView(probe, false),
       fields: [
         { id: 'name', label: '名称', value: draft.name, placeholder: '例如 main' },
         {
           id: 'provider',
-          label: '服务商',
+          label: '接口类型',
           value: draft.provider,
-          choices: snapshot.providers.map((provider) => ({ value: provider, label: provider })),
+          choices: snapshot.providers.map((provider) => ({ value: provider, label: providerLabel(provider) })),
         },
-        { id: 'baseUrl', label: 'Base URL', value: draft.baseUrl, mono: true, placeholder: '留空使用默认' },
+        { id: 'baseUrl', label: '地址', value: draft.baseUrl, mono: true, placeholder: '留空使用官方地址' },
         {
           id: 'apiKey',
           label: 'API key',
           value: draft.apiKey,
           mono: true,
-          placeholder: draft.isNew ? '' : '留空表示不修改',
+          secret: true,
+          placeholder: '留空表示不修改',
         },
-        // A new endpoint with no model is a row that cannot be used for anything,
-        // so the first model is offered here rather than in a second trip through
-        // 「新增模型」. Both fields or neither — see `draftToChanges`. The image
-        // switch is here too, not only in the model form, so the declaration is
-        // reachable on the path that creates most models.
-        ...(draft.isNew
-          ? [
-              {
-                id: 'modelKey',
-                label: '模型键名',
-                value: draft.modelKey,
-                placeholder: '可留空；例如 big',
-              },
-              {
-                id: 'modelId',
-                label: '模型 id',
-                value: draft.modelId,
-                mono: true,
-                placeholder: '可留空；例如 claude-opus-5',
-              },
-              {
-                id: 'modelSupportsImageInput',
-                label: '支持图像输入',
-                value: draft.modelSupportsImageInput,
-                choices: [
-                  { value: '', label: '关闭' },
-                  { value: 'on', label: '开启' },
-                ],
-                note: IMAGE_INPUT_NOTE,
-              },
-            ]
-          : []),
       ],
     }
   }
@@ -1933,20 +1994,20 @@ function draftForm(
         label: '接入点',
         value: draft.endpoint,
         choices: [
-          { value: '', label: '（不使用接入点）' },
+          { value: '', label: '不使用接入点' },
           ...snapshot.endpoints.map((endpoint) => ({ value: endpoint.name, label: endpoint.name })),
         ],
       },
       {
         id: 'provider',
-        label: '服务商',
+        label: '接口类型',
         value: draft.provider,
         choices: [
-          { value: '', label: '（跟随接入点）' },
-          ...snapshot.providers.map((provider) => ({ value: provider, label: provider })),
+          { value: '', label: '与接入点相同' },
+          ...snapshot.providers.map((provider) => ({ value: provider, label: providerLabel(provider) })),
         ],
       },
-      { id: 'contextWindow', label: '上下文窗口', value: draft.contextWindow, placeholder: '例如 200000' },
+      { id: 'contextWindow', label: '上下文窗口', value: draft.contextWindow, placeholder: '留空使用默认值', note: '单位 token。常见值：200000、128000、1000000。' },
       {
         id: 'supportedEfforts',
         label: '思考等级',
@@ -1965,21 +2026,16 @@ function draftForm(
       },
       {
         id: 'longContext1m',
-        label: '1M 上下文请求头',
+        label: '1M 上下文',
         value: draft.longContext1m,
-        choices: [
-          { value: '', label: '关闭' },
-          { value: 'on', label: '开启：发送 context-1m beta' },
-        ],
+        toggle: true,
+        note: '开启后请求带上 context-1m beta 请求头。',
       },
       {
         id: 'supportsImageInput',
         label: '支持图像输入',
         value: draft.supportsImageInput,
-        choices: [
-          { value: '', label: '关闭' },
-          { value: 'on', label: '开启' },
-        ],
+        toggle: true,
         note: IMAGE_INPUT_NOTE,
       },
       { id: 'maxOutputTokens', label: '最大输出 token', value: draft.maxOutputTokens, placeholder: '可留空' },
@@ -2083,7 +2139,8 @@ export function draftToChange(
     const change: SettingsChange = { scope: 'provider', kind: 'set-endpoint', name, provider: draft.provider }
     const baseUrl = draft.baseUrl.trim()
     if (baseUrl) change.baseUrl = baseUrl
-    if (draft.keyTouched) change.apiKey = draft.apiKey.trim()
+    const apiKey = typedKey(draft)
+    if (apiKey !== undefined) change.apiKey = apiKey
     return change
   }
 
@@ -2158,36 +2215,244 @@ export function draftToChanges(
       change,
     ]
   }
-  // A new endpoint may carry its first model. `runSettingsChanges` runs the
-  // batch in order and folds each reply, so the `set-model` sees the endpoint.
-  if (draft.kind === 'endpoint' && draft.isNew) {
-    const modelKey = draft.modelKey.trim()
-    const modelId = draft.modelId.trim()
-    if (modelKey === '' && modelId === '') return [change]
-    if (modelKey === '' || modelId === '') {
-      return { error: '模型键名和模型 id 要么都填，要么都留空。' }
-    }
-    if (snapshot.models.some((model) => model.key === modelKey)) {
-      return { error: `已经有一个叫 ${modelKey} 的模型。` }
-    }
-    return [
-      change,
-      {
+  // The wizard's endpoint carries its models. `runSettingsChanges` runs the batch
+  // in order and folds each reply, so every `set-model` sees the endpoint.
+  if (draft.kind === 'endpoint' && draft.step !== undefined) {
+    const picked = draft.picked ?? []
+    // A resumed batch (`originalName` set) may have nothing left but the endpoint itself.
+    if (picked.length === 0 && draft.originalName === undefined) return { error: '至少选择一个模型。' }
+    const name = draft.name.trim()
+    const taken = snapshot.models.map((model) => model.key)
+    const models = picked.map((id): Extract<SettingsChange, { kind: 'set-model' }> => {
+      const info = draft.listed?.find((model) => model.id === id)
+      const key = freeName(id, taken, `${name}/${id}`)
+      taken.push(key)
+      return {
         scope: 'provider',
         kind: 'set-model',
-        key: modelKey,
-        model: modelId,
-        endpoint: draft.name.trim(),
-        ...(draft.modelSupportsImageInput === 'on' ? { supportsImageInput: true } : {}),
-      },
+        key,
+        model: id,
+        endpoint: name,
+        ...(info?.contextWindow ? { contextWindow: info.contextWindow } : {}),
+        ...(info?.maxOutputTokens ? { maxOutputTokens: info.maxOutputTokens } : {}),
+        ...(info?.imageInput ? { supportsImageInput: true } : {}),
+      }
+    })
+    return [
+      change,
+      ...models,
       // Only when there is nothing to start from: a config that already names a
       // default must not have it moved by adding an endpoint.
-      ...(snapshot.defaultModel === undefined
-        ? [{ scope: 'provider', kind: 'set-default-model', key: modelKey } as SettingsChange]
+      ...(snapshot.defaultModel === undefined && models[0]
+        ? [{ scope: 'provider', kind: 'set-default-model', key: models[0].key } as SettingsChange]
         : []),
     ]
   }
   return [change]
+}
+
+const NEW_ENDPOINT_DRAFT: SettingsDraft = {
+  kind: 'endpoint',
+  name: '',
+  isNew: true,
+  provider: '',
+  baseUrl: '',
+  apiKey: '',
+  keyTouched: false,
+  step: 'preset',
+  picked: [],
+}
+
+const PROBED_FIELDS: ReadonlySet<string> = new Set(['provider', 'baseUrl', 'apiKey'])
+
+/**
+ * A wizard batch that failed part-way: the endpoint may already exist, and so
+ * may some of its models. The retry has to edit that endpoint rather than
+ * collide with it, and send only the models still missing.
+ */
+function resumable(draft: SettingsDraft | undefined, snapshot: WireSettingsSnapshot | undefined): { draft?: SettingsDraft } {
+  if (draft?.kind !== 'endpoint' || draft.step === undefined || !snapshot) return {}
+  const name = draft.name.trim()
+  if (!snapshot.endpoints.some((endpoint) => endpoint.name === name)) return {}
+  const made = (id: string): boolean => snapshot.models.some((model) => model.endpoint === name && model.model === id)
+  return { draft: { ...draft, originalName: name, picked: (draft.picked ?? []).filter((id) => !made(id)) } }
+}
+
+/** `base`, or the first of `alternate`, `base-2`, `base-3`… that `taken` lacks. */
+function freeName(base: string, taken: readonly string[], alternate?: string): string {
+  if (!taken.includes(base)) return base
+  if (alternate !== undefined && !taken.includes(alternate)) return alternate
+  for (let n = 2; ; n++) {
+    if (!taken.includes(`${base}-${n}`)) return `${base}-${n}`
+  }
+}
+
+/**
+ * The key an endpoint form sends: what was typed, the stand-in a key-optional
+ * local server is stored with, or nothing — which the host reads as "leave it",
+ * the promise the edit form's 留空表示不修改 makes.
+ */
+function typedKey(draft: Extract<SettingsDraft, { kind: 'endpoint' }>): string | undefined {
+  const typed = draft.keyTouched ? draft.apiKey.trim() : ''
+  if (typed) return typed
+  if (draft.isNew && presetById(draft.preset)?.keyOptional) return PLACEHOLDER_KEY
+  return undefined
+}
+
+function startProbe(
+  state: SettingsState,
+  cleared: SettingsState,
+  advance: boolean,
+): SettingsOutcome {
+  const draft = state.draft
+  if (draft?.kind !== 'endpoint' || state.probe?.status === 'running') return { state }
+  const provider = draft.provider
+  if (provider !== 'anthropic' && provider !== 'openai') {
+    return { state: { ...state, error: '请选择服务商。', openMenu: undefined } }
+  }
+  // 下一步 checks the form before spending a request on it.
+  if (advance && state.snapshot) {
+    const checked = draftToChange(draft, state.snapshot)
+    if ('error' in checked) return { state: { ...state, error: checked.error, openMenu: undefined } }
+  }
+  const seq = state.probeSeq + 1
+  const baseUrl = draft.baseUrl.trim()
+  const apiKey = typedKey(draft)
+  return {
+    state: { ...cleared, probeSeq: seq, probe: { seq, status: 'running', advance } },
+    probe: {
+      seq,
+      provider,
+      ...(baseUrl ? { baseUrl } : {}),
+      ...(apiKey !== undefined
+        ? { apiKey }
+        : !draft.isNew && draft.originalName !== undefined
+          ? { endpointName: draft.originalName }
+          : {}),
+    },
+  }
+}
+
+const PROBE_FAILURES: Record<Exclude<WireShellProbeEndpointResult, { ok: true }>['reason'], string> = {
+  'no-key': '缺少 API key。',
+  'bad-url': '地址格式不对，应以 http:// 或 https:// 开头。',
+  'not-api': '这个地址返回的是网页，不是接口。检查地址是否填成了官网。',
+  unreachable: '连不上这个地址。检查地址是否写对，以及网络或代理是否正常。',
+  timeout: '连接超时：15 秒内没有响应。',
+  tls: '证书校验失败：这个地址的 HTTPS 证书不受信任。',
+  auth: 'API key 无效。',
+  forbidden: '这个 API key 没有访问权限。',
+  'not-found': '地址能连上，但没有找到模型列表接口。可能地址路径不对，也可能这个服务不提供模型列表。',
+  'rate-limit': '请求太频繁，或账户额度不足。',
+  server: '服务商那边出错了，稍后再试。',
+  other: '连接失败。',
+}
+
+function probeView(
+  probe: SettingsProbe | undefined,
+  wizard: boolean,
+  preset?: ProviderPreset,
+): SettingsProbeView {
+  if (!probe) return { status: 'idle' }
+  if (probe.status === 'running') return { status: 'running', message: '正在连接…' }
+  const { result } = probe
+  if (result.ok) {
+    const found = result.models.length > 0 ? `找到 ${result.models.length} 个模型` : '这个服务没有列出模型'
+    const moved = result.baseUrl ? `，地址已改为 ${result.baseUrl}` : ''
+    const unverified = preset?.publicModels ? '。这个服务的模型列表不校验 key，key 要到第一次对话时才能确认' : ''
+    return { status: 'ok', message: `已连接 · ${result.latencyMs} ms · ${found}${moved}${unverified}` }
+  }
+  const status = result.status !== undefined ? `（${result.status}）` : ''
+  const detail = result.reason === 'other' && result.detail ? ` ${result.detail}` : ''
+  return { status: 'failed', message: `${PROBE_FAILURES[result.reason]}${status}${detail}`, skippable: wizard }
+}
+
+function wizardForm(
+  draft: Extract<SettingsDraft, { kind: 'endpoint' }>,
+  probe: SettingsProbe | undefined,
+): SettingsForm {
+  const preset = presetById(draft.preset)
+  const step = draft.step ?? 'preset'
+  const base = {
+    kind: 'endpoint-wizard' as const,
+    anchor: { cardId: 'endpoints' },
+    step,
+    presets: PROVIDER_PRESETS.map((choice) => ({
+      id: choice.id,
+      label: choice.label,
+      note: choice.note,
+      selected: choice.id === draft.preset,
+    })),
+    probe: probeView(probe, true, preset),
+  }
+  if (step === 'preset') return { ...base, title: '添加服务商', fields: [], submitLabel: '下一步' }
+  if (step === 'connect') {
+    return {
+      ...base,
+      title: `连接 ${preset?.service ?? preset?.label ?? '服务'}`,
+      submitLabel: '下一步',
+      fields: [
+        {
+          id: 'baseUrl',
+          label: '地址',
+          value: draft.baseUrl,
+          mono: true,
+          placeholder: preset?.defaultUrl ?? 'https://',
+          ...(preset?.defaultUrl ? { note: '留空使用官方地址。' } : {}),
+        },
+        {
+          id: 'apiKey',
+          label: 'API key',
+          value: draft.apiKey,
+          mono: true,
+          secret: true,
+          placeholder: preset?.keyOptional ? '本机服务可不填' : '粘贴 API key',
+        },
+        { id: 'name', label: '名称', value: draft.name, placeholder: preset?.id ?? '例如 main', note: '模型设置里用这个名字指代它。' },
+      ],
+    }
+  }
+  const listed = draft.listed ?? []
+  const picked = draft.picked ?? []
+  const typed = picked.filter((id) => !listed.some((model) => model.id === id)).map((id) => ({ id }))
+  const all: readonly ProbedModel[] = [...typed, ...listed]
+  const query = (draft.modelFilter ?? '').trim().toLowerCase()
+  const shown = query
+    ? all.filter((model) => model.id.toLowerCase().includes(query) || model.name?.toLowerCase().includes(query))
+    : all
+  return {
+    ...base,
+    title: '选择模型',
+    submitLabel: '完成',
+    fields: [],
+    picker: {
+      ...(listed.length > 8 ? { filter: draft.modelFilter ?? '' } : {}),
+      rows: shown.map((model) => ({
+        id: model.id,
+        ...(modelMeta(model) ? { meta: modelMeta(model) } : {}),
+        picked: picked.includes(model.id),
+      })),
+      ...(picked.length > 0 || listed.length > 0
+        ? { summary: listed.length > 0 ? `已选 ${picked.length} 个，共 ${listed.length} 个` : `已选 ${picked.length} 个` }
+        : {}),
+      ...(all.length === 0
+        ? { empty: '没有拿到模型列表。在下面填写模型 id 添加。' }
+        : shown.length === 0
+          ? { empty: '没有匹配的模型。' }
+          : {}),
+      manual: draft.manualModel ?? '',
+      manualPlaceholder: preset?.exampleModel ? `模型 id，例如 ${preset.exampleModel}` : '模型 id',
+    },
+  }
+}
+
+function modelMeta(model: ProbedModel): string | undefined {
+  const parts = [
+    model.name && model.name !== model.id ? model.name : undefined,
+    model.contextWindow ? `${Math.round(model.contextWindow / 1000)}k 上下文` : undefined,
+    model.imageInput ? '支持图片' : undefined,
+  ].filter((part) => part !== undefined)
+  return parts.length > 0 ? parts.join(' · ') : undefined
 }
 
 // --- keys --------------------------------------------------------------------
@@ -2226,7 +2491,7 @@ export function settingsKeyToIntent(chord: SettingsChord, state: SettingsState):
   if (chord.ctrlKey || chord.metaKey) return { kind: 'none' }
   if (chord.key === 'Escape') {
     if (state.openMenu !== undefined) return { kind: 'close-menu' }
-    if (state.draft) return { kind: 'cancel-draft' }
+    if (state.draft) return state.discardArmed ? { kind: 'keep-editing' } : { kind: 'cancel-draft' }
     if (state.confirmingRemove) return { kind: 'cancel-remove' }
     if (state.query !== '') return { kind: 'clear-search' }
     return { kind: 'close' }
@@ -2239,11 +2504,20 @@ export function settingsKeyToIntent(chord: SettingsChord, state: SettingsState):
 
 export type SettingsIntent =
   /** `category` is the page to land on; absent means "wherever we left off". */
-  | { kind: 'open'; category?: SettingsCategory }
+  | { kind: 'open'; category?: SettingsCategory; setup?: boolean }
   | { kind: 'close' }
   | { kind: 'select-category'; category: SettingsCategory }
   | { kind: 'select-project'; projectRoot: string }
   | { kind: 'new-endpoint' }
+  | { kind: 'pick-preset'; preset: string }
+  | { kind: 'wizard-back' }
+  /** Runs the connection test for the open endpoint form. */
+  | { kind: 'test-endpoint' }
+  /** Past a failed test, to the model page with whatever could be listed. */
+  | { kind: 'skip-test' }
+  | { kind: 'probe-result'; seq: number; result: WireShellProbeEndpointResult }
+  | { kind: 'toggle-picked-model'; id: string }
+  | { kind: 'add-manual-model' }
   | { kind: 'edit-endpoint'; name: string }
   | { kind: 'new-model' }
   | { kind: 'edit-model'; key: string }
@@ -2263,7 +2537,10 @@ export type SettingsIntent =
   | { kind: 'mcp-remove-env-passthrough'; index: number }
   | { kind: 'draft-field'; field: string; value: string }
   | { kind: 'submit-draft' }
+  /** Closes the form, or asks first when it has been edited. */
   | { kind: 'cancel-draft' }
+  | { kind: 'discard-draft' }
+  | { kind: 'keep-editing' }
   | { kind: 'request-remove'; target: { kind: 'endpoint' | 'model' | 'mcp-server'; name: string } }
   | { kind: 'confirm-remove' }
   | { kind: 'cancel-remove' }
@@ -2314,6 +2591,7 @@ export interface SettingsOutcome {
   readonly pending?: readonly PendingMutation[]
   /** The caller should (re)load the snapshot for `state.projectRoot`. */
   readonly load?: boolean
+  readonly probe?: SettingsProbeRequest
   /**
    * A renderer-local theme write. Never a `SettingsChange`: the theme has no host
    * config. `app.ts` persists it to `localStorage` and applies it to the document.
@@ -2353,8 +2631,24 @@ export function applySettingsIntent(state: SettingsState, intent: SettingsIntent
   }
 }
 
+/** Every field that belongs to the open form, cleared together when it closes. */
+const NO_DRAFT = {
+  draft: undefined,
+  draftEdited: undefined,
+  discardArmed: undefined,
+  draftSubmit: undefined,
+  probe: undefined,
+} as const
+
 function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): SettingsOutcome {
-  const cleared = { ...state, error: undefined, confirmingRemove: undefined, openMenu: undefined }
+  const cleared = {
+    ...state,
+    error: undefined,
+    errorRows: undefined,
+    confirmingRemove: undefined,
+    openMenu: undefined,
+    discardArmed: undefined,
+  }
   switch (intent.kind) {
     case 'none':
       return { state }
@@ -2366,14 +2660,17 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       // pull that is already in flight for the same config.
       if (state.open) {
         if (category === state.category) return { state }
-        return { state: { ...cleared, category, draft: undefined } }
+        return { state: { ...cleared, category, ...NO_DRAFT } }
       }
-      return { state: { ...cleared, open: true, category, draft: undefined, query: '' }, load: true }
+      return {
+        state: { ...cleared, open: true, category, ...NO_DRAFT, query: '', setupWizard: intent.setup },
+        load: true,
+      }
     }
     case 'close':
-      return { state: { ...cleared, open: false, draft: undefined } }
+      return { state: { ...cleared, open: false, ...NO_DRAFT } }
     case 'select-category':
-      return { state: { ...cleared, category: intent.category, draft: undefined } }
+      return { state: { ...cleared, category: intent.category, ...NO_DRAFT } }
     // Typing is not a transition that invalidates what is on screen: it must not
     // dismiss an armed delete or a failure message, so neither uses `cleared`.
     // The dropdown does close — the row holding it can be filtered away.
@@ -2411,28 +2708,96 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
     case 'select-project':
       if (intent.projectRoot === state.projectRoot) return { state }
       return {
-        state: { ...cleared, projectRoot: intent.projectRoot, draft: undefined, snapshot: undefined },
+        state: { ...cleared, projectRoot: intent.projectRoot, ...NO_DRAFT, snapshot: undefined },
         load: true,
       }
 
     case 'new-endpoint':
+      return { state: { ...cleared, ...NO_DRAFT, draft: NEW_ENDPOINT_DRAFT } }
+    case 'pick-preset': {
+      const draft = state.draft
+      const preset = presetById(intent.preset)
+      if (draft?.kind !== 'endpoint' || draft.step === undefined || !preset) return { state }
+      const same = draft.preset === preset.id
       return {
         state: {
           ...cleared,
+          ...(same ? {} : { probe: undefined }),
           draft: {
-            kind: 'endpoint',
-            name: '',
-            isNew: true,
-            provider: state.snapshot?.providers[0] ?? '',
-            baseUrl: '',
-            apiKey: '',
-            keyTouched: false,
-            modelKey: '',
-            modelId: '',
-            modelSupportsImageInput: '',
+            ...draft,
+            ...(same
+              ? {}
+              : { baseUrl: preset.baseUrl ?? '', apiKey: '', keyTouched: false, listed: undefined, picked: [] }),
+            step: 'connect',
+            preset: preset.id,
+            provider: preset.provider,
+            name: draft.nameTouched ? draft.name : freeName(preset.id, state.snapshot?.endpoints.map((e) => e.name) ?? []),
           },
         },
       }
+    }
+    case 'wizard-back': {
+      const draft = state.draft
+      if (draft?.kind !== 'endpoint' || draft.step === undefined || draft.step === 'preset') return { state }
+      return { state: { ...cleared, draft: { ...draft, step: draft.step === 'models' ? 'connect' : 'preset' } } }
+    }
+    case 'test-endpoint':
+      return startProbe(state, cleared, false)
+    case 'skip-test': {
+      const draft = state.draft
+      if (draft?.kind !== 'endpoint' || draft.step !== 'connect') return { state }
+      return { state: { ...cleared, draft: { ...draft, step: 'models' } } }
+    }
+    case 'probe-result': {
+      const draft = state.draft
+      if (state.probe?.status !== 'running' || state.probe.seq !== intent.seq || draft?.kind !== 'endpoint') {
+        return { state }
+      }
+      const { result } = intent
+      const advance = state.probe.advance && result.ok && draft.step === 'connect'
+      return {
+        state: {
+          ...state,
+          probe: { seq: intent.seq, status: 'done', result },
+          draft: result.ok
+            ? {
+                ...draft,
+                ...(result.baseUrl ? { baseUrl: result.baseUrl } : {}),
+                listed: result.models,
+                ...(advance ? { step: 'models' as const } : {}),
+              }
+            : draft,
+        },
+      }
+    }
+    case 'toggle-picked-model': {
+      const draft = state.draft
+      if (draft?.kind !== 'endpoint') return { state }
+      const picked = draft.picked ?? []
+      return {
+        state: {
+          ...cleared,
+          draftEdited: true,
+          draft: {
+            ...draft,
+            picked: picked.includes(intent.id) ? picked.filter((id) => id !== intent.id) : [...picked, intent.id],
+          },
+        },
+      }
+    }
+    case 'add-manual-model': {
+      const draft = state.draft
+      const id = draft?.kind === 'endpoint' ? draft.manualModel?.trim() : undefined
+      if (draft?.kind !== 'endpoint' || !id) return { state }
+      const picked = draft.picked ?? []
+      return {
+        state: {
+          ...cleared,
+          draftEdited: true,
+          draft: { ...draft, manualModel: '', picked: picked.includes(id) ? picked : [id, ...picked] },
+        },
+      }
+    }
     case 'edit-endpoint': {
       const endpoint = state.snapshot?.endpoints.find((candidate) => candidate.name === intent.name)
       if (!endpoint) return { state }
@@ -2451,11 +2816,8 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
             // and `keyTouched` is what actually decides whether it is sent.
             apiKey: '',
             keyTouched: false,
-            // Not offered when editing: the form draws them only for `isNew`.
-            modelKey: '',
-            modelId: '',
-            modelSupportsImageInput: '',
           },
+          probe: undefined,
         },
       }
     }
@@ -2551,13 +2913,14 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       // Kept in ladder order rather than click order, so the summary and the
       // saved list read the way the picker does.
       const supportedEfforts = VALID_EFFORT_LEVELS.filter((level) => picked.has(level))
-      return { state: { ...state, draft: { ...state.draft, supportedEfforts } } }
+      return { state: { ...state, draft: { ...state.draft, supportedEfforts }, draftEdited: true } }
     }
     case 'mcp-add-arg': {
       if (state.draft?.kind !== 'mcp-server') return { state }
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, args: [...state.draft.args, ''] },
         },
       }
@@ -2571,6 +2934,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, args },
         },
       }
@@ -2581,6 +2945,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, args },
         },
       }
@@ -2590,6 +2955,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, env: [...state.draft.env, { key: '', value: '' }] },
         },
       }
@@ -2607,6 +2973,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, env },
         },
       }
@@ -2617,6 +2984,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, env },
         },
       }
@@ -2626,6 +2994,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, headers: [...state.draft.headers, { key: '', value: '' }] },
         },
       }
@@ -2643,6 +3012,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, headers },
         },
       }
@@ -2653,6 +3023,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, headers },
         },
       }
@@ -2662,6 +3033,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, envPassthrough: [...state.draft.envPassthrough, ''] },
         },
       }
@@ -2675,6 +3047,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, envPassthrough },
         },
       }
@@ -2685,21 +3058,53 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...state,
+          draftEdited: true,
           draft: { ...state.draft, envPassthrough },
         },
       }
     }
     case 'draft-field': {
       if (!state.draft) return { state }
-      return { state: { ...cleared, draft: withField(state.draft, intent.field, intent.value) } }
+      // A field also commits its unchanged value on blur and Enter; that is not an edit.
+      if ((state.draft as Record<string, unknown>)[intent.field] === intent.value) return { state }
+      const draft = withField(state.draft, intent.field, intent.value)
+      // A test, and the models it listed, answer for the address and key it was run with.
+      const stale = draft.kind === 'endpoint' && PROBED_FIELDS.has(intent.field)
+      return {
+        state: {
+          ...cleared,
+          draft: stale && draft.listed
+            ? { ...draft, listed: undefined, picked: draft.picked?.filter((id) => !draft.listed!.some((model) => model.id === id)) }
+            : draft,
+          draftEdited: true,
+          ...(stale ? { probe: undefined } : {}),
+        },
+      }
     }
     case 'cancel-draft':
-      return { state: { ...cleared, draft: undefined } }
+      if (state.draftEdited && !state.discardArmed) {
+        return { state: { ...state, discardArmed: true, openMenu: undefined } }
+      }
+      return { state: { ...cleared, ...NO_DRAFT } }
+    case 'discard-draft':
+      return { state: { ...cleared, ...NO_DRAFT } }
+    case 'keep-editing':
+      return { state: { ...state, discardArmed: undefined } }
     case 'submit-draft': {
-      if (!state.draft || !state.snapshot) return { state }
+      if (!state.draft || !state.snapshot || state.draftSubmit !== undefined) return { state }
+      // Enter on the wizard's earlier pages means 下一步, which tests first.
+      if (state.draft.kind === 'endpoint' && state.draft.step === 'preset') return { state }
+      if (state.draft.kind === 'endpoint' && state.draft.step === 'connect') {
+        if (state.probe?.status === 'done' && state.probe.result.ok) {
+          return { state: { ...cleared, draft: { ...state.draft, step: 'models' } } }
+        }
+        return startProbe(state, cleared, true)
+      }
       const changes = draftToChanges(state.draft, state.snapshot)
       if ('error' in changes) return { state: { ...state, error: changes.error, openMenu: undefined } }
-      return { state: { ...cleared, draft: undefined, busy: true }, changes }
+      // The draft stays: a refused change must not eat what the user typed.
+      // `applySettingsIntent` mints this batch's ids from `pendingSeq`.
+      return { state: { ...cleared, busy: true, draftSubmit: state.pendingSeq }, changes }
     }
 
     case 'request-remove':
@@ -2804,7 +3209,9 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
     case 'set-coordination-effort': {
       const value = intent.value as EffortLevel | typeof INHERIT
       if (value !== INHERIT && !VALID_EFFORT_LEVELS.includes(value)) {
-        return { state: { ...state, error: '推理强度无效。', openMenu: undefined } }
+        return {
+          state: { ...state, error: '推理强度无效。', errorRows: [`agent:coordination-${intent.role}-effort`], openMenu: undefined },
+        }
       }
       return {
         state: { ...cleared, busy: true },
@@ -2816,7 +3223,14 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       const text = intent.value.trim()
       const parsed = text === '' ? NaN : Number(text)
       if (!Number.isSafeInteger(parsed) || parsed < 0) {
-        return { state: { ...state, error: `${label}必须是不小于 0 的整数。`, openMenu: undefined } }
+        return {
+          state: {
+            ...state,
+            error: `${label}必须是不小于 0 的整数。`,
+            errorRows: [`agent:coordination-${intent.field}`],
+            openMenu: undefined,
+          },
+        }
       }
       return {
         state: { ...cleared, busy: true },
@@ -2825,7 +3239,9 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
     }
     case 'set-context-value': {
       const parsed = parseContextValue(intent.field, intent.value)
-      if (typeof parsed !== 'number') return { state: { ...state, error: parsed.error, openMenu: undefined } }
+      if (typeof parsed !== 'number') {
+        return { state: { ...state, error: parsed.error, errorRows: [`context:${intent.field}`], openMenu: undefined } }
+      }
       return {
         state: { ...cleared, busy: true },
         changes: [
@@ -2886,10 +3302,6 @@ function withField(draft: SettingsDraft, field: string, value: string): Settings
   }
   if (draft.kind === 'permission-rule') {
     switch (field) {
-      case 'behavior':
-        return value === 'allow' || value === 'ask' || value === 'deny'
-          ? { ...draft, behavior: value }
-          : draft
       case 'entry':
         return { ...draft, entry: value }
       default:
@@ -2899,7 +3311,7 @@ function withField(draft: SettingsDraft, field: string, value: string): Settings
   if (draft.kind === 'endpoint') {
     switch (field) {
       case 'name':
-        return { ...draft, name: value }
+        return { ...draft, name: value, nameTouched: true }
       case 'provider':
         return { ...draft, provider: value }
       case 'baseUrl':
@@ -2907,12 +3319,10 @@ function withField(draft: SettingsDraft, field: string, value: string): Settings
       case 'apiKey':
         // Typing here is the *only* thing that arms the key for sending.
         return { ...draft, apiKey: value, keyTouched: true }
-      case 'modelKey':
-        return { ...draft, modelKey: value }
-      case 'modelId':
-        return { ...draft, modelId: value }
-      case 'modelSupportsImageInput':
-        return { ...draft, modelSupportsImageInput: value }
+      case 'modelFilter':
+        return { ...draft, modelFilter: value }
+      case 'manualModel':
+        return { ...draft, manualModel: value }
       default:
         return draft
     }
@@ -2956,6 +3366,7 @@ export async function loadSettings(
     const result = await client.getSettings(state.projectRoot)
     const latest = current()
     if (latest.projectRoot !== state.projectRoot) return latest
+    const setup = latest.setupWizard === true && result.settings.endpoints.length === 0 && !latest.draft
     return {
       ...latest,
       busy: false,
@@ -2963,6 +3374,8 @@ export async function loadSettings(
       snapshot: result.settings,
       projects: result.projects,
       projectRoot: result.settings.projectRoot,
+      setupWizard: undefined,
+      ...(setup ? { draft: NEW_ENDPOINT_DRAFT } : {}),
     }
   } catch (error) {
     const latest = current()
@@ -2999,23 +3412,46 @@ export async function runSettingsChanges(
     return { ...retire(state), busy: false, error: '还没有选定项目。' }
   }
   let next = state
-  const finish = (error?: string): SettingsState => {
+  const finish = (failure?: { error: string; change: SettingsChange }): SettingsState => {
     const latest = current()
     if (latest.projectRoot !== projectRoot) return latest
     // Only the snapshot and this batch's pending entries belong to the reply.
     // Navigation, menus, focus intent and closing may have changed meanwhile.
     const retired = retire(latest)
-    return { ...retired, snapshot: next.snapshot, busy: retired.pending.length > 0, error }
+    // The open form is this batch's only if it is still the one that sent it.
+    const submitted = latest.draftSubmit !== undefined && ids.has(latest.draftSubmit)
+    return {
+      ...retired,
+      snapshot: next.snapshot,
+      busy: retired.pending.length > 0,
+      error: failure?.error,
+      errorRows: failure ? errorRowsOf(failure.change) : undefined,
+      ...(submitted ? (failure ? { draftSubmit: undefined, ...resumable(latest.draft, next.snapshot) } : NO_DRAFT) : {}),
+    }
   }
   for (const { change } of batch) {
     try {
       const result = await client.changeSettings(projectRoot, change)
       next = { ...next, snapshot: result.settings, error: undefined }
     } catch (error) {
-      return finish(messageOf(error))
+      return finish({ error: messageOf(error), change })
     }
   }
   return finish()
+}
+
+/** The rows a failed change is about: the ones it dimmed, or the row a removal took away. */
+function errorRowsOf(change: SettingsChange): string[] {
+  switch (change.kind) {
+    case 'remove-endpoint':
+      return [`endpoint:${change.name}`]
+    case 'remove-model':
+      return [`model:${change.key}`]
+    case 'remove-mcp-server':
+      return [`mcp:${change.name}`]
+    default:
+      return [...pendingRowIds([{ id: 0, change }])]
+  }
 }
 
 function messageOf(error: unknown): string {

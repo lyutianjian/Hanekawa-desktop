@@ -1,7 +1,8 @@
 import { el, reconcile, replace, show } from './dom.js'
 import { button, multiSelectField, pillSelect, selectField, textField, toggleField, updateToggleField, type ToggleOptions } from './controls.js'
+import { icon, type IconName } from './icons.js'
 import { onPressOutside } from './dismiss.js'
-import { createPresence, finishPresenceWithin } from './presence.js'
+import { createModalPresence, createPresence, finishPresenceWithin } from './presence.js'
 import type {
   SettingsAnchor,
   SettingsButton,
@@ -9,8 +10,11 @@ import type {
   SettingsChord,
   SettingsEditor,
   SettingsForm,
+  SettingsFormField,
+  SettingsFormStatus,
   SettingsIntent,
   SettingsNavItem,
+  SettingsProbeView,
   SettingsRow,
   SettingsViewModel,
 } from '../model/settings.js'
@@ -94,8 +98,9 @@ export function createSettingsView(
   // repaints the whole screen for every intent it is handed, and this listener
   // sees every press in the window, including the ones while settings is shut.
   onPressOutside(['.settings-menu-shell'], () => {
-    if (lastOpenMenu === undefined) return
+    if (lastOpenMenu === undefined) return false
     onIntent({ kind: 'close-menu' })
+    return true
   })
 
   // Focus leaving the screen closes an open dropdown. `relatedTarget === null` is
@@ -133,6 +138,25 @@ export function createSettingsView(
   container.appendChild(nav)
   container.appendChild(body)
 
+  // The form dialog, over the whole screen. While it is up the nav and the page
+  // behind it are `inert`, so neither the pointer nor Tab can leave the form.
+  const dialogLayer = el('div', 'settings-dialog-layer')
+  const dialog = el('div', 'settings-dialog')
+  dialog.setAttribute('role', 'dialog')
+  dialog.setAttribute('aria-modal', 'true')
+  // Where focus goes when a paint disables or removes the focused control: still
+  // inside the dialog, so Tab stays trapped and Esc still reaches the form.
+  dialog.tabIndex = -1
+  dialogLayer.appendChild(dialog)
+  container.appendChild(dialogLayer)
+  const dialogPresence = createModalPresence(dialogLayer, dialog, () => replace(dialog))
+  // The backdrop, and only the backdrop: a press that starts inside the dialog
+  // and bubbles here is not a dismissal.
+  dialogLayer.addEventListener('pointerdown', (event) => {
+    if (event.target === dialogLayer) onIntent({ kind: 'cancel-draft' })
+  })
+  dialog.addEventListener('keydown', (event) => trapTab(event, dialog))
+
   // Programmatically focusable but not a tab stop, exactly like the sidebar's
   // list. Without focus *inside* the screen the `keydown` above never fires, and
   // this screen is reached by `Ctrl+,` from a composer that the stylesheet then
@@ -152,6 +176,15 @@ export function createSettingsView(
   // Which pill is open, as of the *previous* paint, so a menu that just opened can
   // be told from one that has been open all along and may hold the user's arrow key.
   let lastOpenMenu: string | undefined
+  let lastError: string | undefined
+  let lastTitle: string | undefined
+  // The open form's identity and discard prompt as of the previous paint, and
+  // the name of the control that opened it — the node itself may be rebuilt
+  // while the dialog is up, so focus goes back to whatever answers to that name.
+  let lastFormKey: string | undefined
+  let lastStep: string | undefined
+  let lastConfirmDiscard = false
+  let opener: string | undefined
   // The node to focus once this paint is in the page. A list rather than a
   // variable: it is written from a callback the paint hands down, and narrowing
   // cannot see that — a `let` reset to `undefined` reads back as `never`.
@@ -184,7 +217,9 @@ export function createSettingsView(
       ariaLabel: string
       placeholder?: string
       mono?: boolean
+      secret?: boolean
       live?: boolean
+      onEnter?: () => void
       intentOnCommit: (value: string) => SettingsIntent
     },
   ): HTMLInputElement {
@@ -205,6 +240,7 @@ export function createSettingsView(
       ...(options.placeholder !== undefined ? { placeholder: options.placeholder } : {}),
       ...(options.mono ? { mono: true } : {}),
       ...(options.live ? { live: true } : {}),
+      ...(options.onEnter ? { onEnter: options.onEnter } : {}),
       // Through the map, not the closure: the node outlives this paint, and a
       // captured `intentOnCommit` would keep answering with the old row's value.
       onCommit: (value) => {
@@ -212,8 +248,204 @@ export function createSettingsView(
         if (commit) onIntent(commit(value))
       },
     })
+    if (options.secret) made.type = 'password'
     kept.set(key, made)
     return made
+  }
+
+  /**
+   * A kept native select. Keyed by its choices too, so a list that changes gets
+   * a new node, and one that does not keeps its focus across the paint its own
+   * `change` causes.
+   */
+  function keptSelect(
+    key: string,
+    options: { value: string; ariaLabel: string; choices: ReadonlyArray<{ value: string; label: string }>; field: string },
+  ): HTMLSelectElement {
+    const id = `${key}:${options.choices.map((choice) => choice.value).join('|')}`
+    claimed.add(id)
+    const existing = kept.get(id) as HTMLSelectElement | undefined
+    if (existing) {
+      if (existing.value !== options.value) existing.value = options.value
+      return existing
+    }
+    const made = selectField({
+      value: options.value,
+      ariaLabel: options.ariaLabel,
+      choices: options.choices,
+      onChange: (value) => onIntent({ kind: 'draft-field', field: options.field, value }),
+    })
+    kept.set(id, made)
+    return made
+  }
+
+  /** A kept button whose intent never changes; its label and state follow the paint. */
+  function keptButton(
+    key: string,
+    className: string,
+    label: string,
+    intent: SettingsIntent,
+    options: { title?: string; enabled?: boolean; icon?: IconName } = {},
+  ): HTMLButtonElement {
+    claimed.add(key)
+    let made = kept.get(key) as HTMLButtonElement | undefined
+    if (!made) {
+      made = button(className, label, options.title ?? label, () => onIntent(intent), options.icon ? { icon: options.icon } : {})
+      kept.set(key, made)
+    }
+    made.className = className
+    const text = made.querySelector('.btn-label')
+    if (text && text.textContent !== label) text.textContent = label
+    made.title = options.title ?? label
+    made.setAttribute('aria-label', made.title)
+    made.disabled = options.enabled === false
+    return made
+  }
+
+  /** The dialog's three parts around whichever field list the form has. */
+  function dialogNodes(
+    form: SettingsForm & SettingsFormStatus,
+    error: string | undefined,
+    menus: FormMenuContext,
+  ): Array<Node | null> {
+    const key = formKeyOf(form)
+    const submit = (): void => onIntent({ kind: 'submit-draft' })
+    const head = node(`${key}:head`, 'div', 'settings-dialog-head')
+    reconcile(head, [
+      el('div', 'settings-dialog-title', form.title),
+      form.kind === 'mcp-server' ? docLinkNode(node(`${key}:doc`, 'a', 'mcp-form-doc-link')) : null,
+      keptButton(`${key}:close`, 'settings-dialog-close', '', { kind: 'cancel-draft' }, { title: '关闭（Esc）', icon: 'close' }),
+    ])
+    const fields = (): Node[] => fieldNodes(form, key, { node, keptInput, keptToggle, keptSelect, onIntent, submit, menus })
+    const probe = form.kind === 'mcp-server' ? undefined : form.probe
+    const content = node(`${key}:body`, 'div', 'settings-dialog-body')
+    reconcile(
+      content,
+      form.kind === 'mcp-server'
+        ? mcpFieldNodes(form, node, keptInput, onIntent, submit)
+        : form.kind === 'endpoint-wizard'
+          ? wizardNodes(form, key, fields)
+          : [...fields(), probe ? probeNode(probe, key, false) : null],
+    )
+    const running = probe?.status === 'running'
+    const wizardStep = form.kind === 'endpoint-wizard' ? form.step : undefined
+    const submitButton = keptButton(
+      `${key}:submit`,
+      'settings-btn primary',
+      running ? '连接中…' : form.submitting ? '保存中…' : form.submitLabel,
+      { kind: 'submit-draft' },
+      { title: `${form.submitLabel}（Enter）`, enabled: !form.submitting && !running },
+    )
+    const foot = node(`${key}:foot`, 'div', 'settings-dialog-foot')
+    reconcile(
+      foot,
+      form.confirmDiscard
+        ? [
+            el('span', 'settings-dialog-prompt', '放弃未保存的修改？'),
+            keptButton(`${key}:keep`, 'settings-btn', '继续编辑', { kind: 'keep-editing' }, { title: '继续编辑（Esc）' }),
+            keptButton(`${key}:discard`, 'settings-btn danger', '放弃修改', { kind: 'discard-draft' }),
+          ]
+        : wizardStep === 'preset'
+          ? [keptButton(`${key}:cancel`, 'settings-btn', '取消', { kind: 'cancel-draft' }, { title: '取消（Esc）' })]
+          : wizardStep !== undefined
+            ? [keptButton(`${key}:back`, 'settings-btn', '上一步', { kind: 'wizard-back' }), submitButton]
+            : [
+                probe
+                  ? keptButton(`${key}:test`, 'settings-btn lead', running ? '测试中…' : '测试连接', { kind: 'test-endpoint' }, { enabled: !running })
+                  : null,
+                keptButton(`${key}:cancel`, 'settings-btn', '取消', { kind: 'cancel-draft' }, { title: '取消（Esc）' }),
+                submitButton,
+              ],
+    )
+    return [head, content, error ? el('div', 'settings-error', error) : null, foot]
+  }
+
+  /** The connection test's outcome, kept so a screen reader hears each change once. */
+  function probeNode(probe: SettingsProbeView, key: string, wizard: boolean): HTMLElement | null {
+    if (probe.status === 'idle') return null
+    const line = node(`${key}:probe`, 'div', `settings-probe ${probe.status}`, (made) => made.setAttribute('role', 'status'))
+    reconcile(line, [
+      icon(probe.status === 'running' ? 'spinner' : probe.status === 'ok' ? 'check' : 'close'),
+      el('span', 'settings-probe-text', probe.message ?? ''),
+      wizard && probe.skippable
+        ? keptButton(`${key}:skip`, 'settings-probe-skip', '跳过测试', { kind: 'skip-test' }, { title: '不测试，直接选择模型' })
+        : null,
+    ])
+    return line
+  }
+
+  /** The new-endpoint wizard's page: service cards, the connection, or the models. */
+  function wizardNodes(
+    form: Extract<SettingsForm, { kind: 'endpoint-wizard' }>,
+    key: string,
+    fields: () => Node[],
+  ): Array<Node | null> {
+    if (form.step === 'preset') {
+      const grid = node(`${key}:presets`, 'div', 'settings-presets')
+      reconcile(grid, form.presets.map((preset) =>
+        node(`${key}:preset:${preset.id}`, 'button', preset.selected ? 'settings-preset selected' : 'settings-preset', (made) => {
+          made.type = 'button'
+          made.appendChild(el('span', 'settings-preset-label', preset.label))
+          made.appendChild(el('span', 'settings-preset-note', preset.note))
+          made.addEventListener('click', () => onIntent({ kind: 'pick-preset', preset: preset.id }))
+        })))
+      return [grid]
+    }
+    if (form.step === 'connect') return [...fields(), probeNode(form.probe, key, true)]
+    const picker = form.picker!
+    const list = node(`${key}:models`, 'div', 'settings-model-list')
+    reconcile(
+      list,
+      picker.empty
+        ? [el('div', 'settings-model-empty', picker.empty)]
+        : picker.rows.map((row) => {
+            const item = node(`${key}:model:${row.id}`, 'button', row.picked ? 'settings-model-row picked' : 'settings-model-row', (made) => {
+              made.type = 'button'
+              made.setAttribute('role', 'checkbox')
+              made.addEventListener('click', () => onIntent({ kind: 'toggle-picked-model', id: row.id }))
+            })
+            item.setAttribute('aria-checked', String(row.picked))
+            reconcile(item, [
+              el('span', 'settings-model-check', row.picked ? icon('check') : null),
+              el('span', 'settings-model-id', row.id),
+              row.meta ? el('span', 'settings-model-meta', row.meta) : null,
+            ])
+            return item
+          }),
+    )
+    const manualKey = `${key}:manual-input`
+    const manual = node(`${key}:manual`, 'div', 'settings-model-manual')
+    reconcile(manual, [
+      keptInput(manualKey, {
+        value: picker.manual,
+        ariaLabel: '手动添加模型',
+        placeholder: picker.manualPlaceholder,
+        mono: true,
+        live: true,
+        onEnter: () => {
+          onIntent({ kind: 'add-manual-model' })
+          // A focused field is never written back to, so the one reset it gets is here.
+          const input = kept.get(manualKey) as HTMLInputElement | undefined
+          if (input) input.value = ''
+        },
+        intentOnCommit: (value) => ({ kind: 'draft-field', field: 'manualModel', value }),
+      }),
+      keptButton(`${key}:manual-add`, 'settings-btn', '添加', { kind: 'add-manual-model' }, { icon: 'plus', enabled: picker.manual.trim() !== '' }),
+    ])
+    return [
+      picker.filter !== undefined
+        ? keptInput(`${key}:filter`, {
+            value: picker.filter,
+            ariaLabel: '筛选模型',
+            placeholder: '筛选模型',
+            live: true,
+            intentOnCommit: (value) => ({ kind: 'draft-field', field: 'modelFilter', value }),
+          })
+        : null,
+      picker.summary ? el('div', 'settings-model-summary', picker.summary) : null,
+      list,
+      manual,
+    ]
   }
 
   function keptToggle(key: string, options: ToggleOptions): HTMLButtonElement {
@@ -256,6 +488,16 @@ export function createSettingsView(
       presence.set(view.open)
       if (!view.open) {
         wasOpen = false
+        // A dropdown left open must not keep claiming presses on the screens behind.
+        lastOpenMenu = undefined
+        // Closed with a form up: the dialog goes with the screen, not on its next opening.
+        if (lastFormKey !== undefined) {
+          dialogPresence.set(false, true)
+          for (const region of [nav, body]) region.removeAttribute('inert')
+          lastFormKey = undefined
+          lastConfirmDiscard = false
+          opener = undefined
+        }
         return
       }
       // Only on the transition: focusing on every render would pull the caret out
@@ -278,6 +520,8 @@ export function createSettingsView(
       // keydown — Esc included — stops firing until something is clicked.
       const focusWasInside =
         document.activeElement instanceof Node && container.contains(document.activeElement)
+      // Read before the column is rebuilt: the button that opened a form may not survive it.
+      const activeLabel = document.activeElement?.getAttribute('aria-label') ?? undefined
 
       replace(
         navList,
@@ -291,50 +535,95 @@ export function createSettingsView(
         ),
       )
 
-      // The form and the confirmation are drawn *inside* the card that owns them
-      // rather than stacked above every card, so the answer to a click appears
-      // where the click was. Anything unanchored (a card filtered away by the
-      // search) falls back to the column, which is better than not drawing it.
-      const anchoredCards = new Set(view.cards.map((card) => card.id))
-      const formHomeless = view.form !== undefined && !anchoredCards.has(view.form.anchor.cardId)
+      // A confirmation is drawn inside the card that owns it, so the answer to a
+      // click appears where the click was. One whose card the search filtered
+      // away falls back to the column, which beats not drawing it.
       const confirmHomeless =
-        view.confirming !== undefined && !anchoredCards.has(view.confirming.anchor.cardId)
-
+        view.confirming !== undefined && !view.cards.some((card) => card.id === view.confirming!.anchor.cardId)
+      const { form } = view
+      const menus: FormMenuContext = {
+        justOpened,
+        focusAfterPaint: (element) => {
+          pendingFocus.push(element)
+        },
+      }
+      // An error goes where the user is looking: into the open form, under the
+      // row it is about, or — with neither on screen — pinned to the bottom of
+      // the scroller, in view however far the page is scrolled.
+      const errorRow = view.error && !form
+        ? view.errorRows?.find((id) => view.cards.some((card) => card.rows.some((row) => row.id === id)))
+        : undefined
       reconcile(column, [
         headerNode(view, onIntent),
-        view.error ? el('div', 'settings-error', view.error) : null,
         confirmHomeless && view.confirming ? confirmNode(view.confirming.message, onIntent) : null,
-        formHomeless && view.form
-          ? (view.form.kind === 'mcp-server'
-              ? mcpServerFormNode(view.form, node, keptInput, onIntent)
-              : formNode(view.form, node, keptInput, onIntent, {
-                  justOpened,
-                  focusAfterPaint: (element) => {
-                    pendingFocus.push(element)
-                  },
-                }))
-          : null,
         view.searchEmpty ? el('div', 'settings-empty', view.searchEmpty) : null,
         view.editor ? editorNode(view.editor) : null,
         ...view.cards.map((card) =>
           cardNode(card, {
             openMenu: view.openMenu,
             justOpened,
-            focusAfterPaint: (element) => {
-              pendingFocus.push(element)
-            },
-            form: !formHomeless && view.form?.anchor.cardId === card.id ? view.form : undefined,
+            focusAfterPaint: menus.focusAfterPaint,
             confirm:
               !confirmHomeless && view.confirming?.anchor.cardId === card.id
                 ? view.confirming
                 : undefined,
+            ...(errorRow && view.error ? { rowError: { rowId: errorRow, message: view.error } } : {}),
             node,
             keptInput,
             keptToggle,
             onIntent,
           }),
         ),
+        view.error && !form && !errorRow ? el('div', 'settings-error banner', view.error) : null,
       ])
+
+      // The dialog keeps its last content while it closes; only an open form repaints it.
+      const formKey = form ? formKeyOf(form) : undefined
+      if (form) reconcile(dialog, dialogNodes(form, view.error, menus))
+      for (const region of [nav, body]) {
+        if (form) region.setAttribute('inert', '')
+        else region.removeAttribute('inert')
+      }
+      dialogPresence.set(form !== undefined)
+      const firstField = (): HTMLElement | null =>
+        dialog.querySelector('.settings-dialog-body')?.querySelector('input, select, button') as HTMLElement | null
+      if (formKey !== undefined && lastFormKey === undefined) {
+        opener = activeLabel
+        const first = firstField()
+        if (first) pendingFocus.unshift(first)
+      } else if (form?.kind === 'endpoint-wizard' && formKey === lastFormKey && form.step !== lastStep) {
+        const first = firstField()
+        if (first) pendingFocus.unshift(first)
+      } else if (form && !form.confirmDiscard && lastConfirmDiscard) {
+        // The prompt's buttons are gone; back to the form rather than to nowhere.
+        const first = firstField()
+        if (first) pendingFocus.unshift(first)
+      } else if (formKey === undefined && lastFormKey !== undefined) {
+        const back = [...column.querySelectorAll('button')].find((candidate) => candidate.getAttribute('aria-label') === opener)
+        pendingFocus.unshift(back ?? container)
+        opener = undefined
+      }
+      if (form?.confirmDiscard && !lastConfirmDiscard) {
+        const keep = dialog.querySelector('.settings-dialog-foot')?.querySelector('button')
+        if (keep) pendingFocus.unshift(keep)
+      }
+      lastFormKey = formKey
+      lastStep = form?.kind === 'endpoint-wizard' ? form.step : undefined
+      lastConfirmDiscard = form?.confirmDiscard === true
+
+      if (view.error && view.error !== lastError) {
+        container.querySelector('.settings-error, .settings-row-error')?.scrollIntoView({ block: 'nearest' })
+      }
+      lastError = view.error
+      // A menu opens downward, so one on a low row may start below the fold.
+      if (justOpened !== undefined) {
+        const trigger = [...container.querySelectorAll('[aria-expanded]')]
+          .find((candidate) => candidate.getAttribute('aria-expanded') === 'true')
+        trigger?.closest('.settings-menu-shell')?.querySelector('.settings-menu')?.scrollIntoView({ block: 'nearest' })
+      }
+      // A new page starts at its top, not at the previous page's scroll offset.
+      if (view.title !== lastTitle) body.scrollTop = 0
+      lastTitle = view.title
 
       // Everything this paint did not ask for is gone for good, refs included —
       // otherwise a kept node keeps answering with the state that built it.
@@ -357,8 +646,9 @@ export function createSettingsView(
       ) {
         // The paint took the focused node out from under the user. The screen is
         // the fallback rather than a guess at a replacement: it is what `Ctrl+,`
-        // focuses too, and it is the node whose keydown answers Esc.
-        container.focus()
+        // focuses too, and it is the node whose keydown answers Esc. With a form
+        // up, the dialog is, for the same reasons.
+        ;(form ? dialog : container).focus()
       }
     },
   }
@@ -379,12 +669,19 @@ type InputFactory = (
     ariaLabel: string
     placeholder?: string
     mono?: boolean
+    secret?: boolean
     live?: boolean
+    onEnter?: () => void
     intentOnCommit: (value: string) => SettingsIntent
   },
 ) => HTMLInputElement
 
 type ToggleFactory = (key: string, options: ToggleOptions) => HTMLButtonElement
+
+type SelectFactory = (
+  key: string,
+  options: { value: string; ariaLabel: string; choices: ReadonlyArray<{ value: string; label: string }>; field: string },
+) => HTMLSelectElement
 
 function navItemNode(
   item: SettingsNavItem,
@@ -449,8 +746,8 @@ function cardNode(
     openMenu: string | undefined
     justOpened: string | undefined
     focusAfterPaint: (element: HTMLElement) => void
-    form?: SettingsForm
     confirm?: { message: string; anchor: SettingsAnchor }
+    rowError?: { rowId: string; message: string }
     node: NodeFactory
     keptInput: InputFactory
     keptToggle: ToggleFactory
@@ -466,30 +763,16 @@ function cardNode(
   }
   for (const row of card.rows) {
     children.push(rowNode(card.id, row, context))
-    // Directly under the row it is about: an edit form or a delete confirmation
-    // has a subject, and putting it anywhere else makes the reader hunt for it.
+    // Directly under the row they are about, so the reader does not hunt for them.
+    if (context.rowError?.rowId === row.id) {
+      children.push(el('div', 'settings-row-error', context.rowError.message))
+    }
     if (context.confirm?.anchor.rowId === row.id) {
       children.push(confirmNode(context.confirm.message, onIntent))
     }
-    if (context.form?.anchor.rowId === row.id) {
-      children.push(
-        context.form.kind === 'mcp-server'
-          ? mcpServerFormNode(context.form, node, context.keptInput, onIntent)
-          : formNode(context.form, node, context.keptInput, onIntent, context),
-      )
-    }
   }
-  // Anchored to the card rather than a row: 新增… has no subject yet, so it goes
-  // at the end of the list it is about to grow, above the button that opened it.
   if (context.confirm && context.confirm.anchor.rowId === undefined) {
     children.push(confirmNode(context.confirm.message, onIntent))
-  }
-  if (context.form && context.form.anchor.rowId === undefined) {
-    children.push(
-      context.form.kind === 'mcp-server'
-        ? mcpServerFormNode(context.form, node, context.keptInput, onIntent)
-        : formNode(context.form, node, context.keptInput, onIntent, context),
-    )
   }
   if (card.footerButtons?.length) {
     const footer = el('div', 'settings-card-footer')
@@ -655,136 +938,146 @@ export interface FormMenuContext {
   focusAfterPaint: (element: HTMLElement) => void
 }
 
-function formNode(
-  form: SettingsForm,
-  node: NodeFactory,
-  keptInput: InputFactory,
-  onIntent: (intent: SettingsIntent) => void,
-  menus: FormMenuContext,
-): HTMLElement {
-  // Keyed by the anchor, not by a counter: opening a *different* form drops this
-  // one's nodes, while re-rendering the same form keeps every field's caret.
-  const key = `form:${form.anchor.cardId}:${form.anchor.rowId ?? ''}`
-  const section = node(key, 'section', 'settings-card settings-form')
-  const children: Node[] = [el('div', 'settings-card-title', form.title)]
-  for (const field of form.fields) {
-    // Both wrappers are kept, not just the input inside them. `appendChild` moves
-    // a node, and moving means *detaching first*: a focused `<input>` appended
-    // into a newly built cell is out of the document for that instant, which is
-    // all the browser needs to blur it. Since a form field commits `live`, every
-    // character typed re-rendered this form — so every character threw the caret
-    // out of the field and the user had to click back in to type the next one.
-    const row = node(`${key}:row:${field.id}`, 'div', 'settings-row')
-    const control = node(`${key}:control:${field.id}`, 'div', 'settings-row-control')
-    const controls: Node[] = []
-    if (field.multi) {
-      const multi = field.multi
-      controls.push(
-        multiSelectField({
-          summary: multi.summary,
-          ariaLabel: field.label,
-          choices: multi.options,
-          selected: multi.selected,
-          open: multi.open,
-          // Focus moves into the menu only on the paint that opened it; a click
-          // that merely checks an item must leave the caret where it was.
-          ...(menus.justOpened === multi.menuId
-            ? { onFirstItem: (item: HTMLElement) => menus.focusAfterPaint(item) }
-            : {}),
-          onToggle: () => onIntent(multi.intentOnToggleMenu),
-          onCloseFocus: menus.focusAfterPaint,
-          onToggleValue: (value) => onIntent(multi.intentOnToggle(value)),
-        }, node(`${key}:menu:${field.id}`, 'div', 'settings-menu-shell')),
-      )
-    } else if (field.choices) {
-      controls.push(
-        selectField({
-          value: field.value,
-          ariaLabel: field.label,
-          choices: field.choices,
-          onChange: (value) => onIntent({ kind: 'draft-field', field: field.id, value }),
-        }),
-      )
-    } else {
-      controls.push(
-        // `live`, unlike a settings row: a form field writes the draft in the
-        // renderer, not the config, so there is no cost per keystroke — and a
-        // blur-commit is exactly what used to swallow the click on 保存.
-        keptInput(`${key}:${field.id}`, {
-          value: field.value,
-          ariaLabel: field.label,
-          ...(field.placeholder !== undefined ? { placeholder: field.placeholder } : {}),
-          ...(field.mono ? { mono: true } : {}),
-          live: true,
-          intentOnCommit: (value) => ({ kind: 'draft-field', field: field.id, value }),
-        }),
-      )
-    }
-    reconcile(control, controls)
-    // The label may be rebuilt: it holds no caret and no animation. A note is a
-    // second line under the name — `.settings-row-desc`, the class the card
-    // rows' detail text already uses, so the two cannot drift apart visually.
-    reconcile(row, [
-      el(
-        'div',
-        'settings-row-label',
-        el('div', 'settings-row-name', field.label),
-        ...(field.note ? [el('div', 'settings-row-desc', field.note)] : []),
-      ),
-      control,
-    ])
-    children.push(row)
-  }
-  children.push(
-    el(
-      'div',
-      'settings-card-footer',
-      button('settings-btn primary', form.submitLabel, form.submitLabel, () =>
-        onIntent({ kind: 'submit-draft' }),
-      ),
-      button('settings-btn', '取消', '取消（Esc）', () => onIntent({ kind: 'cancel-draft' })),
-    ),
-  )
-  reconcile(section, children)
-  return section
+/**
+ * The key a form's kept nodes share. From the anchor, never a counter: opening
+ * a *different* form drops this one's nodes, while repainting the same form
+ * keeps every field's caret.
+ */
+function formKeyOf(form: SettingsForm): string {
+  return `form:${form.anchor.cardId}:${form.anchor.rowId ?? ''}${form.kind === 'mcp-server' ? ':mcp' : ''}`
 }
 
-function mcpServerFormNode(
+/**
+ * Tab and Shift+Tab wrap inside the dialog. The page behind it is `inert`, but
+ * the title bar is not, and Tab off the last button would land there.
+ */
+function trapTab(event: KeyboardEvent, dialog: HTMLElement): void {
+  if (event.key !== 'Tab') return
+  const stops = [...dialog.querySelectorAll<HTMLElement>('input, select, button, a')].filter(
+    (candidate) =>
+      !(candidate as HTMLButtonElement).disabled
+      && !(candidate.closest('.settings-menu') as HTMLElement | null)?.hidden,
+  )
+  if (stops.length === 0) return
+  const first = stops[0]!
+  const last = stops[stops.length - 1]!
+  // Focus parked on the dialog itself (a paint disabled the focused button) is
+  // pulled onto a control too, or Tab would walk out of the dialog from there.
+  const at = document.activeElement
+  const outside = at === dialog || !dialog.contains(at)
+  if (!outside && (event.shiftKey ? at !== first : at !== last)) return
+  event.preventDefault()
+  ;(event.shiftKey ? last : first).focus()
+}
+
+function docLinkNode(link: HTMLAnchorElement): HTMLAnchorElement {
+  if (!link.firstChild) {
+    link.replaceChildren(el('span', 'btn-label', '文档'), icon('external'))
+    link.href = 'https://modelcontextprotocol.io'
+    link.target = '_blank'
+    link.rel = 'noreferrer noopener'
+    link.title = 'MCP 文档'
+  }
+  return link
+}
+
+/**
+ * A form's fields, label above control. Every wrapper is kept, not just the
+ * control: `appendChild` moves a node by detaching it first, and a focused
+ * `<input>` that leaves the document for that instant is blurred — once per
+ * character, since a form field commits `live`.
+ */
+function fieldNodes(
+  form: { readonly fields: readonly SettingsFormField[] },
+  key: string,
+  context: {
+    node: NodeFactory
+    keptInput: InputFactory
+    keptToggle: ToggleFactory
+    keptSelect: SelectFactory
+    onIntent: (intent: SettingsIntent) => void
+    submit: () => void
+    menus: FormMenuContext
+  },
+): Node[] {
+  const { node, onIntent, menus } = context
+  return form.fields.map((field) => {
+    const wrapper = node(`${key}:field:${field.id}`, 'div', field.toggle ? 'settings-field switch' : 'settings-field')
+    const label = el('div', 'settings-field-label', field.label)
+    const note = field.note ? el('div', 'settings-field-note', field.note) : null
+    if (field.toggle) {
+      const control = context.keptToggle(`${key}:toggle:${field.id}`, {
+        value: field.value === 'on',
+        ariaLabel: field.label,
+        onChange: (value) => onIntent({ kind: 'draft-field', field: field.id, value: value ? 'on' : '' }),
+      })
+      reconcile(wrapper, [el('div', 'settings-field-text', label, note), control])
+      return wrapper
+    }
+    let control: HTMLElement
+    if (field.multi) {
+      const multi = field.multi
+      control = multiSelectField({
+        summary: multi.summary,
+        ariaLabel: field.label,
+        choices: multi.options,
+        selected: multi.selected,
+        open: multi.open,
+        // Focus moves into the menu only on the paint that opened it; a click
+        // that merely checks an item must leave the caret where it was.
+        ...(menus.justOpened === multi.menuId
+          ? { onFirstItem: (item: HTMLElement) => menus.focusAfterPaint(item) }
+          : {}),
+        onToggle: () => onIntent(multi.intentOnToggleMenu),
+        onCloseFocus: menus.focusAfterPaint,
+        onToggleValue: (value) => onIntent(multi.intentOnToggle(value)),
+      }, node(`${key}:menu:${field.id}`, 'div', 'settings-menu-shell'))
+    } else if (field.choices) {
+      control = context.keptSelect(`${key}:select:${field.id}`, {
+        value: field.value,
+        ariaLabel: field.label,
+        choices: field.choices,
+        field: field.id,
+      })
+    } else {
+      control = context.keptInput(`${key}:${field.id}`, {
+        value: field.value,
+        ariaLabel: field.label,
+        ...(field.placeholder !== undefined ? { placeholder: field.placeholder } : {}),
+        ...(field.mono ? { mono: true } : {}),
+        ...(field.secret ? { secret: true } : {}),
+        live: true,
+        onEnter: context.submit,
+        intentOnCommit: (value) => ({ kind: 'draft-field', field: field.id, value }),
+      })
+    }
+    reconcile(wrapper, [label, control, note])
+    return wrapper
+  })
+}
+
+/** The MCP server form's fields: identity, then the transport's own. */
+function mcpFieldNodes(
   form: Extract<SettingsForm, { kind: 'mcp-server' }>,
   node: NodeFactory,
   keptInput: InputFactory,
   onIntent: (intent: SettingsIntent) => void,
-): HTMLElement {
+  submit: () => void,
+): Node[] {
   const { draft } = form
-  const key = `form:${form.anchor.cardId}:${form.anchor.rowId ?? ''}:mcp`
-  const section = node(key, 'section', 'settings-card settings-form mcp-form-container')
+  const key = formKeyOf(form)
+  const children: Node[] = []
 
-  // Header: Title + Doc link
-  const header = node(`${key}:header`, 'div', 'mcp-form-header')
-  const title = node(`${key}:header:title`, 'div', 'settings-card-title')
-  title.textContent = form.title
-  const docLink = node(`${key}:header:link`, 'a', 'mcp-form-doc-link')
-  docLink.textContent = '文档 🌐'
-  docLink.setAttribute('href', 'https://modelcontextprotocol.io')
-  docLink.setAttribute('target', '_blank')
-  docLink.setAttribute('rel', 'noreferrer noopener')
-  reconcile(header, [title, docLink])
-
-  const children: Node[] = [header]
-
-  // Card 1: Name and Type
   const identityCard = node(`${key}:card:identity`, 'div', 'mcp-form-card')
-  const nameLabel = el('div', 'mcp-form-label', '名称')
   const nameInput = keptInput(`${key}:name`, {
     value: draft.name,
     ariaLabel: '名称',
-    placeholder: 'MCP server name',
+    placeholder: '例如 sqlite',
     live: true,
+    onEnter: submit,
     intentOnCommit: (value) => ({ kind: 'draft-field', field: 'name', value }),
   })
-
   const typeRow = node(`${key}:type:row`, 'div', 'mcp-type-row')
-  const typeLabel = el('div', 'mcp-form-label', '类型')
   const segmented = node(`${key}:segmented:transport`, 'div', 'mcp-segmented-control')
   const stdioBtn = button(
     draft.transport === 'stdio' ? 'mcp-segmented-btn active' : 'mcp-segmented-btn',
@@ -799,191 +1092,146 @@ function mcpServerFormNode(
     () => onIntent({ kind: 'draft-field', field: 'transport', value: 'sse' }),
   )
   reconcile(segmented, [stdioBtn, sseBtn])
-  reconcile(typeRow, [typeLabel, segmented])
-  reconcile(identityCard, [nameLabel, nameInput, typeRow])
-  children.push(identityCard)
+  reconcile(typeRow, [el('div', 'mcp-form-label', '类型'), segmented])
+  reconcile(identityCard, [el('div', 'mcp-form-label', '名称'), nameInput])
+  children.push(identityCard, typeRow)
 
-  if (draft.transport === 'stdio') {
-    // Card 2: Command
-    const cmdCard = node(`${key}:card:command`, 'div', 'mcp-form-card')
-    const cmdLabel = el('div', 'mcp-form-label', '启动命令')
-    const cmdInput = keptInput(`${key}:command`, {
-      value: draft.command,
-      ariaLabel: '启动命令',
-      placeholder: 'openai-dev-mcp serve-sqlite',
-      mono: true,
-      live: true,
-      intentOnCommit: (value) => ({ kind: 'draft-field', field: 'command', value }),
-    })
-    reconcile(cmdCard, [cmdLabel, cmdInput])
-    children.push(cmdCard)
-
-    // Card 3: Args
-    const argsCard = node(`${key}:card:args`, 'div', 'mcp-form-card')
-    const argsLabel = el('div', 'mcp-form-label', '参数')
-    const argsList = node(`${key}:list:args`, 'div', 'mcp-form-list')
-    const argRows: Node[] = []
-    for (let idx = 0; idx < draft.args.length; idx++) {
-      const argRow = node(`${key}:arg:row:${idx}`, 'div', 'mcp-form-row')
-      const argInput = keptInput(`${key}:arg:${idx}`, {
-        value: draft.args[idx] ?? '',
-        ariaLabel: `参数 ${idx + 1}`,
+  /** One labelled single field. */
+  const single = (slot: string, label: string, value: string, placeholder: string, field: string): HTMLElement => {
+    const card = node(`${key}:card:${slot}`, 'div', 'mcp-form-card')
+    reconcile(card, [
+      el('div', 'mcp-form-label', label),
+      keptInput(`${key}:${slot}`, {
+        value,
+        ariaLabel: label,
+        placeholder,
         mono: true,
         live: true,
-        intentOnCommit: (value) => ({ kind: 'mcp-update-arg', index: idx, value }),
-      })
-      const trash = button('mcp-btn-trash', '', `删除参数 ${idx + 1}`, () =>
-        onIntent({ kind: 'mcp-remove-arg', index: idx }),
-        { icon: 'trash' },
-      )
-      reconcile(argRow, [argInput, trash])
-      argRows.push(argRow)
-    }
-    reconcile(argsList, argRows)
-    const addArgBtn = button('mcp-form-add-btn', '+ 添加参数', '添加参数', () =>
-      onIntent({ kind: 'mcp-add-arg' }),
-    )
-    reconcile(argsCard, [argsLabel, argsList, addArgBtn])
-    children.push(argsCard)
-  } else {
-    // SSE: Card 2: URL
-    const urlCard = node(`${key}:card:url`, 'div', 'mcp-form-card')
-    const urlLabel = el('div', 'mcp-form-label', 'URL')
-    const urlInput = keptInput(`${key}:url`, {
-      value: draft.url,
-      ariaLabel: 'URL',
-      placeholder: 'http://localhost:3000/sse',
-      mono: true,
-      live: true,
-      intentOnCommit: (value) => ({ kind: 'draft-field', field: 'url', value }),
-    })
-    reconcile(urlCard, [urlLabel, urlInput])
-    children.push(urlCard)
+        onEnter: submit,
+        intentOnCommit: (next) => ({ kind: 'draft-field', field, value: next }),
+      }),
+    ])
+    return card
   }
 
-  /** One card of key/value rows — the env card and the header card differ only in wording. */
-  const pairCard = (
+  /** One labelled list of single values with a remove button each. */
+  const list = (
     slot: string,
     label: string,
     noun: string,
-    pairs: readonly { readonly key: string; readonly value: string }[],
+    addLabel: string,
+    values: readonly string[],
+    placeholder: string | undefined,
     intents: {
-      update: (index: number, part: { key?: string; value?: string }) => SettingsIntent
+      update: (index: number, value: string) => SettingsIntent
       remove: (index: number) => SettingsIntent
-      add: () => SettingsIntent
+      add: SettingsIntent
     },
   ): HTMLElement => {
     const card = node(`${key}:card:${slot}`, 'div', 'mcp-form-card')
-    const cardLabel = el('div', 'mcp-form-label', label)
-    const list = node(`${key}:list:${slot}`, 'div', 'mcp-form-list')
-    const rows: Node[] = []
-    for (let idx = 0; idx < pairs.length; idx++) {
-      const item = pairs[idx]!
+    const rows = node(`${key}:list:${slot}`, 'div', 'mcp-form-list')
+    reconcile(rows, values.map((value, idx) => {
+      const row = node(`${key}:${slot}:row:${idx}`, 'div', 'mcp-form-row')
+      reconcile(row, [
+        keptInput(`${key}:${slot}:${idx}`, {
+          value,
+          ariaLabel: `${noun} ${idx + 1}`,
+          ...(placeholder !== undefined ? { placeholder } : {}),
+          mono: true,
+          live: true,
+          onEnter: submit,
+          intentOnCommit: (next) => intents.update(idx, next),
+        }),
+        button('mcp-btn-trash', '', `删除${noun} ${idx + 1}`, () => onIntent(intents.remove(idx)), { icon: 'trash' }),
+      ])
+      return row
+    }))
+    reconcile(card, [
+      el('div', 'mcp-form-label', label),
+      rows,
+      button('mcp-form-add-btn', addLabel, addLabel, () => onIntent(intents.add), { icon: 'plus' }),
+    ])
+    return card
+  }
+
+  /** One labelled list of key/value pairs — the env list and the header list differ only in wording. */
+  const pairs = (
+    slot: string,
+    label: string,
+    noun: string,
+    entries: readonly { readonly key: string; readonly value: string }[],
+    intents: {
+      update: (index: number, part: { key?: string; value?: string }) => SettingsIntent
+      remove: (index: number) => SettingsIntent
+      add: SettingsIntent
+    },
+  ): HTMLElement => {
+    const card = node(`${key}:card:${slot}`, 'div', 'mcp-form-card')
+    const rows = node(`${key}:list:${slot}`, 'div', 'mcp-form-list')
+    reconcile(rows, entries.map((item, idx) => {
       const row = node(`${key}:${slot}:row:${idx}`, 'div', 'mcp-form-row mcp-env-row')
-      const keyInput = keptInput(`${key}:${slot}:key:${idx}`, {
-        value: item.key,
-        ariaLabel: `${noun}键 ${idx + 1}`,
-        placeholder: '键',
-        mono: true,
-        live: true,
-        intentOnCommit: (value) => intents.update(idx, { key: value }),
-      })
-      const valInput = keptInput(`${key}:${slot}:val:${idx}`, {
-        value: item.value,
-        ariaLabel: `${noun}值 ${idx + 1}`,
-        placeholder: '值',
-        mono: true,
-        live: true,
-        intentOnCommit: (value) => intents.update(idx, { value }),
-      })
-      const trash = button('mcp-btn-trash', '', `删除${noun} ${idx + 1}`, () =>
-        onIntent(intents.remove(idx)),
-        { icon: 'trash' },
-      )
-      reconcile(row, [keyInput, valInput, trash])
-      rows.push(row)
-    }
-    reconcile(list, rows)
-    const addBtn = button('mcp-form-add-btn', `+ 添加${noun}`, `添加${noun}`, () =>
-      onIntent(intents.add()),
-    )
-    reconcile(card, [cardLabel, list, addBtn])
+      reconcile(row, [
+        keptInput(`${key}:${slot}:key:${idx}`, {
+          value: item.key,
+          ariaLabel: `${noun}键 ${idx + 1}`,
+          placeholder: '键',
+          mono: true,
+          live: true,
+          onEnter: submit,
+          intentOnCommit: (next) => intents.update(idx, { key: next }),
+        }),
+        keptInput(`${key}:${slot}:val:${idx}`, {
+          value: item.value,
+          ariaLabel: `${noun}值 ${idx + 1}`,
+          placeholder: '值',
+          mono: true,
+          live: true,
+          onEnter: submit,
+          intentOnCommit: (next) => intents.update(idx, { value: next }),
+        }),
+        button('mcp-btn-trash', '', `删除${noun} ${idx + 1}`, () => onIntent(intents.remove(idx)), { icon: 'trash' }),
+      ])
+      return row
+    }))
+    reconcile(card, [
+      el('div', 'mcp-form-label', label),
+      rows,
+      button('mcp-form-add-btn', `添加${noun}`, `添加${noun}`, () => onIntent(intents.add), { icon: 'plus' }),
+    ])
     return card
   }
 
   if (draft.transport === 'stdio') {
-    // Card 4: Env. Only for stdio — an environment cannot follow an HTTP request.
     children.push(
-      pairCard(`env`, '环境变量', '环境变量', draft.env, {
+      single('command', '启动命令', draft.command, 'npx -y @modelcontextprotocol/server-sqlite', 'command'),
+      list('args', '参数', '参数', '添加参数', draft.args, undefined, {
+        update: (index, value) => ({ kind: 'mcp-update-arg', index, value }),
+        remove: (index) => ({ kind: 'mcp-remove-arg', index }),
+        add: { kind: 'mcp-add-arg' },
+      }),
+      // Only for stdio — an environment cannot follow an HTTP request.
+      pairs('env', '环境变量', '环境变量', draft.env, {
         update: (index, part) => ({ kind: 'mcp-update-env', index, ...part }),
         remove: (index) => ({ kind: 'mcp-remove-env', index }),
-        add: () => ({ kind: 'mcp-add-env' }),
+        add: { kind: 'mcp-add-env' },
       }),
+      list('pt', '环境变量传递', '环境变量传递', '添加变量', draft.envPassthrough, '例如 PATH 或 API_KEY', {
+        update: (index, value) => ({ kind: 'mcp-update-env-passthrough', index, value }),
+        remove: (index) => ({ kind: 'mcp-remove-env-passthrough', index }),
+        add: { kind: 'mcp-add-env-passthrough' },
+      }),
+      single('cwd', '工作目录', draft.cwd, '~/code', 'cwd'),
     )
-
-    // Card 5: Env Passthrough
-    const ptCard = node(`${key}:card:pt`, 'div', 'mcp-form-card')
-    const ptLabel = el('div', 'mcp-form-label', '环境变量传递')
-    const ptList = node(`${key}:list:pt`, 'div', 'mcp-form-list')
-    const ptRows: Node[] = []
-    for (let idx = 0; idx < draft.envPassthrough.length; idx++) {
-      const ptRow = node(`${key}:pt:row:${idx}`, 'div', 'mcp-form-row')
-      const ptInput = keptInput(`${key}:pt:${idx}`, {
-        value: draft.envPassthrough[idx] ?? '',
-        ariaLabel: `环境变量传递 ${idx + 1}`,
-        placeholder: '例如 PATH 或 API_KEY',
-        mono: true,
-        live: true,
-        intentOnCommit: (value) => ({ kind: 'mcp-update-env-passthrough', index: idx, value }),
-      })
-      const trash = button('mcp-btn-trash', '', `删除环境变量传递 ${idx + 1}`, () =>
-        onIntent({ kind: 'mcp-remove-env-passthrough', index: idx }),
-        { icon: 'trash' },
-      )
-      reconcile(ptRow, [ptInput, trash])
-      ptRows.push(ptRow)
-    }
-    reconcile(ptList, ptRows)
-    const addPtBtn = button('mcp-form-add-btn', '+ 添加变量', '添加变量', () =>
-      onIntent({ kind: 'mcp-add-env-passthrough' }),
-    )
-    reconcile(ptCard, [ptLabel, ptList, addPtBtn])
-    children.push(ptCard)
-
-    // Card 6: Cwd
-    const cwdCard = node(`${key}:card:cwd`, 'div', 'mcp-form-card')
-    const cwdLabel = el('div', 'mcp-form-label', '工作目录')
-    const cwdInput = keptInput(`${key}:cwd`, {
-      value: draft.cwd,
-      ariaLabel: '工作目录',
-      placeholder: '~/code',
-      mono: true,
-      live: true,
-      intentOnCommit: (value) => ({ kind: 'draft-field', field: 'cwd', value }),
-    })
-    reconcile(cwdCard, [cwdLabel, cwdInput])
-    children.push(cwdCard)
   } else {
-    // Card 3: Request headers — where a hosted endpoint's bearer token goes.
     children.push(
-      pairCard(`headers`, '请求头', '请求头', draft.headers, {
+      single('url', 'URL', draft.url, 'http://localhost:3000/sse', 'url'),
+      // Where a hosted endpoint's bearer token goes.
+      pairs('headers', '请求头', '请求头', draft.headers, {
         update: (index, part) => ({ kind: 'mcp-update-header', index, ...part }),
         remove: (index) => ({ kind: 'mcp-remove-header', index }),
-        add: () => ({ kind: 'mcp-add-header' }),
+        add: { kind: 'mcp-add-header' },
       }),
     )
   }
-
-  // Footer
-  const footer = node(`${key}:footer`, 'div', 'settings-card-footer mcp-form-footer')
-  reconcile(footer, [
-    button('settings-btn primary', form.submitLabel, form.submitLabel, () =>
-      onIntent({ kind: 'submit-draft' }),
-    ),
-    button('settings-btn', '取消', '取消（Esc）', () => onIntent({ kind: 'cancel-draft' })),
-  ])
-  children.push(footer)
-
-  reconcile(section, children)
-  return section
+  return children
 }

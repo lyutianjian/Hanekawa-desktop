@@ -25,8 +25,9 @@ test('every status has a label, a tone and a bucket', () => {
   }
   assert.equal(threadTone('needs-you'), 'attention')
   assert.equal(threadTone('awaiting-coordinator'), 'attention')
-  assert.equal(threadTone('failed'), 'neutral')
-  assert.deepEqual(new Set(Object.values(THREAD_STATUS_LABEL)), new Set(['运行中', '阻塞', '空闲', '已完成']))
+  assert.equal(threadTone('failed'), 'danger', 'a failed thread is not drawn like an idle one')
+  assert.equal(threadTone('interrupted'), 'neutral')
+  assert.deepEqual(new Set(Object.values(THREAD_STATUS_LABEL)), new Set(['运行中', '阻塞', '空闲', '失败', '已完成']))
   assert.equal(threadBucket('stale'), 'resolved')
   assert.equal(threadBucket('quiet'), 'quiet')
   assert.equal(threadBucket('awaiting-coordinator'), 'active')

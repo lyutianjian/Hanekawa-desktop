@@ -534,6 +534,29 @@ test('badges come off the pane snapshot, with awaiting-input outranking running'
   assert.equal(badges.get('a6'), 'none', 'a closed session has no pane to report')
 })
 
+test('a session whose last turn failed says so, on a closed row and an open one, until work resumes', () => {
+  const state = stateWith({
+    projects: [project('/a', 'alpha', [
+      session('a1', { failed: true }),
+      session('a2', { failed: true }),
+      session('a3', { failed: true }),
+      session('a4'),
+    ])],
+    lanes: [lane('2', 'a2', '/a'), lane('3', 'a3', '/a')],
+    laneStatus: new Map([
+      ['2', paneStatus()],
+      // Retrying: the spinner outranks the previous failure.
+      ['3', paneStatus({ streaming: true })],
+    ]),
+  })
+
+  const badges = new Map(sidebarView(state).rows.map((row) => [row.sessionId, row.badge]))
+  assert.equal(badges.get('a1'), 'failed', 'a closed session still carries it')
+  assert.equal(badges.get('a2'), 'failed')
+  assert.equal(badges.get('a3'), 'running')
+  assert.equal(badges.get('a4'), 'none')
+})
+
 test('a lane with no status entry yet carries no badge', () => {
   const view = sidebarView(
     stateWith({

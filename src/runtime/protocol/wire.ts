@@ -435,7 +435,7 @@ export type ToolDisplays = Record<string, ToolDisplayDto>
  * adding a seventh panel does not widen the union.
  */
 export type CommandEffect =
-  | { kind: 'write-line'; text: string }
+  | { kind: 'write-line'; text: string; tone?: 'error' }
   | { kind: 'open-command-view'; view: CommandView }
   | { kind: 'open-surface'; surface: CommandSurface }
 

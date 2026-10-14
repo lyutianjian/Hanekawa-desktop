@@ -37,9 +37,9 @@ export const modelCommand: CommandDefinition = {
     if (result && !result.ok) {
       const lines = [result.message]
       if (result.availableModels && result.availableModels.length > 0) {
-        lines.push(`Available models: ${result.availableModels.join(', ')}`)
+        lines.push(`可用模型：${result.availableModels.join('、')}`)
       }
-      context.writeLine(lines.join('\n'))
+      context.writeLine(lines.join('\n'), 'error')
       return
     }
 

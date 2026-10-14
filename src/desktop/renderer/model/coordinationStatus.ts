@@ -5,9 +5,10 @@ import type { WireCoordinationThreads, WireThreadInfo, WireThreadStatus } from '
  * colour tone, which list section it sits in, and the counts the project row
  * badges. Pure, from wire types only.
  *
- * The table's nine statuses read as four: 运行中, 阻塞 (waiting on the user or
- * the coordinator), 空闲 (its turn is over; it can still be messaged) and 已完成
- * (resolved, final). A failed or interrupted turn is 空闲 with a reason line.
+ * The table's nine statuses read as five: 运行中, 阻塞 (waiting on the user or
+ * the coordinator), 空闲 (its turn is over; it can still be messaged), 失败 (its
+ * last turn ended on an error; it can still be messaged) and 已完成 (resolved,
+ * final). An interrupted turn is 空闲 with a reason line.
  */
 
 export const THREAD_STATUS_LABEL: Readonly<Record<WireThreadStatus, string>> = {
@@ -15,7 +16,7 @@ export const THREAD_STATUS_LABEL: Readonly<Record<WireThreadStatus, string>> = {
   idle: '空闲',
   'awaiting-coordinator': '阻塞',
   'needs-you': '阻塞',
-  failed: '空闲',
+  failed: '失败',
   interrupted: '空闲',
   quiet: '空闲',
   resolved: '已完成',
@@ -35,7 +36,7 @@ export function threadFinished(status: WireThreadStatus): boolean {
   return status === 'resolved' || status === 'stale'
 }
 
-export type ThreadTone = 'running' | 'attention' | 'neutral' | 'muted'
+export type ThreadTone = 'running' | 'attention' | 'danger' | 'neutral' | 'muted'
 
 export function threadTone(status: WireThreadStatus): ThreadTone {
   switch (status) {
@@ -44,8 +45,9 @@ export function threadTone(status: WireThreadStatus): ThreadTone {
     case 'needs-you':
     case 'awaiting-coordinator':
       return 'attention'
-    case 'idle':
     case 'failed':
+      return 'danger'
+    case 'idle':
     case 'interrupted':
     case 'quiet':
       return 'neutral'

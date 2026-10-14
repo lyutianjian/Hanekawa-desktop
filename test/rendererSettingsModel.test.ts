@@ -214,6 +214,16 @@ test('typing in the key field is the only thing that arms it', () => {
   assert.equal((change as Extract<SettingsChange, { kind: 'set-endpoint' }>).apiKey, 'sk-brand-new-key')
 })
 
+test('a key typed and then deleted leaves the saved key alone, as the placeholder promises', () => {
+  const opened = applySettingsIntent(openState(), { kind: 'edit-endpoint', name: 'main' }).state
+  const typed = applySettingsIntent(opened, { kind: 'draft-field', field: 'apiKey', value: 'sk-x' }).state
+  const emptied = applySettingsIntent(typed, { kind: 'draft-field', field: 'apiKey', value: '' }).state
+  assert.ok(emptied.draft)
+  const change = draftToChange(emptied.draft, snapshotOf())
+  assert.ok(!('error' in change))
+  assert.equal('apiKey' in change, false, 'an empty string would make the host drop the key')
+})
+
 test('an edited endpoint seeds its key field empty, not with the mask', () => {
   const state = applySettingsIntent(openState(), { kind: 'edit-endpoint', name: 'main' }).state
   assert.ok(state.draft && state.draft.kind === 'endpoint')
@@ -370,9 +380,6 @@ function endpointDraft(
     baseUrl: '',
     apiKey: '',
     keyTouched: false,
-    modelKey: '',
-    modelId: '',
-    modelSupportsImageInput: '',
     ...overrides,
   }
 }
@@ -514,10 +521,7 @@ test('the image-input switch round-trips through the model form', () => {
   const form = settingsView(opened).form
   assert.ok(form && form.kind !== 'mcp-server')
   const field = form.fields.find((field) => field.id === 'supportsImageInput')
-  assert.deepEqual(field?.choices, [
-    { value: '', label: '关闭' },
-    { value: 'on', label: '开启' },
-  ])
+  assert.equal(field?.toggle, true)
   assert.equal(field?.note, '开启后，此模型可接收图片。请确认该模型及接入点支持当前协议的图像输入。')
 
   const card = settingsView(openState({ category: 'provider', snapshot })).cards
@@ -525,48 +529,32 @@ test('the image-input switch round-trips through the model form', () => {
   assert.match(card?.rows.find((row) => row.id === 'model:big')?.detail ?? '', /支持图像/)
 })
 
-test("a new endpoint's first model carries the image switch", () => {
-  const snapshot = snapshotOf({ defaultModel: undefined })
-  const draft = endpointDraft({
-    name: 'fresh',
-    modelKey: 'first',
-    modelId: 'claude-first',
-    modelSupportsImageInput: 'on',
-  })
-
-  const changes = draftToChanges(draft, snapshot)
-  assert.ok(!('error' in changes))
-  const setModel = changes.find(
-    (change) => change.kind === 'set-model',
-  ) as Extract<SettingsChange, { kind: 'set-model' }>
-  assert.equal(setModel.supportsImageInput, true)
-  assert.equal(setModel.endpoint, 'fresh')
-
-  // The field is on the new-endpoint form itself, so the declaration is
-  // reachable on the path that creates most models — not only in a later edit.
-  const opened = applySettingsIntent(
-    openState({ category: 'provider', snapshot }),
-    { kind: 'new-endpoint' },
-  ).state
-  assert.ok(opened.draft?.kind === 'endpoint')
-  const form = settingsView(opened).form
-  assert.ok(form && form.kind !== 'mcp-server')
-  const field = form.fields.find((field) => field.id === 'modelSupportsImageInput')
-  assert.deepEqual(field?.choices, [
-    { value: '', label: '关闭' },
-    { value: 'on', label: '开启' },
-  ])
-
-  // Off is absence here too.
-  const off = draftToChanges(
-    endpointDraft({ name: 'fresh', modelKey: 'first', modelId: 'claude-first' }),
-    snapshot,
+test("a new endpoint's models carry what the service reported about them", () => {
+  const changes = draftToChanges(
+    endpointDraft({
+      name: 'fresh',
+      step: 'models',
+      listed: [{ id: 'claude-x', contextWindow: 200000, maxOutputTokens: 64000, imageInput: true }, { id: 'plain' }],
+      picked: ['claude-x', 'typed-in'],
+    }),
+    snapshotOf({ defaultModel: undefined }),
   )
-  assert.ok(!('error' in off))
-  const offSetModel = off.find(
-    (change) => change.kind === 'set-model',
-  ) as Extract<SettingsChange, { kind: 'set-model' }>
-  assert.equal('supportsImageInput' in offSetModel, false)
+  assert.deepEqual(changes, [
+    { scope: 'provider', kind: 'set-endpoint', name: 'fresh', provider: 'anthropic' },
+    {
+      scope: 'provider',
+      kind: 'set-model',
+      key: 'claude-x',
+      model: 'claude-x',
+      endpoint: 'fresh',
+      contextWindow: 200000,
+      maxOutputTokens: 64000,
+      supportsImageInput: true,
+    },
+    // Typed in by hand, so nothing is known about it: every field stays at its default.
+    { scope: 'provider', kind: 'set-model', key: 'typed-in', model: 'typed-in', endpoint: 'fresh' },
+    { scope: 'provider', kind: 'set-default-model', key: 'claude-x' },
+  ])
 })
 
 test('the supported effort levels round-trip through the model form', () => {
@@ -1140,13 +1128,13 @@ test('a rule already in the local layer is rejected instead of duplicated', () =
   assert.match(submitted.state.error ?? '', /已经有这条规则/)
 })
 
-test('the new-rule form can change which group it lands in', () => {
+test('the new-rule form lands in the group whose button opened it', () => {
   const opened = applySettingsIntent(
     openState({ category: 'permissions' }),
-    { kind: 'new-permission-rule', behavior: 'allow' },
+    { kind: 'new-permission-rule', behavior: 'deny' },
   )
-  const switched = applySettingsIntent(opened.state, { kind: 'draft-field', field: 'behavior', value: 'deny' })
-  const typed = applySettingsIntent(switched.state, { kind: 'draft-field', field: 'entry', value: 'Delete' })
+  assert.deepEqual(settingsView(opened.state).form?.fields.map((field) => field.id), ['entry'])
+  const typed = applySettingsIntent(opened.state, { kind: 'draft-field', field: 'entry', value: 'Delete' })
   const submitted = applySettingsIntent(typed.state, { kind: 'submit-draft' })
 
   assert.deepEqual(submitted.changes, [
@@ -1594,6 +1582,65 @@ test('a change with no project selected fails instead of guessing one', async ()
   assert.ok(state.error)
 })
 
+test('a failed removal names the row it was about, so the error can sit under it', async () => {
+  const state = await runSettingsChanges(
+    fakeClient({
+      changeSettings: async () => {
+        throw new Error('still referenced')
+      },
+    }),
+    openState(),
+    pendingOf({ scope: 'provider', kind: 'remove-model', key: 'big' }),
+  )
+  assert.deepEqual(state.errorRows, ['model:big'])
+})
+
+test('a submitted form stays open until the host answers, and a refusal keeps what was typed', async () => {
+  const opened = applySettingsIntent(openState(), { kind: 'new-model' }).state
+  const typed = [
+    { kind: 'draft-field', field: 'key', value: 'huge' },
+    { kind: 'draft-field', field: 'model', value: 'claude-huge' },
+  ].reduce((state, intent) => applySettingsIntent(state, intent as SettingsIntent).state, opened)
+  const submitted = applySettingsIntent(typed, { kind: 'submit-draft' })
+  assert.equal(submitted.state.draft?.kind, 'model', 'the form closed before the reply')
+  assert.equal(submitted.state.draftSubmit, submitted.pending?.[0]?.id)
+  assert.deepEqual(applySettingsIntent(submitted.state, { kind: 'submit-draft' }).changes, undefined, 'a second Enter sent it twice')
+
+  const refused = await runSettingsChanges(
+    fakeClient({
+      changeSettings: async () => {
+        throw new Error('disk full')
+      },
+    }),
+    submitted.state,
+    submitted.pending!,
+  )
+  assert.equal(refused.error, 'disk full')
+  assert.equal(refused.draft?.kind === 'model' && refused.draft.key, 'huge')
+  assert.equal(refused.draftSubmit, undefined, 'the form must be submittable again')
+
+  const accepted = await runSettingsChanges(fakeClient(), submitted.state, submitted.pending!)
+  assert.equal(accepted.draft, undefined)
+  assert.equal(accepted.draftSubmit, undefined)
+})
+
+test('dismissing an edited form asks first; an untouched one just closes', () => {
+  const opened = applySettingsIntent(openState(), { kind: 'new-model' }).state
+  assert.equal(applySettingsIntent(opened, { kind: 'cancel-draft' }).state.draft, undefined)
+
+  const edited = applySettingsIntent(opened, { kind: 'draft-field', field: 'key', value: 'h' }).state
+  const asked = applySettingsIntent(edited, { kind: 'cancel-draft' }).state
+  assert.equal(asked.draft?.kind, 'model')
+  assert.equal(asked.discardArmed, true)
+  assert.equal(settingsView(asked).form?.confirmDiscard, true)
+  assert.deepEqual(settingsKeyToIntent({ key: 'Escape' }, asked), { kind: 'keep-editing' })
+
+  const kept = applySettingsIntent(asked, { kind: 'keep-editing' }).state
+  assert.equal(kept.discardArmed, undefined)
+  assert.equal(kept.draft?.kind, 'model')
+  assert.equal(applySettingsIntent(asked, { kind: 'discard-draft' }).state.draft, undefined)
+})
+
 // --- the optimistic projection ------------------------------------------------
 
 test('a pending removal takes the row off screen before the host answers', () => {
@@ -1697,41 +1744,219 @@ test('a delete confirmation is anchored to the row it is about, and names the ca
 
 // --- an endpoint and its first model ------------------------------------------
 
-test('a new endpoint can carry its first model, and both fields are all-or-nothing', () => {
-  const snapshot = snapshotOf({ models: [], defaultModel: undefined })
+test('a new endpoint needs a model, and a key already taken is scoped by its endpoint', () => {
+  const snapshot = snapshotOf({ defaultModel: undefined })
+  const none = draftToChanges(endpointDraft({ name: 'fresh', step: 'models' }), snapshot)
+  assert.ok('error' in none)
+  assert.match(none.error, /至少选择一个模型/)
 
-  const alone = draftToChanges(endpointDraft({ name: 'fresh' }), snapshot)
-  assert.ok(Array.isArray(alone))
-  assert.deepEqual(alone.map((change) => change.kind), ['set-endpoint'])
-
-  const half = draftToChanges(endpointDraft({ name: 'fresh', modelKey: 'big' }), snapshot)
-  assert.ok('error' in half)
-
-  const both = draftToChanges(
-    endpointDraft({ name: 'fresh', modelKey: 'big', modelId: 'claude-big' }),
-    snapshot,
-  )
-  assert.ok(Array.isArray(both))
-  assert.deepEqual(both.map((change) => change.kind), [
-    'set-endpoint',
-    'set-model',
-    // Nothing was the default, so the model just added becomes it.
-    'set-default-model',
-  ])
-  assert.equal(
-    (both[1] as Extract<SettingsChange, { kind: 'set-model' }>).endpoint,
-    'fresh',
-    'the model must point at the endpoint created one change earlier',
-  )
+  const changes = draftToChanges(endpointDraft({ name: 'fresh', step: 'models', picked: ['big'] }), snapshot)
+  assert.ok(Array.isArray(changes))
+  assert.deepEqual(changes.map((change) => change.kind), ['set-endpoint', 'set-model', 'set-default-model'])
+  assert.equal((changes[1] as Extract<SettingsChange, { kind: 'set-model' }>).key, 'fresh/big')
 })
 
 test('adding an endpoint does not move an existing default model', () => {
-  const changes = draftToChanges(
-    endpointDraft({ name: 'fresh', modelKey: 'other', modelId: 'claude-other' }),
-    snapshotOf(),
-  )
+  const changes = draftToChanges(endpointDraft({ name: 'fresh', step: 'models', picked: ['claude-other'] }), snapshotOf())
   assert.ok(Array.isArray(changes))
   assert.deepEqual(changes.map((change) => change.kind), ['set-endpoint', 'set-model'])
+})
+
+// --- the new-endpoint wizard ---------------------------------------------------
+
+test('the wizard walks service, connection, models — testing the connection on the way', () => {
+  let state = applySettingsIntent(openState({ category: 'provider' }), { kind: 'new-endpoint' }).state
+  let form = settingsView(state).form
+  assert.ok(form?.kind === 'endpoint-wizard' && form.step === 'preset')
+  assert.ok(form.presets.length >= 8)
+
+  state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'deepseek' }).state
+  assert.ok(state.draft?.kind === 'endpoint')
+  assert.equal(state.draft.step, 'connect')
+  assert.equal(state.draft.provider, 'openai')
+  assert.equal(state.draft.baseUrl, 'https://api.deepseek.com')
+  assert.equal(state.draft.name, 'deepseek')
+
+  state = applySettingsIntent(state, { kind: 'draft-field', field: 'apiKey', value: 'sk-1' }).state
+  // 下一步 (or Enter) tests before it moves on.
+  const next = applySettingsIntent(state, { kind: 'submit-draft' })
+  assert.deepEqual(next.probe, { seq: 1, provider: 'openai', baseUrl: 'https://api.deepseek.com', apiKey: 'sk-1' })
+  assert.equal(next.changes, undefined)
+  form = settingsView(next.state).form
+  assert.ok(form?.kind === 'endpoint-wizard')
+  assert.equal(form.probe.status, 'running')
+
+  state = applySettingsIntent(next.state, {
+    kind: 'probe-result',
+    seq: 1,
+    result: { ok: true, latencyMs: 120, models: [{ id: 'deepseek-chat' }, { id: 'deepseek-reasoner' }] },
+  }).state
+  assert.ok(state.draft?.kind === 'endpoint')
+  assert.equal(state.draft.step, 'models', 'a success started by 下一步 moves on by itself')
+  form = settingsView(state).form
+  assert.ok(form?.kind === 'endpoint-wizard')
+  assert.deepEqual(form.picker?.rows.map((row) => row.id), ['deepseek-chat', 'deepseek-reasoner'])
+
+  state = applySettingsIntent(state, { kind: 'toggle-picked-model', id: 'deepseek-chat' }).state
+  const done = applySettingsIntent(state, { kind: 'submit-draft' })
+  assert.deepEqual(done.changes, [
+    { scope: 'provider', kind: 'set-endpoint', name: 'deepseek', provider: 'openai', baseUrl: 'https://api.deepseek.com', apiKey: 'sk-1' },
+    { scope: 'provider', kind: 'set-model', key: 'deepseek-chat', model: 'deepseek-chat', endpoint: 'deepseek' },
+  ])
+})
+
+test('a failed test stays on the page, says why in plain words, and can be skipped', () => {
+  let state = applySettingsIntent(openState(), { kind: 'new-endpoint' }).state
+  state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'openai' }).state
+  state = applySettingsIntent(state, { kind: 'submit-draft' }).state
+  state = applySettingsIntent(state, {
+    kind: 'probe-result',
+    seq: 1,
+    result: { ok: false, reason: 'auth', status: 401, detail: 'bad key' },
+  }).state
+  assert.ok(state.draft?.kind === 'endpoint')
+  assert.equal(state.draft.step, 'connect')
+  const form = settingsView(state).form
+  assert.ok(form?.kind === 'endpoint-wizard')
+  assert.equal(form.probe.status, 'failed')
+  assert.equal(form.probe.message, 'API key 无效。（401）')
+  assert.equal(form.probe.skippable, true)
+
+  state = applySettingsIntent(state, { kind: 'skip-test' }).state
+  const picker = settingsView(state).form
+  assert.ok(picker?.kind === 'endpoint-wizard' && picker.step === 'models')
+  assert.match(picker.picker?.empty ?? '', /没有拿到模型列表/)
+
+  state = applySettingsIntent(state, { kind: 'draft-field', field: 'manualModel', value: ' gpt-5 ' }).state
+  state = applySettingsIntent(state, { kind: 'add-manual-model' }).state
+  assert.ok(state.draft?.kind === 'endpoint')
+  assert.deepEqual(state.draft.picked, ['gpt-5'])
+  assert.equal(state.draft.manualModel, '')
+})
+
+test('a reply to a superseded test is ignored, and changing the address drops the result', () => {
+  let state = applySettingsIntent(openState(), { kind: 'new-endpoint' }).state
+  state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'openai-compatible' }).state
+  state = applySettingsIntent(state, { kind: 'draft-field', field: 'baseUrl', value: 'http://a' }).state
+  state = applySettingsIntent(state, { kind: 'test-endpoint' }).state
+  state = applySettingsIntent(state, { kind: 'draft-field', field: 'baseUrl', value: 'http://b' }).state
+  assert.equal(state.probe, undefined)
+  const late = applySettingsIntent(state, {
+    kind: 'probe-result',
+    seq: 1,
+    result: { ok: true, latencyMs: 5, models: [{ id: 'x' }] },
+  }).state
+  assert.equal(late, state)
+
+  // An unchanged value committed on blur is not an edit.
+  state = applySettingsIntent(state, { kind: 'test-endpoint' }).state
+  state = applySettingsIntent(state, {
+    kind: 'probe-result',
+    seq: 2,
+    result: { ok: true, latencyMs: 5, models: [], baseUrl: 'http://b/v1' },
+  }).state
+  assert.ok(state.draft?.kind === 'endpoint')
+  assert.equal(state.draft.baseUrl, 'http://b/v1', 'the address that answered replaces the one typed')
+  state = applySettingsIntent(state, { kind: 'draft-field', field: 'baseUrl', value: 'http://b/v1' }).state
+  assert.equal(state.probe?.status, 'done')
+})
+
+test('an endpoint being edited is tested with its saved key until a new one is typed', () => {
+  let state = applySettingsIntent(openState(), { kind: 'edit-endpoint', name: 'main' }).state
+  const form = settingsView(state).form
+  assert.ok(form && form.kind === undefined)
+  assert.equal(form.probe?.status, 'idle')
+  assert.deepEqual(applySettingsIntent(state, { kind: 'test-endpoint' }).probe, {
+    seq: 1,
+    provider: 'anthropic',
+    baseUrl: 'https://api.example',
+    endpointName: 'main',
+  })
+  state = applySettingsIntent(state, { kind: 'draft-field', field: 'apiKey', value: 'sk-new' }).state
+  assert.deepEqual(applySettingsIntent(state, { kind: 'test-endpoint' }).probe, {
+    seq: 1,
+    provider: 'anthropic',
+    baseUrl: 'https://api.example',
+    apiKey: 'sk-new',
+  })
+})
+
+test('a wizard batch that failed part-way retries as an edit of what it already made', async () => {
+  let state = applySettingsIntent(openState({ snapshot: snapshotOf({ defaultModel: 'big' }) }), { kind: 'new-endpoint' }).state
+  state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'openai' }).state
+  state = applySettingsIntent(state, { kind: 'skip-test' }).state
+  for (const id of ['a', 'b']) {
+    state = applySettingsIntent(state, { kind: 'draft-field', field: 'manualModel', value: id }).state
+    state = applySettingsIntent(state, { kind: 'add-manual-model' }).state
+  }
+  const submitted = applySettingsIntent(state, { kind: 'submit-draft' })
+  let current = submitted.state
+  let after = snapshotOf({ defaultModel: 'big' })
+  const client = fakeClient({
+    changeSettings: async (_root, change) => {
+      if (change.kind === 'set-model' && change.model === 'a') throw new Error('写入失败')
+      if (change.kind === 'set-endpoint') after = { ...after, endpoints: [...after.endpoints, { name: change.name, provider: change.provider }] }
+      if (change.kind === 'set-model') after = { ...after, models: [...after.models, { key: change.key, model: change.model, endpoint: change.endpoint, resolves: true }] }
+      return { settings: after, rebuiltLanes: 0 } as WireShellSettingsChangeResult
+    },
+  })
+  current = await runSettingsChanges(client, current, submitted.pending!, () => current)
+  assert.match(current.error ?? '', /写入失败/)
+  assert.ok(current.draft?.kind === 'endpoint')
+  assert.equal(current.draft.originalName, 'openai')
+
+  const retry = draftToChanges(current.draft, current.snapshot!)
+  assert.ok(Array.isArray(retry), JSON.stringify(retry))
+  // `b` went in before `a` failed, so only `a` is left to send.
+  assert.deepEqual(retry.map((change) => change.kind === 'set-model' ? change.model : change.kind), ['set-endpoint', 'a'])
+})
+
+test('a field committing its unchanged value is not an edit', () => {
+  const opened = applySettingsIntent(openState(), { kind: 'edit-endpoint', name: 'main' }).state
+  const same = applySettingsIntent(opened, { kind: 'draft-field', field: 'name', value: 'main' }).state
+  assert.equal(same, opened)
+  assert.equal(applySettingsIntent(same, { kind: 'cancel-draft' }).state.draft, undefined, 'nothing to confirm')
+})
+
+test('a local server that needs no key is stored with a stand-in one', () => {
+  let state = applySettingsIntent(openState(), { kind: 'new-endpoint' }).state
+  state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'ollama' }).state
+  assert.equal(applySettingsIntent(state, { kind: 'submit-draft' }).probe?.apiKey, 'ollama')
+  assert.ok(state.draft)
+  const change = draftToChange(state.draft, snapshotOf())
+  assert.ok(!('error' in change) && change.kind === 'set-endpoint')
+  assert.equal(change.apiKey, 'ollama')
+})
+
+test('a picked service names the endpoint until the user names it', () => {
+  const taken = openState({ snapshot: snapshotOf({ endpoints: [{ name: 'openai', provider: 'openai' }] }) })
+  let state = applySettingsIntent(taken, { kind: 'new-endpoint' }).state
+  state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'openai' }).state
+  assert.ok(state.draft?.kind === 'endpoint')
+  assert.equal(state.draft.name, 'openai-2')
+  state = applySettingsIntent(state, { kind: 'draft-field', field: 'name', value: 'work' }).state
+  state = applySettingsIntent(state, { kind: 'wizard-back' }).state
+  state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'anthropic' }).state
+  assert.ok(state.draft?.kind === 'endpoint')
+  assert.equal(state.draft.name, 'work')
+  assert.equal(state.draft.provider, 'anthropic')
+})
+
+test('first-run setup opens the wizard once the snapshot shows no endpoint', async () => {
+  const opened = applySettingsIntent(createSettingsState(), { kind: 'open', category: 'provider', setup: true })
+  assert.equal(opened.load, true)
+  const empty = fakeClient({
+    getSettings: async () =>
+      ({ settings: snapshotOf({ endpoints: [], models: [] }), projects: [] }) as unknown as WireShellSettingsResult,
+  })
+  const loaded = await loadSettings(empty, opened.state)
+  assert.ok(loaded.draft?.kind === 'endpoint')
+  assert.equal(loaded.draft.step, 'preset')
+  assert.equal(loaded.setupWizard, undefined)
+
+  // With an endpoint already configured the page itself is the answer.
+  const configured = await loadSettings(fakeClient(), opened.state)
+  assert.equal(configured.draft, undefined)
 })
 
 // --- MCP server drafts and operations -----------------------------------------

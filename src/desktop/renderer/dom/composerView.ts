@@ -18,7 +18,8 @@ import type { WireRuntimeSnapshot } from '../../../runtime/protocol/wire.js'
 import { el, reconcile, replace, show } from './dom.js'
 import { createPresence, finishPresenceWithin, type Presence } from './presence.js'
 import { button } from './controls.js'
-import { onPressOutside } from './dismiss.js'
+import { dismissable } from './dismiss.js'
+import { followPointer, rovingFocus } from './focus.js'
 import { createHoverCard } from './hoverCard.js'
 import { icon } from './icons.js'
 
@@ -272,6 +273,7 @@ export function createComposerView(els: {
     attachItems.push(pickItem, mentionItem)
     menu.appendChild(pickItem)
     menu.appendChild(mentionItem)
+    followPointer(menu, '.composer-menu-item')
     els.attach.parentElement?.appendChild(menu)
     attachMenu = menu
     attachPresence = createPresence(menu)
@@ -280,17 +282,20 @@ export function createComposerView(els: {
     els.attach.classList.add('open')
   }
 
-  els.attach.addEventListener('click', () => {
+  function toggleAttachMenu(): void {
     attachMenuOpen = !attachMenuOpen
     renderAttachMenu()
     if (attachMenuOpen) attachItems[0]?.focus()
-  })
+  }
+  els.attach.addEventListener('click', toggleAttachMenu)
   // Scope dismissal to the menu and trigger, not the surrounding bar.
   const attachShell = els.attach.parentElement ?? els.attach
-  onPressOutside([els.attach, '.attachment-menu'], () => {
-    if (!attachMenuOpen) return
-    closeAttachMenu()
+  dismissable([els.attach, '.attachment-menu'], {
+    isOpen: () => attachMenuOpen,
+    close: closeAttachMenu,
   })
+  attachShell.addEventListener('keydown', (event) =>
+    rovingFocus(event, attachItems, attachMenuOpen, toggleAttachMenu))
   attachShell.addEventListener('focusout', (event) => {
     const next = (event as FocusEvent).relatedTarget
     if (next === null) return
@@ -342,9 +347,10 @@ export function createComposerView(els: {
    * The name is not drawn: at 64px a file name is either truncated to nothing
    * or wider than the picture it labels, so it lives in the `title` and the
    * accessible name instead, where it is still one hover or one screen reader
-   * away. The two non-ready states keep the tile's box — an import that
-   * finishes must not shove the tiles beside it sideways — and carry their
-   * words in the same two places.
+   * away. An importing tile keeps the box — an import that finishes must not
+   * shove the tiles beside it sideways — and carries its words in the same two
+   * places. A failed one also says why beside its box: a refusal only a hover
+   * could read is a refusal most people never see.
    */
   function attachmentTileNode(row: AttachmentStripView['rows'][number]): HTMLElement {
     const item = el('div', `attachment-tile ${row.state}`)
@@ -354,6 +360,9 @@ export function createComposerView(els: {
     const described = row.detail === undefined ? row.label : `${row.label}（${row.detail}）`
     item.setAttribute('title', described)
     item.setAttribute('aria-label', described)
+    // The 64px square the controls hang off. A failed tile is wider than it (the
+    // reason sits beside it), so there it is a box of its own.
+    const picture = row.state === 'failed' ? el('div', 'attachment-picture') : item
 
     if (row.state === 'ready') {
       // The thumbnail (S12): the pane's on-demand data URL, painted in place.
@@ -374,28 +383,32 @@ export function createComposerView(els: {
         event.preventDefault()
         actions.onPreviewAttachment(row.draftId)
       })
-      item.appendChild(thumb)
+      picture.appendChild(thumb)
     } else {
       // A placeholder of the same size: `importing` pulses, `failed` is a
       // danger-bordered box. Neither is a control — the ✕ and 重试 are — so it
       // is `aria-hidden` and the tile's own label does the talking.
       const placeholder = el('div', 'attachment-placeholder')
       placeholder.setAttribute('aria-hidden', 'true')
-      item.appendChild(placeholder)
+      picture.appendChild(placeholder)
     }
 
     if (row.state === 'failed') {
       const retry = button('attachment-retry', '重试', `重新导入 ${row.label}`, () => {
         actions.onRetryAttachment(row.draftId)
       })
-      item.appendChild(retry)
+      picture.appendChild(retry)
     }
     // The corner ✕, over the picture rather than after it: the tile is the
     // whole row now, so the remove has nowhere else to sit.
     const remove = button('attachment-remove', '✕', `移除 ${row.label}`, () => {
       actions.onRemoveAttachment(row.draftId)
     })
-    item.appendChild(remove)
+    picture.appendChild(remove)
+    if (picture !== item) {
+      item.appendChild(picture)
+      if (row.detail !== undefined) item.appendChild(el('span', 'attachment-reason', row.detail))
+    }
     return item
   }
 
@@ -424,7 +437,7 @@ export function createComposerView(els: {
     els.submit.setAttribute('aria-label', label)
     els.submit.title = label
   }
-  els.chipRuntime.addEventListener('click', () => {
+  function toggleRuntimeMenu(): void {
     if (runtimeMenu) {
       closeRuntimeMenu()
       return
@@ -433,22 +446,29 @@ export function createComposerView(els: {
     // back through `showRuntimeMenu`.
     runtimeMenuPending = true
     actions.onOpenRuntimeMenu()
-  })
-  els.chipPermission.addEventListener('click', () => {
+  }
+  els.chipRuntime.addEventListener('click', toggleRuntimeMenu)
+  function togglePermissionMenu(): void {
     permissionMenuOpen = !permissionMenuOpen
     renderPermission()
-    if (permissionMenuOpen) firstMenuItem()?.focus()
-  })
+    // The mode in force, so the keyboard starts where the menu says it is.
+    if (permissionMenuOpen) (permissionItems.find((item) => item.classList.contains('active')) ?? permissionItems[0])?.focus()
+  }
+  els.chipPermission.addEventListener('click', togglePermissionMenu)
 
   // Closed three ways: a press outside the shell, focus leaving it, and Escape.
   // `relatedTarget` is where focus *went*, so a click on a menu item — which
   // happens before the item's own `click` — must not close it. The shell, not
   // the menu, so the pill can still toggle its own popover shut.
-  onPressOutside([els.chipPermission, '.permission-menu'], () => {
-    if (!permissionMenuOpen) return
-    permissionMenuOpen = false
-    renderPermission()
+  dismissable([els.chipPermission, '.permission-menu'], {
+    isOpen: () => permissionMenuOpen,
+    close: () => {
+      permissionMenuOpen = false
+      renderPermission()
+    },
   })
+  els.permissionShell.addEventListener('keydown', (event) =>
+    rovingFocus(event, permissionItems, permissionMenuOpen, togglePermissionMenu))
   els.permissionShell.addEventListener('focusout', (event) => {
     const next = (event as FocusEvent).relatedTarget
     if (next === null) return
@@ -478,10 +498,6 @@ export function createComposerView(els: {
   let permissionSignature: string | undefined
   let chipSignature: string | undefined
   let contextSignature: string | undefined
-
-  function firstMenuItem(): HTMLButtonElement | undefined {
-    return permissionItems[0]
-  }
 
   function renderPermission(): void {
     const view = permissionPillView({ runtime: runtimeSnapshot, open: permissionMenuOpen, coordinator: coordinatorLane })
@@ -544,6 +560,7 @@ export function createComposerView(els: {
         return item
       })
       reconcile(permissionMenu, permissionItems)
+      followPointer(permissionMenu, '.composer-menu-item')
       els.permissionShell.appendChild(permissionMenu)
       permissionPresence = createPresence(permissionMenu)
     }
@@ -561,9 +578,16 @@ export function createComposerView(els: {
   // at a time — an open flyout first — because a flyout opened by hover would
   // otherwise take the whole popover with it; a press *outside* the chip is not
   // that kind of unwinding and takes the popover whole.
-  onPressOutside([els.chipRuntime, '.chip-menu'], () => {
-    if (!runtimeMenu) return
-    closeRuntimeMenu()
+  dismissable([els.chipRuntime, '.chip-menu'], {
+    isOpen: () => runtimeMenu !== undefined,
+    close: closeRuntimeMenu,
+  })
+  // Arrows walk the flyout when focus is in it and the two rows otherwise;
+  // ArrowDown on the closed chip opens it.
+  els.chipShell.addEventListener('keydown', (event) => {
+    const inFlyout = flyoutNode?.contains(event.target as Node) === true
+    const items = inFlyout ? flyoutItems() : Array.from(entryRows.values())
+    rovingFocus(event, runtimeMenu ? items : [], runtimeMenu !== undefined, toggleRuntimeMenu)
   })
   els.chipShell.addEventListener('focusout', (event) => {
     const next = (event as FocusEvent).relatedTarget
@@ -618,6 +642,18 @@ export function createComposerView(els: {
     if (returnFocus) els.chipRuntime.focus()
   }
 
+  /** The open flyout's rows that can be chosen, in order. */
+  function flyoutItems(): HTMLButtonElement[] {
+    return Array.from(flyoutNode?.children ?? [])
+      .filter((node): node is HTMLButtonElement => node.classList.contains('chip-flyout-item') && !(node as HTMLButtonElement).disabled)
+  }
+
+  /** Keyboard entry into the flyout: the value in force, else the first row. */
+  function focusFlyout(): void {
+    const items = flyoutItems()
+    ;(items.find((item) => item.classList.contains('active')) ?? items[0])?.focus()
+  }
+
   function openFlyout(key: RuntimeMenuKey): void {
     clearTimeout(flyoutIntent)
     // The guard is what breaks the hover loop described above, and it also makes
@@ -654,6 +690,7 @@ export function createComposerView(els: {
       node.setAttribute('role', 'listbox')
       node.addEventListener('mouseenter', () => clearTimeout(flyoutIntent))
       shell.appendChild(node)
+      followPointer(node, '.chip-flyout-item')
       kept = { node, presence: createPresence(node, { direction: 'slide' }), signature: '' }
       flyouts.set(openEntry, kept)
     }
@@ -853,6 +890,7 @@ export function createComposerView(els: {
         runtimeMenuNode.setAttribute('role', 'menu')
         runtimeMenuNode.setAttribute('aria-label', '模型与推理强度')
         runtimeMenuNode.addEventListener('mousemove', (event) => { pointer = { x: event.clientX, y: event.clientY } })
+        followPointer(runtimeMenuNode, '.chip-menu-row')
         els.chipShell.appendChild(runtimeMenuNode)
         runtimePresence = createPresence(runtimeMenuNode)
       }
@@ -887,10 +925,12 @@ export function createComposerView(els: {
         // `ArrowRight` and Enter are the keyboard's way in.
         row.addEventListener('mouseenter', (event) => hoverFlyout(entry.key, { x: event.clientX, y: event.clientY }))
         row.addEventListener('keydown', (event) => {
-          if ((event as KeyboardEvent).key !== 'ArrowRight') return
+          const key = (event as KeyboardEvent).key
+          if (key !== 'ArrowRight' && key !== 'Enter') return
           event.preventDefault()
           event.stopPropagation()
           openFlyout(entry.key)
+          focusFlyout()
         })
         shell.appendChild(row)
         entryShells.set(entry.key, shell)

@@ -491,7 +491,7 @@ test('loose items paint as items: messages, notices and 已中断; the duration 
 
   render(transcript([
     { id: 'a', kind: 'user', text: 'hi' },
-    { id: 'b', kind: 'notice', text: 'Context compacted.' },
+    { id: 'b', kind: 'notice', text: '上下文已压缩' },
     { id: 'c', kind: 'error', text: 'boom', failed: true },
     { id: 'd', kind: 'duration', text: '已处理 1s', durationMs: 1000, turnId: 't1' },
     { id: 'e', kind: 'notice', text: 'Interrupted.', interrupt: true },
@@ -504,7 +504,7 @@ test('loose items paint as items: messages, notices and 已中断; the duration 
     ['item-meta', 'turn-foot'],
     ['item', 'notice', 'interrupt'],
   ])
-  assert.deepEqual(items().map((item) => item.text), ['hi', 'Context compacted.', 'boom', '用时 1s', '已中断'])
+  assert.deepEqual(items().map((item) => item.text), ['hi', '上下文已压缩', 'boom', '用时 1s', '已中断'])
 })
 
 test('a duration made from a streaming turn’s records is not drawn until the turn ends', (t) => {
@@ -2341,6 +2341,50 @@ test('T6 thread note cards: head, status label, and 查看 only with a thread id
   assert.deepEqual(opened, ['thr_0123456789ab'])
   assert.equal(buttons[1]!.disabled, true)
   real.dispose()
+})
+
+test('a failed turn draws a card: reason, target, hint, the provider\'s words, and the two actions', (t) => {
+  const retried: string[] = []
+  let providerSettings = 0
+  const stub = installDomStub()
+  const container = stub.createContainer('transcript')
+  const host = stub.createContainer('pane')
+  const real = createTranscriptView(container, host, {
+    onToggle: () => {}, onTaskStep: () => {}, onOpenPlan: () => {}, onOpenSubagent: () => {}, onOpenPath: () => {},
+    onViewImage: () => {}, imageThumbUrl: () => undefined, onCopy: () => {},
+    onOpenProviderSettings: () => { providerSettings += 1 },
+    onRetryTurn: (id) => retried.push(id),
+  })
+  t.after(() => {
+    real.dispose()
+    stub.uninstall()
+  })
+  const failure = (retryable: boolean): TranscriptItem => ({
+    id: 'f1', kind: 'turn-failure', text: '连不上服务商',
+    failure: {
+      kind: 'network', reason: '连不上服务商', hint: '检查网络。', target: '模型 m · 服务商 h/v1',
+      detail: 'Connection error.', userMessageId: 'u1', retryable,
+    },
+  })
+  const find = (cls: string): StubView[] => (function walk(n: StubView): StubView[] {
+    return [...(n.classes.includes(cls) ? [n] : []), ...n.children.flatMap(walk)]
+  })(stub.inspect(container))
+
+  real.render({ ...createTranscriptState(), items: [failure(true)] }, NO_DISCLOSURE)
+  assert.deepEqual(
+    ['failure-reason', 'failure-target', 'failure-hint', 'failure-detail'].map((cls) => find(cls)[0]?.text),
+    ['连不上服务商', '模型 m · 服务商 h/v1', '检查网络。', 'Connection error.'],
+  )
+  const actions = find('failure-action')
+  assert.deepEqual(actions.map((action) => action.text), ['打开服务商设置', '重试'])
+  stub.dispatch(actions[0]!.node, 'click', {})
+  stub.dispatch(actions[1]!.node, 'click', {})
+  assert.equal(providerSettings, 1)
+  assert.deepEqual(retried, ['u1'])
+
+  // Once something has been sent since, the card keeps its words and loses 重试.
+  real.render({ ...createTranscriptState(), items: [failure(false)] }, NO_DISCLOSURE)
+  assert.deepEqual(find('failure-action').map((action) => action.text), ['打开服务商设置'])
 })
 
 test('receipts: a question card lists asks and answers, a plan card opens the plan', (t) => {

@@ -31,6 +31,8 @@ interface Rendered {
   readonly stub: DomStub
   readonly container: HTMLElement
   readonly intents: SidebarIntent[]
+  /** The keys the container handed to the model's key map. */
+  readonly keys: string[]
   render(view: SidebarView): void
   focusProject(projectRoot: string): void
   finishMotion(): void
@@ -46,11 +48,13 @@ function mount(t: { after(fn: () => void): void }, platform: DesktopPlatform = '
   t.after(() => stub.uninstall())
   const container = stub.createContainer('sidebar')
   const intents: SidebarIntent[] = []
-  const dom = createSidebarView(container, (intent) => intents.push(intent), () => false, platform)
+  const keys: string[] = []
+  const dom = createSidebarView(container, (intent) => intents.push(intent), (chord) => { keys.push(chord.key); return false }, platform)
   return {
     stub,
     container,
     intents,
+    keys,
     render: (view) => dom.render(view),
     focusProject: (projectRoot) => dom.focusProject(projectRoot),
     finishMotion: () => dom.finishMotion(),
@@ -471,21 +475,36 @@ test('focusProject scrolls to the heading but leaves the keyboard on the list', 
   )
 })
 
-test('a press outside the rail withdraws whatever it was asking', (t) => {
+test('a press outside the rail withdraws what is asking, and only that press is eaten', (t) => {
   // The hole `focusout` alone leaves: a click on the transcript's background
   // moves no focus at all, so a delete confirmation drawn in the sidebar used to
-  // sit there with nothing able to answer it.
+  // sit there with nothing able to answer it. The press that withdraws it is the
+  // whole gesture: the click behind it must not also activate what was under the
+  // pointer.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   const { render, stub, intents } = mount(t)
   render(viewOf({ ...tieredState(), pendingDelete: 'history' }))
 
   const elsewhere = stub.createContainer('canvas')
-  stub.dispatchDocument('pointerdown', { target: elsewhere })
+  const press = stub.dispatchDocument('pointerdown', { target: elsewhere })
+  assert.deepEqual(intents.map((intent) => intent.kind), ['cancel-delete'])
+  assert.equal(press.propagationStopped, true, 'the pointerdown stops at the document')
+  assert.equal(stub.dispatchDocument('click', { target: elsewhere }).defaultPrevented, true)
+  stub.dispatchDocument('pointerup', { target: elsewhere })
+  t.mock.timers.tick(1)
+})
 
-  assert.deepEqual(intents.map((intent) => intent.kind), [
-    'cancel-delete',
-    'cancel-remove-project',
-    'open-project-menu',
-  ])
+test('nothing asking means a press is nobody’s business', (t) => {
+  // Every press in the window reaches the rail's registrations; with no question
+  // on screen none of them may withdraw anything or eat the click.
+  const { render, stub, intents } = mount(t)
+  render(viewOf(tieredState()))
+
+  const elsewhere = stub.createContainer('canvas')
+  const press = stub.dispatchDocument('pointerdown', { target: elsewhere })
+  assert.deepEqual(intents, [])
+  assert.equal(press.propagationStopped, false)
+  assert.equal(stub.dispatchDocument('click', { target: elsewhere }).defaultPrevented, false)
 })
 
 test('each question is scoped to itself, not to the rail', (t) => {
@@ -494,35 +513,33 @@ test('each question is scoped to itself, not to the rail', (t) => {
   // — is the user saying "not that": scoping the withdrawal to the whole sidebar
   // left the question standing for every press inside it, which is most of the
   // blank space anyone reaches for.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   const { render, root, stub, intents } = mount(t)
   render(viewOf({ ...tieredState(), pendingDelete: 'history' }))
 
   stub.dispatchDocument('pointerdown', { target: find(root(), 'project-heading')?.node })
   assert.deepEqual(
     intents.map((intent) => intent.kind),
-    ['cancel-delete', 'cancel-remove-project', 'open-project-menu'],
+    ['cancel-delete'],
     'a press on a heading withdraws the confirmation asked in a row',
   )
 
   // The confirmation's own two buttons are the one place that is *inside*: the
   // press that lands on 删除 must reach it, not be answered as a withdrawal.
-  // The other two withdrawals still fire and are no-ops in `app.ts`, which
-  // answers an unchanged state without repainting — that idempotence is what
-  // lets three scopes share one press.
   intents.length = 0
-  stub.dispatchDocument('pointerdown', { target: find(root(), 'session-confirm-yes')?.node })
-  assert.ok(
-    !intents.some((intent) => intent.kind === 'cancel-delete'),
-    'a press on the confirmation is not a press outside it',
-  )
+  stub.dispatchDocument('pointerup')
+  t.mock.timers.tick(1)
+  const yes = stub.dispatchDocument('pointerdown', { target: find(root(), 'session-confirm-yes')?.node })
+  assert.deepEqual(intents, [], 'a press on the confirmation is not a press outside it')
+  assert.equal(yes.propagationStopped, false)
 })
 
-test('a press on another workspace’s heading closes the menu; its own does not', (t) => {
+test('a press on a heading closes the menu hanging off it and is eaten', (t) => {
   // The reported shape: right-click project A's heading, then left-press project
-  // B's. The scope was a bare `.project-row`, which made *every* heading the
-  // menu's trigger — the press read as "inside", nothing withdrew the menu, and
-  // the repaint B's own click caused drew it again over a rail that had moved.
-  // Only the row the menu belongs to is its trigger.
+  // B's. The menu is withdrawn by the press, and the click behind it must not
+  // also fold B's group — the repaint that click caused drew the menu again over
+  // a rail that had moved. The menu itself is the only thing that stays inside.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   const { render, root, stub, intents } = mount(t)
   render(
     viewOf({
@@ -537,8 +554,6 @@ test('a press on another workspace’s heading closes the menu; its own does not
   const rows = descendants(root()).filter((node) => node.classes.includes('project-row'))
   assert.equal(rows.length, 2, 'expected a heading per workspace')
   const [mine, other] = rows
-  assert.ok(mine?.classes.includes('project-menu-open'), 'the open menu’s trigger is unmarked')
-  assert.ok(!other?.classes.includes('project-menu-open'), 'a second heading claims the menu')
 
   stub.dispatchDocument('pointerdown', { target: other?.node })
   assert.deepEqual(
@@ -546,28 +561,146 @@ test('a press on another workspace’s heading closes the menu; its own does not
     [{ kind: 'open-project-menu', projectRoot: undefined }],
     'pressing another workspace’s heading leaves the menu standing',
   )
+  assert.equal(stub.dispatchDocument('click', { target: other?.node }).defaultPrevented, true)
+  stub.dispatchDocument('pointerup')
+  t.mock.timers.tick(1)
 
-  // Its own heading closes it too, but through the row rather than through
-  // `dom/dismiss.ts`: that scope has to keep the row inside, or the close it
-  // sends on the `pointerdown` of a *right*-click would be undone by the
-  // `contextmenu` behind it and the menu could never be toggled shut.
+  // Its own heading closes it as well: the swallowed `contextmenu` behind a
+  // right press is what keeps the menu from opening straight back.
   intents.length = 0
-  stub.dispatchDocument('pointerdown', { target: mine?.node })
-  assert.ok(
-    !intents.some((intent) => intent.kind === 'open-project-menu'),
-    'the dismissal scope must leave the menu’s own trigger to the row',
-  )
-
-  stub.dispatch(mine?.node, 'pointerdown', { button: 0 })
+  stub.dispatchDocument('pointerdown', { target: mine?.node, button: 2 })
   assert.deepEqual(
     intents.filter((intent) => intent.kind === 'open-project-menu'),
     [{ kind: 'open-project-menu', projectRoot: undefined }],
-    'a left press on the open menu’s own heading leaves it standing',
   )
+  assert.equal(stub.dispatchDocument('contextmenu', { target: mine?.node }).defaultPrevented, true)
+  stub.dispatchDocument('pointerup')
+  t.mock.timers.tick(1)
 
   intents.length = 0
-  stub.dispatch(mine?.node, 'pointerdown', { button: 2 })
-  assert.deepEqual(intents, [], 'the right-click’s own press must not pre-empt its contextmenu')
+  const menu = find(root(), 'project-menu')?.node
+  stub.dispatchDocument('pointerdown', { target: menu })
+  assert.deepEqual(intents, [], 'a press inside the menu is not a press outside it')
+})
+
+const rowTitled = (root: StubView, title: string): StubView => {
+  const found = sessionRows(root).find((row) => find(row, 'session-title-run')?.text === title)
+  assert.ok(found, `no row titled ${title}`)
+  return found
+}
+
+test('Escape in the search box clears the query, then leaves the field', (t) => {
+  const { render, root, stub, intents } = mount(t)
+  render(viewOf(tieredState()))
+  const search = find(root(), 'sidebar-search')!
+  const field = search.node as { value: string }
+  stub.focus(search.node)
+  field.value = '后台'
+
+  const first = stub.dispatch(search.node, 'keydown', { key: 'Escape' })
+  assert.equal(field.value, '')
+  assert.deepEqual(intents, [{ kind: 'search', query: '' }])
+  assert.equal(stub.activeElement(), search.node, 'the first Escape keeps the field')
+  assert.equal(first.defaultPrevented && first.propagationStopped, true, 'and never interrupts the turn')
+
+  intents.length = 0
+  stub.dispatch(search.node, 'keydown', { key: 'Escape' })
+  assert.equal(stub.activeElement(), undefined, 'the second one leaves it')
+  assert.deepEqual(intents, [])
+})
+
+test('asking to delete puts the keyboard on 取消, and cancelling gives it back to the trash button', (t) => {
+  // The row is rebuilt for the question and Chromium fires no blur for the
+  // removed button, so focus used to fall to `<body>` — where Escape interrupts
+  // the turn instead of backing out of the question.
+  const { render, root, stub } = mount(t)
+  render(viewOf(tieredState()))
+  stub.focus(find(rowTitled(root(), '只是历史'), 'session-delete')!.node)
+
+  render(viewOf({ ...tieredState(), pendingDelete: 'history' }))
+  assert.equal(
+    stub.activeElement(),
+    find(rowTitled(root(), '只是历史'), 'session-confirm-no')!.node,
+    'the safe answer, not the destructive one',
+  )
+
+  render(viewOf(tieredState()))
+  assert.equal(stub.activeElement(), find(rowTitled(root(), '只是历史'), 'session-delete')!.node)
+})
+
+test('focus that was elsewhere stays there when a question appears', (t) => {
+  // Asking takes the keyboard only for the control that was asked through: the
+  // rail repaints per streamed token and must not pull focus from the composer.
+  const { render, stub } = mount(t)
+  render(viewOf(tieredState()))
+  const composer = stub.createContainer('composer')
+  stub.focus(composer)
+
+  render(viewOf(tieredState()))
+  assert.equal(stub.activeElement(), composer)
+})
+
+test('deleting a session hands the keyboard to the row beside it', (t) => {
+  const { render, root, stub } = mount(t)
+  render(viewOf({ ...tieredState(), pendingDelete: 'background' }))
+  stub.focus(find(rowTitled(root(), '后台 lane'), 'session-confirm-yes')!.node)
+
+  const [shown, , history] = tieredState().projects![0]!.sessions
+  render(viewOf({ ...tieredState(), projects: [{ ...tieredState().projects![0]!, sessions: [shown!, history!] }] }))
+
+  assert.equal(
+    stub.activeElement(),
+    find(rowTitled(root(), '只是历史'), 'session-open')!.node,
+    'focus fell to <body> with the row it was on',
+  )
+})
+
+test('Enter on a confirmation or menu button is the button’s, not the cursor row’s', (t) => {
+  // The container's key map reads Enter as "activate the cursor row"; on a
+  // focused 取消 that would confirm the very delete being cancelled.
+  const { render, root, stub, container, keys } = mount(t)
+  render(viewOf({ ...tieredState(), pendingDelete: 'history' }))
+
+  const cancel = find(rowTitled(root(), '只是历史'), 'session-confirm-no')!
+  stub.dispatch(container, 'keydown', { key: 'Enter', target: cancel.node })
+  assert.deepEqual(keys, [])
+
+  stub.dispatch(container, 'keydown', { key: 'Enter', target: find(rowTitled(root(), '正在显示'), 'session-open')!.node })
+  assert.deepEqual(keys, ['Enter'], 'a row keeps its Enter')
+})
+
+test('opening the project menu focuses its item, and closing it returns to the heading', (t) => {
+  const { render, root, stub } = mount(t)
+  render(viewOf(tieredState()))
+
+  render(viewOf({ ...tieredState(), projectMenu: '/w/app' }))
+  assert.equal(stub.activeElement(), find(root(), 'project-menu-item')!.node)
+
+  render(viewOf(tieredState()))
+  assert.equal(stub.activeElement(), find(root(), 'project-heading')!.node)
+})
+
+test('a repaint keeps the rows, nav and footer whose inputs did not change', (t) => {
+  // A node rebuilt under the pointer eats the click that was aimed at it, and a
+  // rebuilt focused node drops the keyboard to `<body>`.
+  const { render, root } = mount(t)
+  render(viewOf(tieredState()))
+  const before = sessionRows(root()).map((row) => row.node)
+  const nav = find(root(), 'sidebar-nav-item')!.node
+  const settings = find(root(), 'sidebar-settings')!.node
+
+  const renamed = tieredState().projects![0]!
+  render(viewOf({
+    ...tieredState(),
+    projects: [{ ...renamed, sessions: renamed.sessions.map((s) => (s.id === 'history' ? { ...s, title: '改过名' } : s)) }],
+  }))
+
+  const after = sessionRows(root()).map((row) => row.node)
+  assert.equal(after[0], before[0])
+  assert.equal(after[1], before[1])
+  assert.notEqual(after[2], before[2], 'only the row that changed is rebuilt')
+  assert.equal(find(root(), 'sidebar-nav-item')!.node, nav)
+  assert.equal(find(root(), 'sidebar-settings')!.node, settings)
 })
 
 test('the marquee’s second copy is hidden from the accessibility tree', (t) => {
@@ -710,7 +843,7 @@ test('the chord list is behind the ? and reports a toggle', (t) => {
   render(viewOf({ helpOpen: true }))
   const hint = footer().children.find((child) => child.classes.includes('sidebar-hint'))
   assert.ok(hint, 'the ? panel did not open')
-  assert.equal(hint.text, sidebarHint('win32'))
+  assert.equal(hint.text, '快捷键' + sidebarHint('win32').map((row) => row.label + row.chord).join(''))
 })
 
 test('macOS sidebar tooltips and help agree on Command shortcuts', (t) => {
@@ -720,8 +853,22 @@ test('macOS sidebar tooltips and help agree on Command shortcuts', (t) => {
   assert.equal((nav[0]?.node as HTMLElement).title, '在当前项目里新建会话（⌘T）')
   assert.equal((nav[1]?.node as HTMLElement).title, '打开另一个项目（⇧⌘O）')
   assert.equal((find(root(), 'sidebar-settings')?.node as HTMLElement).title, '打开设置（⌘,）')
-  assert.equal(find(root(), 'sidebar-hint')?.text,
-    '[⌘1-9] 切换  [⌘T] 新会话  [⌘W] 关闭  [⌘B] 收起侧栏  [⇧⌘O] 打开项目')
+  assert.deepEqual(sidebarHint('darwin').map((row) => row.chord), ['⌘T', '⌘1-9', '⌘W', '⌘B', '⇧⌘O', '⌘,'])
+  assert.ok(find(root(), 'sidebar-hint')?.text.includes('打开设置⌘,'))
+})
+
+test('the open ? panel closes on a press outside it and on Escape', (t) => {
+  const { render, root, stub, intents, container } = mount(t)
+  render(viewOf({ helpOpen: true }))
+
+  stub.dispatchDocument('pointerdown', { target: find(root(), 'sidebar-hint')?.node })
+  assert.ok(!intents.some((intent) => intent.kind === 'toggle-help'), 'a press inside the panel closed it')
+
+  stub.dispatchDocument('pointerdown', { target: stub.createContainer('canvas') })
+  assert.equal(intents.filter((intent) => intent.kind === 'toggle-help').length, 1)
+
+  stub.dispatch(container, 'keydown', { key: 'Escape' })
+  assert.equal(intents.filter((intent) => intent.kind === 'toggle-help').length, 2)
 })
 
 test('a repaint that only flips the help panel is not swallowed by the render guard', (t) => {
@@ -767,6 +914,23 @@ test('a session waiting for approval says so in words; a running one does not', 
   // The label is the visible half of what `aria-label` already said; both stay,
   // because the badge is still the thing being described.
   assert.equal(waiting.attributes.get('aria-label'), '等待授权')
+})
+
+test('a session whose last turn failed names it in words, like a parked request', (t) => {
+  const r = mount(t)
+  const base = tieredState()
+  r.render(sidebarView(createSidebarState({
+    ...base,
+    projects: base.projects!.map((project) => ({
+      ...project,
+      sessions: project.sessions.map((session, index) => (index === 0 ? { ...session, failed: true } : session)),
+    })),
+  })))
+
+  const failed = sessionRows(r.root()).map((row) => find(row, 'session-badge')).find((badge) => badge?.classes.includes('failed'))
+  assert.ok(failed, 'the failed session has a badge')
+  assert.equal(find(failed, 'session-badge-label')?.text, '失败')
+  assert.equal(failed.attributes.get('aria-label'), '失败')
 })
 
 test('the pinned section draws the coordinator under its project name with thread counts, then ordinary rows; no thread rows', (t) => {

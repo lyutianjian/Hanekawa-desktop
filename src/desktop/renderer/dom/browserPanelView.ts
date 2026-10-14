@@ -117,6 +117,15 @@ export function createBrowserPanelView(
   replace(nodes.address, back, forward, reload, url, takeOver)
 
   url.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') {
+      // Takes back what was typed; with nothing typed it leaves the field.
+      event.preventDefault()
+      event.stopPropagation()
+      const current = addressLabel(activeTab())
+      if (url.value === current) url.blur()
+      else url.value = current
+      return
+    }
     if (event.key !== 'Enter') return
     // Scoped to the field, and stopped here: Enter in an address bar is a
     // navigation, never a composer submit.
