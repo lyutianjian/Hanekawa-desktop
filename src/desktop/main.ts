@@ -49,7 +49,7 @@
  * The `node:fs` imports and the wall-clock commands stay here, never in the
  * renderer bundle.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell as electronShell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, shell as electronShell } from 'electron'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -474,13 +474,14 @@ const IMAGE_PICKER_EXTENSIONS = [...IMAGE_FILE_EXTENSIONS].map((extension) => ex
 async function ensureShell(): Promise<Shell> {
   if (shell) return shell
 
+  // Room for the sidebar, a full reading column and a side panel beside it,
+  // shrunk to the work area of a screen smaller than that. The minimums are
+  // where the two columns and the composer's action bar still fit without
+  // wrapping.
+  const workArea = screen.getPrimaryDisplay().workAreaSize
   const window = new BrowserWindow({
-    // Sized for the layout rather than for the screen: the transcript reads in a
-    // 1100px column and the sidebar is 268 of the rest, so a wider default only
-    // buys canvas nobody writes into. The minimums are where the two columns and
-    // the composer's action bar still fit without wrapping.
-    width: 1080,
-    height: 720,
+    width: Math.min(1152, workArea.width),
+    height: Math.min(738, workArea.height),
     minWidth: 1000,
     minHeight: 620,
     // Frameless chrome (5g): the renderer draws the title bar — the rail toggle

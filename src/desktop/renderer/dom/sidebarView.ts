@@ -640,8 +640,6 @@ export function createSidebarView(
     if (group.menuOpen !== entry.menuShown) {
       entry.menuShown = group.menuOpen
       if (group.menuOpen && !entry.menu.firstElementChild) {
-        entry.menu.appendChild(button('project-menu-item', '项目调度', '打开此项目的调度会话', () =>
-          onIntent({ kind: 'open-coordinator', projectRoot: group.projectRoot })))
         entry.menu.appendChild(button('project-menu-item', '移除项目并删除历史', '从侧边栏移除此项目，并删除它的全部会话记录', () =>
           onIntent({ kind: 'request-remove-project', projectRoot: group.projectRoot })))
       }

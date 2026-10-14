@@ -12,51 +12,45 @@
  */
 
 import type { WireBrowserTabInfo } from '../../shellProtocol.js'
+import type { SideMode } from './sidePanel.js'
 
 // --- the panel's width --------------------------------------------------------
 //
 // Stored and clamped exactly the way `model/sidebarWidth.ts` stores the rail's,
 // because it is the same kind of thing: a local view preference that never rides
-// the wire and never enters project state.
+// the wire and never enters project state. Each mode keeps its own: the browser
+// needs room for a site's desktop layout, the overview only a column of text.
+//
+// No stored width means the stylesheet's default — for the browser a share of
+// the window rather than a number, so it is not written from here at all.
 
-export const BROWSER_WIDTH_STORAGE_KEY = 'hanekawa.browserPanelWidth.v2'
+export const SIDE_WIDTH_STORAGE_KEYS: Readonly<Record<SideMode, string>> = {
+  browser: 'hanekawa.browserPanelWidth.v3',
+  overview: 'hanekawa.overviewPanelWidth.v1',
+}
 
-/**
- * The resting width, and the stylesheet's own fallback.
- *
- * 408 rather than the 480 this started at: at the window's own minimum the
- * panel has to leave a transcript worth reading beside it, and most sites hold
- * their desktop layout this far down. Below roughly here they flip to a tablet
- * breakpoint and the panel stops showing what the user is actually building —
- * which is what `BROWSER_WIDTH_MIN` marks.
- */
-export const BROWSER_WIDTH_DEFAULT = 264
+/** The CSS custom properties the panel rule reads, one per mode. */
+export const SIDE_WIDTH_VARIABLES: Readonly<Record<SideMode, string>> = {
+  browser: '--browser-panel-width',
+  overview: '--overview-panel-width',
+}
+
 /** Under this the address bar cannot show a host *and* its controls. */
-export const BROWSER_WIDTH_MIN = 240
+export const SIDE_WIDTH_MIN = 240
 /**
- * The wide end. Past this the transcript, not the browser, is the cramped
+ * The wide end. Past this the transcript, not the panel, is the cramped
  * column — the same reasoning `SIDEBAR_WIDTH_MAX` uses, from the other side.
  */
-export const BROWSER_WIDTH_MAX = 900
+export const SIDE_WIDTH_MAX = 900
 
-/** The CSS custom property the panel rule reads. Spelled once, imported by `app.ts`. */
-export const BROWSER_WIDTH_VARIABLE = '--browser-panel-width'
-
-export function clampBrowserWidth(px: number): number {
-  // Non-finite is not clamped to an edge: `NaN` means the caller has no width at
-  // all, and the default is the honest answer rather than the minimum.
-  if (!Number.isFinite(px)) return BROWSER_WIDTH_DEFAULT
-  return Math.round(Math.min(BROWSER_WIDTH_MAX, Math.max(BROWSER_WIDTH_MIN, px)))
+export function clampSideWidth(px: number): number {
+  return Math.round(Math.min(SIDE_WIDTH_MAX, Math.max(SIDE_WIDTH_MIN, px)))
 }
 
-/** A stored width, or the default. Takes the raw `localStorage` string, `null` included. */
-export function parseBrowserWidth(raw: string | null): number {
-  if (raw === null) return BROWSER_WIDTH_DEFAULT
-  return clampBrowserWidth(Number.parseFloat(raw))
-}
-
-export function browserWidthVariable(px: number): string {
-  return `${clampBrowserWidth(px)}px`
+/** A stored width, or `undefined` for the default. Takes the raw `localStorage` string, `null` included. */
+export function parseSideWidth(raw: string | null): number | undefined {
+  const px = raw === null ? Number.NaN : Number.parseFloat(raw)
+  return Number.isFinite(px) ? clampSideWidth(px) : undefined
 }
 
 // --- which tabs, and which one --------------------------------------------------

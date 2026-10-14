@@ -2,17 +2,16 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  BROWSER_WIDTH_DEFAULT,
-  BROWSER_WIDTH_MAX,
-  BROWSER_WIDTH_MIN,
+  SIDE_WIDTH_MAX,
+  SIDE_WIDTH_MIN,
+  SIDE_WIDTH_STORAGE_KEYS,
   addressLabel,
   browserControlState,
   browserOverlay,
-  browserWidthVariable,
-  clampBrowserWidth,
+  clampSideWidth,
   newTabsForLane,
   normalizeAddress,
-  parseBrowserWidth,
+  parseSideWidth,
   resolveActiveTab,
   shouldShowBrowserView,
   tabLabel,
@@ -36,23 +35,21 @@ function tab(overrides: Partial<WireBrowserTabInfo> & { tabId: string; lane: str
 // --- width ---------------------------------------------------------------------
 
 test('a panel width is clamped to its bounds and rounded', () => {
-  assert.equal(clampBrowserWidth(BROWSER_WIDTH_MIN - 200), BROWSER_WIDTH_MIN)
-  assert.equal(clampBrowserWidth(BROWSER_WIDTH_MAX + 200), BROWSER_WIDTH_MAX)
-  assert.equal(clampBrowserWidth(512.6), 513)
+  assert.equal(clampSideWidth(SIDE_WIDTH_MIN - 200), SIDE_WIDTH_MIN)
+  assert.equal(clampSideWidth(SIDE_WIDTH_MAX + 200), SIDE_WIDTH_MAX)
+  assert.equal(clampSideWidth(512.6), 513)
 })
 
-test('a width that is not a number falls back to the default, not to the minimum', () => {
-  // `NaN` means "no width at all", which is a different question from "a width
-  // below the floor" — answering it with the floor would silently shrink the
-  // panel for anyone whose stored value went bad.
-  assert.equal(clampBrowserWidth(Number.NaN), BROWSER_WIDTH_DEFAULT)
-  assert.equal(parseBrowserWidth(null), BROWSER_WIDTH_DEFAULT)
-  assert.equal(parseBrowserWidth('not a width'), BROWSER_WIDTH_DEFAULT)
+test('no stored width, or one that is not a number, leaves the stylesheet default', () => {
+  // The browser's default is a share of the window, which no stored number can
+  // stand in for — so a bad value is not answered with the floor either.
+  assert.equal(parseSideWidth(null), undefined)
+  assert.equal(parseSideWidth('not a width'), undefined)
+  assert.equal(parseSideWidth(String(SIDE_WIDTH_MAX + 500)), SIDE_WIDTH_MAX)
 })
 
-test('a stored width from an older build is clamped rather than discarded', () => {
-  assert.equal(parseBrowserWidth(String(BROWSER_WIDTH_MAX + 500)), BROWSER_WIDTH_MAX)
-  assert.equal(browserWidthVariable(BROWSER_WIDTH_DEFAULT), `${BROWSER_WIDTH_DEFAULT}px`)
+test('each mode remembers its own width', () => {
+  assert.notEqual(SIDE_WIDTH_STORAGE_KEYS.browser, SIDE_WIDTH_STORAGE_KEYS.overview)
 })
 
 // --- which tabs ------------------------------------------------------------------

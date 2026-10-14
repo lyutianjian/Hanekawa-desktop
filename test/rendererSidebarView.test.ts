@@ -369,12 +369,8 @@ test('right-clicking a heading opens its menu, and the menu item asks first', (t
   const opened = find(root(), 'project-menu')
   assert.equal(opened?.hidden, false, 'the menu the model opened is not showing')
   const items = descendants(root()).filter((node) => node.classes.includes('project-menu-item'))
-  assert.deepEqual(items.map((node) => node.text), ['项目调度', '移除项目并删除历史'])
-  const item = items[1]!
-  assert.ok(item, 'the menu drew nothing to click')
-  stub.click(items[0]!.node)
-  assert.deepEqual(intents, [{ kind: 'open-coordinator', projectRoot: '/w/app' }])
-  intents.length = 0
+  assert.deepEqual(items.map((node) => node.text), ['移除项目并删除历史'])
+  const item = items[0]!
 
   // A repaint that has nothing to do with the menu — the rail gets one per
   // streamed token — must leave the menu's node and its item alone. Re-inserting
@@ -382,7 +378,7 @@ test('right-clicking a heading opens its menu, and the menu item asks first', (t
   // item the user was aiming at.
   render(viewOf({ ...tieredState(), projectMenu: '/w/app', pendingDelete: 'history' }))
   assert.equal(find(root(), 'project-menu')?.node, opened?.node, 'the menu was rebuilt')
-  assert.equal(descendants(root()).filter((node) => node.classes.includes('project-menu-item'))[1]?.node, item.node, 'the menu item was rebuilt')
+  assert.equal(descendants(root()).filter((node) => node.classes.includes('project-menu-item'))[0]?.node, item.node, 'the menu item was rebuilt')
 
   stub.click(item.node)
   assert.deepEqual(intents, [{ kind: 'request-remove-project', projectRoot: '/w/app' }])

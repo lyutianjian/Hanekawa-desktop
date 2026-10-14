@@ -783,7 +783,7 @@ export type SidebarIntent =
   /** Unregister the project. Its sessions stay on disk; only the row goes. */
   | { kind: 'confirm-remove-project'; projectRoot: string }
   | { kind: 'cancel-remove-project' }
-  /** Open (or focus) the project's coordinator session — the heading menu's 「项目调度」. */
+  /** Open (or focus) the project's coordinator session — a coordination group's row. */
   | { kind: 'open-coordinator'; projectRoot: string }
   /** Open or close the footer's `?` panel. */
   | { kind: 'toggle-help' }

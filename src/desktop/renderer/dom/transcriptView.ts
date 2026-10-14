@@ -415,6 +415,7 @@ export function createTranscriptView(
   // scroll event at all — a `turn-end` dropping a draft or a `transcript-reset`
   // shortens the scroller under a reader who is then already at the tail.
   container.addEventListener('scroll', () => {
+    container.classList.toggle('scrolled', container.scrollTop > 0)
     if (dragging && !isScrolledToBottom(container)) following = false
     syncJump()
     if (!guardedPosition) readingPosition = atTail() ? undefined : readingReference()

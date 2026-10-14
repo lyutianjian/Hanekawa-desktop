@@ -113,13 +113,11 @@ import { titleBarMenus, type TitleBarAction } from './model/titleBar.js'
 import { createBrowserPanelView, browserPanelNodes } from './dom/browserPanelView.js'
 import { createSubagentPanelView } from './dom/subagentPanelView.js'
 import {
-  BROWSER_WIDTH_STORAGE_KEY,
-  BROWSER_WIDTH_VARIABLE,
-  BROWSER_WIDTH_DEFAULT,
-  browserWidthVariable,
+  SIDE_WIDTH_STORAGE_KEYS,
+  SIDE_WIDTH_VARIABLES,
   newTabsForLane,
-  clampBrowserWidth,
-  parseBrowserWidth,
+  clampSideWidth,
+  parseSideWidth,
   resolveActiveTab,
   tabsForLane,
 } from './model/browserPanel.js'
@@ -1487,15 +1485,17 @@ function runTitleBarAction(action: TitleBarAction): void {
 // --- the browser panel ----------------------------------------------------------
 
 /**
- * The panel's width, stored and applied exactly like the rail's: a custom
- * property the stylesheet reads, never an inline `width`.
+ * The panel's width per mode, stored and applied like the rail's: a custom
+ * property the stylesheet reads, never an inline `width`. `undefined` leaves the
+ * stylesheet's default in force.
  */
-let browserWidth = parseBrowserWidth(localStorage.getItem(BROWSER_WIDTH_STORAGE_KEY))
-function applyBrowserWidth(px: number): void {
-  browserWidth = clampBrowserWidth(px)
-  document.documentElement.style.setProperty(BROWSER_WIDTH_VARIABLE, browserWidthVariable(browserWidth))
+function applySideWidth(mode: SideMode, px: number | undefined): void {
+  // An empty value removes the declaration (CSSOM `setProperty`).
+  document.documentElement.style.setProperty(SIDE_WIDTH_VARIABLES[mode], px === undefined ? '' : `${clampSideWidth(px)}px`)
 }
-applyBrowserWidth(browserWidth)
+for (const mode of ['browser', 'overview'] as const) {
+  applySideWidth(mode, parseSideWidth(localStorage.getItem(SIDE_WIDTH_STORAGE_KEYS[mode])))
+}
 
 /**
  * Whether the panel is up. A single boolean rather than a derivation from "this
@@ -1719,6 +1719,7 @@ function renderSubagents(): void {
   const visible = view.open && !settingsState.open && !projectsOpen
   show(sidePanel, visible)
   show(sideResizer, visible)
+  sidePanel.classList.toggle('overview', view.mode === 'overview')
   const pane = activePane()
   const root = activeLaneInfo()?.projectRoot
   const onOverview = visible && view.mode === 'overview'
@@ -2031,20 +2032,26 @@ sidebarResizer.addEventListener('dblclick', () => {
  */
 const browserResizer = required('browser-resizer')
 let browserDragStartX = 0
-let browserDragStartWidth = BROWSER_WIDTH_DEFAULT
+let browserDragStartWidth = 0
+let browserDragWidth = 0
+/** The mode whose width the drag writes; fixed at the press so a repaint mid-drag cannot switch it. */
+let browserDragMode: SideMode = 'browser'
 
 browserResizer.addEventListener('pointerdown', (event) => {
   if (event.button !== 0) return
   event.preventDefault()
+  browserDragMode = sidePanelView(sidePanelInput()).mode
   browserDragStartX = event.clientX
-  browserDragStartWidth = browserWidth
+  // Measured rather than remembered: the default is a share of the window, not a number.
+  browserDragStartWidth = browserDragWidth = sidePanel.getBoundingClientRect().width
   browserResizer.setPointerCapture(event.pointerId)
   document.body.classList.add('resizing')
 })
 
 browserResizer.addEventListener('pointermove', (event) => {
   if (!browserResizer.hasPointerCapture(event.pointerId)) return
-  applyBrowserWidth(browserDragStartWidth - (event.clientX - browserDragStartX))
+  browserDragWidth = clampSideWidth(browserDragStartWidth - (event.clientX - browserDragStartX))
+  applySideWidth(browserDragMode, browserDragWidth)
   // The hole moved with the column. `ResizeObserver` would catch this too, but
   // only after a layout pass — measuring now is what keeps the page glued to
   // the panel instead of trailing it by a frame.
@@ -2055,15 +2062,16 @@ function endBrowserDrag(event: PointerEvent): void {
   if (!browserResizer.hasPointerCapture(event.pointerId)) return
   browserResizer.releasePointerCapture(event.pointerId)
   document.body.classList.remove('resizing')
-  localStorage.setItem(BROWSER_WIDTH_STORAGE_KEY, String(browserWidth))
+  localStorage.setItem(SIDE_WIDTH_STORAGE_KEYS[browserDragMode], String(browserDragWidth))
 }
 browserResizer.addEventListener('pointerup', endBrowserDrag)
 browserResizer.addEventListener('pointercancel', endBrowserDrag)
 
 browserResizer.addEventListener('dblclick', () => {
-  applyBrowserWidth(BROWSER_WIDTH_DEFAULT)
+  const mode = sidePanelView(sidePanelInput()).mode
+  applySideWidth(mode, undefined)
   browserPanel.measure()
-  localStorage.setItem(BROWSER_WIDTH_STORAGE_KEY, String(browserWidth))
+  localStorage.removeItem(SIDE_WIDTH_STORAGE_KEYS[mode])
 })
 
 // --- the window's own dismissals ---------------------------------------------------

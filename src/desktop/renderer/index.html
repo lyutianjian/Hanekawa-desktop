@@ -35,6 +35,12 @@
       sessions keeps scroll positions and repaints nothing.
     -->
     <!--
+      The window's left column: the title bar over the sidebar and the canvas.
+      The side panel is its sibling rather than a child of `#shell`, so its card
+      runs the window's full height and the title bar stops at its edge.
+    -->
+    <div id="frame">
+    <!--
       The frameless window's own title bar (5g). It is a drag region; the OS
       still paints its window controls into a reserved strip (left on macOS,
       normally right elsewhere), measured through Window Controls Overlay.
@@ -126,7 +132,7 @@
                 empties it whenever there is nothing to show.
               -->
               <div id="composer-attachments"></div>
-<textarea id="input" placeholder="随心输入，/ 调用命令，@ 引用文件，Shift+Tab 切换权限模式" rows="1"></textarea>
+<textarea id="input" placeholder="随心输入，/ 调用命令，@ 引用文件" rows="1"></textarea>
               <div id="composer-bar">
                 <button id="composer-attach" type="button"></button>
                 <!--
@@ -193,6 +199,8 @@
           <div id="rewind-panel"></div>
         </div>
       </main>
+    </div>
+    </div>
       <!--
         The browser panel's own drag handle, mirroring `#sidebar-resizer` from
         the other side of the canvas. A sibling of both columns for the same
@@ -244,7 +252,6 @@
           </section>
         </div>
       </aside>
-    </div>
     <!--
       The image viewer, outside `#shell` on purpose — the one layer that is not a
       blocking request and the one that *does* cover the window. An image opened

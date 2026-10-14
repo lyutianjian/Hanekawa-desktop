@@ -66,7 +66,7 @@ const ALLOWED_INLINE_STYLE_PROPS = ['height']
  */
 const ALLOWED_STYLE_PROPERTY_CONSTANTS = [
   'SIDEBAR_WIDTH_VARIABLE',
-  'BROWSER_WIDTH_VARIABLE',
+  'SIDE_WIDTH_VARIABLES',
   // Native window controls are measured by Chromium, including zoom/fullscreen.
   'TITLEBAR_LEFT_INSET_VARIABLE',
   'TITLEBAR_RIGHT_INSET_VARIABLE',
@@ -391,7 +391,8 @@ test('the palette is the one that was agreed, value for value', () => {
       // The browser panel's resting width, the same kind of exception as the
       // rail's above: a layout number `app.ts` re-declares on the document
       // element when the handle between the canvas and the panel is dragged.
-      '--browser-panel-width': '264px',
+      '--browser-panel-width': 'clamp(240px, (100vw - var(--sidebar-width)) / 2, 900px)',
+      '--overview-panel-width': '320px',
       '--titlebar-inset-left': '0px',
       '--titlebar-inset-right': '138px',
       // The sidebar seam, and the 7px slice its scrollbar overhangs (2px of air
@@ -512,7 +513,8 @@ test('the palette is the one that was agreed, value for value', () => {
       // The browser panel's resting width, the same kind of exception as the
       // rail's above: a layout number `app.ts` re-declares on the document
       // element when the handle between the canvas and the panel is dragged.
-      '--browser-panel-width': '264px',
+      '--browser-panel-width': 'clamp(240px, (100vw - var(--sidebar-width)) / 2, 900px)',
+      '--overview-panel-width': '320px',
       '--titlebar-inset-left': '0px',
       '--titlebar-inset-right': '138px',
       // The sidebar seam, and the 7px slice its scrollbar overhangs (2px of air
