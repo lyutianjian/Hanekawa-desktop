@@ -215,6 +215,10 @@
      minus 2px of air and the 1px sash line, so the scrollbar owns 7px and the
      canvas does not move. */
   --sidebar-gutter: 10px;
+  /* The sidebar/canvas divider and the footer rule that meets it. Drawn as
+     borders: Chromium rounds a sub-pixel border up to one device pixel, so this
+     is a single physical pixel on any screen. */
+  --hairline: 0.5px;
   --sidebar-scrollbar-overhang: calc(var(--sidebar-gutter) - 3px);
   /* The task panel's completed share, 0..1. The second layout number the
      renderer writes and, like the rail's width, the *rule* that reads it stays
@@ -400,6 +404,7 @@ body {
 /* The left column — title bar over sidebar and canvas. The side panel sits
    beside it rather than under the title bar, so its card runs full height. */
 #frame {
+  position: relative;
   flex: 1 1 auto;
   min-width: 0;
   display: flex;
@@ -513,20 +518,25 @@ body:has(#sidebar.collapsed) .titlebar-lead {
   flex-basis: 0;
   transition: flex-basis var(--motion-layout) var(--ease-exit);
 }
-/* The sidebar/canvas divider continues up through the caption strip so it runs
-   the window's full height: the canvas's own edge shadow starts below the bar. */
-.titlebar-lead { position: relative; align-self: stretch; }
-.titlebar-lead::after {
+/* The sidebar/canvas divider, drawn once down the window's full height so the
+   caption strip and the canvas cannot disagree on where it falls. It sits just
+   left of the canvas edge and rides the sidebar's collapse off-screen. */
+#frame::after {
   content: '';
   position: absolute;
   top: 0;
   bottom: 0;
-  right: calc(-1 * var(--space-1) - 1px);
-  width: 1px;
-  background: var(--border-subtle);
+  left: calc(var(--sidebar-width) + var(--sidebar-scrollbar-overhang) - var(--hairline));
+  z-index: 2;
+  border-left: var(--hairline) solid var(--border-subtle);
+  pointer-events: none;
+  transition: left var(--motion-layout) var(--ease-out);
 }
-body:has(#sidebar.collapsed) .titlebar-lead::after,
-body.settings-open .titlebar-lead::after { display: none; }
+body:has(#sidebar.collapsed) #frame::after {
+  left: calc(-1 * var(--hairline));
+  transition: left var(--motion-layout) var(--ease-exit);
+}
+body.settings-open #frame::after { display: none; }
 /* The strip above the canvas takes the canvas's colour, so the transcript's top
    fade dissolves into the same surface instead of into the frame. It starts
    where the canvas does and follows the sidebar on the lead's curves. */
@@ -548,7 +558,8 @@ body:has(#sidebar.collapsed) #titlebar::before {
 body.settings-open #titlebar::before { left: 0; transition: none; }
 body.settings-open .titlebar-rail { visibility: hidden; }
 body.resizing .titlebar-lead,
-body.resizing #titlebar::before { transition: none; }
+body.resizing #titlebar::before,
+body.resizing #frame::after { transition: none; }
 .titlebar-rail {
   display: inline-flex;
   align-items: center;
@@ -866,13 +877,12 @@ body.resizing #titlebar::before { transition: none; }
      what keeps the pumping above from coming back. Here it is the 3px remainder
      of the sidebar seam; the sash reaches across it with its negative right
      margin, so its hover line lands on the canvas edge. */
-  /* Flush, not a floating card: no margin, no radius. A 1px outer shadow on the
-     left edge is the divider to the sidebar; unlike a border it takes no layout,
-     so `#rewind` still matches the canvas edge for edge. */
+  /* Flush, not a floating card: no margin, no radius. The divider to the
+     sidebar is `#frame::after`, so `#rewind` still matches the canvas edge for
+     edge. */
   margin: 0;
   background: var(--surface-canvas);
   overflow: hidden;
-  box-shadow: -1px 0 0 var(--border-subtle);
 }
 
 /* --- sidebar --- */
@@ -1537,8 +1547,10 @@ body.settings-open #browser-resizer { display: none; }
 .sidebar-footer {
   position: relative;
   flex: 0 0 auto;
-  padding: var(--space-2) var(--space-3);
-  border-top: 1px solid var(--border-subtle);
+  /* Out over the scrollbar's overhang so the rule meets the divider. */
+  margin-right: calc(-1 * var(--sidebar-scrollbar-overhang));
+  padding: var(--space-2) calc(var(--space-3) + var(--sidebar-scrollbar-overhang)) var(--space-2) var(--space-3);
+  border-top: var(--hairline) solid var(--border-subtle);
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -1548,7 +1560,7 @@ body.settings-open #browser-resizer { display: none; }
 .sidebar-hint {
   position: absolute;
   left: var(--space-2);
-  right: var(--space-2);
+  right: calc(var(--space-2) + var(--sidebar-scrollbar-overhang));
   bottom: calc(100% + var(--space-1));
   z-index: 5;
   display: flex;

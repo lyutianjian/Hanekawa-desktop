@@ -399,6 +399,7 @@ test('the palette is the one that was agreed, value for value', () => {
       // plus the 1px sash line).
       '--sidebar-gutter': '10px',
       '--sidebar-scrollbar-overhang': 'calc(var(--sidebar-gutter) - 3px)',
+      '--hairline': '0.5px',
       // The task panel's progress, same shape of exception: a number the view
       // writes and the sheet's own rule reads.
       '--task-progress': '0',
@@ -521,6 +522,7 @@ test('the palette is the one that was agreed, value for value', () => {
       // plus the 1px sash line).
       '--sidebar-gutter': '10px',
       '--sidebar-scrollbar-overhang': 'calc(var(--sidebar-gutter) - 3px)',
+      '--hairline': '0.5px',
       // The task panel's progress, same shape of exception: a number the view
       // writes and the sheet's own rule reads.
       '--task-progress': '0',
@@ -960,14 +962,15 @@ test('the canvas is a flush clipped pane divided by a hairline', () => {
   assert.ok(declares(canvas, 'overflow', 'hidden'), '#canvas must clip its scrolling contents')
   assert.ok(declares(canvas, 'margin', '0'), '#canvas must not float as a card')
   assert.ok(!canvas.decls.some((decl) => decl.prop === 'border-radius'))
-  // A shadow, not a border: a border would inset the `absolute; inset: 0` scrims.
-  const line = canvas.decls.find((decl) => decl.prop === 'box-shadow')
-  assert.ok(line, '#canvas needs the divider against the sidebar')
-  assert.match(line.value, /var\(--border-subtle\)/)
   assert.ok(
     !canvas.decls.some((decl) => decl.prop === 'border' || decl.prop.startsWith('border-width')),
     '#canvas must not use a border: it would move the modal scrim off the canvas edge',
   )
+  // One line for the full window height: the caption strip and the canvas each
+  // drawing their own segment left a 1px step where they met.
+  const divider = blockFor('#frame::after')
+  assert.ok(declares(divider, 'border-left', 'var(--hairline) solid var(--border-subtle)'))
+  assert.ok(declares(divider, 'top', '0') && declares(divider, 'bottom', '0'))
 })
 
 test('the settings screen scrolls full width and reads in a column', () => {
