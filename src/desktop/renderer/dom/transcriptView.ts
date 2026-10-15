@@ -1922,9 +1922,11 @@ function liftAnchor(
     return { pad: state.pad, lifted: false, measured: false }
   }
   const topGap = anchorTopGap(state.first)
-  // The scroller's leading padding, which is also its trailing one: `.transcript`
-  // gives its two vertical insets in one value, and `rendererStyleTokens` keeps
-  // it that way. Measured rather than named, so a retuned inset needs no edit
+  // The scroller's leading padding, counted as its trailing one too. The leading
+  // inset is larger by `--transcript-tuck` (the scroller starts that far up under
+  // the title bar), and counting it at the bottom lowers the lift by the same
+  // amount — so `topGap` lands measured from the canvas's top, not the
+  // scroller's. Measured rather than named, so a retuned inset needs no edit
   // here — and measurable at any scroll position because the column no longer
   // has an auto margin to sit anywhere but the top.
   const inset = container.scrollTop + (content.top - view.top)

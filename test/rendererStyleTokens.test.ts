@@ -1002,7 +1002,10 @@ test('the newest question owns the screen, and a long one still scrolls from the
   assert.ok(declares(scroller, 'overflow-y', 'auto'), '.transcript stays the scroller')
   // The scroller starts `--transcript-tuck` up under the title bar and its top
   // padding pays exactly that back, so the first row still sits one step below
-  // the bar, the same inset the bottom edge keeps.
+  // the bar, the same inset the bottom edge keeps. `liftAnchor` in
+  // `dom/transcriptView.ts` counts the leading inset at the bottom as well; the
+  // tuck it over-counts is what lands the lifted question on its gap from the
+  // canvas's top rather than the scroller's.
   assert.ok(declares(scroller, 'margin-top', 'calc(-1 * var(--transcript-tuck))'))
   assert.ok(
     declares(scroller, 'padding', 'calc(var(--space-2) + var(--transcript-tuck)) var(--reading-gutter) var(--space-2)'),
