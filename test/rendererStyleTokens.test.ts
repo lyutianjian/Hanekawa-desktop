@@ -395,6 +395,8 @@ test('the palette is the one that was agreed, value for value', () => {
       '--overview-panel-width': '320px',
       '--titlebar-inset-left': '0px',
       '--titlebar-inset-right': '138px',
+      // How far the transcript scroller reaches up under the title bar.
+      '--transcript-tuck': '8px',
       // The sidebar seam, and the 7px slice its scrollbar overhangs (2px of air
       // plus the 1px sash line).
       '--sidebar-gutter': '10px',
@@ -515,6 +517,8 @@ test('the palette is the one that was agreed, value for value', () => {
       '--overview-panel-width': '320px',
       '--titlebar-inset-left': '0px',
       '--titlebar-inset-right': '138px',
+      // How far the transcript scroller reaches up under the title bar.
+      '--transcript-tuck': '8px',
       // The sidebar seam, and the 7px slice its scrollbar overhangs (2px of air
       // plus the 1px sash line).
       '--sidebar-gutter': '10px',
@@ -996,16 +1000,13 @@ test('the newest question owns the screen, and a long one still scrolls from the
   assert.ok(declares(scroller, 'display', 'flex'), '.transcript must be a flex column holding one reading column')
   assert.ok(declares(scroller, 'flex-direction', 'column'), '.transcript stacks one reading column; the axis has to say so')
   assert.ok(declares(scroller, 'overflow-y', 'auto'), '.transcript stays the scroller')
-  // `dom/transcriptView.ts` measures the *leading* inset and spends it as the
-  // trailing one — a scroller whose vertical padding came in two values would
-  // put the lifted question a few pixels off its gap, in a direction nothing
-  // would name. Two-value shorthand: vertical first, horizontal second.
-  const inset = scroller.decls.find((decl) => decl.prop === 'padding')
-  assert.ok(inset, '.transcript must state its inset in one place')
-  assert.equal(
-    inset.value.trim().split(/\s+/).length,
-    2,
-    '.transcript needs one vertical inset for both edges; the lift measures the top and spends it at the bottom',
+  // The scroller starts `--transcript-tuck` up under the title bar and its top
+  // padding pays exactly that back, so the first row still sits one step below
+  // the bar, the same inset the bottom edge keeps.
+  assert.ok(declares(scroller, 'margin-top', 'calc(-1 * var(--transcript-tuck))'))
+  assert.ok(
+    declares(scroller, 'padding', 'calc(var(--space-2) + var(--transcript-tuck)) var(--reading-gutter) var(--space-2)'),
+    '.transcript must pay the tuck back in its top padding and keep one step at both edges',
   )
   // The alternative that looks equivalent and is not: in a scroll container,
   // `justify-content: flex-end` puts the *top* of overflowing content out of
