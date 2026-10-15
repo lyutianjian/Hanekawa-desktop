@@ -46,7 +46,6 @@ import type { QuestionCardView } from './dom/questionCardView.js'
 import type { RewindPanel } from './dom/rewindView.js'
 import type { SurfacePanel } from './dom/surfaceView.js'
 import type { ProcessStripView } from './dom/processStripView.js'
-import type { TaskPanelDom } from './dom/taskPanelView.js'
 import { append, el, show } from './dom/dom.js'
 import { copyText } from './dom/clipboard.js'
 import { finishPresenceWithin } from './dom/presence.js'
@@ -205,10 +204,11 @@ import type { ImageViewerView } from './dom/imageViewerView.js'
 import type { ImageAttachmentRef } from '../../media/types.js'
 import { localizeCommands } from './model/builtinLabels.js'
 import {
-  advanceTaskPanel,
-  retireCompletedTaskPanel,
-  taskPanelState,
-  type TaskPanelState,
+  advanceTaskList,
+  staleTaskList,
+  taskCard,
+  taskListState,
+  type TaskListState,
 } from './model/tasks.js'
 
 export interface PaneSessionDeps {
@@ -243,8 +243,6 @@ export interface PaneSessionDeps {
   rewindPanel: RewindPanel
   surface: SurfacePanel
   suggestions: SuggestionsView
-  /** The resident strip above the composer; a singleton, like the composer itself. */
-  taskPanel: TaskPanelDom
   processStrip: ProcessStripView
   status: StatusView
   composer: ComposerView
@@ -450,11 +448,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     onOpenThread: (id) => deps.onOpenThread?.(id),
     ...(deps.onOpenProviderSettings ? { onOpenProviderSettings: deps.onOpenProviderSettings } : {}),
     onRetryTurn: (id) => { void retryTurn(id) },
-    // The panel is a singleton the active pane drives, so a background pane
-    // cannot reach it — and cannot be clicked either, since it does not paint.
-    onTaskStep: () => {
-      if (active) deps.taskPanel.flash()
-    },
     // A receipt can name a plan the pane no longer holds (a reopened session), so
     // the plan it was decided on becomes the one the tab shows.
     onOpenPlan: (planContent) => {
@@ -521,14 +514,15 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   /** A 「重试」 between its press and the turn it starts. */
   let retrying = false
   /**
-   * The checklist above the composer, or `undefined` for no panel at all.
+   * The model's checklist, or `undefined` for none; drawn as the transcript's
+   * task card while a turn runs.
    *
-   * Held here rather than derived from the transcript: the panel's source is the
+   * Held here rather than derived from the transcript: the list's source is the
    * newest `taskSnapshot`, which `TranscriptState` does not keep, and the pane
    * never keeps the record list either. `hello` and `transcript-reset` project it
-   * from a whole list; every other record advances it one step (§7.3).
+   * from a whole list; every other record advances it one step.
    */
-  let taskPanel: TaskPanelState | undefined
+  let taskList: TaskListState | undefined
   /**
    * When the running turn started, epoch ms — the live status's clock, and
    * nothing else reads it. Per pane, and cleared at `turn-end`: a background
@@ -838,6 +832,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     paneEl.classList.toggle('empty', !coordinator && isTranscriptEmpty(shown))
     const asking = askState ? askViewModel(askState)?.header : undefined
     const taskCount = shownTaskCount = runningTaskCount(client.getBackgroundTasks())
+    const card = taskCard(taskList, isStreaming)
     transcriptView.render(presented, disclosure, {
       isStreaming,
       startedAt: turnStartedAt,
@@ -847,6 +842,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       ...(taskCount === 0 ? {} : { backgroundTasks: taskCount }),
       ...(transcript.phase ? { phase: transcript.phase } : {}),
       ...(transcript.draftCall ? { draftCall: transcript.draftCall } : {}),
+      ...(card ? { taskCard: card } : {}),
     }, selectedSubagent, coordinator ? coordinatorWelcomeEl : undefined, threadChipEl)
     subagentList = undefined
     // Thumbnails arrive on demand, exactly as the composer's tiles do: the
@@ -923,11 +919,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   function toggleDisclosureAt(id: string, expanded: boolean): void {
     disclosure = toggleDisclosure(disclosure, id, expanded)
     renderTranscript()
-  }
-
-  function renderTaskPanel(): void {
-    if (!active) return
-    deps.taskPanel.render(taskPanel)
   }
 
   /**
@@ -1257,7 +1248,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    */
   const streamRepaint = createRepaint(() => {
     renderTranscript()
-    renderTaskPanel()
   })
   /**
    * `snapshot` arrives per chunk too, and the sidebar's badges hang off it — but
@@ -1553,16 +1543,16 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     transcript = outcome.state
     noteConversationState()
 
-    // Not a `default`-free switch, and deliberately so: the task panel cares
+    // Not a `default`-free switch, and deliberately so: the task list cares
     // about three of a dozen event kinds, and `applySessionEvent` above is the
     // one that must stay exhaustive over `SessionEvent`.
-    if (event.type === 'record') taskPanel = advanceTaskPanel(taskPanel, event.record)
+    if (event.type === 'record') taskList = advanceTaskList(taskList, event.record)
     // `/clear`, `/resume` and a rewind all arrive here: the new record list is
     // the whole truth, and an empty one has no snapshot, so a cleared session
-    // drops the panel without a case of its own.
-    if (event.type === 'transcript-reset') taskPanel = taskPanelState(event.records)
+    // drops the list without a case of its own.
+    if (event.type === 'transcript-reset') taskList = taskListState(event.records)
     // The user starting something new, a beat before their record lands.
-    if (event.type === 'turn-start') taskPanel = retireCompletedTaskPanel(taskPanel)
+    if (event.type === 'turn-start') taskList = staleTaskList(taskList)
 
     // One paint for both, at most once a frame: `stream` deltas arrive per token
     // and each paint is linear in the conversation.
@@ -2043,7 +2033,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     if (surfaceView || commandView) renderSurface()
     else deps.surface.hide()
     renderSuggestions()
-    renderTaskPanel()
     renderStatus()
     // Everything above is the whole surface, so a frame still owed from before
     // the switch has nothing left to draw.
@@ -2076,10 +2065,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     deps.rewindPanel.hide()
     deps.surface.hide()
     syncTaskClock()
-    // Emptied, not remembered: the strip is a singleton on the composer's axis,
-    // so a background pane's checklist would otherwise hang over the session the
-    // user just switched to. `activate()` repaints it from `taskPanel`.
-    deps.taskPanel.hide()
     deps.suggestions.render(NO_COMPLETIONS)
     // The composer is a singleton the active pane drives, so an open permission
     // menu would hang over the next pane and act on *its* runtime.
@@ -2142,10 +2127,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // content — only later transitions are "first content".
     hadConversation = !isTranscriptEmpty(transcript)
     // The reverse scan, once per pane: a session resumed mid-checklist gets its
-    // panel back from the records alone (§7.3).
-    taskPanel = taskPanelState(hello.records)
+    // list back from the records alone.
+    taskList = taskListState(hello.records)
     renderTranscript()
-    renderTaskPanel()
     renderStatus()
 
     boundSessionId = hello.session.id

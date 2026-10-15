@@ -48,6 +48,7 @@ import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
 import type { ThreadNoteCard } from '../model/threadNotes.js'
 import type { TurnFailureCard } from '../model/turnFailure.js'
 import type { WireThreadStatus } from '../../shellProtocol.js'
+import { TASK_LOCATE_FALLBACK_MS, type TaskCard, type TaskListItem } from '../model/tasks.js'
 import { button } from './controls.js'
 import { diffNode } from './diffView.js'
 import { append, el, reconcile, show, type Child } from './dom.js'
@@ -117,11 +118,6 @@ export interface TranscriptView {
 export interface TranscriptHandlers {
   /** `expanded` is what the row shows now, so the first click always inverts it. */
   onToggle(id: string, expanded: boolean): void
-  /**
-   * A `TodoWrite` row was clicked. It has no body — the checklist is drawn once,
-   * above the composer — so the row's whole job is to point at it (§7.3).
-   */
-  onTaskStep(): void
   /**
    * A plan receipt was clicked. `planContent` is the plan it was decided on, when
    * the record kept it; the pane opens the plan tab on it.
@@ -463,6 +459,26 @@ export function createTranscriptView(
       syncJump()
     }) : undefined
   let observing = false
+  let taskFlash: ReturnType<typeof setTimeout> | undefined
+
+  function finishTaskFlash(): void {
+    clearTimeout(taskFlash)
+    taskFlash = undefined
+    cache.get(TASK_CARD_KEY)?.node.classList.remove('flash')
+  }
+
+  /** Brings the card into view and pulses its outline; nothing when no card is drawn. */
+  function locateTaskCard(): void {
+    const card = cache.get(TASK_CARD_KEY)?.node
+    if (!card) return
+    finishTaskFlash()
+    card.scrollIntoView({ block: 'nearest', behavior: motionPolicy().scrollBehavior })
+    // A layout read between removing and re-adding the class restarts the pulse.
+    card.getBoundingClientRect()
+    card.classList.add('flash')
+    taskFlash = setTimeout(finishTaskFlash, motionDelay(TASK_LOCATE_FALLBACK_MS))
+    ;(taskFlash as unknown as { unref?: () => void }).unref?.()
+  }
 
   function stopMotion(): void {
     stopClock()
@@ -481,6 +497,7 @@ export function createTranscriptView(
     },
     dispose() {
       stopMotion()
+      clearTimeout(taskFlash)
       mark?.dispose()
       window.removeEventListener('pointerup', endDrag)
       window.removeEventListener('pointercancel', endDrag)
@@ -551,6 +568,7 @@ export function createTranscriptView(
         keepClock: (span) => { clockNode = span },
         keepLabel: (span) => { labelNode = span },
         keepMark: (host) => { markHost = host },
+        locateTaskCard,
         afterPaint: (run) => afterPaint.push(run),
       })
       const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index), activity !== undefined))
@@ -558,6 +576,7 @@ export function createTranscriptView(
       // that asked for it. A kept line keeps the spans its fill handed over.
       status = live.row ? { row: live.row, tokens: activity?.outputTokens } : undefined
       const tasks = activity?.backgroundTasks ?? 0
+      if (activity?.taskCard) nodes.push(taskCardNode(painter, activity.taskCard))
       if (live.row) nodes.push(waitingNode(painter, tasks))
       else if (tasks > 0 && painter.onOpenBackgroundTasks) nodes.push(idleStatusNode(painter, tasks))
       if (!live.row) {
@@ -751,6 +770,8 @@ interface LivePaint {
   keepLabel(span: HTMLElement): void
   /** Likewise the mark's carrier, so the view can move its mark in. */
   keepMark(host: HTMLElement): void
+  /** A task row was clicked: point at the task card, if one is drawn. */
+  locateTaskCard(): void
   afterPaint(run: () => void): void
 }
 
@@ -805,9 +826,9 @@ function createPainter(
     keepClock: paint.keepClock,
     keepLabel: paint.keepLabel,
     keepMark: paint.keepMark,
+    locateTaskCard: paint.locateTaskCard,
     afterPaint: paint.afterPaint,
     onToggle: handlers.onToggle,
-    onTaskStep: handlers.onTaskStep,
     onOpenPlan: handlers.onOpenPlan,
     onOpenSubagent: handlers.onOpenSubagent,
     onOpenBackgroundTasks: handlers.onOpenBackgroundTasks,
@@ -1035,19 +1056,57 @@ function stepNode(painter: Painter, step: ActivityStep): HTMLElement {
 }
 
 /**
- * A `TodoWrite` row: one line, no body, ever. The checklist it wrote is drawn once
- * — above the composer, where it stays useful after the run folds — so clicking the
- * row points at *that* panel rather than repeating the list here.
+ * A `TodoWrite` row: one line, no body, ever. The checklist is drawn once, as the
+ * task card at the transcript's tail, so clicking the row points at that card
+ * rather than repeating the list here.
  *
  * A `<button>` with no `aria-expanded`, because nothing here opens: the row is a
  * pointer, not a disclosure.
  */
 function taskRow(painter: Painter, step: Extract<ActivityStep, { kind: 'task' }>): HTMLElement {
   return painter.node(`step:${step.id}`, `step task ${step.status}`, [step.text, step.status], () => {
-    const head = button('step-head', '', `${step.text} · ${toolStatusLabel(step.status)}`, () => painter.onTaskStep())
+    const head = button('step-head', '', `${step.text} · ${toolStatusLabel(step.status)}`, () => painter.locateTaskCard())
     append(head, [el('span', 'step-label', step.text)])
     return [head]
   })
+}
+
+const TASK_CARD_KEY = 'task-card'
+
+const TASK_STATUS_LABEL: Record<TaskListItem['status'], string> = {
+  pending: '未开始',
+  in_progress: '进行中',
+  completed: '已完成',
+}
+
+/**
+ * The checklist card above the status line, drawn while a turn runs. Read-only:
+ * the list belongs to the model, so no row is a control. The card node is kept
+ * across paints, so its entrance plays when the list appears, not per token.
+ */
+function taskCardNode(painter: Painter, card: TaskCard): HTMLElement {
+  const rows = card.rows.map((task) => painter.node(
+    `${TASK_CARD_KEY}:row:${task.id}`,
+    `task-row ${task.status}`,
+    [task.label, task.status],
+    () => [taskMark(task.status), el('span', 'task-label', task.label)],
+    () => el('li'),
+  ))
+  const list = painter.node(`${TASK_CARD_KEY}:list`, 'task-list', rows, () => rows, () => el('ul'))
+  return painter.node(TASK_CARD_KEY, 'task-card', [list, card.stale, card.hiddenBefore, card.openAfter], () => [
+    card.stale ? el('p', 'task-note', '上一条消息之前的计划') : undefined,
+    card.hiddenBefore > 0 ? el('p', 'task-more', `更早的 ${card.hiddenBefore} 项`) : undefined,
+    list,
+    card.openAfter > 0 ? el('p', 'task-more', `还有 ${card.openAfter} 项`) : undefined,
+  ])
+}
+
+function taskMark(status: TaskListItem['status']): HTMLElement {
+  const mark = el('span', `task-mark ${status}`)
+  mark.setAttribute('role', 'img')
+  mark.setAttribute('aria-label', TASK_STATUS_LABEL[status])
+  if (status !== 'pending') mark.appendChild(icon(status === 'completed' ? 'check' : 'spinner'))
+  return mark
 }
 
 type ToolLike = Extract<ActivityStep, { kind: 'tool' | 'subagent' }>

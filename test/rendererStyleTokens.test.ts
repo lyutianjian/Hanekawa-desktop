@@ -400,10 +400,7 @@ test('the palette is the one that was agreed, value for value', () => {
       '--sidebar-gutter': '10px',
       '--sidebar-scrollbar-overhang': 'calc(var(--sidebar-gutter) - 3px)',
       '--hairline': '0.5px',
-      // The task panel's progress, same shape of exception: a number the view
-      // writes and the sheet's own rule reads.
-      '--task-progress': '0',
-      // The sidebar marquee's distance and duration, third of the same kind:
+      // The sidebar marquee's distance and duration, same shape of exception:
       // per-row numbers written by `dom/sidebarView.ts` from `model/marquee.ts`,
       // declared here so an un-hovered row resolves to a still animation.
       '--marquee-shift': '0px',
@@ -523,10 +520,7 @@ test('the palette is the one that was agreed, value for value', () => {
       '--sidebar-gutter': '10px',
       '--sidebar-scrollbar-overhang': 'calc(var(--sidebar-gutter) - 3px)',
       '--hairline': '0.5px',
-      // The task panel's progress, same shape of exception: a number the view
-      // writes and the sheet's own rule reads.
-      '--task-progress': '0',
-      // The sidebar marquee's distance and duration, third of the same kind:
+      // The sidebar marquee's distance and duration, same shape of exception:
       // per-row numbers written by `dom/sidebarView.ts` from `model/marquee.ts`,
       // declared here so an un-hovered row resolves to a still animation.
       '--marquee-shift': '0px',
@@ -959,7 +953,7 @@ test('the serif is display-only, and only in the whitelisted spots', () => {
 
 test('the canvas is a flush clipped pane divided by a hairline', () => {
   const canvas = blockFor('#canvas')
-  assert.ok(declares(canvas, 'overflow', 'hidden'), '#canvas must clip its scrolling contents')
+  assert.ok(declares(canvas, 'overflow', 'clip'), '#canvas must clip its scrolling contents')
   assert.ok(declares(canvas, 'margin', '0'), '#canvas must not float as a card')
   assert.ok(!canvas.decls.some((decl) => decl.prop === 'border-radius'))
   assert.ok(

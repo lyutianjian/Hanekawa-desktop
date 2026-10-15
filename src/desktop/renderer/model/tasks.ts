@@ -4,15 +4,15 @@ import { messageText } from './transcript.js'
 /** The location feedback token plus event-delivery slack. */
 export const TASK_LOCATE_FALLBACK_MS = 660
 
+/** The most rows the task card draws; the rest is summarised above and below. */
+export const TASK_CARD_ROWS = 12
+
 /**
- * The task panel as data: the model's checklist, projected for the strip that
- * sits above the composer (`activity_group_design.md` §7).
+ * The model's checklist as data, for the card at the transcript's tail.
  *
- * Session-level, not turn-level. The checklist says what happens *next*, so it
- * outlives the activity group that last touched it — which is also why the
- * source is a snapshot rather than an accumulation: the newest
+ * The source is a snapshot rather than an accumulation: the newest
  * `tool_result.display.taskSnapshot` is the whole truth, and recovering after a
- * pane switch or `/resume` is just a reverse scan of the records (§7.3).
+ * pane switch or `/resume` is just a reverse scan of the records.
  *
  * `transcript-reset` needs no special case here: the caller hands this the new
  * record list, and an empty list has no snapshot.
@@ -21,117 +21,108 @@ export const TASK_LOCATE_FALLBACK_MS = 660
  * tsconfig program, which has no DOM lib.
  */
 
-export interface TaskPanelItem {
+export interface TaskListItem {
   readonly id: string
   readonly status: 'pending' | 'in_progress' | 'completed'
-  readonly subject: string
   /** What the row reads: `activeForm` while running, the subject otherwise. */
   readonly label: string
 }
 
-export interface TaskPanelState {
-  readonly tasks: readonly TaskPanelItem[]
+export interface TaskListState {
+  readonly tasks: readonly TaskListItem[]
   readonly counts: TaskDisplayCounts
-  /** The one `in_progress` task, if the model marked one. */
-  readonly activeTask?: TaskPanelItem
-  /** Completed share, 0..1 — the width of the 2px progress bar. */
-  readonly ratio: number
   readonly allDone: boolean
+  /** The user has spoken since the list was written: it is a plan from an earlier turn. */
+  readonly stale: boolean
+}
+
+/** What the card draws: a window of at most `TASK_CARD_ROWS` rows around the current one. */
+export interface TaskCard {
+  readonly rows: readonly TaskListItem[]
+  readonly hiddenBefore: number
+  /** Unfinished rows past the window; finished ones there are not worth a mention. */
+  readonly openAfter: number
+  readonly stale: boolean
 }
 
 /**
- * The panel's whole state, or `undefined` when there is no panel at all —
- * no snapshot yet, an empty checklist, or a finished checklist the user has
- * already moved past. The view draws nothing rather than a placeholder (§7.2).
+ * The checklist's state, or `undefined` when there is none — no snapshot yet, an
+ * empty checklist, or a finished one the user has already moved past. An
+ * unfinished list outlives its turn as a stale plan.
  */
-export function taskPanelState(records: readonly SessionRecord[]): TaskPanelState | undefined {
-  const found = findLatestSnapshot(records)
-  if (!found) return undefined
-
-  const state = projectSnapshot(found.snapshot)
-  if (!state) return undefined
-  // A finished list survives exactly one more beat: it stays through the rest of
-  // the turn so "did that actually finish?" has an answer, and the next user
-  // message retires it (§7.3). An unfinished list is still the plan, so it stays.
-  if (state.allDone && hasUserMessageAfter(records, found.index)) return undefined
-  return state
-}
-
-/** Same projection from a snapshot already in hand (the live `tool_result`). */
-export function taskPanelStateFromSnapshot(snapshot: TaskDisplaySnapshot | undefined): TaskPanelState | undefined {
-  return snapshot ? projectSnapshot(snapshot) : undefined
-}
-
-/**
- * The panel after one more record — the live counterpart of `taskPanelState`.
- *
- * A pane sees records one at a time and never keeps the list, so the reverse
- * scan above is only affordable on the two paths that hand over a whole list
- * (`hello`, `transcript-reset`). This walks the same two rules forward instead:
- * a snapshot replaces the panel outright, and the user's next message retires a
- * finished one. Folding a session's records through this must land on what
- * `taskPanelState` says about the same records — `test/rendererTasks.test.ts`
- * asserts exactly that, because the two paths meet on every pane switch.
- */
-export function advanceTaskPanel(
-  current: TaskPanelState | undefined,
-  record: SessionRecord,
-): TaskPanelState | undefined {
-  if (record.type === 'tool_result') {
-    const snapshot = record.display?.taskSnapshot
-    return snapshot ? taskPanelStateFromSnapshot(snapshot) : current
-  }
-  return current?.allDone && isRetiringUserMessage(record) ? undefined : current
-}
-
-/**
- * The user starting something new, which is what a finished checklist waits for
- * (§7.3). `turn-start` is the same moment seen a beat earlier — the user record
- * only lands after the turn's first I/O — so the pane retires on both and this
- * is what keeps the replay honest.
- */
-export function retireCompletedTaskPanel(current: TaskPanelState | undefined): TaskPanelState | undefined {
-  return current?.allDone ? undefined : current
-}
-
-function projectSnapshot(snapshot: TaskDisplaySnapshot): TaskPanelState | undefined {
-  // `deleted` tasks ride along in the snapshot and are counted in its `total`
-  // but nowhere else, so the panel counts its own rows instead of trusting
-  // `snapshot.counts` — otherwise a deleted task holds the bar below full
-  // forever.
-  const tasks = snapshot.tasks.filter(isPanelTask).map(toPanelItem)
-  if (tasks.length === 0) return undefined
-
-  const counts = countPanelItems(tasks)
-  const activeTask = tasks.find((task) => task.id === snapshot.activeTaskId && task.status === 'in_progress')
-    ?? tasks.find((task) => task.status === 'in_progress')
-  return {
-    tasks,
-    counts,
-    ...(activeTask ? { activeTask } : {}),
-    ratio: counts.completed / counts.total,
-    allDone: counts.completed === counts.total,
-  }
-}
-
-function findLatestSnapshot(
-  records: readonly SessionRecord[],
-): { readonly snapshot: TaskDisplaySnapshot; readonly index: number } | undefined {
+export function taskListState(records: readonly SessionRecord[]): TaskListState | undefined {
+  let userSpoke = false
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index]
-    if (record?.type !== 'tool_result') continue
-    const snapshot = record.display?.taskSnapshot
-    if (snapshot) return { snapshot, index }
+    if (!record) continue
+    if (record.type === 'tool_result' && record.display?.taskSnapshot) {
+      const state = projectSnapshot(record.display.taskSnapshot)
+      return userSpoke ? staleTaskList(state) : state
+    }
+    userSpoke ||= isRetiringUserMessage(record)
   }
   return undefined
 }
 
-function hasUserMessageAfter(records: readonly SessionRecord[], index: number): boolean {
-  for (let cursor = index + 1; cursor < records.length; cursor += 1) {
-    const record = records[cursor]
-    if (record && isRetiringUserMessage(record)) return true
+/**
+ * The checklist after one more record — the live counterpart of `taskListState`.
+ *
+ * A pane sees records one at a time and never keeps the list, so the reverse
+ * scan above is only affordable on the two paths that hand over a whole list
+ * (`hello`, `transcript-reset`). Folding a session's records through this must
+ * land on what `taskListState` says about the same records —
+ * `test/rendererTasks.test.ts` asserts exactly that, because the two paths meet
+ * on every pane switch.
+ */
+export function advanceTaskList(current: TaskListState | undefined, record: SessionRecord): TaskListState | undefined {
+  if (record.type === 'tool_result') {
+    const snapshot = record.display?.taskSnapshot
+    return snapshot ? projectSnapshot(snapshot) : current
   }
-  return false
+  return current && isRetiringUserMessage(record) ? staleTaskList(current) : current
+}
+
+/**
+ * The user starting something new: a finished list retires, an unfinished one
+ * becomes the plan from before. `turn-start` is the same moment seen a beat
+ * earlier — the user record only lands after the turn's first I/O — so the pane
+ * applies this on both, and doing it twice changes nothing.
+ */
+export function staleTaskList(current: TaskListState | undefined): TaskListState | undefined {
+  if (!current || current.allDone) return undefined
+  return current.stale ? current : { ...current, stale: true }
+}
+
+/**
+ * The card, only while a turn runs: between turns the checklist is history, and
+ * the transcript's own task rows are where it is read.
+ *
+ * The window opens one row before the current one, so the step just finished
+ * stays in view; with nothing running, the first unfinished row stands in.
+ */
+export function taskCard(state: TaskListState | undefined, isStreaming: boolean): TaskCard | undefined {
+  if (!state || !isStreaming) return undefined
+  const { tasks } = state
+  const running = tasks.findIndex((task) => task.status === 'in_progress')
+  const current = running >= 0 ? running : tasks.findIndex((task) => task.status !== 'completed')
+  const start = Math.max(0, Math.min((current >= 0 ? current : tasks.length) - 1, tasks.length - TASK_CARD_ROWS))
+  const after = tasks.slice(start + TASK_CARD_ROWS)
+  return {
+    rows: tasks.slice(start, start + TASK_CARD_ROWS),
+    hiddenBefore: start,
+    openAfter: after.filter((task) => task.status !== 'completed').length,
+    stale: state.stale,
+  }
+}
+
+function projectSnapshot(snapshot: TaskDisplaySnapshot): TaskListState | undefined {
+  // `deleted` tasks ride along in the snapshot and are counted in its `total`
+  // but nowhere else, so the list counts its own rows instead of trusting
+  // `snapshot.counts`.
+  const tasks = snapshot.tasks.filter(isListTask).map(toListItem)
+  if (tasks.length === 0) return undefined
+  const counts = countListItems(tasks)
+  return { tasks, counts, allDone: counts.completed === counts.total, stale: false }
 }
 
 function isRetiringUserMessage(record: SessionRecord): boolean {
@@ -146,21 +137,20 @@ function isSystemReminderBlock(text: string): boolean {
   return trimmed.startsWith('<system-reminder>') && trimmed.endsWith('</system-reminder>')
 }
 
-function isPanelTask(task: TaskDisplayItem): boolean {
+function isListTask(task: TaskDisplayItem): boolean {
   return task.status === 'pending' || task.status === 'in_progress' || task.status === 'completed'
 }
 
-function toPanelItem(task: TaskDisplayItem): TaskPanelItem {
-  const status = task.status as TaskPanelItem['status']
+function toListItem(task: TaskDisplayItem): TaskListItem {
+  const status = task.status as TaskListItem['status']
   return {
     id: task.id,
     status,
-    subject: task.subject,
     label: status === 'in_progress' && task.activeForm ? task.activeForm : task.subject,
   }
 }
 
-function countPanelItems(tasks: readonly TaskPanelItem[]): TaskDisplayCounts {
+function countListItems(tasks: readonly TaskListItem[]): TaskDisplayCounts {
   const pending = tasks.filter((task) => task.status === 'pending').length
   const inProgress = tasks.filter((task) => task.status === 'in_progress').length
   const completed = tasks.filter((task) => task.status === 'completed').length

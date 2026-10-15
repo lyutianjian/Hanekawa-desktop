@@ -220,17 +220,11 @@
      is a single physical pixel on any screen. */
   --hairline: 0.5px;
   --sidebar-scrollbar-overhang: calc(var(--sidebar-gutter) - 3px);
-  /* The task panel's completed share, 0..1. The second layout number the
-     renderer writes and, like the rail's width, the *rule* that reads it stays
-     here: `dom/taskPanelView.ts` sets the number on the panel and the fill
-     resolves its own width from it. Declared so the bar is empty rather than
-     invalid before the first snapshot arrives. */
-  --task-progress: 0;
   /* The hover marquee's two numbers, written per row by `dom/sidebarView.ts`
      from `model/marquee.ts`. They depend on the measured overhang, which depends
      on the rail's width, so neither can be a token — but both are declared here
-     for the same reason `--task-progress` is: a row that has not been hovered yet
-     must resolve to a still, valid animation rather than an invalid one. */
+     so a row that has not been hovered yet resolves to a still, valid
+     animation rather than an invalid one. */
   --marquee-shift: 0px;
   --marquee-duration: 0s;
   /* The blank between the two copies of a scrolling name. Not written by the
@@ -271,6 +265,8 @@
      with an 80px left inset supplied by dom/windowChrome.ts. */
   --titlebar-inset-left: 0px;
   --titlebar-inset-right: 138px;
+  /* How far the transcript scroller reaches up under the title bar. */
+  --transcript-tuck: 8px;
 
   /* --- type ---
      The chrome is proportional; anything the user has to read character by
@@ -539,12 +535,15 @@ body:has(#sidebar.collapsed) #frame::after {
 body.settings-open #frame::after { display: none; }
 /* The strip above the canvas takes the canvas's colour, so the transcript's top
    fade dissolves into the same surface instead of into the frame. It starts
-   where the canvas does and follows the sidebar on the lead's curves. */
-#titlebar { position: relative; }
+   where the canvas does and follows the sidebar on the lead's curves. It stops
+   `--transcript-tuck` short of the bar's foot: that band is the canvas's own
+   (its offset shadow), so the transcript can scroll up under it. `z-index`
+   keeps the bar, and its drag region, above that band. */
+#titlebar { position: relative; z-index: 1; }
 #titlebar::before {
   content: '';
   position: absolute;
-  inset: 0 0 0 calc(var(--sidebar-width) + var(--sidebar-scrollbar-overhang));
+  inset: 0 0 var(--transcript-tuck) calc(var(--sidebar-width) + var(--sidebar-scrollbar-overhang));
   z-index: -1;
   background: var(--surface-canvas);
   transition: left var(--motion-layout) var(--ease-out);
@@ -882,7 +881,11 @@ body.resizing #frame::after { transition: none; }
      edge. */
   margin: 0;
   background: var(--surface-canvas);
-  overflow: hidden;
+  /* `clip` plus a margin rather than `hidden`: the transcript reaches
+     `--transcript-tuck` above the canvas, under the title bar. */
+  overflow: clip;
+  overflow-clip-margin: var(--transcript-tuck);
+  box-shadow: 0 calc(-1 * var(--transcript-tuck)) 0 var(--surface-canvas);
 }
 
 /* --- sidebar --- */
@@ -1999,9 +2002,11 @@ body.settings-open #browser-resizer { display: none; }
    positions survive and nothing repaints. The mount and the wrapper
    carry the flex column; `.transcript` itself is the scroll container. */
 /* Scrolled down: what passes under the title bar fades out instead of being cut
-   at the scroller's edge. `transcriptView` sets the class from `scrollTop`. */
+   at the scroller's edge. `transcriptView` sets the class from `scrollTop`. The
+   scroller starts `--transcript-tuck` up inside the title bar, so half the fade
+   sits in the bar and the bar does not read taller. */
 .transcript.scrolled {
-  mask-image: linear-gradient(to bottom, transparent, currentColor 12px);
+  mask-image: linear-gradient(to bottom, transparent, currentColor 24px);
 }
 #transcript-area {
   flex: 1 1 auto;
@@ -2021,7 +2026,8 @@ body.settings-open #browser-resizer { display: none; }
 .transcript {
   flex: 1 1 auto;
   overflow-y: auto;
-  padding: var(--space-2) var(--reading-gutter);
+  margin-top: calc(-1 * var(--transcript-tuck));
+  padding: calc(var(--space-2) + var(--transcript-tuck)) var(--reading-gutter) var(--space-2);
   /* One step smaller than the rest of the app, and only here: the conversation is
      the one surface read in long stretches, and its rows, code and tool output
      step down with the prose. */
@@ -2884,7 +2890,7 @@ body.settings-open #browser-resizer { display: none; }
    against the composer instead of sharing the canvas with an almost-empty
    scroller. The startup notices a fresh draft carries stay visible underneath —
    never hide output the host emitted. */
-.pane.empty .transcript { flex: 0 0 auto; overflow: visible; padding-block: 0; }
+.pane.empty .transcript { flex: 0 0 auto; overflow: visible; margin-top: 0; padding-block: 0; }
 .welcome {
   flex: 1 1 auto;
   min-height: 0;
@@ -3255,16 +3261,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   margin-bottom: var(--space-2);
   pointer-events: none;
 }
-/* The task panel (§7.2): resident, in flow, on the composer's own axis — the
-   opposite of the three transient panels above, which is why it is a sibling of
-   `#composer` rather than a fourth child of that shell.
-
-   A card groove, `--radius-md`, and **no shadow**: depth in this sheet is two
-   steps (menus float, modals sit deeper) and a strip that is part of the
-   composer is neither. It appears once, with the sheet's shared panel presence —
-   `dom/taskPanelView.ts` reuses the panel node across repaints, so the entrance
-   plays when the checklist appears and not once per streamed token. */
-#task-panel:empty { display: none; }
 /* The running-process tag: a quiet pill above the composer that opens `/tasks`. */
 #process-strip:empty { display: none; }
 #process-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-2); }
@@ -3303,23 +3299,28 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .thread-chip .icon { width: 14px; height: 14px; }
 .thread-chip.running .icon { color: var(--accent-brand-strong); animation: spin var(--motion-running) linear infinite; }
 .thread-chip-blocked { color: var(--text-warn); }
-.task-panel {
+/* The task card (`dom/transcriptView.ts`): the model's checklist above the
+   status line while a turn runs. A hairline ring with no fill and no shadow —
+   it is part of the conversation, not a surface floating over it. The node is
+   kept across paints, so the fade plays when the list appears, not per token. */
+.task-card {
   position: relative;
-  background: var(--surface-card);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  margin-bottom: var(--space-3);
+  padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  margin-bottom: var(--space-2);
-  overflow: hidden;
+  line-height: 1.6;
+  animation: fade-in var(--motion-panel-in) var(--ease-out);
 }
-/* The one-shot outline pulse the transcript's `TodoWrite` step points at,
-   instead of drawing the checklist a second time inside the group (§7.3).
-   It is a pseudo-element and not the panel's own `animation` on purpose: the
-   two would be one property, and taking the flash off again would restart the
-   entrance underneath it. */
-.task-panel.flash::after {
+/* The one-shot outline pulse a `TodoWrite` row asks for. A pseudo-element, so
+   taking the flash off again cannot restart the card's own entrance. */
+.task-card.flash::after {
   content: '';
   position: absolute;
-  inset: 0;
+  inset: -1px;
   border: 1px solid;
   border-color: var(--accent-brand);
   border-radius: inherit;
@@ -3327,85 +3328,48 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   animation: task-flash var(--motion-locate) var(--ease-out);
 }
 @keyframes task-flash { from { opacity: 1; } to { opacity: 0; } }
-/* The 2px bar across the top. The fill is a *rule*, not a surface: the accent
-   reaches it through `border-top-color`, so the sheet's three named accent fills
-   stay three. Its width is the completed share, handed in as `--task-progress`
-   — the fallback below is what a panel painted before the first snapshot uses. */
-.task-progress {
-  height: 2px;
-  background: var(--border-subtle);
-}
-.task-progress-fill {
-  width: calc(var(--task-progress) * 100%);
-  height: 0;
-  border-top: 2px solid;
-  border-top-color: var(--accent-brand);
-  transition: width var(--motion-layout) var(--ease-out);
-}
-/* The head is the whole switch, as in the transcript (§9): no chevron, the
-   hover tint is the affordance. A resting rule of its own, because a bare
-   `<button>` under Chromium is a grey box. */
-.task-panel-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
-  background: none;
-  border: 0;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: var(--type-meta);
-  text-align: left;
-  cursor: pointer;
-}
-.task-panel-head:hover { background: var(--surface-hover); }
-.task-count { flex: 0 0 auto; font-family: var(--font-mono); }
-.task-current {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.task-note,
+.task-more {
+  margin: 0;
   color: var(--text-tertiary);
+  font-size: var(--type-meta);
 }
-/* Read-only rows: the list belongs to the model, so nothing in here is a
-   control and nothing takes a hover state. */
+.task-more { padding-left: calc(16px + var(--space-2)); }
 .task-list {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
-  padding: 0 var(--space-3) var(--space-3);
-  font-size: var(--type-meta);
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .task-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2);
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
-.task-row.completed { color: var(--text-tertiary); text-decoration: line-through; }
-/* The same 7px dot as a step's, and the same contract: `aria-hidden`, with the
-   state carried in words by the head's accessible name. Pending is the hollow
-   one — an inset ring rather than a fill, so 「还没开始」 reads without a colour. */
-.task-bead {
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
+.task-row.completed { color: var(--text-tertiary); }
+/* One line box tall, so the mark centres on a wrapped label's first line. */
+.task-mark {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 1lh;
+}
+.task-mark .icon { width: 14px; height: 14px; }
+.task-mark.in_progress .icon { animation: spin var(--motion-running) linear infinite; }
+.task-mark.pending::before {
+  content: '';
+  width: 11px;
+  height: 11px;
   border-radius: var(--radius-pill);
-  color: var(--text-tertiary);
-  background: currentColor;
-}
-.task-bead.pending {
-  background: none;
   box-shadow: inset 0 0 0 1px currentColor;
+  color: var(--text-tertiary);
 }
-.task-bead.in_progress { animation: breathe var(--motion-running) var(--ease-out) infinite; }
-.task-bead.completed { color: var(--accent-review); }
-.task-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
+.task-label { min-width: 0; overflow-wrap: anywhere; }
 /* The horizontal padding is `--composer-overhang`'s other half; the two are one
    number and move together (see that token). */
 #composer {
@@ -5964,8 +5928,8 @@ body.projects-open #browser-resizer,
     color: inherit;
   }
   .step-bead,
-  .task-bead,
-  .task-panel,
+  .task-mark .icon,
+  .task-card,
   .session-badge.running .icon,
   .thread-status .icon,
   .session-title-text {

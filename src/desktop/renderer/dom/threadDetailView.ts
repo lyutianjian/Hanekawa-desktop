@@ -136,7 +136,6 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
           manual.set(id, !expanded)
           paint()
         },
-        onTaskStep: () => {},
         onOpenPlan: () => {},
         onOpenPath: handlers.onOpenPath,
         onViewImage: () => {},

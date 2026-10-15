@@ -14,6 +14,7 @@ import type { SessionEvent } from '../src/runtime/sessionController.js'
 import type { ImageAttachmentRef } from '../src/media/types.js'
 import { ANCHOR_REST_PX } from '../src/desktop/renderer/model/transcriptAnchor.js'
 import type { WaitingInput } from '../src/desktop/renderer/model/waiting.js'
+import type { TaskCard } from '../src/desktop/renderer/model/tasks.js'
 import type { ToolErrorCode } from '../src/harness/types.js'
 
 /**
@@ -255,8 +256,6 @@ interface Rendered {
   readonly host: HTMLElement
   /** `[id, what the row showed when it was clicked]`, the absolute-answer pair. */
   readonly toggled: Array<readonly [string, boolean]>
-  /** How many times a `TodoWrite` row asked the task panel to flash. */
-  readonly taskClicks: () => number
   /** How many times the status line's background-task button was pressed. */
   readonly backgroundOpens: () => number
   /** `[path, line]` per clicked search row, the `open-in-editor` payload. */
@@ -292,11 +291,9 @@ function mount(t: { after(fn: () => void): void }): Rendered {
   const thumbs = new Map<string, string>()
   const openedSubagents: string[] = []
   const openedPlans: Array<string | undefined> = []
-  let taskClicks = 0
   let backgroundOpens = 0
   const view = createTranscriptView(container, host, {
     onToggle: (id, expanded) => toggled.push([id, expanded]),
-    onTaskStep: () => { taskClicks += 1 },
     onOpenPlan: (content) => openedPlans.push(content),
     onOpenPath: (path, line) => opened.push([path, line]),
     onViewImage: (image) => viewedImages.push([image.id, image.name]),
@@ -326,7 +323,6 @@ function mount(t: { after(fn: () => void): void }): Rendered {
     stub,
     container,
     host,
-    taskClicks: () => taskClicks,
     backgroundOpens: () => backgroundOpens,
     toggled,
     opened,
@@ -1576,23 +1572,38 @@ test('a bubble with no mention is still a single text node', (t) => {
   assert.deepEqual(bubble?.nodes, ['mail me at foo@bar.com'])
 })
 
+const TODO_STEP: TranscriptItem = {
+  id: 'todo-1',
+  kind: 'tool',
+  text: 'TodoWrite 3/6',
+  toolName: 'TodoWrite',
+  turnId: 't1',
+  tool: { displayName: 'TodoWrite', useSummary: '3/6', detail: '- [x] one' },
+}
+
+const CARD: TaskCard = {
+  rows: [
+    { id: '1', status: 'completed', label: 'Read the design' },
+    { id: '2', status: 'in_progress', label: 'Wiring the card' },
+    { id: '3', status: 'pending', label: 'Style it' },
+  ],
+  hiddenBefore: 0,
+  openAfter: 0,
+  stale: false,
+}
+
+function cardOf(view: Rendered): StubView | undefined {
+  return view.items().find((child) => child.classes.includes('task-card'))
+}
+
 /**
- * The `TodoWrite` row (T10). It never opens — the checklist is drawn once, above
- * the composer — so it is a control that points at that panel instead.
+ * The `TodoWrite` row. It never opens — the checklist is drawn once, as the task
+ * card — so it is a control that points at that card instead.
  */
-test('a TodoWrite step is a bodyless button that flashes the task panel', (t) => {
+test('a TodoWrite step is a bodyless button that points at the task card', (t) => {
   const view = mount(t)
-  view.render(transcript(
-    [{
-      id: 'todo-1',
-      kind: 'tool',
-      text: 'TodoWrite 3/6',
-      toolName: 'TodoWrite',
-      turnId: 't1',
-      tool: { displayName: 'TodoWrite', useSummary: '3/6', detail: '- [x] one' },
-    }],
-    { toolProgress: undefined },
-  ), new Map([['run:todo-1', true]]))
+  const state = transcript([TODO_STEP], { toolProgress: undefined })
+  view.render(state, new Map([['run:todo-1', true]]))
 
   const step = rowOf(view)
   assert.deepEqual(step?.classes, ['step', 'task', 'done'])
@@ -1604,11 +1615,51 @@ test('a TodoWrite step is a bodyless button that flashes the task panel', (t) =>
   // And no body, even though the result carried a `detail` the tool family would
   // have drawn.
   assert.equal(step?.children.length, 1)
-
-  assert.equal(view.taskClicks(), 0)
   view.stub.click(head?.node)
-  assert.equal(view.taskClicks(), 1)
   assert.deepEqual(view.toggled, [], 'the row folds nothing')
+
+  view.render(state, new Map([['run:todo-1', true]]), { ...waiting(state, Date.now()), taskCard: CARD })
+  assert.equal(cardOf(view)?.classes.includes('flash'), false)
+  view.stub.click(rowOf(view)?.children[0]?.node)
+  assert.equal(cardOf(view)?.classes.includes('flash'), true, 'the click pulses the card')
+})
+
+test('the task card sits above the status line, one row and mark per task', (t) => {
+  const view = mount(t)
+  const state = transcript([{ id: 'u1', kind: 'user', text: 'go' }])
+  view.render(state, NO_DISCLOSURE, { ...waiting(state, Date.now()), taskCard: CARD })
+
+  const items = view.items()
+  const card = cardOf(view)!
+  assert.equal(items.at(-2)?.node, card.node)
+  assert.ok(items.at(-1)?.classes.includes('waiting'))
+  const list = card.children.find((child) => child.tagName === 'UL')!
+  assert.deepEqual(list.children.map((row) => [row.tagName, row.classes.join(' '), row.text]), [
+    ['LI', 'task-row completed', 'Read the design'],
+    ['LI', 'task-row in_progress', 'Wiring the card'],
+    ['LI', 'task-row pending', 'Style it'],
+  ])
+  assert.deepEqual(
+    list.children.map((row) => row.children[0]?.attributes.get('aria-label')),
+    ['已完成', '进行中', '未开始'],
+    'each mark says its state in words',
+  )
+
+  // Kept across paints, so the entrance does not replay per token.
+  const node = card.node
+  view.render(state, NO_DISCLOSURE, { ...waiting(state, Date.now()), taskCard: { ...CARD } })
+  assert.equal(cardOf(view)?.node, node)
+
+  view.render(state, NO_DISCLOSURE, { isStreaming: false, startedAt: undefined, turnId: undefined })
+  assert.equal(cardOf(view), undefined, 'no card between turns')
+})
+
+test('a windowed or carried-over card summarises what it does not show', (t) => {
+  const view = mount(t)
+  const state = transcript([{ id: 'u1', kind: 'user', text: 'go' }])
+  view.render(state, NO_DISCLOSURE, { ...waiting(state, Date.now()), taskCard: { ...CARD, stale: true, hiddenBefore: 4, openAfter: 2 } })
+  const notes = cardOf(view)!.children.filter((child) => child.tagName === 'P').map((child) => child.text)
+  assert.deepEqual(notes, ['上一条消息之前的计划', '更早的 4 项', '还有 2 项'])
 })
 
 test('only the user bubble grows pills', (t) => {
@@ -2316,7 +2367,7 @@ test('T6 thread note cards: head, status label, and 查看 only with a thread id
   const container = stub.createContainer('transcript')
   const host = stub.createContainer('pane')
   const real = createTranscriptView(container, host, {
-    onToggle: () => {}, onTaskStep: () => {}, onOpenPlan: () => {}, onOpenSubagent: () => {}, onOpenPath: () => {},
+    onToggle: () => {}, onOpenPlan: () => {}, onOpenSubagent: () => {}, onOpenPath: () => {},
     onViewImage: () => {}, imageThumbUrl: () => undefined, onCopy: () => {},
     onOpenThread: (id) => opened.push(id),
   })
@@ -2350,7 +2401,7 @@ test('a failed turn draws a card: reason, target, hint, the provider\'s words, a
   const container = stub.createContainer('transcript')
   const host = stub.createContainer('pane')
   const real = createTranscriptView(container, host, {
-    onToggle: () => {}, onTaskStep: () => {}, onOpenPlan: () => {}, onOpenSubagent: () => {}, onOpenPath: () => {},
+    onToggle: () => {}, onOpenPlan: () => {}, onOpenSubagent: () => {}, onOpenPath: () => {},
     onViewImage: () => {}, imageThumbUrl: () => undefined, onCopy: () => {},
     onOpenProviderSettings: () => { providerSettings += 1 },
     onRetryTurn: (id) => retried.push(id),

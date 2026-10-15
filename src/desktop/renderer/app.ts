@@ -102,7 +102,6 @@ import { createPlanPanelView } from './dom/planPanelView.js'
 import { createQuestionCardView } from './dom/questionCardView.js'
 import { createRewindView } from './dom/rewindView.js'
 import { createSurfacePanel } from './dom/surfaceView.js'
-import { createTaskPanelView } from './dom/taskPanelView.js'
 import { createProcessStripView } from './dom/processStripView.js'
 import { createComposerView } from './dom/composerView.js'
 import { createImageViewerView } from './dom/imageViewerView.js'
@@ -247,9 +246,6 @@ const surface = createSurfacePanel(required('surface'), (action) => {
 const suggestions = createSuggestionsView(required('suggestions'), (index) => {
   void activePane()?.acceptCompletionAt(index)
 })
-// Resident, and window-level like every other singleton the active pane drives:
-// it lives on the composer's own axis, so exactly one is on screen at a time.
-const taskPanel = createTaskPanelView(required('task-panel'))
 const processStrip = createProcessStripView(required('process-strip'), () => activePane()?.toggleBackgroundTasks())
 const status = createStatusView({
   usage: required('status-usage'),
@@ -352,7 +348,6 @@ function attachPaneSession(lane: string): void {
     rewindPanel,
     surface,
     suggestions,
-    taskPanel,
     processStrip,
     status,
     composer,
@@ -2047,7 +2042,6 @@ function syncMotion(): void {
   finishPresenceWithin(document)
   sidebar.finishMotion()
   permissionRequest.finishMotion()
-  taskPanel.finishMotion()
   for (const pane of paneSessions.values()) pane.syncMotion()
   if (motionQuery.matches || document.hidden) {
     // Changing transition-duration does not retime an already-running CSS

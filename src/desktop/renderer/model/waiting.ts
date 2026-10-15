@@ -11,6 +11,7 @@ import {
 import { batchPhrase, callPhrase, type CallStep } from './toolPhrases.js'
 import { EDIT_TOOLS } from './thinking.js'
 import { markSpecFor, peekField, type MarkSpec } from './workingMark.js'
+import type { TaskCard } from './tasks.js'
 
 /**
  * What the turn is doing **right now**: one status line, the transcript's last,
@@ -49,6 +50,8 @@ export interface WaitingInput {
   readonly backgroundTasks?: number
   /** The tool call whose arguments are streaming in (`TranscriptState.draftCall`). */
   readonly draftCall?: DraftCall
+  /** The checklist card drawn above the status line; absent between turns. */
+  readonly taskCard?: TaskCard
 }
 
 export interface WaitingRow {

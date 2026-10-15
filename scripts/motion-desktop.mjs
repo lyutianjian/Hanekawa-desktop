@@ -192,13 +192,10 @@ async function streamingScene(project, lane) {
   await sleep(1200)
   check('stream menu keeps its focused item', await read("document.activeElement === window.__motion.node('menuFocus')"), menuFocus)
   await key(handle.cdp, 'Escape')
-  await present('.task-panel')
-  await watch('taskPanel', '.task-panel', 'document')
-  await watch('progress', '.task-progress-fill', 'document')
-  await click('.task-panel-head')
+  await present('.task-card')
+  await watch('taskCard', '.task-card', 'document')
   await present('.task-row')
   await watch('taskRow', '.task-row', 'document')
-  await watch('taskBead', '.task-row .task-bead', 'document')
   await present('.task-row.in_progress')
   await mark('task-unchanged')
   await sleep(1100)
@@ -229,14 +226,12 @@ async function streamingScene(project, lane) {
   const live = record.frames.filter((frame) => frame.streaming && frame.nodes.group?.id)
   check('live group never collapses in tool gaps', live.length > 0 && live.every((frame) => !frame.nodes.group.cls.includes('collapsed')))
   check('no blank content sample after the group appears', live.length > 0 && live.every((frame) => frame.visibleText > 0), { samples: live.length })
-  for (const [label, names] of [['thought-noop', ['thought', 'rule', 'thoughtBody']], ['stream-menu', ['menu', 'menuFocus']], ['task-unchanged', ['taskPanel', 'progress', 'taskRow', 'taskBead']], ['markdown-growth', ['paragraph', 'code', 'math']]]) {
+  for (const [label, names] of [['thought-noop', ['thought', 'rule', 'thoughtBody']], ['stream-menu', ['menu', 'menuFocus']], ['task-unchanged', ['taskCard', 'taskRow']], ['markdown-growth', ['paragraph', 'code', 'math']]]) {
     for (const name of names) {
       const target = report.scenes.stream.summaries[label]?.targets[name]
       check(label + ' stable ' + name, target?.identities.length === 1 && target.detaches === 0, target && { identities: target.identities.length, detaches: target.detaches })
     }
   }
-  const progress = report.scenes.stream.summaries['task-unchanged'].targets.progress
-  check('unchanged task progress has no width movement', progress.widthRange <= 1, { widthRange: progress.widthRange })
   const groupBead = live.find((frame) => frame.nodes.liveBead?.id)?.nodes.liveBead.id
   check('group breath starts once for the whole live turn',
     record.events.filter((event) => event.id === groupBead && event.type === 'animationstart' && event.name === 'breathe').length === 1)
@@ -441,7 +436,7 @@ async function reducedScene() {
   await handle.cdp.send('Emulation.setEmulatedMedia', { features: [] })
   await sleep(100)
   const record = await finish()
-  check('restoring motion does not replay the task panel', !record.events.some((event) => event.type === 'animationstart' && event.name === 'rise-in' && event.target.includes('task-panel')))
+  check('restoring motion does not replay the task card', !record.events.some((event) => event.type === 'animationstart' && event.name === 'fade-in' && event.target.includes('task-card')))
 }
 
 try {

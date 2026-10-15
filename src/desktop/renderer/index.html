@@ -96,21 +96,12 @@
               <div id="surface" hidden></div>
               <div id="suggestions" hidden role="listbox" aria-label="斜杠命令"></div>
             </div>
-            <!--
-              The task panel's host (§7.2). In the flow, above the composer and
-              on its axis — deliberately *not* one of the three panels above:
-              those are transient overlays, this is resident, and a resident
-              strip inside an absolutely positioned, `pointer-events: none`
-              shell would fight both. Empty when the model has no checklist,
-              which is how the panel stops existing rather than sitting blank.
-            -->
-            <div id="task-panel"></div>
             <!-- Running background processes; empty (and not drawn) when there are none. -->
             <div id="process-strip"></div>
             <!--
               The merge reminder (stage 5): a thread canvas's own pending branch,
               or the coordinator's summary of every one. Resident and in the
-              flow like the two strips above; empty when nothing waits.
+              flow like the strip above; empty when nothing waits.
             -->
             <div id="merge-bar"></div>
             <div id="composer">

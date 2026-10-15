@@ -179,7 +179,6 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
           manual.set(id, !expanded)
           paintTimeline()
         },
-        onTaskStep: () => {},
         onOpenPlan: () => {},
         onOpenPath: handlers.onOpenPath,
         onViewImage: () => {},
