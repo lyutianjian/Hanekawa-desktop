@@ -1,6 +1,6 @@
-import type { Tool } from '../../harness/types.js'
-import { sortedTasks, taskDisplay } from '../taskFormat.js'
-import { applyTaskUpdate, ensureTaskState } from '../taskState.js'
+import type { TaskItem, Tool } from '../../harness/types.js'
+import { isRemainingTask, sortedTasks, taskDisplay } from '../taskFormat.js'
+import { applyTaskUpdate, claimTaskList, ensureTaskState } from '../taskState.js'
 import { taskUpdateInputSchema } from '../taskSchemas.js'
 import { TASK_UPDATE_TOOL_NAME } from './constants.js'
 import { DESCRIPTION, PROMPT } from './prompt.js'
@@ -40,6 +40,7 @@ export const taskUpdateTool: Tool = {
         metadata: { display: { summary: 'Task not found' } },
       }
     }
+    claimTaskList(tasks, context.requestTurnId)
     if (result.deleted) {
       return {
         ok: true,
@@ -59,10 +60,36 @@ export const taskUpdateTool: Tool = {
       parsed.metadata !== undefined ? 'metadata' : undefined,
     ].filter((field): field is string => Boolean(field))
 
+    const all = sortedTasks(tasks.values())
+    const progress = parsed.status === 'completed' ? describeProgress(all)
+      : parsed.status === 'in_progress' ? describeOtherInProgress(all, parsed.taskId)
+      : undefined
     return {
       ok: true,
-      content: `Updated task #${parsed.taskId} ${fields.join(', ') || 'no changes'}`,
-      metadata: { display: taskDisplay(sortedTasks(tasks.values())) },
+      content: `Updated task #${parsed.taskId} ${fields.join(', ') || 'no changes'}.${progress ? ` ${progress}` : ''}`,
+      metadata: { display: taskDisplay(all) },
     }
   },
+}
+
+function describeProgress(tasks: readonly TaskItem[]): string {
+  const remaining = tasks.filter(isRemainingTask)
+  if (remaining.length === 0) return 'All tasks are completed.'
+  const count = remaining.length === 1 ? '1 task remains' : `${remaining.length} tasks remain`
+  const inProgress = remaining.filter((task) => task.status === 'in_progress')
+  if (inProgress.length > 0) return `${count}; in progress: ${inProgress.map(taskLabel).join(', ')}.`
+  const completedIds = new Set(tasks.filter((task) => task.status === 'completed').map((task) => task.id))
+  const next = remaining.find((task) => (task.blockedBy ?? []).every((id) => completedIds.has(id)))
+  return next ? `${count}; next pending: ${taskLabel(next)}.` : `${count}.`
+}
+
+function describeOtherInProgress(tasks: readonly TaskItem[], taskId: string): string | undefined {
+  const others = tasks.filter((task) => task.status === 'in_progress' && task.id !== taskId)
+  if (others.length === 0) return undefined
+  const ids = others.map((task) => `#${task.id}`).join(', ')
+  return `${ids} ${others.length === 1 ? 'is' : 'are'} also in_progress; keep only one.`
+}
+
+function taskLabel(task: TaskItem): string {
+  return `#${task.id} ${task.subject}`
 }

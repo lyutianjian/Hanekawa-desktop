@@ -1,21 +1,16 @@
+import { readFileSync } from 'node:fs'
 import { readFile, access, mkdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
-import fg from 'fast-glob'
 import { getUserInstructionsPath } from '../../utils/paths.js'
 
 /**
- * The instruction file names, in preference order. Both lists are **first match
- * wins per directory**: a repo that keeps `AGENTS.md` and `CLAUDE.md` in sync
- * (this one does) would otherwise send the same guide twice in every request.
+ * The instruction file names, in preference order. **First match wins per
+ * directory**: a repo that keeps `AGENTS.md` and `CLAUDE.md` in sync would
+ * otherwise send the same guide twice in every request.
  */
 const CONTEXT_FILES = [
   'CLAUDE.md',
   'AGENTS.md',
-]
-
-const LOCAL_FILES = [
-  'CLAUDE.local.md',
-  'AGENTS.local.md',
 ]
 
 /** The first of `names` that exists in `dir`, or undefined. */
@@ -37,48 +32,27 @@ async function exists(path: string): Promise<boolean> {
 }
 
 export async function discoverContextFiles(cwd: string): Promise<string[]> {
-  // One entry per directory walked, cwd first. Emitted root-first below: the
-  // walk goes upwards, but the prompt reads downwards, and the nearest file is
-  // the most specific one, so it has to come last to override its ancestors.
-  const byDirectory: string[][] = []
+  // Collected cwd first, returned root-first: the walk goes upwards, but the
+  // prompt reads downwards, and the nearest file is the most specific one, so
+  // it has to come last to override its ancestors.
+  const found: string[] = []
   let dir = cwd
   const visited = new Set<string>()
 
   while (dir !== resolve(dir, '..') && !visited.has(dir)) {
     visited.add(dir)
-    const level: string[] = []
-
-    // Check for context files
     const contextFile = await firstExisting(dir, CONTEXT_FILES)
-    if (contextFile) level.push(contextFile)
-
-    // Check for rules directory
-    const rulesDir = join(dir, '.myagent', 'rules')
-    if (await exists(rulesDir)) {
-      try {
-        const ruleFiles = await fg('*.md', { cwd: rulesDir, absolute: true })
-        level.push(...ruleFiles)
-      } catch {
-        // Ignore glob errors
-      }
-    }
-
-    byDirectory.push(level)
+    if (contextFile) found.push(contextFile)
     dir = resolve(dir, '..')
   }
 
-  const found = byDirectory.reverse().flat()
-
-  // Local files (highest priority, loaded last)
-  const localFile = await firstExisting(cwd, LOCAL_FILES)
-  if (localFile) found.push(localFile)
-
-  return found
+  return found.reverse()
 }
 
-export async function readUserInstructions(): Promise<string> {
+/** Sync: a runtime snapshots it per session while it is being built. */
+export function readUserInstructions(): string {
   try {
-    return await readFile(getUserInstructionsPath(), 'utf-8')
+    return readFileSync(getUserInstructionsPath(), 'utf-8')
   } catch {
     return ''
   }
@@ -96,24 +70,28 @@ export async function writeUserInstructions(content: string): Promise<void> {
 }
 
 export async function loadProjectContext(cwd: string): Promise<string> {
-  const files = await discoverContextFiles(cwd)
+  return composeProjectContext(readUserInstructions(), await loadProjectEntries(cwd))
+}
 
+async function loadProjectEntries(cwd: string): Promise<string[]> {
+  const files = await discoverContextFiles(cwd)
   const entries: string[] = []
-  const user = (await readUserInstructions()).trim()
-  if (user !== '') {
-    entries.push(labelled(getUserInstructionsPath(), "user's private global instructions for all projects", user))
-  }
   for (const file of files) {
     let content = ''
     try {
       content = (await readFile(file, 'utf-8')).trim()
     } catch {}
     if (content === '') continue
-    const description = /\.local\.md$/.test(file)
-      ? "user's private project instructions, not checked in"
-      : 'project instructions, checked into the codebase'
-    entries.push(labelled(file, description, content))
+    entries.push(labelled(file, 'project instructions, checked into the codebase', content))
   }
+  return entries
+}
+
+export function composeProjectContext(userInstructions: string, projectEntries: readonly string[]): string {
+  const user = userInstructions.trim()
+  const entries = user === ''
+    ? [...projectEntries]
+    : [labelled(getUserInstructionsPath(), "user's private global instructions for all projects", user), ...projectEntries]
   if (entries.length === 0) return ''
 
   // The user's file and the project's are independent, not layers: each entry
@@ -128,23 +106,25 @@ function labelled(path: string, description: string, content: string): string {
   return `Contents of ${path} (${description}):\n\n${content}`
 }
 
-// Project context per cwd. A single-slot cache thrashed once two projects were
-// open at the same time, re-reading every CLAUDE.md on each alternating turn.
-const contextByCwd = new Map<string, string>()
+// Project instruction files per cwd, labelled. A single-slot cache thrashed
+// once two projects were open at the same time, re-reading every CLAUDE.md on
+// each alternating turn. The global file is not in it: each session snapshots
+// that one itself (see `createRuntimeFactory`).
+const entriesByCwd = new Map<string, string[]>()
 
-export async function getProjectContext(cwd: string): Promise<string> {
-  const cached = contextByCwd.get(cwd)
-  if (cached !== undefined) return cached
-
-  const context = await loadProjectContext(cwd)
-  contextByCwd.set(cwd, context)
-  return context
+export async function getProjectEntries(cwd: string): Promise<string[]> {
+  let entries = entriesByCwd.get(cwd)
+  if (entries === undefined) {
+    entries = await loadProjectEntries(cwd)
+    entriesByCwd.set(cwd, entries)
+  }
+  return entries
 }
 
 export function clearProjectContextCache(cwd?: string): void {
   if (cwd === undefined) {
-    contextByCwd.clear()
+    entriesByCwd.clear()
     return
   }
-  contextByCwd.delete(cwd)
+  entriesByCwd.delete(cwd)
 }

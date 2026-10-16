@@ -32,6 +32,10 @@ export const IMAGE_PROCESS_DEFAULTS = {
    *  Same policy number the request path's final check enforces — see
    *  `media/imageRequestLimits.ts`. */
   maxSendBytes: MAX_IMAGE_SEND_BYTES,
+  /** PNG rungs win only under this size; past it JPEG is several times
+   *  smaller, and every image's bytes stay in each later request of the
+   *  session. */
+  maxPngSendBytes: 1_000_000,
 } as const
 
 export interface ImageProcessLimits {
@@ -39,6 +43,7 @@ export interface ImageProcessLimits {
   maxDecodedPixels: number
   sendLongEdge: number
   maxSendBytes: number
+  maxPngSendBytes: number
 }
 
 /** Formats the content sniffer can name. `supported` marks the first version's
@@ -193,7 +198,8 @@ export interface ProcessImageOptions extends Partial<ImageProcessLimits> {
  * metadata, takes the first frame of animations, and scales down to the long
  * edge without ever enlarging. Encoding then walks a finite ladder —
  * lossless PNG, palette PNG, then JPEG at descending quality and size — and
- * the first step under the byte budget wins. Reaching the bottom rung still
+ * the first step under the byte budget wins (PNG rungs under the tighter
+ * `maxPngSendBytes`). Reaching the bottom rung still
  * over budget rejects the image (with a "crop it" hint) rather than degrading
  * it forever. Transparent input that falls through to JPEG is flattened onto
  * an explicit white background, never an accidental black one.
@@ -507,7 +513,8 @@ async function runCompressionLadder(
     .png({ compressionLevel: 9 })
     .toBuffer({ resolveWithObject: true })
   const normalizedBytes = first.data
-  if (first.data.byteLength <= limits.maxSendBytes) {
+  const maxPngBytes = Math.min(limits.maxPngSendBytes, limits.maxSendBytes)
+  if (first.data.byteLength <= maxPngBytes) {
     return {
       bytes: first.data,
       mimeType: 'image/png',
@@ -529,7 +536,7 @@ async function runCompressionLadder(
       pipeline = pipeline.flatten({ background: JPEG_BACKGROUND }).jpeg({ quality: step.quality })
     }
     const { data, info } = await pipeline.toBuffer({ resolveWithObject: true })
-    if (data.byteLength <= limits.maxSendBytes) {
+    if (data.byteLength <= (step.kind === 'jpeg' ? limits.maxSendBytes : maxPngBytes)) {
       return {
         bytes: data,
         mimeType: step.kind === 'jpeg' ? 'image/jpeg' : 'image/png',

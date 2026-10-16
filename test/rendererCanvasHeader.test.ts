@@ -180,6 +180,19 @@ test('an ordinary session shows neither the breadcrumb nor the threads button', 
   assert.equal(view.threadsButton, false)
 })
 
+test('the 概览 badge counts blocked threads, caps at 9+, and is empty outside coordination', () => {
+  const badge = (role: 'coordinator' | 'thread' | undefined, blockedThreads: number) => canvasHeaderView({
+    lane: lane(),
+    menuOpen: false,
+    renaming: false,
+    pendingDelete: undefined,
+    hasConversation: true,
+    ...(role === undefined ? {} : { role }),
+    blockedThreads,
+  }).threadsBadge
+  assert.deepEqual([badge('coordinator', 0), badge('coordinator', 3), badge('thread', 12), badge(undefined, 3)], ['', '3', '9+', ''])
+})
+
 test('a thread role without its thread falls back to the plain title', () => {
   const view = canvasHeaderView({
     lane: lane(),

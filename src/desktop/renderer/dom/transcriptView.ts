@@ -48,11 +48,11 @@ import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
 import type { ThreadNoteCard } from '../model/threadNotes.js'
 import type { TurnFailureCard } from '../model/turnFailure.js'
 import type { WireThreadStatus } from '../../shellProtocol.js'
-import { TASK_LOCATE_FALLBACK_MS, type TaskCard, type TaskListItem } from '../model/tasks.js'
+import { pausedTaskCard, TASK_LOCATE_FALLBACK_MS, type TaskCard, type TaskRowStatus } from '../model/tasks.js'
 import { button } from './controls.js'
 import { diffNode } from './diffView.js'
 import { append, el, reconcile, show, type Child } from './dom.js'
-import { icon } from './icons.js'
+import { icon, type IconName } from './icons.js'
 import { markdownChildren } from './markdownView.js'
 import { createPresence, finishPresenceWithin, type Presence } from './presence.js'
 import { motionDelay, motionPolicy } from './motion.js'
@@ -576,7 +576,9 @@ export function createTranscriptView(
       // that asked for it. A kept line keeps the spans its fill handed over.
       status = live.row ? { row: live.row, tokens: activity?.outputTokens } : undefined
       const tasks = activity?.backgroundTasks ?? 0
-      if (activity?.taskCard) nodes.push(taskCardNode(painter, activity.taskCard))
+      // `blocked` is the mark's word for a turn waiting on the user: a question or an approval.
+      const card = activity?.taskCard && (live.mark?.state === 'blocked' ? pausedTaskCard(activity.taskCard) : activity.taskCard)
+      if (card) nodes.push(taskCardNode(painter, card))
       if (live.row) nodes.push(waitingNode(painter, tasks))
       else if (tasks > 0 && painter.onOpenBackgroundTasks) nodes.push(idleStatusNode(painter, tasks))
       if (!live.row) {
@@ -1073,9 +1075,10 @@ function taskRow(painter: Painter, step: Extract<ActivityStep, { kind: 'task' }>
 
 const TASK_CARD_KEY = 'task-card'
 
-const TASK_STATUS_LABEL: Record<TaskListItem['status'], string> = {
+const TASK_STATUS_LABEL: Record<TaskRowStatus, string> = {
   pending: '未开始',
   in_progress: '进行中',
+  paused: '已搁置',
   completed: '已完成',
 }
 
@@ -1093,19 +1096,25 @@ function taskCardNode(painter: Painter, card: TaskCard): HTMLElement {
     () => el('li'),
   ))
   const list = painter.node(`${TASK_CARD_KEY}:list`, 'task-list', rows, () => rows, () => el('ul'))
-  return painter.node(TASK_CARD_KEY, 'task-card', [list, card.stale, card.hiddenBefore, card.openAfter], () => [
-    card.stale ? el('p', 'task-note', '上一条消息之前的计划') : undefined,
+  return painter.node(TASK_CARD_KEY, 'task-card', [list, card.hiddenBefore, card.openAfter], () => [
     card.hiddenBefore > 0 ? el('p', 'task-more', `更早的 ${card.hiddenBefore} 项`) : undefined,
     list,
     card.openAfter > 0 ? el('p', 'task-more', `还有 ${card.openAfter} 项`) : undefined,
   ])
 }
 
-function taskMark(status: TaskListItem['status']): HTMLElement {
+const TASK_MARK_ICON: Record<TaskRowStatus, IconName> = {
+  pending: 'circle',
+  in_progress: 'progress-ring',
+  paused: 'circle-ellipsis',
+  completed: 'check-circle',
+}
+
+function taskMark(status: TaskRowStatus): HTMLElement {
   const mark = el('span', `task-mark ${status}`)
   mark.setAttribute('role', 'img')
   mark.setAttribute('aria-label', TASK_STATUS_LABEL[status])
-  if (status !== 'pending') mark.appendChild(icon(status === 'completed' ? 'check' : 'spinner'))
+  mark.appendChild(icon(TASK_MARK_ICON[status]))
   return mark
 }
 
@@ -1306,7 +1315,7 @@ function toolRow(painter: Painter, step: ToolLike): HTMLElement {
   const agent = step.kind === 'tool' && step.toolName === AGENT_TOOL
   const selected = agent && painter.selectedSubagent === step.id
   // Running: a bordered capsule that says only which agent. Finished: one line of prose.
-  const capsule = agent && status !== 'done' && status !== 'failed'
+  const capsule = agent && (status === 'running' || status === 'awaiting-approval')
   const expanded = isExpanded(painter.disclosure, step.id) && !agent
   const classes = ['step', step.kind, status]
   if (!expanded) classes.push('collapsed')
@@ -1381,7 +1390,7 @@ function liveLine(live: SubagentLive): HTMLElement {
  */
 function rowLabel(step: ToolLike): { readonly text: string; readonly parts: Child[] } {
   if (step.kind === 'subagent') return { text: step.text, parts: [step.text] }
-  const failed = step.status === 'failed' ? ' 失败' : ''
+  const failed = step.status === 'failed' ? ' 失败' : step.status === 'interrupted' ? ' 已中断' : ''
   if (step.toolName === AGENT_TOOL) {
     const target = [step.tool.agentType, step.tool.useSummary].filter(Boolean).join(' · ')
     return { text: `${step.tool.displayName} ${target}${failed}`, parts: [step.tool.displayName, ' ', el('strong', '', target), failed] }

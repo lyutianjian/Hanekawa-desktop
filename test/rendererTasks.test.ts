@@ -2,8 +2,10 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   advanceTaskList,
+  pausedTaskCard,
   staleTaskList,
   taskCard,
+  taskListAtTurnStart,
   taskListState,
   TASK_CARD_ROWS,
   type TaskListState,
@@ -12,9 +14,8 @@ import type { SessionRecord, TaskDisplayItem, TaskDisplaySnapshot } from '../src
 import { wrapInSystemReminder } from '../src/harness/systemReminder.js'
 
 /**
- * The task card's view model. Everything the list knows comes from a reverse
- * scan for the newest `taskSnapshot` — the same recovery path a pane switch and
- * `/resume` take — or from folding the same records forward one at a time.
+ * The task card's view model. Everything the list knows comes from folding the
+ * records forward — at once on a pane switch or `/resume`, one at a time live.
  */
 function task(id: string, status: TaskDisplayItem['status'], subject: string, activeForm?: string): TaskDisplayItem {
   return {
@@ -39,7 +40,7 @@ function snapshot(tasks: TaskDisplayItem[], activeTaskId?: string): TaskDisplayS
   }
 }
 
-function todoWrite(id: string, snap: TaskDisplaySnapshot): SessionRecord {
+function todoWrite(id: string, snap: TaskDisplaySnapshot, turnId?: string): SessionRecord {
   return {
     type: 'tool_result',
     id,
@@ -49,11 +50,12 @@ function todoWrite(id: string, snap: TaskDisplaySnapshot): SessionRecord {
     content: 'updated',
     createdAt: 'now',
     display: { summary: '更新任务清单', taskSnapshot: snap },
+    ...(turnId ? { turnId } : {}),
   }
 }
 
-function message(id: string, role: 'user' | 'assistant', content: string): SessionRecord {
-  return { type: 'message', id, role, content, createdAt: 'now' }
+function message(id: string, role: 'user' | 'assistant', content: string, turnId?: string): SessionRecord {
+  return { type: 'message', id, role, content, createdAt: 'now', ...(turnId ? { turnId } : {}) }
 }
 
 const THREE_OF_SIX = snapshot([
@@ -123,34 +125,33 @@ test('a system-reminder user record is not the user starting something new', () 
   assert.equal(state?.stale, false)
 })
 
-// --- the live path -----------------------------------------------------------
+// --- request boundaries --------------------------------------------------------
 
-/** What the pane does: fold the same records one at a time, in order. */
-function live(records: readonly SessionRecord[]): TaskListState | undefined {
-  return records.reduce<TaskListState | undefined>((state, record) => advanceTaskList(state, record), undefined)
-}
+test('only a new turn is a new request: steering amends it and a notification turn carries it on', () => {
+  const steered = taskListState([
+    message('u1', 'user', 'build it', 't1'),
+    todoWrite('r1', THREE_OF_SIX, 't1'),
+    message('u2', 'user', 'also check the docs', 't1'),
+  ])
+  assert.equal(steered?.stale, false, 'a message steered into the turn is part of its request')
+  const woken = taskListState([
+    todoWrite('r1', THREE_OF_SIX, 't1'),
+    message('u2', 'user', wrapInSystemReminder('task done'), 't2'),
+    message('u3', 'user', 'and the docs', 't2'),
+  ])
+  assert.equal(woken?.stale, false, 'a turn woken by notifications, steering included, is no new request')
+  const next = taskListState([todoWrite('r1', THREE_OF_SIX, 't1'), message('u2', 'user', 'something else', 't2')])
+  assert.equal(next?.stale, true)
+})
 
-test('folding records forward lands where the reverse scan does', () => {
-  const done = snapshot([task('1', 'completed', 'Kept')])
-  const histories: SessionRecord[][] = [
-    [],
-    [todoWrite('r1', THREE_OF_SIX)],
-    [todoWrite('r1', THREE_OF_SIX), todoWrite('r2', done)],
-    [todoWrite('r1', done), message('u2', 'user', 'next thing')],
-    [todoWrite('r1', done), message('u2', 'user', wrapInSystemReminder('nudge'))],
-    [todoWrite('r1', THREE_OF_SIX), message('u2', 'user', 'keep going')],
-    [todoWrite('r1', THREE_OF_SIX), message('u2', 'user', 'a'), message('u3', 'user', 'b')],
-    [todoWrite('r1', done), message('u2', 'user', 'next'), todoWrite('r3', THREE_OF_SIX)],
-  ]
-  // The two paths meet on every pane switch — `hello` scans, everything after it
-  // folds — so an answer either of them can reach alone is a bug.
-  for (const records of histories) {
-    assert.deepEqual(live(records), taskListState(records), JSON.stringify(records.map((r) => r.id)))
-  }
+test('turn-start stales the list only for a turn the user started', () => {
+  const state = taskListState([todoWrite('r1', THREE_OF_SIX, 't1')])
+  assert.equal(taskListAtTurnStart(state, wrapInSystemReminder('task done')), state)
+  assert.equal(taskListAtTurnStart(state, 'something else')?.stale, true)
 })
 
 test('a tool_result without a snapshot leaves the list alone', () => {
-  const state = live([
+  const state = taskListState([
     todoWrite('r1', THREE_OF_SIX),
     { type: 'tool_result', id: 'r2', toolUseId: 'u2', tool: 'Read', ok: true, content: 'x', createdAt: 'now' },
   ])
@@ -182,7 +183,7 @@ test('the card is drawn only while a turn runs', () => {
   const state = taskListState([todoWrite('r1', THREE_OF_SIX)])
   assert.equal(taskCard(state, false), undefined)
   assert.equal(taskCard(undefined, true), undefined)
-  assert.deepEqual(taskCard(state, true), { rows: state!.tasks, hiddenBefore: 0, openAfter: 0, stale: false })
+  assert.deepEqual(taskCard(state, true), { rows: state!.tasks, hiddenBefore: 0, openAfter: 0 })
 })
 
 test('a long list opens its window one row before the current one', () => {
@@ -210,7 +211,26 @@ test('with nothing running, the first unfinished row anchors the window', () => 
   assert.equal(taskCard(taskListState([todoWrite('r1', snapshot(done))]), true)!.hiddenBefore, 20 - TASK_CARD_ROWS)
 })
 
-test('a carried-over plan says so on its card', () => {
-  const state = taskListState([todoWrite('r1', THREE_OF_SIX), message('u2', 'user', 'go on')])
-  assert.equal(taskCard(state, true)?.stale, true)
+test('with nothing marked running, a live card draws the first unfinished row as running', () => {
+  const tasks = [task('1', 'completed', 'Done'), task('2', 'pending', 'Next'), task('3', 'pending', 'Later')]
+  const live = taskListState([todoWrite('r1', snapshot(tasks))])
+  assert.deepEqual(taskCard(live, true)!.rows.map((row) => row.status), ['completed', 'in_progress', 'pending'])
+  assert.equal(live!.tasks[1]?.status, 'pending', 'the list itself keeps what the model wrote')
+})
+
+test('a plan a new request superseded shows its current step paused', () => {
+  const state = taskListState([todoWrite('r1', THREE_OF_SIX), message('u2', 'user', 'something else')])
+  assert.deepEqual(
+    taskCard(state, true)!.rows.map((row) => row.status),
+    ['completed', 'completed', 'completed', 'paused', 'pending', 'pending'],
+  )
+  const tasks = [task('1', 'completed', 'Done'), task('2', 'pending', 'Next')]
+  const unmarked = taskListState([todoWrite('r1', snapshot(tasks)), message('u2', 'user', 'something else')])
+  assert.deepEqual(taskCard(unmarked, true)!.rows.map((row) => row.status), ['completed', 'paused'], 'the stand-in current row too')
+})
+
+test('waiting on the user pauses the running step and nothing else', () => {
+  const card = pausedTaskCard(taskCard(taskListState([todoWrite('r1', THREE_OF_SIX)]), true)!)
+  assert.deepEqual(card.rows.map((row) => row.status), ['completed', 'completed', 'completed', 'paused', 'pending', 'pending'])
+  assert.equal(card.rows[3]?.label, 'Wiring the card')
 })

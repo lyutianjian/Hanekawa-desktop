@@ -41,9 +41,16 @@ import type { PlanModeManager } from './planModeManager.js'
 import type { AgentRunResult, AttachmentBytesLoader, ChatMessage, ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, RequestImageBytes, SessionRecord, SteerSource, Tool, ToolCall, ToolContext, ToolResultRecord, ToolUseSummaryRecord, TokenUsage, TurnOrigin } from './types.js'
 import type { ThinkingConfig } from '../config/service.js'
 import type { CompactPromptVariant } from '../prompts/compactPrompt.js'
-import { remainingTasksFromState } from '../tools/taskFormat.js'
+import { formatTaskLine, remainingTasksFromState, sortedTasks } from '../tools/taskFormat.js'
 import { describeShell } from '../tools/BashTool/BashTool.js'
-import { ENTER_PLAN_MODE_TOOL_NAME, EXIT_PLAN_MODE_TOOL_NAME } from '../tools/toolNames.js'
+import {
+  ENTER_PLAN_MODE_TOOL_NAME,
+  EXIT_PLAN_MODE_TOOL_NAME,
+  TASK_CREATE_TOOL_NAME,
+  TASK_GET_TOOL_NAME,
+  TASK_LIST_TOOL_NAME,
+  TASK_UPDATE_TOOL_NAME,
+} from '../tools/toolNames.js'
 import {
   buildAtMentionContextRecord,
   collectAtMentionImages,
@@ -83,7 +90,7 @@ import {
 } from '../media/imageTokens.js'
 import { ToolResultTrimState } from './toolResultTrimState.js'
 import { getToolResultSpillDir } from '../utils/paths.js'
-import { wrapInSystemReminder } from './systemReminder.js'
+import { isSystemReminderBlock, wrapInSystemReminder } from './systemReminder.js'
 
 export interface ActiveModelRuntime {
   provider: ModelProvider
@@ -167,8 +174,10 @@ export interface AgentLoopOptions {
   toolContext: ToolContext
   system?: string
   projectContext?: string
-  /** The auto-memory section; kept apart from `projectContext`, which subagents inherit. */
+  /** The memory section; kept apart from `projectContext`, which subagents inherit. */
   memoryPrompt?: string
+  /** `MEMORY.md`, labelled; it opens the conversation alongside `projectContext`. */
+  memoryIndex?: string
   criticalSystemReminder?: string
   skills?: SkillDefinition[]
   promptCacheRetention?: 'in_memory' | '24h'
@@ -307,6 +316,7 @@ export class AgentLoop {
    * and there. Read when an automatic fallback asks whether it applies.
    */
   private currentRequestNewImages: ImageAttachmentRef[] = []
+  private stepsSinceTaskTool = 0
 
   constructor(private readonly options: AgentLoopOptions) {
     const primary = {
@@ -701,6 +711,9 @@ export class AgentLoop {
         ? { sourceQueuedMessageId: this.activeRunOverrides.sourceQueuedMessageId }
         : {}),
     })
+    // A turn woken by notifications alone carries on the request before it;
+    // messages steered in mid-turn amend this one.
+    if (!isSystemReminderBlock(userInput.text)) this.options.toolContext.requestTurnId = turnId
     try {
       await this.runUserPromptSubmitHooks(userMessageInput(userMessage), turnId, signal)
       let lastResponseTokenCount: number | undefined
@@ -1062,6 +1075,18 @@ export class AgentLoop {
           createdAt: new Date().toISOString(),
         })
       }
+
+      const taskReminder = this.noteTaskToolStep(response.toolCalls)
+      if (taskReminder) {
+        await this.appendRecord({
+          type: 'message',
+          id: randomUUID(),
+          role: 'user',
+          content: taskReminder,
+          turnId,
+          createdAt: new Date().toISOString(),
+        })
+      }
       }
 
       // Only reachable with an explicit maxTurns; without one the loop above
@@ -1098,6 +1123,17 @@ export class AgentLoop {
       }
       throw error
     }
+  }
+
+  /** Counts tool-calling responses since the last task tool call; due every `TASK_REMINDER_STEPS` while tasks remain open. */
+  private noteTaskToolStep(toolCalls: readonly ToolCall[]): string | undefined {
+    if (toolCalls.some((call) => TASK_TOOL_NAMES.has(call.name))) {
+      this.stepsSinceTaskTool = 0
+      return undefined
+    }
+    if (++this.stepsSinceTaskTool < TASK_REMINDER_STEPS) return undefined
+    this.stepsSinceTaskTool = 0
+    return buildTaskReminder(this.options.toolContext.taskState)
   }
 
   private async consumeTurnInterruptionContext(records: readonly SessionRecord[], userInput: string): Promise<string | undefined> {
@@ -1737,7 +1773,10 @@ export class AgentLoop {
       records: imageSend.records,
       tools: toolsForContext,
       system: this.options.system,
-      projectContext: this.options.projectContext,
+      // An inherited prefix already opens with the parent's instructions message.
+      ...(this.options.inheritedRequest
+        ? {}
+        : { projectContext: this.options.projectContext, memoryIndex: this.options.memoryIndex }),
       memoryPrompt: this.options.memoryPrompt,
       rolePrompt: this.options.rolePrompt,
       criticalSystemReminder: this.options.criticalSystemReminder,
@@ -2297,6 +2336,21 @@ function buildMaxTokensContinuationReminder(taskState: ToolContext['taskState'])
     )
   }
   return wrapInSystemReminder(blocks.join('\n'))
+}
+
+const TASK_TOOL_NAMES = new Set([TASK_CREATE_TOOL_NAME, TASK_GET_TOOL_NAME, TASK_LIST_TOOL_NAME, TASK_UPDATE_TOOL_NAME])
+const TASK_REMINDER_STEPS = 10
+
+function buildTaskReminder(taskState: ToolContext['taskState']): string | undefined {
+  if (remainingTasksFromState(taskState).length === 0) return undefined
+  const tasks = sortedTasks(taskState?.values() ?? [])
+  const completedIds = new Set(tasks.filter((task) => task.status === 'completed').map((task) => task.id))
+  return wrapInSystemReminder([
+    `No task tool call in your last ${TASK_REMINDER_STEPS} responses. Task list:`,
+    ...tasks.map((task) => formatTaskLine(task, completedIds)),
+    '',
+    'If it lags behind your work, update it now: mark fully done tasks completed and your current task in_progress; add, reword, or delete tasks that no longer match. If it is accurate, continue. Never mention this reminder.',
+  ].join('\n'))
 }
 
 function buildMaxTurnsExceededContent(content: string, maxTurns: number): string {

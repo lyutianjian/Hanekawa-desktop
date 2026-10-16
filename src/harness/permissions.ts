@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { lstatSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { matchBashRule, bashCommandSegments, parseShellRule, suggestBashPrefix } from './shellRuleMatching.js'
@@ -82,6 +83,7 @@ const FILE_TOOLS = new Set([...WRITE_FAMILY, ...READ_FAMILY, 'NotebookRead'])
 const PLAN_FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit'])
 const MEMORY_FILE_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'Delete'])
 const MEMORY_DIR_TOOLS = new Set(['Grep', 'Glob'])
+const USER_INSTRUCTIONS_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit'])
 /** `WebFetch(domain:...)` rule content, aligned with Claude Code's syntax. */
 const DOMAIN_RULE_PREFIX = 'domain:'
 
@@ -294,6 +296,7 @@ export class PermissionGate {
   private readonly additionalDirectories: string[]
   private sessionId?: string
   private readonly memoryDir?: string
+  private readonly userInstructionsFile?: string
   private riskContext?: RiskContext
   /** Highest tier each allow rule may cover, keyed by rule; computed on demand. */
   private readonly ruleCeilings = new Map<string, RiskTier>()
@@ -316,6 +319,8 @@ export class PermissionGate {
       sessionId?: string
       /** The project's memory directory, when auto memory is on; its `*.md` files need no approval. */
       memoryDir?: string
+      /** The user's global instructions file; given only to a session's own gate, never a sub-agent's. */
+      userInstructionsFile?: string
       persistRule?: (rule: PermissionRule) => Promise<void>
       sessionRuleStore?: SessionRuleStore
     },
@@ -332,6 +337,7 @@ export class PermissionGate {
       .map((dir) => path.resolve(this.cwd, dir))
     this.sessionId = options?.sessionId
     this.memoryDir = options?.memoryDir
+    this.userInstructionsFile = options?.userInstructionsFile
     this.persistRule = options?.persistRule
   }
 
@@ -355,8 +361,10 @@ export class PermissionGate {
     const deniedBy = this.matchingRule('deny', tool.name, input, risk)
     if (deniedBy) return this.denyByRule(deniedBy)
 
-    // Memory files are the model's own notes: no prompt, in every mode. An ask rule still applies (step 4).
-    if (this.isMemoryAccess(tool, input)) {
+    // Memory files are the model's own notes: no prompt, in every mode. The
+    // user's global instructions file likewise, but only outside plan and
+    // readonly. An ask rule still applies (step 4).
+    if (this.isMemoryAccess(tool, input) || this.isUserInstructionsAccess(tool, input, mode)) {
       const askedByRule = mode === 'bypass' ? undefined : this.matchingRule('ask', tool.name, input, risk)
       if (!askedByRule || this.coveredBy(this.sessionRuleStore.rules, tool.name, input, risk)) return allow('mode')
       if (mode === 'readonly') {
@@ -832,6 +840,21 @@ export class PermissionGate {
     return MEMORY_FILE_TOOLS.has(tool.name)
       && absolute.toLowerCase().endsWith('.md')
       && samePath(path.dirname(absolute), memoryDir)
+  }
+
+  private isUserInstructionsAccess(tool: Tool, input: unknown, mode: PermissionMode): boolean {
+    if (!this.userInstructionsFile || mode === 'plan' || mode === 'readonly') return false
+    if (!USER_INSTRUCTIONS_TOOLS.has(tool.name)) return false
+    const filePath = extractFilePath(input)
+    if (!filePath) return false
+    if (!samePath(realPath(path.resolve(this.cwd, filePath)), realPath(this.userInstructionsFile))) return false
+    // A symlinked AGENTS.md would carry the exemption to its target (say
+    // `~/.zshrc`), dangling or not; only its ancestors may be links.
+    try {
+      return !lstatSync(this.userInstructionsFile).isSymbolicLink()
+    } catch {
+      return true
+    }
   }
 
   /** `<plansDir>/<slug>.md` or a sub-agent's `<plansDir>/<slug>-agent-<id>.md`. */

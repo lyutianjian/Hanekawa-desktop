@@ -66,7 +66,7 @@ function toEntry(item: TranscriptItem): SubagentEntry {
     name: tool.displayName,
     description: tool.useSummary,
     status,
-    finished: status === 'failed' || tool.subagent !== undefined,
+    finished: status === 'failed' || status === 'interrupted' || tool.subagent !== undefined,
     notes: reply?.notes ?? [],
     ...(agentId === undefined ? {} : { agentId }),
     ...(tool.agentType === undefined ? {} : { agentType: tool.agentType }),
@@ -74,7 +74,8 @@ function toEntry(item: TranscriptItem): SubagentEntry {
     ...(toolCount === undefined ? {} : { toolCount }),
     ...(status === 'running' && tool.live !== undefined ? { live: tool.live } : {}),
     ...(Number.isFinite(startedAt) ? { startedAt } : {}),
-    ...(tool.durationMs === undefined ? {} : { durationMs: tool.durationMs }),
+    // A detached run's call settled at its start; that span is not the run's.
+    ...(tool.durationMs === undefined || status === 'running' ? {} : { durationMs: tool.durationMs }),
     ...(tool.task === undefined ? {} : { task: tool.task }),
     ...(response === undefined ? {} : { reply: response }),
   }

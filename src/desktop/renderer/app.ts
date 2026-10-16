@@ -126,7 +126,7 @@ import { REDUCED_MOTION_QUERY } from './model/reducedMotion.js'
 import { finishPresenceWithin } from './dom/presence.js'
 import type { WireCoordinationThreads, WireThreadMerge, WireThreadStatus } from '../shellProtocol.js'
 import { THREAD_STATUS_LABEL, coordinationCounts, threadBySession, threadFinished, threadTone } from './model/coordinationStatus.js'
-import { threadPanelView, type ThreadFold, type ThreadPanelIntent } from './model/threadPanel.js'
+import { nextThreadSeen, threadPanelView, type ThreadGroup, type ThreadPanelIntent } from './model/threadPanel.js'
 import { mergeBarView, type MergeBarIntent } from './model/mergeBar.js'
 import {
   OVERVIEW_CLOSED_STORAGE_KEY,
@@ -139,6 +139,7 @@ import {
   serializeOverviewClosed,
   serializeSectionsCollapsed,
   keepSelectedSubagent,
+  overviewHeadView,
   sidePanelView,
   threadStripView,
   visibleSections,
@@ -498,6 +499,7 @@ function removePaneSession(lane: string): void {
   paneSessions.delete(lane)
   lastActiveTick.delete(lane)
   evicting.delete(lane)
+  browserOpenLanes.delete(lane)
   session.dispose()
   if (activeLane === lane) {
     activeLane = undefined
@@ -813,10 +815,20 @@ function runSidebarIntent(intent: SidebarIntent): void {
         composer.focus()
         return
       }
+      // Typing into a fresh session and then picking another project's `+` is
+      // choosing where that prompt goes: the text moves to the new session, and
+      // the abandoned draft — invisible in the sidebar — is closed.
+      const carried = active && !active.hasConversation() ? composer.value() : ''
+      const abandoned = carried === '' ? undefined : activeLane
       // "New session" is a window-level act, so it goes to the shell, targeting
       // the active pane's project.
       void shellClient
         .openSession(intent.projectRoot !== undefined ? { projectRoot: intent.projectRoot } : {})
+        .then((opened) => {
+          if (abandoned === undefined) return
+          paneSessions.get(opened.lane)?.restoreDraftText(carried)
+          closeLane(abandoned)
+        })
         .catch((error) => reportError({ action: '新建会话' }, error))
       return
     }
@@ -996,8 +1008,22 @@ async function removeProject(projectRoot: string): Promise<void> {
 const coordinationByRoot = new Map<string, WireCoordinationThreads>()
 /** Thread ids with a stop or resolve in flight, from the panel or the breadcrumb. */
 const pendingThreads = new Set<string>()
-/** The thread panel's open folds. View state; nothing persists it. */
-let threadFolds: ReadonlySet<ThreadFold> = new Set()
+/** Thread groups folded or opened against their default. View state; nothing persists it. */
+let threadGroupsToggled: ReadonlySet<ThreadGroup> = new Set()
+/** The thread whose row menu is open. */
+let threadMenu: string | undefined
+/** Per thread id, the activity the user has seen; what the rows' unread dots compare against. */
+let threadSeen: ReadonlyMap<string, string> = new Map()
+
+/** Marks seen the threads on screen: the active lane's, and the one whose page is open. */
+function markThreadsSeen(state: WireCoordinationThreads | undefined): void {
+  const watching = new Set<string>()
+  const active = activeLaneInfo()?.sessionId
+  if (active !== undefined) watching.add(active)
+  const viewed = viewedThread && state?.threads.find((thread) => thread.threadId === viewedThread!.threadId)
+  if (viewed) watching.add(viewed.sessionId)
+  threadSeen = nextThreadSeen(threadSeen, state, watching)
+}
 
 /** Statuses a user stop applies to — the same set the thread panel offers 停止 on. */
 const STOPPABLE_THREAD: ReadonlySet<WireThreadStatus> = new Set(['running', 'needs-you', 'awaiting-coordinator'])
@@ -1061,17 +1087,18 @@ function runThreadPanelIntent(intent: ThreadPanelIntent): void {
     case 'resolve':
       if (root !== undefined) runThreadCommand(root, intent.threadId, intent.kind)
       return
-    case 'stop-all':
-      if (root === undefined) return
-      void shellClient.stopAllCoordination(root).catch((error) => reportError({ action: '停止全部线程', place: 'thread-panel' }, error))
-      return
-    case 'toggle-fold': {
-      const next = new Set(threadFolds)
-      if (!next.delete(intent.fold)) next.add(intent.fold)
-      threadFolds = next
+    case 'toggle-group': {
+      const next = new Set(threadGroupsToggled)
+      if (!next.delete(intent.group)) next.add(intent.group)
+      threadGroupsToggled = next
       renderSubagents()
       return
     }
+    case 'menu':
+      if (threadMenu === intent.threadId) return
+      threadMenu = intent.threadId
+      renderSubagents()
+      return
     default:
       assertNeverIntent(intent)
   }
@@ -1201,6 +1228,7 @@ const mergeBar = createMergeBarView(mergeBarNode, (intent) => runMergeIntent(int
 shellClient.onCoordinationThreads((state) => {
   const previous = coordinationByRoot.get(state.projectRoot)
   coordinationByRoot.set(state.projectRoot, state)
+  markThreadsSeen(state)
   // A thread just started in the project on screen: bring its list up. The
   // first pull has nothing to compare with, so opening the app opens nothing.
   const started = previous !== undefined
@@ -1259,6 +1287,7 @@ function renderCanvasHeader(): void {
             canStop: STOPPABLE_THREAD.has(thread.status) && !pendingThreads.has(thread.threadId),
           },
         }),
+    blockedThreads: info === undefined ? 0 : coordinationCounts(coordinationByRoot.get(info.projectRoot)?.threads ?? []).blocked,
     menuOpen: headerMenuOpen,
     renaming: headerRenaming,
     pendingDelete: headerPendingDelete,
@@ -1574,18 +1603,18 @@ for (const mode of ['browser', 'overview'] as const) {
 }
 
 /**
- * Whether the panel is up. A single boolean rather than a derivation from "this
- * lane has tabs", because it has to be possible to *close* a panel whose lane
- * still has tabs — a derived flag would spring straight back open.
+ * The lanes whose panel is up. State rather than a derivation from "this lane
+ * has tabs", because it has to be possible to *close* a panel whose lane still
+ * has tabs — a derived flag would spring straight back open.
  */
-let browserOpen = false
+const browserOpenLanes = new Set<string>()
 /**
- * Which mode the ordinary session's panel is in while `browserOpen`: the browser,
+ * Which mode the ordinary session's panel is in while it is open: the browser,
  * or the overview's stack of sections.
  */
 let sideMode: SideMode = 'browser'
 /**
- * A coordinator or thread session ignores `browserOpen`: its 概览 switch is
+ * A coordinator or thread session ignores `browserOpenLanes`: its 概览 switch is
  * remembered per project, and the browser is a second mode beside it.
  */
 let overviewClosed = parseOverviewClosed(localStorage.getItem(OVERVIEW_CLOSED_STORAGE_KEY))
@@ -1606,7 +1635,7 @@ function sidePanelInput(): SidePanelInput {
   const isCoordinated = coordinated()
   return {
     coordinated: isCoordinated,
-    browserOpen,
+    browserOpen: activeLane !== undefined && browserOpenLanes.has(activeLane),
     mode: isCoordinated ? coordMode : sideMode,
     overviewClosed: root !== undefined && overviewClosed.has(root),
     has: {
@@ -1653,8 +1682,9 @@ function setPanelOpen(open: boolean): void {
     } catch {
       // Storage full or blocked: the choice still holds for this window.
     }
-  } else {
-    browserOpen = open
+  } else if (activeLane !== undefined) {
+    if (open) browserOpenLanes.add(activeLane)
+    else browserOpenLanes.delete(activeLane)
   }
 }
 
@@ -1778,6 +1808,13 @@ const sectionNodes: Record<SideSection, SectionNode> = {
   threads: sectionNode('threads'),
 }
 const sideSections = required('side-sections')
+const overviewHead = required('overview-head')
+const overviewSummary = required('overview-summary')
+const overviewStopAll = button('overview-stop-all', '全部停止', '停止所有运行中的线程', () => {
+  const root = activeLaneInfo()?.projectRoot
+  if (root !== undefined) void shellClient.stopAllCoordination(root).catch((error) => reportError({ action: '停止全部线程', place: 'thread-panel' }, error))
+})
+required('overview-summary-row').appendChild(overviewStopAll)
 
 function sectionNode(id: SideSection): SectionNode {
   const section = required(`side-section-${id}`)
@@ -1861,10 +1898,18 @@ function renderSubagents(): void {
     subagents: '子代理',
     threads: '线程',
   }
+  // The head stands over the sections; a page standing alone needs its height.
+  const head = onOverview && shown.focus === undefined ? overviewHeadView(threadStripView(coordinated(), coordination)) : undefined
+  show(overviewHead, head !== undefined)
+  if (head !== undefined) {
+    overviewSummary.textContent = head.summary
+    overviewStopAll.disabled = !head.canStopAll
+  }
   const counts: Record<SideSection, string> = {
     plan: '',
     subagents: running > 0 ? `${running} 运行中` : '',
-    threads: hasCoordination(coordination) ? `${coordinationCounts(coordination!.threads).running} 运行中` : '',
+    // The head already counts them.
+    threads: head === undefined && hasCoordination(coordination) ? `${coordinationCounts(coordination!.threads).running} 运行中` : '',
   }
   for (const id of SIDE_SECTIONS) {
     const node = sectionNodes[id]
@@ -1891,13 +1936,20 @@ function renderSubagents(): void {
   show(threadView, threadListShown)
   show(threadDetailHost, onThreads && detail !== undefined)
   threadDetail.render(onThreads ? detail : undefined)
+  if (!threadListShown) {
+    threadMenu = undefined
+    threadPanel.closeMenu()
+  }
   if (onThreads && detail === undefined) {
+    markThreadsSeen(coordination)
     threadPanel.render(threadPanelView({
       state: coordination,
       now: Date.now(),
       activeSessionId: activeLaneInfo()?.sessionId,
-      expanded: threadFolds,
+      toggled: threadGroupsToggled,
       pending: pendingThreads,
+      seen: threadSeen,
+      menuThreadId: threadMenu,
       ...(threadNotice === undefined ? {} : { notice: threadNotice.text, ...(threadNotice.tone === undefined ? {} : { noticeTone: threadNotice.tone }) }),
     }))
   }
@@ -2002,7 +2054,7 @@ function toggleBrowserPanel(): void {
     if (coordinated()) {
       leaveBrowserMode()
     } else {
-      browserOpen = false
+      setPanelOpen(false)
       renderSidebar()
       renderBrowser()
     }
@@ -2425,7 +2477,7 @@ shellClient.onBrowserState((tabs) => {
   // changing, a navigation, a failure are all the same tab going about its
   // business, and a panel the user closed would otherwise be shoved back open by
   // a page that is merely still loading. It never closes the panel either; that
-  // stays the user's decision, which is why `browserOpen` is state.
+  // stays the user's decision, which is why `browserOpenLanes` is state.
   const arrived = newTabsForLane(tabs, activeLane, knownBrowserTabs)
   knownBrowserTabs = new Set(tabs.map((tab) => tab.tabId))
   const latest = arrived.at(-1)
@@ -2433,12 +2485,12 @@ shellClient.onBrowserState((tabs) => {
     // A coordination session gets the browser as a tab beside 概览; a panel the
     // user collapsed stays collapsed.
     if (coordinated()) coordBrowser = true
-    else browserOpen = true
+    else setPanelOpen(true)
     setMode('browser')
     // Onto the new tab, not whichever one was last on screen: the page the agent
     // just opened is the one it is asking about.
     browserActiveTab.set(activeLane, latest.tabId)
-    // The title bar's browser button draws `browserOpen`, and `renderSidebar` is
+    // The title bar's browser button draws the panel's open state, and `renderSidebar` is
     // the only call site that paints the bar.
     renderSidebar()
   }

@@ -11,8 +11,10 @@ import {
   getProjectMemoryDir,
   getProjectPlansDir,
   getCoordinationNotesDir,
+  getGlobalMyAgentDir,
   getSessionsDir,
   getToolResultSpillDir,
+  getUserInstructionsPath,
   projectDataKey,
   resolveToolPath,
 } from '../src/utils/paths.js'
@@ -43,7 +45,9 @@ test('resolveToolPath takes data roots from projectDir while resolving against c
       path.join(getProjectMemoryDir(projectDir), 'n.md'),
       path.join(getCoordinationNotesDir(projectDir), 't.md'),
       path.join(getToolResultSpillDir(projectDir, 'session-a'), 'x.txt'),
+      getUserInstructionsPath(),
     ]) assert.equal(resolveToolPath(context, p), p)
+    assert.throws(() => resolveToolPath(context, path.join(getGlobalMyAgentDir(), 'settings.json')), /runtime data/)
     assert.equal(resolveToolPath(context, 'a.ts'), path.join(worktree, 'a.ts'))
     assert.throws(() => resolveToolPath(context, path.join(getProjectPlansDir(worktree), 'p.md')), /runtime data/)
     assert.throws(() => resolveToolPath(context, path.join(getProjectMemoryDir(worktree), 'n.md')), /runtime data/)
@@ -109,7 +113,7 @@ test('a renamed project starts empty and its old history stays under the old key
   }
 })
 
-test('file tools reach outside the project, but under ~/.myagent only this session\'s spill dir and the plans dir', async () => {
+test('file tools reach outside the project, but under ~/.myagent only this session\'s spill dir, the plans and memory dirs and the global instructions file', async () => {
   const cwd = await makeProject()
   try {
     const context = { cwd, sessionId: 'session-a' }
@@ -123,6 +127,7 @@ test('file tools reach outside the project, but under ~/.myagent only this sessi
     assert.equal(resolveToolPath(context, plan), plan)
     const note = path.join(getProjectMemoryDir(cwd), 'note.md')
     assert.equal(resolveToolPath(context, note), note)
+    assert.equal(resolveToolPath(context, getUserInstructionsPath()), getUserInstructionsPath())
     assert.equal(resolveToolPath(context, 'src/a.ts'), path.join(cwd, 'src/a.ts'))
     // Outside the project is the permission gate's call, not the tool's.
     const outside = path.join(path.dirname(cwd), 'elsewhere', 'SKILL.md')

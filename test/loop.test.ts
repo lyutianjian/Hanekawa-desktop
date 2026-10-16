@@ -1880,6 +1880,55 @@ test('agent loop includes sub-agent transcript usage in returned turn usage', as
   assert.ok(records.some((record) => record.type === 'subagent_transcript'))
 })
 
+test('an inheriting fork opens with the parent\'s instructions message and builds none of its own', async () => {
+  const requests: ModelRequest[] = []
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage(request) {
+      requests.push(request)
+      const usage = { inputTokens: 1, cacheReadInputTokens: 0, outputTokens: 1 }
+      if (requests.length === 1) {
+        return { content: '', toolCalls: [{ id: 'fork-call', name: 'Agent', input: { task: 'look', subagent_type: 'fork' } }], usage }
+      }
+      return { content: 'done', toolCalls: [], usage }
+    },
+  }
+  let runtimeTools: Tool[] = []
+  const agentTool = createAgentTool({
+    provider,
+    model: 'fake-model',
+    tools: () => runtimeTools,
+    permissionPrompt: async () => true,
+    cwd: process.cwd(),
+    projectContext: 'PROJECT RULES',
+  })
+  runtimeTools = [testTool('Read'), agentTool]
+  const records: SessionRecord[] = []
+  const loop = new AgentLoop({
+    provider,
+    model: 'fake-model',
+    tools: runtimeTools,
+    contextBuilder: new ContextBuilder(),
+    toolRunner: new ToolRunner(runtimeTools, new PermissionGate(async () => true), {
+      onRecord: async (record) => { records.push(record) },
+    }),
+    toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
+    recordStream: recordStreamFor(records),
+    projectContext: 'PROJECT RULES',
+    memoryIndex: 'MEMORY INDEX',
+  })
+
+  await loop.run({ text: 'start' })
+
+  const [parent, fork] = requests
+  assert.ok(parent && fork)
+  const parentPrefix = parent.messages.filter((message) => !message.transient)
+  assert.equal(parentPrefix[0]?.content, '<system-reminder>\nPROJECT RULES\n\nMEMORY INDEX\n</system-reminder>')
+  assert.deepEqual(fork.messages.slice(0, parentPrefix.length), parentPrefix)
+  assert.equal(fork.messages.filter((message) => /PROJECT RULES/.test(message.content)).length, 1)
+  assert.equal(fork.contextItems?.filter((item) => item.kind === 'message' && /PROJECT RULES/.test(item.message.content)).length, 1)
+})
+
 test('agent loop excludes compact summarizer usage from status usage', async () => {
   const records: SessionRecord[] = [
     {

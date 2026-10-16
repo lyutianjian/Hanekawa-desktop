@@ -1,6 +1,6 @@
 import type { Tool } from '../../harness/types.js'
 import { sortedTasks, taskDisplay } from '../taskFormat.js'
-import { applyTaskCreate, ensureTaskState } from '../taskState.js'
+import { applyTaskCreate, ensureTaskState, startRequestTaskList } from '../taskState.js'
 import { taskCreateInputSchema } from '../taskSchemas.js'
 import { TASK_CREATE_TOOL_NAME } from './constants.js'
 import { DESCRIPTION, getPrompt } from './prompt.js'
@@ -22,7 +22,8 @@ export const taskCreateTool: Tool = {
   async execute(input, context) {
     const parsed = taskCreateInputSchema.parse(input)
     const tasks = ensureTaskState(context)
-    const created = parsed.tasks.map((task) => applyTaskCreate(task, tasks))
+    startRequestTaskList(tasks, context.requestTurnId)
+    const created = parsed.tasks.map((task) => applyTaskCreate(task, tasks, context.requestTurnId))
     return {
       ok: true,
       content: `Created ${created.length === 1 ? 'task' : 'tasks'} ${created.map((task) => `#${task.id}: ${task.subject}`).join(', ')}`,

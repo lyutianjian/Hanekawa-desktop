@@ -187,6 +187,11 @@ export function runningTaskCount(tasks: readonly BackgroundTaskSnapshot[]): numb
   return tasks.filter((task) => task.status === 'running').length
 }
 
+/** The `Agent` calls whose run is still going — background ones outlive their call. */
+export function runningAgentCalls(tasks: readonly BackgroundTaskSnapshot[]): ReadonlySet<string> {
+  return new Set(tasks.flatMap((task) => task.kind === 'agent' && task.status === 'running' && task.toolUseId ? [task.toolUseId] : []))
+}
+
 export function formatElapsed(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000))
   if (seconds < 60) return `${seconds}s`

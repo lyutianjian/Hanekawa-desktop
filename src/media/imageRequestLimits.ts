@@ -18,8 +18,12 @@ import type { ImageAttachmentRef } from './types.js'
  */
 export const MAX_IMAGE_SEND_BYTES = 3_750_000
 
-/** Local initial limit for a whole serialized request body (design §11.1). */
-export const MAX_REQUEST_BODY_BYTES = 25_000_000
+/**
+ * Local limit for a whole serialized request body (design §11.1). Under the
+ * strictest gateway seen in use (DashScope rejects bodies over 16 MiB), so
+ * the oldest images are replaced with placeholders before a provider refuses.
+ */
+export const MAX_REQUEST_BODY_BYTES = 15_000_000
 
 /**
  * JSON structure around one encoded image block — `{"type":"image","source":

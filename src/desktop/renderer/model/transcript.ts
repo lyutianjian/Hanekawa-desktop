@@ -90,8 +90,11 @@ export type TranscriptItemKind =
  */
 export type ToolDisplayLookup = (recordId: string) => ToolDisplayDto | undefined
 
-/** §3's four states. The colour is never the only carrier; see `toolStatusLabel`. */
-export type ToolStepStatus = 'awaiting-approval' | 'running' | 'done' | 'failed'
+/**
+ * §3's four states, plus `interrupted` for an `Agent` call the stop cut off. The
+ * colour is never the only carrier; see `toolStatusLabel`.
+ */
+export type ToolStepStatus = 'awaiting-approval' | 'running' | 'done' | 'failed' | 'interrupted'
 
 /**
  * The sub-agent run behind an `Agent` call (§6.2 Agent): the facts its own
@@ -168,6 +171,8 @@ export interface ToolStepDetail {
   readonly agentType?: string
   /** The Agent family, while the run is going: the tool it started last and how many so far. */
   readonly live?: SubagentLive
+  /** The Agent family: the call has returned but its run is still going (`withDetachedRuns`). */
+  readonly detached?: boolean
   /** The task tools: what each call did, in order — several once consecutive calls fold into one row. */
   readonly taskOps?: readonly TaskOp[]
   /** `TodoWrite` only: the `3/6` the head shows (§4.4). */
@@ -404,6 +409,21 @@ export function presentationTranscript(state: TranscriptState): TranscriptState 
       const id = state.presentationIds?.get(item.id)
       return id === undefined ? item : { ...item, id }
     }),
+  }
+}
+
+/**
+ * Marks the `Agent` calls whose run outlives the call — a background run settles
+ * its call at once with a start notice — from the live background-task registry,
+ * never from records: a run the app lost on exit is simply over.
+ */
+export function withDetachedRuns(state: TranscriptState, running: ReadonlySet<string>): TranscriptState {
+  if (running.size === 0) return state
+  return {
+    ...state,
+    items: state.items.map((item) => item.toolName === AGENT_TOOL && item.tool !== undefined && running.has(item.id)
+      ? { ...item, tool: { ...item.tool, detached: true } }
+      : item),
   }
 }
 
@@ -1736,8 +1756,9 @@ function withSubagentActivity(
  * and only an unsettled one distinguishes waiting for the user from running.
  */
 export function toolStepStatus(item: TranscriptItem): ToolStepStatus {
-  if (item.failed === true) return 'failed'
-  if (item.pending !== true) return 'done'
+  // An Agent call stands outside any run, so no run head says 「已中断」 for it.
+  if (item.failed === true) return item.toolName === AGENT_TOOL && item.tool?.errorCode === 'aborted' ? 'interrupted' : 'failed'
+  if (item.pending !== true && item.tool?.detached !== true) return 'done'
   return item.tool?.awaitingApproval === true ? 'awaiting-approval' : 'running'
 }
 
@@ -1754,6 +1775,7 @@ export function toolStatusLabel(status: ToolStepStatus): string {
     case 'running': return '执行中'
     case 'done': return '完成'
     case 'failed': return '失败'
+    case 'interrupted': return '已中断'
   }
 }
 

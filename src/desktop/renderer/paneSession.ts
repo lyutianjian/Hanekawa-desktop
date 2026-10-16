@@ -97,6 +97,7 @@ import {
   createTranscriptState,
   groupTranscript,
   presentationTranscript,
+  withDetachedRuns,
   withQueuedMessages,
   withFailureActions,
   failedTurnInput,
@@ -151,6 +152,7 @@ import {
   modelPickerView,
   moveSurfaceSelection as stepSurfaceSelection,
   resumePickerView,
+  runningAgentCalls,
   runningProcessCount,
   runningTaskCount,
   type SupportedSurface,
@@ -205,8 +207,8 @@ import type { ImageAttachmentRef } from '../../media/types.js'
 import { localizeCommands } from './model/builtinLabels.js'
 import {
   advanceTaskList,
-  staleTaskList,
   taskCard,
+  taskListAtTurnStart,
   taskListState,
   type TaskListState,
 } from './model/tasks.js'
@@ -333,6 +335,8 @@ export interface PaneSession {
   note(text: string, level?: 'system' | 'error'): void
   /** Whether this pane's session has had any input or output yet. */
   hasConversation(): boolean
+  /** Puts `text` in this pane's composer: the live one when active, the banked draft otherwise. */
+  restoreDraftText(text: string): void
   /**
    * Repaint the empty state. `app.ts` calls it when the project list moves — an
    * idle pane's Hero names a project the sidebar just renamed or removed, and
@@ -787,7 +791,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // different block left behind — and an absolute answer would not even be
     // corrected by the default.
     const { isStreaming, turnOutputTokens } = client.getSnapshot()
-    const queuedShown = withQueuedMessages(transcript, queued)
+    const queuedShown = withQueuedMessages(withDetachedRuns(transcript, runningAgentCalls(client.getBackgroundTasks())), queued)
     // No 「重试」 while a turn runs or a retry is on its way: a second press would send it twice.
     const shown = isStreaming || retrying ? queuedShown : withFailureActions(queuedShown)
     const presented = presentationTranscript(shown)
@@ -1551,8 +1555,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // the whole truth, and an empty one has no snapshot, so a cleared session
     // drops the list without a case of its own.
     if (event.type === 'transcript-reset') taskList = taskListState(event.records)
-    // The user starting something new, a beat before their record lands.
-    if (event.type === 'turn-start') taskList = staleTaskList(taskList)
+    // A new request, a beat before its record lands.
+    if (event.type === 'turn-start') taskList = taskListAtTurnStart(taskList, event.displayInput)
 
     // One paint for both, at most once a frame: `stream` deltas arrive per token
     // and each paint is linear in the conversation.
@@ -1566,12 +1570,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // The controller rolled back an interrupted prompt; the record is already
     // gone from disk, so dropping this destroys the user's message.
     if (outcome.restoreInput !== undefined) {
-      if (active) {
-        deps.composer.setValue(outcome.restoreInput, outcome.restoreInput.length)
-        deps.composer.focus()
-      } else {
-        draftText = outcome.restoreInput
-      }
+      restoreDraftText(outcome.restoreInput)
       // The images the interrupt rolled back come back as drafts. Restoring
       // never *overwrites* — the strip is appended to only when the restored
       // ids are not already in it, so a draft the user rebuilt while the turn
@@ -2017,6 +2016,15 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
   // --- activation -----------------------------------------------------------------
 
+  function restoreDraftText(text: string): void {
+    if (active) {
+      deps.composer.setValue(text, text.length)
+      deps.composer.focus()
+    } else {
+      draftText = text
+    }
+  }
+
   function activate(): void {
     if (active) return
     active = true
@@ -2286,7 +2294,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     shellState,
     note,
     hasConversation,
-    subagents: () => (subagentList ??= subagentEntries(presentationTranscript(transcript).items)),
+    restoreDraftText,
+    subagents: () => (subagentList ??= subagentEntries(presentationTranscript(withDetachedRuns(transcript, runningAgentCalls(client.getBackgroundTasks()))).items)),
     setSelectedSubagent,
     refreshWelcome: renderTranscript,
     refreshCommands: () => {

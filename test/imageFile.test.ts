@@ -345,6 +345,18 @@ test('the palette-PNG rung kicks in when full PNG is over budget', async () => {
   assert.ok(colors.size <= 256, `palette PNG has ${colors.size} colors`)
 })
 
+test('PNG rungs answer to the tighter PNG cap, not the send budget', async () => {
+  const source = await noiseImage(800, 800)
+  const result = await processImageBytes(source, {
+    name: 'noise.png',
+    sendLongEdge: NOISE_LONG_EDGE,
+    maxSendBytes: 600_000,
+    maxPngSendBytes: 120_000,
+  })
+  assert.ok(result.ok)
+  assert.equal(result.image.mimeType, 'image/jpeg')
+})
+
 test('transparent input falling through to JPEG lands on white, never black', async () => {
   const source = await noiseImage(800, 800, true)
   const result = await processImageBytes(source, {

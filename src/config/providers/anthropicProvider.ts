@@ -179,6 +179,7 @@ export class AnthropicProvider implements ModelProvider {
       model: request.model,
       betas,
       cacheScope: getAnthropicCacheScope(request, enableCaching),
+      firstMessage: request.messages[0]?.content,
       messages: payload.messages,
     }, cacheSource)
     if (attempt > 1) {

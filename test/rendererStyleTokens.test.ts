@@ -934,6 +934,7 @@ test('the serif is display-only, and only in the whitelisted spots', () => {
   const SERIF_WHITELIST = [
     '.welcome-title', // the home page's greeting
     '.thread-panel-empty-title', // 概览's empty state, the same kind of greeting
+    '.overview-title', // 概览's head over a project's threads
     '#rewind-panel .title',
   ]
 

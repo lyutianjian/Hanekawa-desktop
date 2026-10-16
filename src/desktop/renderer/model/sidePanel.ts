@@ -158,6 +158,16 @@ export function threadStripText(view: ThreadStripView): { total: string; running
   }
 }
 
+/** The overview's head: the project's thread counts in one line, and whether 全部停止 has anything to stop. */
+export function overviewHeadView(strip: ThreadStripView | undefined): { readonly summary: string; readonly canStopAll: boolean } | undefined {
+  if (strip === undefined) return undefined
+  const text = threadStripText(strip)
+  return {
+    summary: [text.total, text.running, text.blocked].filter((part) => part !== undefined).join(' '),
+    canStopAll: strip.running + strip.blocked > 0,
+  }
+}
+
 export function keepSelectedSubagent(selected: string | undefined, ids: readonly string[]): string | undefined {
   return selected !== undefined && ids.includes(selected) ? selected : undefined
 }

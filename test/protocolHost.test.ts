@@ -208,6 +208,9 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
       }
       return loaded.records
     },
+    restoreInput: (text: string) => {
+      for (const listener of [...eventListeners]) listener({ type: 'restore-input', text })
+    },
     retarget: () => {},
     getFileHistoryService: () => ({
       getCheckpointsWithDiffs: async () => [{ messageId: 'm1' }],
@@ -713,6 +716,15 @@ test('truncate-session cuts the file, repaints the view and rebases the ledger',
   )
   assert.ok(reset?.type === 'session-event' && reset.event.type === 'transcript-reset')
   assert.deepEqual(reset.event.records.map((record) => record.id), ['m1', 'm2'])
+
+  // The cut prompt goes back to the composer, after the reset that removed it.
+  const restore = harness.received.findIndex(
+    (event) => event.type === 'session-event' && event.event.type === 'restore-input',
+  )
+  assert.ok(restore > harness.received.indexOf(reset))
+  const restored = harness.received[restore]
+  assert.ok(restored?.type === 'session-event' && restored.event.type === 'restore-input')
+  assert.equal(restored.event.text, 'second')
 
   assert.equal(harness.calls.cacheInvalidations, 1,
     'without this the loop keeps serving the records it read before the cut')

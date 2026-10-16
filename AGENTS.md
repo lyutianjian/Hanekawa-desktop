@@ -78,7 +78,7 @@ desktop/ -> runtime/ + harness/ -> config/providers/
 - File tools read through `src/tools/textFile.ts` and write through `writeTextFile`: normalize reads to LF, preserve encoding/line endings on write, and keep `Read`'s whole-file state available to `Edit`.
 - Every built-in tool is a `src/tools/<Name>Tool/` directory: the implementation, and a `prompt.ts` holding its description plus any tool-name constants. Descriptions name every accepted parameter and every capability the model's Claude Code prior expects but this tool lacks.
 - `src/tools/inputAliases.ts` normalizes input before permissions, hooks, display, records, or execution read it. Renaming an alias onto a real parameter beats dropping it; dropping is for keys no parameter could honour. The prompt's shell line comes from `describeShell()` in `src/tools/BashTool/BashTool.ts`.
-- Project instructions are `AGENTS.md`/`CLAUDE.md` and `.myagent/rules/*.md` walked upward from `cwd`, first match per directory, outermost first; local `AGENTS.local.md`/`CLAUDE.local.md` is read last.
+- Project instructions are `~/.myagent/AGENTS.md`, then `CLAUDE.md`/`AGENTS.md` walked upward from `cwd`, first match per directory, outermost first. With the `MEMORY.md` index they open the conversation as one `<system-reminder>` message, prepended after the budget cut — never in the system prompt. It is durable, not transient: an inheriting fork reuses it from the parent's prefix and builds none of its own. The global file is snapshotted once per session id in `createRuntimeFactory` (feeding both that message and the memory section's wording); repo files follow `reloadSettings`.
 
 ## Permissions and configuration
 

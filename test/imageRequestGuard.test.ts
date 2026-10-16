@@ -48,7 +48,7 @@ const limits = { maxImages: 100, maxImageBytes: MAX_IMAGE_SEND_BYTES, maxRequest
 
 test('per-image and request-body limits take the stricter of local and adapter', () => {
   assert.equal(MAX_IMAGE_SEND_BYTES, 3_750_000)
-  assert.equal(MAX_REQUEST_BODY_BYTES, 25_000_000)
+  assert.equal(MAX_REQUEST_BODY_BYTES, 15_000_000)
 
   assert.equal(resolveMaxImageBytes(undefined), 3_750_000)
   assert.equal(resolveMaxImageBytes(1_000_000), 1_000_000, 'a lower adapter limit wins')
@@ -57,10 +57,10 @@ test('per-image and request-body limits take the stricter of local and adapter',
   assert.equal(resolveMaxImageBytes(3.9), 3)
   assert.equal(resolveMaxImageBytes(Number.NaN), 3_750_000)
 
-  assert.equal(resolveMaxRequestBodyBytes(undefined), 25_000_000)
+  assert.equal(resolveMaxRequestBodyBytes(undefined), 15_000_000)
   assert.equal(resolveMaxRequestBodyBytes(10_000_000), 10_000_000)
-  assert.equal(resolveMaxRequestBodyBytes(90_000_000), 25_000_000)
-  assert.equal(resolveMaxRequestBodyBytes(Number.NaN), 25_000_000)
+  assert.equal(resolveMaxRequestBodyBytes(90_000_000), 15_000_000)
+  assert.equal(resolveMaxRequestBodyBytes(Number.NaN), 15_000_000)
 
   const resolved = resolveImageRequestGuardLimits({
     name: 'fake',
@@ -72,7 +72,7 @@ test('per-image and request-body limits take the stricter of local and adapter',
   assert.deepEqual(resolved, { maxImages: 7, maxImageBytes: 1_000, maxRequestBodyBytes: 5_000 })
   assert.deepEqual(
     resolveImageRequestGuardLimits({ name: 'fake', createMessage: async () => ({ content: '', toolCalls: [] }) }),
-    { maxImages: 100, maxImageBytes: 3_750_000, maxRequestBodyBytes: 25_000_000 },
+    { maxImages: 100, maxImageBytes: 3_750_000, maxRequestBodyBytes: 15_000_000 },
   )
 })
 

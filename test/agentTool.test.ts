@@ -1816,7 +1816,7 @@ test('Agent tool omits project context for explore and plan agents', async () =>
   await agentTool.execute({ task: 'map files', subagent_type: 'explore' }, toolContext())
 
   assert.equal(requests.length, 1)
-  assert.doesNotMatch(requests[0]!.system ?? '', /Project rules/)
+  assert.ok(!requests[0]!.messages.some((message) => /Project rules/.test(message.content)))
   assert.match(requests[0]!.system ?? '', /code exploration specialist/)
 })
 

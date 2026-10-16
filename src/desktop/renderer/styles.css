@@ -1012,6 +1012,14 @@ body.resizing #sidebar { transition: none; }
 }
 #browser-panel.overview { flex-basis: var(--overview-panel-width); }
 #browser-panel[hidden] { display: none; }
+/* The panel's 8px gutter is `body` showing through; painted in the canvas's
+   colour so canvas and gutter read as one surface around the card. */
+body:has(> #browser-panel:not([hidden])) {
+  background: linear-gradient(var(--surface-canvas) 0 0) right / calc(var(--browser-panel-width) + 2 * var(--space-2)) 100% no-repeat var(--surface-base);
+}
+body:has(> #browser-panel.overview:not([hidden])) {
+  background-size: calc(var(--overview-panel-width) + 2 * var(--space-2)) 100%;
+}
 /* With the panel up, the caption buttons are above it, not above the title bar. */
 body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-3); }
 /* The hole. No padding, no border, no transform — it is a measurement, and
@@ -1938,7 +1946,7 @@ body.settings-open #browser-resizer { display: none; }
   height: 14px;
   animation: spin var(--motion-running) linear infinite;
 }
-.session-badge.running .icon path { stroke-width: 2; }
+.session-badge.running .icon { stroke-width: 3; }
 .session-badge.awaiting-input { color: var(--accent-warn); gap: 4px; }
 .session-badge.failed { color: var(--text-danger); gap: 4px; }
 /* "Waiting for you", in words. The permission request is drawn in one lane's
@@ -3328,13 +3336,12 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   animation: task-flash var(--motion-locate) var(--ease-out);
 }
 @keyframes task-flash { from { opacity: 1; } to { opacity: 0; } }
-.task-note,
 .task-more {
   margin: 0;
+  padding-left: calc(16px + var(--space-2));
   color: var(--text-tertiary);
   font-size: var(--type-meta);
 }
-.task-more { padding-left: calc(16px + var(--space-2)); }
 .task-list {
   display: flex;
   flex-direction: column;
@@ -3349,7 +3356,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   gap: var(--space-2);
   color: var(--text-primary);
 }
-.task-row.completed { color: var(--text-tertiary); }
+.task-row.completed { color: var(--text-secondary); }
 /* One line box tall, so the mark centres on a wrapped label's first line. */
 .task-mark {
   flex: none;
@@ -3360,15 +3367,21 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   height: 1lh;
 }
 .task-mark .icon { width: 14px; height: 14px; }
-.task-mark.in_progress .icon { animation: spin var(--motion-running) linear infinite; }
-.task-mark.pending::before {
-  content: '';
-  width: 11px;
-  height: 11px;
-  border-radius: var(--radius-pill);
-  box-shadow: inset 0 0 0 1px currentColor;
-  color: var(--text-tertiary);
-}
+/* Done: a filled disc with the tick cut out of it in the page colour. */
+.task-mark.completed .icon { color: var(--text-secondary); }
+.task-mark.completed circle { fill: currentColor; }
+.task-mark.completed path { stroke: var(--surface-canvas); stroke-width: 2.5; }
+/* Running: an arc turning on a faint track. */
+.task-mark.in_progress .icon { color: var(--text-secondary); animation: spin var(--motion-running) linear infinite; }
+.task-mark.in_progress circle { stroke: var(--border-strong); }
+/* Paused — the turn waits on the user, or a new request superseded the plan:
+   a still ring holding three dots. */
+.task-mark.paused .icon { color: var(--text-secondary); }
+.task-mark.paused path { stroke-width: 3.5; }
+/* Not started: a dashed ring — twelve dashes, so the circumference (2π·10)
+   divides evenly and no seam shows. */
+.task-mark.pending .icon { color: var(--text-tertiary); }
+.task-mark.pending circle { stroke-dasharray: 2.618 2.618; stroke-linecap: butt; }
 .task-label { min-width: 0; overflow-wrap: anywhere; }
 /* The horizontal padding is `--composer-overhang`'s other half; the two are one
    number and move together (see that token). */
@@ -6019,8 +6032,7 @@ body.projects-open #browser-resizer,
 .canvas-status { flex: 0 0 auto; font-size: var(--type-meta); }
 .canvas-stop-thread,
 .thread-row-open,
-.thread-row-stop,
-.thread-row-resolve {
+.thread-row-stop {
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
@@ -6032,13 +6044,11 @@ body.projects-open #browser-resizer,
 }
 .canvas-stop-thread:hover:enabled,
 .thread-row-open:hover:enabled,
-.thread-row-stop:hover:enabled,
-.thread-row-resolve:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
+.thread-row-stop:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
 .thread-row-stop:hover:enabled { color: var(--text-danger); }
 .canvas-stop-thread:disabled,
 .thread-row-open:disabled,
-.thread-row-stop:disabled,
-.thread-row-resolve:disabled { opacity: 0.5; cursor: default; }
+.thread-row-stop:disabled { opacity: 0.5; cursor: default; }
 .canvas-threads-open {
   display: inline-flex;
   align-items: center;
@@ -6054,35 +6064,74 @@ body.projects-open #browser-resizer,
   cursor: pointer;
 }
 .canvas-threads-open:hover { color: var(--text-primary); background: var(--surface-hover); }
+/* Threads waiting on someone: the count in the warn tone on a neutral chip. */
+.canvas-threads-badge {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-active);
+  color: var(--text-warn);
+  font-size: var(--type-micro);
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+}
+.canvas-threads-badge[hidden] { display: none; }
 
-/* Thread panel: a card like the task panel, rows inside it like session rows. */
-.thread-panel {
-  background: var(--surface-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-.thread-panel-head {
+/* The overview's head over a coordination project's sections: the title and
+   the thread counts, 全部停止 at the end of the counts. The title keeps clear of
+   the panel's close button, which sits over this corner when it is alone. */
+#overview-head {
+  flex: 0 0 auto;
   display: flex;
-  justify-content: flex-end;
-  padding: var(--space-1) var(--space-2);
-  border-bottom: 1px solid var(--border-subtle);
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-3) var(--space-3) var(--space-2);
 }
-.thread-panel-stop-all {
-  padding: var(--space-1) var(--space-2);
+#overview-head[hidden] { display: none; }
+.overview-title {
+  margin: 0;
+  padding-right: 40px;
+  font: 500 var(--type-title)/1.3 var(--font-serif);
+  color: var(--text-primary);
+}
+.overview-summary-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 24px;
+}
+#overview-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-stop-all {
+  flex: none;
+  padding: 2px var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font: inherit;
   font-size: var(--type-meta);
   cursor: pointer;
 }
-.thread-panel-stop-all:hover:enabled { color: var(--text-danger); background: var(--surface-hover); }
-.thread-panel-stop-all:disabled { opacity: 0.5; cursor: default; }
+.overview-stop-all:hover:enabled { color: var(--text-danger); background: var(--surface-hover); }
+.overview-stop-all:disabled { opacity: 0.5; cursor: default; }
+
+/* Thread list: rows straight on the panel, one line each, under bands that
+   name their group. */
+#thread-view { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+#thread-view[hidden] { display: none; }
+.thread-panel { display: flex; flex-direction: column; gap: var(--space-1); padding: 0 var(--space-2) var(--space-2); }
 .thread-panel-notice {
-  padding: var(--space-2) var(--space-3);
-  border-bottom: 1px solid var(--border-subtle);
+  padding: var(--space-1) var(--space-2);
   color: var(--text-secondary);
   font-size: var(--type-meta);
 }
@@ -6110,7 +6159,6 @@ body.projects-open #browser-resizer,
   cursor: pointer;
 }
 .thread-detail-retry:hover { color: var(--text-primary); background: var(--surface-hover); }
-.thread-panel-active { display: flex; flex-direction: column; padding: var(--space-1); }
 .thread-panel-empty {
   display: flex;
   flex-direction: column;
@@ -6136,79 +6184,160 @@ body.projects-open #browser-resizer,
 }
 .thread-panel-empty-hint .icon { width: 28px; height: 28px; }
 .thread-panel-empty-hint p { margin: 0; }
-.thread-row {
+.thread-group { display: flex; flex-direction: column; }
+.thread-group-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: var(--space-1);
-  padding: var(--space-2) var(--space-3);
+  height: 26px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  /* Opaque, so rows scrolling under the stuck band do not show through. */
+  background: color-mix(in srgb, var(--text-primary) 4%, var(--surface-card));
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: var(--type-micro);
+  text-align: left;
+  cursor: pointer;
+}
+.thread-group-head:hover { color: var(--text-secondary); }
+.thread-group-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.thread-group-label { color: var(--text-secondary); font-weight: 500; }
+.thread-group-count { font-variant-numeric: tabular-nums; }
+.thread-group-head .icon { width: 12px; height: 12px; transition: transform var(--motion-micro) var(--ease-out); }
+.thread-group-head[aria-expanded="false"] .icon { transform: rotate(-90deg); }
+.thread-group-body { display: flex; flex-direction: column; padding-top: 2px; }
+.thread-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 32px;
   border-radius: var(--radius-sm);
 }
 .thread-row:hover { background: var(--surface-hover); }
-.thread-row.current { background: var(--surface-active); }
-.thread-row.pending { opacity: 0.7; }
-.thread-row-head {
+.thread-row.current { background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+.thread-row.pending { opacity: 0.6; }
+.thread-row.menu-open { anchor-name: --thread-menu; }
+.thread-row-main {
+  flex: 1 1 auto;
   display: flex;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
-}
-.thread-row-title {
-  flex: 1 1 auto;
-  min-width: 0;
-  padding: 0;
+  height: 100%;
+  padding: 0 var(--space-1) 0 var(--space-2);
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
   font-size: var(--type-ui);
   text-align: left;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
   cursor: pointer;
 }
-.thread-status {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: var(--type-micro);
-  white-space: nowrap;
-}
-.thread-status .icon { width: 12px; height: 12px; animation: spin var(--motion-running) linear infinite; }
-.thread-status .icon path { stroke-width: 2; }
-.thread-row-time {
-  flex: 0 0 auto;
-  color: var(--text-tertiary);
-  font-size: var(--type-micro);
-  white-space: nowrap;
-}
-.thread-row-line {
+.thread-row-main:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.thread-row-mark { flex: none; display: inline-flex; color: var(--text-tertiary); }
+.thread-row-mark .icon { width: 14px; height: 14px; }
+.thread-row-mark.tone-running { color: var(--accent-brand-strong); }
+.thread-row-mark.tone-running .icon { animation: spin var(--motion-running) linear infinite; }
+.thread-row-mark.tone-attention { color: var(--text-warn); }
+.thread-row-mark.tone-danger { color: var(--text-danger); }
+.thread-row-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 70%;
   overflow: hidden;
-  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-row.unread .thread-row-title { font-weight: 600; }
+.thread-group.quiet .thread-row-title { color: var(--text-secondary); }
+.thread-group.resolved .thread-row-title { color: var(--text-tertiary); }
+.thread-row-line {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-tertiary);
   font-size: var(--type-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.thread-row-actions { display: flex; justify-content: flex-end; gap: var(--space-1); }
-.thread-fold { border-top: 1px solid var(--border-subtle); }
-.thread-fold-head {
-  display: flex;
-  justify-content: space-between;
-  width: 100%;
-  padding: var(--space-2) var(--space-3);
+.thread-row-dot { flex: none; display: inline-flex; margin-left: auto; color: var(--accent-info); }
+.thread-row-dot .icon { width: 10px; height: 10px; }
+/* The time and the ⋯ share the row's end: the ⋯ takes the time's place on
+   hover, on keyboard focus and while its menu is open. */
+.thread-row-time {
+  flex: none;
+  min-width: 28px;
+  padding-right: var(--space-2);
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+.thread-row-more {
+  position: absolute;
+  top: 50%;
+  right: var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
   border: 0;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
+  cursor: pointer;
+  opacity: 0;
+  translate: 0 -50%;
+}
+.thread-row-more .icon { width: 14px; height: 14px; }
+.thread-row-more .icon { stroke-width: 3.3; }
+.thread-row-more:hover,
+.thread-row.menu-open .thread-row-more { color: var(--text-primary); background: var(--surface-active); }
+.thread-row:hover .thread-row-more,
+.thread-row:focus-within .thread-row-more,
+.thread-row.menu-open .thread-row-more { opacity: 1; }
+.thread-row:hover .thread-row-time,
+.thread-row:focus-within .thread-row-time,
+.thread-row.menu-open .thread-row-time { visibility: hidden; }
+.thread-menu {
+  position: fixed;
+  top: anchor(--thread-menu bottom);
+  right: anchor(--thread-menu right);
+  position-try-fallbacks: flip-block;
+  z-index: 5;
+  margin: 2px 0;
+  min-width: 9rem;
+  display: flex;
+  flex-direction: column;
+  padding: var(--space-1);
+  background: var(--surface-card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-float);
+}
+.thread-menu-item {
+  display: flex;
+  align-items: center;
+  padding: 6px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
   font: inherit;
-  font-size: var(--type-meta);
+  font-size: var(--type-ui);
   text-align: left;
   cursor: pointer;
 }
-.thread-fold-head:hover { background: var(--surface-hover); color: var(--text-primary); }
-.thread-fold-body { display: flex; flex-direction: column; padding: 0 var(--space-1) var(--space-1); }
-.thread-fold.quiet .thread-row-title { color: var(--text-secondary); }
-.thread-fold.resolved .thread-row-title { color: var(--text-tertiary); }
+.thread-menu-item.danger { color: var(--text-danger); }
+.thread-menu-item:disabled { opacity: 0.5; cursor: default; }
 
 /* Merge bar: the same pill vocabulary as `.process-chip`, stacked above the
    composer in the strip's place. */

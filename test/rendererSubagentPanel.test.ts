@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { subagentEntries } from '../src/desktop/renderer/model/subagentPanel.js'
-import type { TranscriptItem } from '../src/desktop/renderer/model/transcript.js'
+import { createTranscriptState, withDetachedRuns, type TranscriptItem } from '../src/desktop/renderer/model/transcript.js'
 
 function agent(id: string, overrides: Partial<TranscriptItem> = {}, tool: Partial<NonNullable<TranscriptItem['tool']>> = {}): TranscriptItem {
   return {
@@ -73,4 +73,22 @@ test('an entry finds its run id from the run, the live progress, or the result n
   assert.equal(fromLive?.agentId, 'explore-2')
   assert.equal(fromNotice?.agentId, 'explore-3')
   assert.deepEqual([fromRun, fromLive, fromNotice, failed].map((entry) => entry?.finished), [true, false, false, true])
+})
+
+test('a background run counts as running while the registry says so, its start-notice span hidden', () => {
+  const items = [agent('a', {}, { content: 'Started explore sub-agent "scan" in the background.', durationMs: 12 }), agent('b')]
+  const state = { ...createTranscriptState([]), items }
+  const [running, done] = subagentEntries(withDetachedRuns(state, new Set(['a'])).items)
+  assert.deepEqual([running?.id, running?.status, running?.finished, running?.durationMs], ['a', 'running', false, undefined])
+  assert.deepEqual([done?.id, done?.status], ['b', 'done'])
+  assert.equal(withDetachedRuns(state, new Set()), state)
+})
+
+test('an Agent call the stop cut off is interrupted, not failed', () => {
+  const [stopped, failed] = subagentEntries([
+    agent('a', { failed: true }, { errorCode: 'aborted' }),
+    agent('b', { failed: true }, { errorCode: 'execution_failed' }),
+  ]).sort((x, y) => x.id.localeCompare(y.id))
+  assert.deepEqual([stopped?.status, stopped?.finished], ['interrupted', true])
+  assert.equal(failed?.status, 'failed')
 })

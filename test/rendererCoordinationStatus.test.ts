@@ -4,7 +4,6 @@ import {
   THREAD_STATUS_LABEL,
   coordinationCounts,
   formatLastActivity,
-  threadBucket,
   threadBySession,
   threadTone,
 } from '../src/desktop/renderer/model/coordinationStatus.js'
@@ -16,21 +15,17 @@ function thread(threadId: string, status: WireThreadStatus, sessionId = `s-${thr
   return { threadId, sessionId, title: threadId, status, lastActivityAt: '2026-10-10T00:00:00.000Z' }
 }
 
-test('every status has a label, a tone and a bucket', () => {
+test('every status has a label and a tone', () => {
   assert.equal(STATUSES.length, 9)
   for (const status of STATUSES) {
     assert.ok(THREAD_STATUS_LABEL[status])
     assert.ok(threadTone(status))
-    assert.ok(threadBucket(status))
   }
   assert.equal(threadTone('needs-you'), 'attention')
   assert.equal(threadTone('awaiting-coordinator'), 'attention')
   assert.equal(threadTone('failed'), 'danger', 'a failed thread is not drawn like an idle one')
   assert.equal(threadTone('interrupted'), 'neutral')
   assert.deepEqual(new Set(Object.values(THREAD_STATUS_LABEL)), new Set(['运行中', '阻塞', '空闲', '失败', '已完成']))
-  assert.equal(threadBucket('stale'), 'resolved')
-  assert.equal(threadBucket('quiet'), 'quiet')
-  assert.equal(threadBucket('awaiting-coordinator'), 'active')
 })
 
 test('coordinationCounts counts running and blocked threads', () => {

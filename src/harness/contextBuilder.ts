@@ -22,8 +22,10 @@ export interface BuildContextInput {
   records: SessionRecord[]
   tools: Tool[]
   system?: string
+  /** Instruction files; with `memoryIndex`, they open the conversation as a system reminder. */
   projectContext?: string
   memoryPrompt?: string
+  memoryIndex?: string
   /** Fixed per scope; goes before the dynamic boundary so the cached prefix stays stable. */
   rolePrompt?: string
   criticalSystemReminder?: string
@@ -96,11 +98,14 @@ const DOING_TASKS_SECTION = `# Doing tasks
  - The user will request software engineering tasks. When given an unclear instruction, consider it in context — find and modify the code, not just reply with the answer.
  - Read code before proposing changes. Prefer editing existing files to creating new ones.
  - If an approach fails, diagnose why before switching tactics. Don't retry blindly, but don't abandon a viable approach after one failure. Escalate only when genuinely stuck.
- - You're a collaborator, not just an executor. Flag misconceptions and adjacent bugs. For exploratory questions, respond in 2-3 sentences with a recommendation and tradeoff.
+ - You're a collaborator, not just an executor. For exploratory questions, respond in 2-3 sentences with a recommendation and tradeoff.
  - Don't add features, abstractions, error handling, or backwards-compatibility shims beyond what the task requires. Three similar lines beats a premature abstraction. If something is unused, delete it completely.
  - Default to no comments. Only add one when the WHY is non-obvious (hidden constraint, subtle invariant, workaround). Don't explain WHAT the code does or reference the current task.
  - Write safe, secure code. Avoid OWASP top 10 vulnerabilities. If you write insecure code, fix it immediately.
- - For UI changes, test the feature before reporting completion. Type checking and tests verify code correctness, not feature correctness — if you can't test the UI, say so.`.trim()
+ - For UI changes, test the feature before reporting completion. Type checking and tests verify code correctness, not feature correctness — if you can't test the UI, say so.
+ - Find out rather than speculate: read the file, run the command, compute it in code. A quick tool call beats reasoning about what something probably is.
+ - Plan only as far as the next step; tool results will shape the rest.
+ - Write file content directly in the Write or Edit call — the tool input is the draft.`.trim()
 
 const ACTIONS_SECTION = `# Executing actions with care
 
@@ -193,7 +198,6 @@ export class ContextBuilder {
   async build(input: BuildContextInput): Promise<BuiltContext> {
     const systemBlocks = this.buildSystemBlocks(
       input.system,
-      input.projectContext,
       input.memoryPrompt,
       input.criticalSystemReminder,
       input.enabledSections,
@@ -223,17 +227,41 @@ export class ContextBuilder {
       ),
     ]
 
+    // Instruction files and the memory index open the conversation at user
+    // level, not in the system prompt: a repo's AGENTS.md is not the harness.
+    // Prepended after the budget cut, which trims from the front, and counted
+    // into it alongside the system prompt. Not transient: it holds index 0 for
+    // the whole session, so it is part of the cached prefix a fork inherits.
+    const instructions = this.buildInstructionsContext(input.projectContext, input.memoryIndex, input.now ?? new Date())
     const built = this.composer.composeContextItems(allContextItems, {
-      system,
+      system: instructions ? `${system}\n\n${instructions.message.content}` : system,
       contextManagement: input.contextManagement ?? this.defaultContextManagement,
       includeHistory: true,
     })
 
     return {
-      system: built.system,
+      system,
       systemBlocks,
-      messages: built.messages,
-      contextItems: built.contextItems,
+      messages: instructions ? [instructions.message, ...built.messages] : built.messages,
+      contextItems: instructions ? [instructions, ...built.contextItems] : built.contextItems,
+    }
+  }
+
+  private buildInstructionsContext(
+    projectContext: string | undefined,
+    memoryIndex: string | undefined,
+    now: Date,
+  ): (ModelContextItem & { kind: 'message' }) | undefined {
+    const parts = [projectContext?.trim(), memoryIndex?.trim()].filter((part): part is string => Boolean(part))
+    if (parts.length === 0) return undefined
+    return {
+      kind: 'message',
+      message: {
+        id: 'meta:instructions',
+        role: 'user',
+        content: wrapInSystemReminder(parts.join('\n\n')),
+        createdAt: now.toISOString(),
+      },
     }
   }
 
@@ -365,7 +393,6 @@ export class ContextBuilder {
 
   private buildSystemBlocks(
     system: string | undefined,
-    projectContext?: string,
     memoryPrompt?: string,
     criticalSystemReminder?: string,
     enabledSections?: readonly SectionKey[],
@@ -377,7 +404,6 @@ export class ContextBuilder {
   ): string[] {
     const staticSections = [
       ...this.buildDefaultSystemSections(enabledSections ?? this.defaultEnabledSections),
-      projectContext?.trim(),
       memoryPrompt?.trim(),
       rolePrompt?.trim(),
       this.buildEnvironmentSystemSection(env),

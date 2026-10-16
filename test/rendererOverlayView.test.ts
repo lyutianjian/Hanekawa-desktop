@@ -305,15 +305,16 @@ test('the scrims are positioned against the canvas and stack above every popover
   assert.equal(decl('#rewind', 'position'), 'absolute', '#rewind is not absolute')
   assert.equal(decl('#rewind', 'inset'), '0', '#rewind does not fill the canvas')
   const fixed = blocks.filter((block) => block.decls.some((d) => d.prop === 'position' && d.value === 'fixed'))
-  // The four that resolve against the viewport, and the reason each does: the
+  // The five that resolve against the viewport, and the reason each does: the
   // settings page replaces the window's work area, its form dialog's scrim
   // covers the title bar above that area too, the image viewer covers the
   // window because a picture at full size belongs to no single lane, and a
   // project heading's menu hangs off a row inside the sidebar's scroller, whose
-  // `overflow` would crop an absolutely positioned popover.
+  // `overflow` would crop an absolutely positioned popover, and a thread row's
+  // menu does the same inside the side panel's thread list.
   assert.deepEqual(
     fixed.map((block) => block.selector).sort(),
-    ['#lightbox', '#settings', '.project-menu', '.settings-dialog-layer'],
+    ['#lightbox', '#settings', '.project-menu', '.settings-dialog-layer', '.thread-menu'],
     'only the window-wide screens use the viewport',
   )
 

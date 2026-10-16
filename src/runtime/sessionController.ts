@@ -470,6 +470,11 @@ export class SessionController {
     }
   }
 
+  /** Hands a prompt that left the conversation back to the composer. */
+  restoreInput(text: string, images?: ImageAttachmentRef[]): void {
+    this.emit({ type: 'restore-input', text, ...(images && images.length > 0 ? { images } : {}) })
+  }
+
   /** Reloads records from disk (after truncation or a rewind) and rebuilds the view. */
   async reload(): Promise<SessionRecord[]> {
     const loaded = await this.store.loadRecordsWithDiagnostics(this.session.id)
@@ -907,11 +912,7 @@ export class SessionController {
       // Rebuilt from scratch, but without bumping the generation: this is a
       // rollback of the current turn, not a new conversation view.
       this.emit({ type: 'transcript-reset', records, systemMessages: [], bumpGeneration: false })
-      this.emit({
-        type: 'restore-input',
-        text: input.text,
-        ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
-      })
+      this.restoreInput(input.text, input.images)
       return true
     } catch {
       return false

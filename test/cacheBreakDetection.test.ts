@@ -44,6 +44,19 @@ test('cache break detection reports tool schema and model changes', () => {
   assert.deepEqual(result.reasons, ['tool_schemas_changed', 'model_changed'])
 })
 
+test('cache break detection reports a changed first message, where the instructions live', () => {
+  resetCacheBreakDetection()
+
+  recordPromptState({ system: 'system', toolsJson: '[]', model: 'model-a', firstMessage: 'rules v1' }, MAIN_SOURCE)
+  assert.equal(checkResponseForCacheBreak(50_000, 1_000, MAIN_SOURCE), null)
+
+  recordPromptState({ system: 'system', toolsJson: '[]', model: 'model-a', firstMessage: 'rules v2' }, MAIN_SOURCE)
+  const result = checkResponseForCacheBreak(10_000, 1_000, MAIN_SOURCE)
+
+  assert.ok(result)
+  assert.deepEqual(result.reasons, ['first_message_changed'])
+})
+
 test('notifyCompaction resets cache break baseline', () => {
   resetCacheBreakDetection()
 

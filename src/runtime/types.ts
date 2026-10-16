@@ -115,11 +115,12 @@ export interface ProjectRuntime {
    */
   getSettings(): MyAgentSettings
   /**
-   * The project instructions the runtime is currently running on — the merged
-   * `AGENTS.md` / `CLAUDE.md` and rules files, as handed to `createRuntime`.
-   * Read-only inspection; `reloadSettings()` is what re-reads them.
+   * The project instruction files the runtime is currently running on — the
+   * labelled `AGENTS.md` / `CLAUDE.md` entries handed to `createRuntime`, which
+   * adds each session's own snapshot of `~/.myagent/AGENTS.md`. Read-only
+   * inspection; `reloadSettings()` is what re-reads them.
    */
-  getProjectContext(): string
+  getProjectEntries(): readonly string[]
   /**
    * The built-in agent definitions merged with the project's own, which is what
    * a runtime hands to its Agent tool. Read-only inspection; editing them means

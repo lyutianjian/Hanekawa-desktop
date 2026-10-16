@@ -1,4 +1,5 @@
 import type { SessionRecord, TaskItem, ToolContext } from '../harness/types.js'
+import { isSystemReminderBlock } from '../harness/systemReminder.js'
 import { normalizeToolInput } from './inputAliases.js'
 import { normalizeTask, sortedTasks } from './taskFormat.js'
 import {
@@ -28,7 +29,7 @@ function nextTaskId(tasks: ReadonlyMap<string, TaskItem>): string {
   return String(index)
 }
 
-export function applyTaskCreate(input: NewTaskInput, tasks: Map<string, TaskItem>): TaskItem {
+export function applyTaskCreate(input: NewTaskInput, tasks: Map<string, TaskItem>, requestTurnId?: string): TaskItem {
   const id = nextTaskId(tasks)
   const task = normalizeTask({
     id,
@@ -37,9 +38,33 @@ export function applyTaskCreate(input: NewTaskInput, tasks: Map<string, TaskItem
     description: input.description,
     ...(input.activeForm ? { activeForm: input.activeForm } : {}),
     ...(input.metadata ? { metadata: { ...input.metadata } } : {}),
+    ...(requestTurnId ? { requestTurnId } : {}),
   })
   tasks.set(id, task)
   return task
+}
+
+/**
+ * A list is local to one user request. The request's first `TaskCreate`
+ * starts over, dropping what an earlier request left, finished or not, so IDs
+ * restart at 1; once this request has written the list, it only adds.
+ */
+export function startRequestTaskList(tasks: Map<string, TaskItem>, requestTurnId: string | undefined): void {
+  if (requestTurnId === undefined) return
+  for (const task of tasks.values()) {
+    if (task.requestTurnId !== requestTurnId) {
+      tasks.clear()
+      return
+    }
+  }
+}
+
+/** A `TaskUpdate` in a later request carries the whole list over into it. */
+export function claimTaskList(tasks: Map<string, TaskItem>, requestTurnId: string | undefined): void {
+  if (requestTurnId === undefined) return
+  for (const [id, task] of tasks) {
+    if (task.requestTurnId !== requestTurnId) tasks.set(id, { ...task, requestTurnId })
+  }
 }
 
 function mergeMetadata(existing: Record<string, unknown> | undefined, incoming: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
@@ -113,11 +138,25 @@ export function applyTaskUpdate(input: TaskUpdateInput, tasks: Map<string, TaskI
   return { found: true, updated }
 }
 
+/**
+ * Replays the task tools, request boundaries included: a request starts with
+ * the first user record of a turn unless that record is only system reminders
+ * — the same turns the loop sets `requestTurnId` for.
+ */
 export function restoreTaskStateFromRecords(records: readonly SessionRecord[]): Map<string, TaskItem> {
   const tasks = new Map<string, TaskItem>()
   const toolUses = new Map<string, Extract<SessionRecord, { type: 'tool_use' }>>()
+  let requestTurnId: string | undefined
+  let userTurnId: string | undefined
 
   for (const record of records) {
+    if (record.type === 'message' && record.role === 'user') {
+      if ((record.turnId === undefined || record.turnId !== userTurnId) && !isSystemReminderBlock(record.content)) {
+        requestTurnId = record.turnId ?? record.id
+      }
+      userTurnId = record.turnId
+      continue
+    }
     if (record.type === 'tool_use' && TASK_TOOL_NAMES.has(record.tool)) {
       toolUses.set(record.id, record)
       continue
@@ -131,9 +170,10 @@ export function restoreTaskStateFromRecords(records: readonly SessionRecord[]): 
       if (toolUse.tool === 'TaskCreate') {
         // Sessions recorded before the batch shape hold one task at the top level.
         const { tasks: created } = taskCreateInputSchema.parse(normalizeToolInput('TaskCreate', toolUse.input))
-        for (const task of created) applyTaskCreate(task, tasks)
+        startRequestTaskList(tasks, requestTurnId)
+        for (const task of created) applyTaskCreate(task, tasks, requestTurnId)
       } else if (toolUse.tool === 'TaskUpdate') {
-        applyTaskUpdate(taskUpdateInputSchema.parse(toolUse.input), tasks)
+        if (applyTaskUpdate(taskUpdateInputSchema.parse(toolUse.input), tasks).found) claimTaskList(tasks, requestTurnId)
       }
     } catch {
       // Ignore stale or malformed historical task calls; live execution already validates inputs.

@@ -19,7 +19,7 @@ import { createRuntimeFactory } from './createRuntime.js'
 import { reconcileOrphanedAgents } from './sessionSwitch.js'
 import type { ToolRegistry } from './toolRegistry.js'
 import type { SessionScope } from './types.js'
-import { getCoordinationNotesDir, getProjectMemoryDir } from '../utils/paths.js'
+import { getCoordinationNotesDir, getProjectMemoryDir, getUserInstructionsPath } from '../utils/paths.js'
 import { initialPermissionMode, sessionRoleOf } from './sessionRole.js'
 
 /**
@@ -37,7 +37,7 @@ export interface SessionScopeDeps {
   getSettings: () => MyAgentSettings
   getSkills: () => SkillDefinition[]
   getAgentDefinitions: () => BaseAgentDefinition[]
-  getProjectContext: () => string
+  getProjectEntries: () => readonly string[]
   toolRegistry: ToolRegistry
   backgroundTasks: BackgroundTaskRegistry
   contextManagement: Partial<ContextManagementConfig> | undefined
@@ -92,6 +92,7 @@ export async function createSessionScope(
       projectDir: deps.cwd,
       sessionId: session.id,
       ...(memoryDir ? { memoryDir } : {}),
+      userInstructionsFile: getUserInstructionsPath(),
       ...(additionalDirectories.length > 0 ? { additionalDirectories } : {}),
       mode: initialPermissionMode(role, settings.permissions?.mode ?? 'default'),
       lockMode: role === 'coordinator',
@@ -115,7 +116,7 @@ export async function createSessionScope(
     getSettings: deps.getSettings,
     getSkills: deps.getSkills,
     getAgentDefinitions: deps.getAgentDefinitions,
-    getProjectContext: deps.getProjectContext,
+    getProjectEntries: deps.getProjectEntries,
     ...(memoryDir ? { memoryDir } : {}),
     toolRegistry: deps.toolRegistry,
     promptSections,

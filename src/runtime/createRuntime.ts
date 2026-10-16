@@ -1,5 +1,6 @@
 import { createProvider, resolveImageCapability } from '../config/providers.js'
-import { buildMemoryPrompt } from '../services/memory/memoryPrompt.js'
+import { buildMemoryIndexContext, buildMemoryPrompt } from '../services/memory/memoryPrompt.js'
+import { composeProjectContext, readUserInstructions } from '../services/context/projectContext.js'
 import type { ConfigService, ModelConfig, ThinkingConfig } from '../config/service.js'
 import type { EffortLevel, EffortValue } from '../config/effort.js'
 import type { RoutingRole } from '../config/routing.js'
@@ -103,11 +104,11 @@ export interface CreateRuntimeDeps {
   getSkills: () => SkillDefinition[]
   getAgentDefinitions: () => BaseAgentDefinition[]
   /**
-   * `AGENTS.md` / `CLAUDE.md` and the rules files under them, already merged.
-   * Captured per runtime like the settings above, so an edit reaches a session
-   * on the next rebuild — see `reloadSettings`'s `needsRuntimeRebuild`.
+   * The project's `AGENTS.md` / `CLAUDE.md` files, labelled. Captured per
+   * runtime like the settings above, so an edit reaches a session on the next
+   * rebuild — see `reloadSettings`'s `needsRuntimeRebuild`.
    */
-  getProjectContext: () => string
+  getProjectEntries: () => readonly string[]
   /** Set when auto memory is on for this scope; the index is read once per session id. */
   memoryDir?: string
   toolRegistry: ToolRegistry
@@ -171,7 +172,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     getSettings,
     getSkills,
     getAgentDefinitions,
-    getProjectContext,
+    getProjectEntries,
     memoryDir,
     toolRegistry,
     promptSections,
@@ -189,11 +190,25 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     onActiveSessionChange,
   } = deps
 
-  let memorySnapshot: { sessionId: string; text: string } | undefined
-  const memoryPromptFor = (sessionId: string): string | undefined => {
-    if (!memoryDir) return undefined
-    if (memorySnapshot?.sessionId !== sessionId) memorySnapshot = { sessionId, text: buildMemoryPrompt(memoryDir) }
-    return memorySnapshot.text
+  // Read once per session id, not per runtime: a rebuild of an open session
+  // keeps them, so an edit — the model's or the settings screen's — reaches the
+  // next new session without moving an open session's cached prefix. The one
+  // global-file read feeds both the memory section's wording and the
+  // instructions message, so they cannot disagree.
+  type SessionSnapshot = { sessionId: string; userInstructions: string; memoryPrompt: string; memoryIndex?: string }
+  let sessionSnapshot: SessionSnapshot | undefined
+  const snapshotFor = (sessionId: string): SessionSnapshot => {
+    if (sessionSnapshot?.sessionId !== sessionId) {
+      const userInstructions = readUserInstructions()
+      const memoryIndex = memoryDir ? buildMemoryIndexContext(memoryDir) : undefined
+      sessionSnapshot = {
+        sessionId,
+        userInstructions,
+        memoryPrompt: buildMemoryPrompt(memoryDir, userInstructions),
+        ...(memoryIndex ? { memoryIndex } : {}),
+      }
+    }
+    return sessionSnapshot
   }
 
   const createRoutedRuntime = (
@@ -227,6 +242,8 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       : createRoutedRuntime({ kind: 'compact' }, modelKey)
     const planModel = createRoutedRuntime({ kind: 'plan' }, modelKey)
 
+    const snapshot = snapshotFor(runtimeSession.id)
+    const projectContext = composeProjectContext(snapshot.userInstructions, getProjectEntries())
     const recordStream = new JsonlRecordStream(store, runtimeSession.id)
     let loop: AgentLoop | undefined
     const planModeManager = new PlanModeManager({
@@ -273,7 +290,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       cwd: workingDir,
       projectDir: cwd,
       system: config.get().agent.system,
-      projectContext: getProjectContext(),
+      projectContext,
       skills: getSkills(),
       agentDefinitions: getAgentDefinitions(),
       loadParentRecords: async () => prepareForkPreloadRecords(await recordStream.load()),
@@ -368,8 +385,9 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
         ...(imageAttachments ? { imageAttachments } : {}),
       },
       system: config.get().agent.system,
-      projectContext: getProjectContext(),
-      memoryPrompt: memoryPromptFor(runtimeSession.id),
+      projectContext,
+      memoryPrompt: snapshot.memoryPrompt,
+      memoryIndex: snapshot.memoryIndex,
       skills: getSkills(),
       promptCacheRetention: targetModelConfig.promptCacheRetention,
       supportsImageInput: resolveImageCapability(targetModelConfig),

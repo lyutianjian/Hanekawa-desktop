@@ -756,16 +756,18 @@ test('project context reads AGENTS.md and CLAUDE.md, nearest last', async () => 
     await writeFile(path.join(child, 'AGENTS.md'), 'from the child', 'utf8')
     // The name Hanekawa used to invent for itself; nothing writes it any more.
     await writeFile(path.join(child, 'MYAGENT.md'), 'from a name we dropped', 'utf8')
+    // Local files and rules directories are not instruction sources.
     await writeFile(path.join(child, 'AGENTS.local.md'), 'from the local layer', 'utf8')
+    await mkdir(path.join(child, '.myagent', 'rules'), { recursive: true })
+    await writeFile(path.join(child, '.myagent', 'rules', 'style.md'), 'from a rules file', 'utf8')
 
     const context = await loadProjectContext(child)
 
-    assert.doesNotMatch(context, /a name we dropped/)
+    assert.doesNotMatch(context, /a name we dropped|from the local layer|from a rules file/)
     // AGENTS.md is read because the child has no CLAUDE.md of its own.
     assert.match(context, /from the child/)
     // The nearest file overrides its ancestors, so it has to be read after them.
     assert.ok(context.indexOf('from the parent') < context.indexOf('from the child'))
-    assert.ok(context.indexOf('from the child') < context.indexOf('from the local layer'))
   } finally {
     clearProjectContextCache()
     await rm(parent, { recursive: true, force: true })
@@ -783,15 +785,11 @@ test('one directory contributes one instruction file, CLAUDE.md first', async ()
     // Repos that keep the two in sync would otherwise pay for the guide twice.
     await writeFile(path.join(project, 'CLAUDE.md'), 'the claude copy', 'utf8')
     await writeFile(path.join(project, 'AGENTS.md'), 'the agents copy', 'utf8')
-    await writeFile(path.join(project, 'CLAUDE.local.md'), 'the local claude copy', 'utf8')
-    await writeFile(path.join(project, 'AGENTS.local.md'), 'the local agents copy', 'utf8')
 
     const context = await loadProjectContext(project)
 
     assert.match(context, /the claude copy/)
     assert.doesNotMatch(context, /the agents copy/)
-    assert.match(context, /the local claude copy/)
-    assert.doesNotMatch(context, /the local agents copy/)
   } finally {
     clearProjectContextCache()
     await rm(project, { recursive: true, force: true })
@@ -799,7 +797,7 @@ test('one directory contributes one instruction file, CLAUDE.md first', async ()
 })
 
 test('project context is cached per cwd and invalidated per cwd', async () => {
-  const { getProjectContext, clearProjectContextCache } =
+  const { getProjectEntries, clearProjectContextCache } =
     await import('../src/services/context/projectContext.js')
 
   const projectA = await mkdtemp(path.join(os.tmpdir(), 'myagent-ctx-a-'))
@@ -810,16 +808,16 @@ test('project context is cached per cwd and invalidated per cwd', async () => {
     await writeFile(path.join(projectA, 'CLAUDE.md'), 'instructions for A', 'utf8')
     await writeFile(path.join(projectB, 'CLAUDE.md'), 'instructions for B', 'utf8')
 
-    assert.match(await getProjectContext(projectA), /instructions for A/)
-    assert.match(await getProjectContext(projectB), /instructions for B/)
+    assert.match((await getProjectEntries(projectA)).join('\n'), /instructions for A/)
+    assert.match((await getProjectEntries(projectB)).join('\n'), /instructions for B/)
     // A single-slot cache would have evicted A when B was read.
-    assert.match(await getProjectContext(projectA), /instructions for A/)
+    assert.match((await getProjectEntries(projectA)).join('\n'), /instructions for A/)
 
     await writeFile(path.join(projectA, 'CLAUDE.md'), 'rewritten A', 'utf8')
     clearProjectContextCache(projectA)
 
-    assert.match(await getProjectContext(projectA), /rewritten A/)
-    assert.match(await getProjectContext(projectB), /instructions for B/)
+    assert.match((await getProjectEntries(projectA)).join('\n'), /rewritten A/)
+    assert.match((await getProjectEntries(projectB)).join('\n'), /instructions for B/)
   } finally {
     clearProjectContextCache()
     await rm(projectA, { recursive: true, force: true })

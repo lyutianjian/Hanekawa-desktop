@@ -137,6 +137,7 @@ export class SessionClient {
   private toolDisplays: ToolDisplays = {}
   private readonly teardown: Array<() => void> = []
   private disposed = false
+  private hostGone = false
 
   constructor(channel: RuntimeChannel) {
     this.channel = channel
@@ -556,7 +557,13 @@ export class SessionClient {
 
   /** Closes a tab by pane id. `paneId` is the same value `WirePaneInfo.paneId` carries. */
   async closePane(paneId: string): Promise<void> {
-    await this.send({ type: 'close-pane', id: randomUUID(), paneId })
+    const own = paneId === this.getSession()?.id
+    try {
+      await this.send({ type: 'close-pane', id: randomUUID(), paneId })
+    } catch (error) {
+      // Closing this lane's own pane tears its channel down before the reply can land.
+      if (!own || !(this.hostGone || this.disposed)) throw error
+    }
   }
 
   /** Lists every open tab. */
@@ -935,6 +942,7 @@ export class SessionClient {
   }
 
   private handleClose = (): void => {
+    this.hostGone = true
     this.failAllPending('The host disconnected.')
   }
 

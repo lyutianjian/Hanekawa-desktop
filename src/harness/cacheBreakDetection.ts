@@ -3,10 +3,11 @@
  *
  * Two responsibilities:
  *
- *  1. Cache-break detection: track prompt state (system, tools, model) before
- *     each request, then compare cache_read_input_tokens after the response to
- *     classify a break by cause (system_prompt_changed, tool_schemas_changed,
- *     model_changed, or server_side eviction).
+ *  1. Cache-break detection: track prompt state (system, tools, model, first
+ *     message) before each request, then compare cache_read_input_tokens after
+ *     the response to classify a break by cause (system_prompt_changed,
+ *     tool_schemas_changed, model_changed, first_message_changed, or
+ *     server_side eviction).
  *
  *  2. Hit-rate formatting: a small helper for human-readable cache hit rate
  *     output, kept here so all prompt-cache diagnostics live together.
@@ -134,6 +135,7 @@ interface PreviousSnapshot {
   cacheScopeHash: string
   model: string
   systemCharCount: number
+  firstMessageHash: string
   prevCacheReadTokens: number | null
   messageHashes?: string[]
 }
@@ -144,6 +146,7 @@ interface PendingChanges {
   betaHeadersChanged: boolean
   cacheScopeChanged: boolean
   modelChanged: boolean
+  firstMessageChanged: boolean
   systemCharDelta: number
   previous: PromptHashes | null
   current: PromptHashes
@@ -159,6 +162,12 @@ interface PromptState {
   model: string
   betas?: string[]
   cacheScope?: string
+  /**
+   * The conversation's first message: the instruction files and memory index
+   * when there are any. They left the system prompt for it, so this is what
+   * names a break that edited them; hashed always, unlike `messages`.
+   */
+  firstMessage?: string
   /**
    * The outbound message array. Fingerprinted per message so a break caused by
    * a rewrite inside the history reports *where* it happened instead of landing
@@ -186,6 +195,7 @@ export function recordPromptState(
   source: CacheBreakSource,
 ): void {
   const systemHash = hashString(state.system)
+  const firstMessageHash = hashString(state.firstMessage ?? '')
   const toolsHash = hashString(state.toolsJson)
   const normalizedBetas = [...(state.betas ?? [])].sort()
   const betasHash = hashString(JSON.stringify(normalizedBetas))
@@ -205,6 +215,7 @@ export function recordPromptState(
     betaHeadersChanged: false,
     cacheScopeChanged: false,
     modelChanged: false,
+    firstMessageChanged: false,
     systemCharDelta: 0,
     previous: null,
     current,
@@ -238,6 +249,9 @@ export function recordPromptState(
     if (previous.model !== state.model) {
       changes.modelChanged = true
     }
+    if (previous.firstMessageHash !== firstMessageHash) {
+      changes.firstMessageChanged = true
+    }
     if (messageHashes && previous.messageHashes) {
       changes.messagesChangedAt = firstChangedMessageIndex(previous.messageHashes, messageHashes)
       changes.previousMessageCount = previous.messageHashes.length
@@ -257,6 +271,7 @@ export function recordPromptState(
     cacheScopeHash,
     model: state.model,
     systemCharCount: state.system.length,
+    firstMessageHash,
     prevCacheReadTokens: previous?.prevCacheReadTokens ?? null,
     ...(messageHashes ? { messageHashes } : {}),
   }
@@ -335,6 +350,9 @@ export function checkResponseForCacheBreak(
     }
     if (pending.modelChanged) {
       result.reasons.push('model_changed')
+    }
+    if (pending.firstMessageChanged) {
+      result.reasons.push('first_message_changed')
     }
     if (pending.messagesChangedAt !== null) {
       result.messagesChangedAt = pending.messagesChangedAt

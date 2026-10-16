@@ -5,6 +5,7 @@ import {
   autoOpensOverview,
   isSectionCollapsed,
   keepSelectedSubagent,
+  overviewHeadView,
   parseOverviewClosed,
   parseSectionsCollapsed,
   serializeOverviewClosed,
@@ -138,6 +139,14 @@ test('the chip leaves out the counts that are zero', () => {
   const overview = { kind: 'overview' } as const
   assert.deepEqual(threadStripText({ total: 3, running: 2, blocked: 1, target: overview }), { total: '3 个线程', running: '· 2 个运行中', blocked: '· 1 个需要你' })
   assert.deepEqual(threadStripText({ total: 3, running: 0, blocked: 0, target: overview }), { total: '3 个线程', running: undefined, blocked: undefined })
+})
+
+test('the overview head joins the chip\'s words and offers 全部停止 while anything can stop', () => {
+  const overview = { kind: 'overview' } as const
+  assert.equal(overviewHeadView(undefined), undefined)
+  assert.deepEqual(overviewHeadView({ total: 3, running: 2, blocked: 1, target: overview }), { summary: '3 个线程 · 2 个运行中 · 1 个需要你', canStopAll: true })
+  assert.deepEqual(overviewHeadView({ total: 2, running: 0, blocked: 1, target: overview }), { summary: '2 个线程 · 1 个需要你', canStopAll: true })
+  assert.deepEqual(overviewHeadView({ total: 2, running: 0, blocked: 0, target: overview }), { summary: '2 个线程', canStopAll: false })
 })
 
 test('switching sessions drops a sub-agent selection with nothing behind it', () => {

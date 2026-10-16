@@ -29,6 +29,7 @@ import { MISSING_MODEL_ISSUE } from '../errors.js'
 import { canPumpQueue, canWakeForNotifications, handOffQueuedMessage, notificationInput } from '../queuePump.js'
 import { projectDisplayName, projectRootKey } from '../projectDirectory.js'
 import { isGlobalWorkspaceRoot } from '../../utils/paths.js'
+import { isSystemReminderBlock } from '../../harness/systemReminder.js'
 import { SessionRecordLedger } from '../recordLedger.js'
 import { buildRewindSummaryRewrite } from '../rewindSummary.js'
 import { generateFileSuggestions } from '../suggestions/fileSuggestions.js'
@@ -948,11 +949,19 @@ export class SessionHost implements CoordinationLaneControl {
         return this.controller.getFileHistoryService().rewindTo(command.messageId)
 
       case 'truncate-session': {
+        const target = (await this.project.store.loadRecords(this.session.id)).find(
+          (record) => record.type === 'message' && record.role === 'user' && record.id === command.messageId,
+        )
         const result = await this.project.store.truncateBeforeMessage(this.session.id, command.messageId)
         // Thrown rather than reported: a rewind that silently did nothing would
         // leave the caller showing a transcript the file no longer matches.
         if (!result.success) throw new Error(result.error ?? 'Failed to truncate session')
-        return withToolDisplays({ records: await this.afterRewind() }) satisfies WireRewindResult
+        const records = await this.afterRewind()
+        // The cut removed the prompt itself; hand it back to edit and resend.
+        if (target?.type === 'message' && !isSystemReminderBlock(target.content)) {
+          this.controller.restoreInput(target.displayContent ?? target.content, target.images)
+        }
+        return withToolDisplays({ records }) satisfies WireRewindResult
       }
 
       case 'summarize-rewind': {

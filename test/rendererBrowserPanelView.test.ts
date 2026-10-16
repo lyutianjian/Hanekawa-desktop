@@ -168,6 +168,26 @@ test('no tab means nothing to position', (t) => {
   assert.deepEqual(r.bounds, [])
 })
 
+test('a lane with no tabs hides the page the last lane showed', (t) => {
+  const r = render(t)
+  r.paint()
+  r.paint({ lane: '2', activeTabId: undefined })
+  assert.deepEqual(r.bounds.at(-1), { tabId: 't1', rect: HOLE_RECT, visible: false })
+})
+
+test('a blank new tab hides the page it replaces on screen', (t) => {
+  const r = render(t)
+  r.paint()
+  r.paint({
+    tabs: [tab({ tabId: 't1', lane: '1', url: 'https://example.com/a' }), tab({ tabId: 't2', lane: '1' })],
+    activeTabId: 't2',
+  })
+  assert.deepEqual(r.bounds.slice(1), [
+    { tabId: 't1', rect: HOLE_RECT, visible: false },
+    { tabId: 't2', rect: HOLE_RECT, visible: false },
+  ])
+})
+
 test('disposing hides the page rather than leaving it floating over the window', (t) => {
   const r = render(t)
   r.paint()

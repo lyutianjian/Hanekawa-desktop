@@ -1589,7 +1589,6 @@ const CARD: TaskCard = {
   ],
   hiddenBefore: 0,
   openAfter: 0,
-  stale: false,
 }
 
 function cardOf(view: Rendered): StubView | undefined {
@@ -1654,12 +1653,23 @@ test('the task card sits above the status line, one row and mark per task', (t) 
   assert.equal(cardOf(view), undefined, 'no card between turns')
 })
 
-test('a windowed or carried-over card summarises what it does not show', (t) => {
+test('a windowed card summarises what it does not show', (t) => {
   const view = mount(t)
   const state = transcript([{ id: 'u1', kind: 'user', text: 'go' }])
-  view.render(state, NO_DISCLOSURE, { ...waiting(state, Date.now()), taskCard: { ...CARD, stale: true, hiddenBefore: 4, openAfter: 2 } })
+  view.render(state, NO_DISCLOSURE, { ...waiting(state, Date.now()), taskCard: { ...CARD, hiddenBefore: 4, openAfter: 2 } })
   const notes = cardOf(view)!.children.filter((child) => child.tagName === 'P').map((child) => child.text)
-  assert.deepEqual(notes, ['上一条消息之前的计划', '更早的 4 项', '还有 2 项'])
+  assert.deepEqual(notes, ['更早的 4 项', '还有 2 项'])
+})
+
+test('while the turn waits on the user, the running row is drawn paused', (t) => {
+  const view = mount(t)
+  const state = transcript([{ id: 'u1', kind: 'user', text: 'go' }])
+  const marks = () => cardOf(view)!.children.find((child) => child.tagName === 'UL')!.children
+    .map((row) => row.children[0]?.attributes.get('aria-label'))
+  view.render(state, NO_DISCLOSURE, { ...waiting(state, Date.now()), taskCard: CARD, asking: '选哪个' })
+  assert.deepEqual(marks(), ['已完成', '已搁置', '未开始'])
+  view.render(state, NO_DISCLOSURE, { ...waiting(state, Date.now()), taskCard: CARD })
+  assert.deepEqual(marks(), ['已完成', '进行中', '未开始'])
 })
 
 test('only the user bubble grows pills', (t) => {

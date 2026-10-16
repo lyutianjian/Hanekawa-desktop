@@ -186,8 +186,13 @@ export function createBrowserPanelView(
   function measure(): void {
     if (disposed) return
     const tabId = model.activeTabId
-    // No tab means nothing to position. The *hiding* of a page whose tab just
-    // closed is not this branch's job — the host drops the view with the tab.
+    // The host hides other tabs only when one is shown, so a page leaving the
+    // screen for no tab (a lane without any) or a non-painting one (a blank
+    // new tab) has to be hidden here, or it stays over the window.
+    if (pushed !== undefined && pushed.visible && pushed.tabId !== tabId) {
+      handlers.onBounds(pushed.tabId, pushed.rect, false)
+      pushed = undefined
+    }
     if (tabId === undefined) {
       pushed = undefined
       return

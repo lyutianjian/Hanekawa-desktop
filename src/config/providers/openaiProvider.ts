@@ -73,6 +73,7 @@ export class OpenAIProvider implements ModelProvider {
           toolsJson: JSON.stringify(getOpenAIToolsFromPayload(payload)),
           model: String(payload.model ?? effectiveRequest.model),
           cacheScope: getOpenAICacheScope(effectiveRequest),
+          firstMessage: effectiveRequest.messages[0]?.content,
           messages: payload.messages,
         }, cacheSource)
         if (attempt > 1) {

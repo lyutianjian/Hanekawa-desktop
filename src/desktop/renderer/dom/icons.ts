@@ -16,6 +16,9 @@
  * Every icon inherits `currentColor`, so an icon is coloured by the rule that
  * colours its button. That is what keeps `--accent-*` on `color` rather than on
  * a `fill` the style test would have to special-case.
+ *
+ * The shapes are Lucide's (https://lucide.dev), ISC License,
+ * Copyright (c) 2026 Lucide Icons and Contributors.
  */
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -68,203 +71,143 @@ export type IconName =
   | 'overview'
   // --- a running sub-agent's capsule ---
   | 'agent'
+  // --- a thread row's status mark and its menu trigger ---
+  | 'circle'
+  | 'check-circle'
+  // --- a task card row's running and paused marks ---
+  | 'progress-ring'
+  | 'circle-ellipsis'
+  | 'x-circle'
+  | 'alert-circle'
+  | 'more'
 
-interface IconSpec {
-  /** Path data on a 16×16 grid. */
-  readonly paths: readonly string[]
-  /** Filled shapes (the dot, the stop square) rather than stroked outlines. */
-  readonly filled?: boolean
-}
+type ShapeTag = 'path' | 'circle' | 'rect' | 'ellipse' | 'line'
+
+/** A bare string is a `<path>`'s data; anything else is one Lucide primitive. */
+type Shape = string | readonly [ShapeTag, Readonly<Record<string, string | number>>]
+
+/** 24×24 shapes, Lucide's copied as drawn so they stay comparable to the source. */
+type IconSpec = readonly Shape[]
+
+/** The status dot: Lucide's `circle-small`, filled. */
+const DOT: Shape = ['circle', { cx: 12, cy: 12, r: 6, fill: 'currentColor', stroke: 'none' }]
+const RING: Shape = ['circle', { cx: 12, cy: 12, r: 10 }]
+const FRAME: Shape = ['rect', { width: 18, height: 18, x: 3, y: 3, rx: 2 }]
 
 /**
  * Keyed `satisfies`, the same drift guard `commandSchema.ts` and
  * `SHELL_COMMAND_SCHEMAS` use: adding a name to `IconName` without drawing it
- * fails the build *by name* rather than rendering an empty box.
+ * fails the build *by name* rather than rendering an empty box. Each entry is
+ * named after the Lucide icon it copies.
  */
 const ICONS = {
-  plus: { paths: ['M8 3.5v9', 'M3.5 8h9'] },
-  // The zoom control's other half, and the `plus` above with one stroke removed.
-  minus: { paths: ['M3.5 8h9'] },
-  // The image viewer's way out. A drawn ✕ rather than the glyph the composer's
-  // small controls use: it sits on a scrim at the window's corner, where a text
-  // character renders at the font's mercy instead of the icon grid's.
-  close: { paths: ['M4 4l8 8', 'M12 4l-8 8'] },
-  trash: {
-    paths: [
-      'M3 4.5h10',
-      'M6.5 4.5V3h3v1.5',
-      'M4.6 4.5l.5 8a1 1 0 0 0 1 .9h3.8a1 1 0 0 0 1-.9l.5-8',
-    ],
-  },
-  // An outlined diamond: the running sub-agent's capsule.
-  agent: { paths: ['M8 2.8 13.2 8 8 13.2 2.8 8z'] },
-  folder: { paths: ['M2 5a1.5 1.5 0 0 1 1.5-1.5h2.2L7 5h5.5A1.5 1.5 0 0 1 14 6.5v5A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5z'] },
-  // A sheet with a folded corner, for the inline file pills in a user message.
-  file: {
-    paths: [
-      'M4 2.6h4.4L12 6.2v7.2a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V3.6a1 1 0 0 1 1-1z',
-      'M8.4 2.6v3.6H12',
-    ],
-  },
-  'chevron-left': { paths: ['M10 3.5 5.5 8l4.5 4.5'] },
-  'chevron-right': { paths: ['M6 3.5 10.5 8 6 12.5'] },
-  'chevron-down': { paths: ['M3.5 6 8 10.5 12.5 6'] },
+  plus: ['M5 12h14', 'M12 5v14'],
+  minus: ['M5 12h14'],
+  // x
+  close: ['M18 6 6 18', 'm6 6 12 12'],
+  trash: [
+    'M10 11v6',
+    'M14 11v6',
+    'M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6',
+    'M3 6h18',
+    'M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2',
+  ],
+  // diamond
+  agent: ['M2.7 10.3a2.41 2.41 0 0 0 0 3.41l7.59 7.59a2.41 2.41 0 0 0 3.41 0l7.59-7.59a2.41 2.41 0 0 0 0-3.41l-7.59-7.59a2.41 2.41 0 0 0-3.41 0Z'],
+  folder: ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'],
+  file: [
+    'M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z',
+    'M14 2v5a1 1 0 0 0 1 1h5',
+  ],
+  'chevron-left': ['m15 18-6-6 6-6'],
+  'chevron-right': ['m9 18 6-6-6-6'],
+  'chevron-down': ['m6 9 6 6 6-6'],
   // A full arrow, not the chevron: the jump-to-bottom button is the only place
   // that means "go to the end", and a bare chevron there reads as "collapse".
-  'arrow-down': { paths: ['M8 3.2v9.6', 'M4 8.8 8 12.8l4-4'] },
-  // The settings screen's way out. A full arrow for the same reason
-  // `arrow-down` is one: `chevron-left` beside a label reads as "collapse this",
-  // not as "go back".
-  'arrow-left': { paths: ['M12.8 8H3.2', 'M7.2 4 3.2 8l4 4'] },
-  dot: { paths: ['M8 5a3 3 0 1 1 0 6 3 3 0 0 1 0-6z'], filled: true },
-  // The chip menu's "this is the one in force" mark. A tick rather than the
-  // `dot` the `#surface` rows use: there the mark sits in a fixed column before
-  // the label, here it trails a flyout row the way a menu check does.
-  check: { paths: ['M3.5 8.6 6.6 11.7 12.5 4.8'] },
-  // A dial with two hands — the「最近」filter. A folder would say "project",
-  // which is the one thing the global workspace is not.
-  clock: { paths: ['M8 2.4a5.6 5.6 0 1 1 0 11.2A5.6 5.6 0 0 1 8 2.4z', 'M8 5.1V8l2.1 1.6'] },
-  // A three-quarter ring with a gap, so a CSS rotation reads as spinning. Stroked
-  // (not filled) so it inherits `currentColor` like every other outline.
-  spinner: { paths: ['M8 3.5a4.5 4.5 0 1 1-4.5 4.5'] },
-  send: { paths: ['M8 13V3.6', 'M3.8 7.8 8 3.5l4.2 4.3'] },
-  // A ring around a small square, one path so the nonzero rule punches the
-  // ring's hole: the outer circle runs clockwise, the inner one counter.
-  stop: {
-    paths: ['M8 1.25a6.75 6.75 0 1 1 0 13.5a6.75 6.75 0 1 1 0-13.5zM8 2.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11zM5.9 5.9h4.2v4.2H5.9z'],
-    filled: true,
-  },
-  // The settings mark: two sliders, outlined like every other icon here. It
-  // replaced a polygon gear that read as heavy and jagged at 14px.
-  gear: {
-    paths: [
-      'M2.5 4.5H8.5',
-      'M11.5 4.5H13.5',
-      'M10 3a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z',
-      'M2.5 11.5H4.5',
-      'M7.5 11.5H13.5',
-      'M6 10a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z',
-    ],
-  },
-  // --- the empty-state screen ---
-  // One glyph now, on the branch pill and on every row of the switcher it opens.
-  // The screen's mark and its three card icons were dropped with the cards
-  // themselves — see `model/welcome.ts`.
-  branch: {
-    paths: [
-      'M4.5 2.6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z',
-      'M4.5 10.4a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z',
-      'M11.5 2.6a1.5 1.5 0 1 1 0 3 1.5 1.5 0 0 1 0-3z',
-      'M4.5 5.6v4.8',
-      'M11.5 5.6v1.4a2.5 2.5 0 0 1-2.5 2.5H7a2.5 2.5 0 0 0-2.5 2.5',
-    ],
-  },
-  // A box with an arrow leaving it: "open this in another app". It replaced
-  // `</>`, which beside 「打开位置」 read as "view the source" rather than as the
-  // hand-off to VS Code the button is. Monochrome like every other icon here.
-  external: { paths: ['M7 3.2H4.2a1 1 0 0 0-1 1v7.6a1 1 0 0 0 1 1h7.6a1 1 0 0 0 1-1V9', 'M9.4 3.2h3.4v3.4', 'M12.8 3.2 7.6 8.4'] },
-  // A panel with its left column ruled off: the rail toggle. The same mark the
-  // reference builds put in the same corner.
-  sidebar: {
-    paths: [
-      'M2.6 4a1.4 1.4 0 0 1 1.4-1.4h8a1.4 1.4 0 0 1 1.4 1.4v8a1.4 1.4 0 0 1-1.4 1.4H4A1.4 1.4 0 0 1 2.6 12z',
-      'M6.4 2.6v10.8',
-    ],
-  },
-  // The same frame with the divider on the other side: the browser panel is the
-  // sidebar's mirror image, and so is the control that opens it.
-  'panel-right': {
-    paths: [
-      'M2.6 4a1.4 1.4 0 0 1 1.4-1.4h8a1.4 1.4 0 0 1 1.4 1.4v8a1.4 1.4 0 0 1-1.4 1.4H4A1.4 1.4 0 0 1 2.6 12z',
-      'M9.6 2.6v10.8',
-    ],
-  },
-  // A ringed question mark: the sidebar footer's shortcut panel. The ring is what
-  // makes it read as a control at 14px, where a bare `?` reads as punctuation.
-  help: {
-    paths: [
-      'M8 2.2a5.8 5.8 0 1 1 0 11.6 5.8 5.8 0 0 1 0-11.6z',
-      'M6.4 6.4a1.7 1.7 0 1 1 2.3 1.6c-.5.2-.7.6-.7 1.1v.3',
-      'M8 11.4v.6',
-    ],
-  },
+  'arrow-down': ['M12 5v14', 'm19 12-7 7-7-7'],
+  'arrow-left': ['m12 19-7-7 7-7', 'M19 12H5'],
+  dot: [DOT],
+  check: ['M20 6 9 17l-5-5'],
+  // The「最近」filter. A folder would say "project", which is the one thing the
+  // global workspace is not.
+  clock: [RING, 'M12 6v6l4 2'],
+  // loader-circle: an open ring, so a CSS rotation reads as spinning.
+  spinner: ['M21 12a9 9 0 1 1-6.219-8.56'],
+  // arrow-up
+  send: ['m5 12 7-7 7 7', 'M12 19V5'],
+  // circle-stop, its square filled so it reads at a glance mid-turn.
+  stop: [RING, ['rect', { x: 9, y: 9, width: 6, height: 6, rx: 1, fill: 'currentColor' }]],
+  // settings-2: two sliders rather than a cog, which reads as heavy at 14px.
+  gear: ['M14 17H5', 'M19 7h-9', ['circle', { cx: 17, cy: 17, r: 3 }], ['circle', { cx: 7, cy: 7, r: 3 }]],
+  // git-branch
+  branch: ['M15 6a9 9 0 0 0-9 9V3', ['circle', { cx: 18, cy: 6, r: 3 }], ['circle', { cx: 6, cy: 18, r: 3 }]],
+  // external-link: the hand-off to another app.
+  external: ['M15 3h6v6', 'M10 14 21 3', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'],
+  // panel-left / panel-right: the browser panel is the sidebar's mirror image,
+  // and so is the control that opens it.
+  sidebar: [FRAME, 'M9 3v18'],
+  'panel-right': [FRAME, 'M15 3v18'],
+  // circle-question-mark
+  help: [RING, 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3', 'M12 17h.01'],
   // The inline request's leading glyph, chosen by what is being asked for: a
-  // shell prompt in a window for a command, a shield for everything else. It
-  // names the *kind* of thing the agent wants, the way the sidebar heading's
-  // glyph names the kind of group — see `dom/permissionRequestView.ts`.
-  terminal: {
-    paths: [
-      'M2.4 4.2a1.2 1.2 0 0 1 1.2-1.2h8.8a1.2 1.2 0 0 1 1.2 1.2v7.6a1.2 1.2 0 0 1-1.2 1.2H3.6a1.2 1.2 0 0 1-1.2-1.2z',
-      'M5 6.6 6.9 8.3 5 10',
-      'M8.6 10.2h2.6',
-    ],
-  },
-  shield: {
-    paths: [
-      'M8 2.2 12.8 4v3.4c0 3-2 5.2-4.8 6.4C5.2 12.6 3.2 10.4 3.2 7.4V4z',
-    ],
-  },
-  // Two offset sheets — the copy affordance every text surface draws. Its front
-  // sheet is the `file` glyph's box without the folded corner, so the two read as
-  // the same family at 14px.
-  copy: {
-    paths: [
-      'M5.6 5.6a1 1 0 0 1 1-1h5.2a1 1 0 0 1 1 1v5.2a1 1 0 0 1-1 1H6.6a1 1 0 0 1-1-1z',
-      'M10.4 4.6V4.2a1 1 0 0 0-1-1H4.2a1 1 0 0 0-1 1v5.2a1 1 0 0 0 1 1h.4',
-    ],
-  },
-  // A user message's 回退: a counter-clockwise arc, the way back to before it.
-  rewind: { paths: ['M3.4 6.2A5 5 0 1 1 3 8.8', 'M3.2 3.2v3.2h3.2'] },
-  // The token readout's one mark. It replaced a set of three — two arrows and a
-  // stack, one per direction — when the line stopped naming directions and
-  // started naming a total. A cylinder is the mark for "accumulated store",
-  // which is what a session total is; an arrow would still be claiming a
-  // direction the figure beside it no longer has.
-  //
-  // One band rather than two: at 11px a second one closes the gaps into a smudge.
-  database: {
-    paths: [
-      'M3.4 4c0-1 2-1.8 4.6-1.8s4.6.8 4.6 1.8-2 1.8-4.6 1.8S3.4 5 3.4 4z',
-      'M3.4 4v8c0 1 2 1.8 4.6 1.8s4.6-.8 4.6-1.8V4',
-      'M12.6 8c0 1-2 1.8-4.6 1.8S3.4 9 3.4 8',
-    ],
-  },
-  // The model chip's stand-in for its own name, for the widths where the name
-  // would render as half a glyph. A four-point spark — the mark this interface
-  // already reads as "the model", and the one shape in the row that is not a
-  // control's own affordance.
-  model: { paths: ['M8 2.4 9.5 6.5 13.6 8 9.5 9.5 8 13.6 6.5 9.5 2.4 8 6.5 6.5Z'] },
-  cat: { paths: ['M2.25 12.05V3.95l3.1 2.6c1.73-.72 3.6-.72 5.3 0l3.1-2.6v8.1', 'M1.2 12.05h13.6', 'M6.05 9.25h.01', 'M9.95 9.25h.01'] },
-  overview: { paths: ['M3 4.5h.01', 'M3 8h.01', 'M3 11.5h.01', 'M6 4.5h7', 'M6 8h7', 'M6 11.5h7'] },
+  // shell prompt for a command, a shield for everything else — see
+  // `dom/permissionRequestView.ts`. square-terminal and shield.
+  terminal: ['m7 11 2-2-2-2', 'M11 13h4', FRAME],
+  shield: ['M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z'],
+  copy: [['rect', { width: 14, height: 14, x: 8, y: 8, rx: 2 }], 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'],
+  // rotate-ccw: a user message's 回退, the way back to before it.
+  rewind: ['M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8', 'M3 3v5h5'],
+  // The token readout's mark: a store, for a figure that is a session total.
+  database: [['ellipse', { cx: 12, cy: 5, rx: 9, ry: 3 }], 'M3 5V19A9 3 0 0 0 21 19V5', 'M3 12A9 3 0 0 0 21 12'],
+  // sparkle: the model chip's stand-in for its own name on narrow rows.
+  model: ['M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z'],
+  // Hanekawa's own mark rather than Lucide's: the original 16-grid drawing at
+  // 1.5×, with the 1.5 stroke it was drawn for.
+  cat: [
+    'M3.375 18.075V5.925l4.65 3.9c2.595-1.08 5.4-1.08 7.95 0l4.65-3.9v12.15',
+    'M1.8 18.075h20.4',
+    'M9.075 13.875h.015',
+    'M14.925 13.875h.015',
+  ].map((d) => ['path', { d, 'stroke-width': 2.25 }] as const),
+  // list
+  overview: ['M3 5h.01', 'M3 12h.01', 'M3 19h.01', 'M8 5h13', 'M8 12h13', 'M8 19h13'],
+  // A thread's state at a glance: an empty ring idles, a ticked one is done, a
+  // crossed one failed, a marked one waits. One ring so the four read as a set.
+  circle: [RING],
+  'check-circle': [RING, 'm16 9-5.5 5.5L8 12'],
+  // A faint track with a quarter arc on it; the stylesheet colours the two apart.
+  'progress-ring': [RING, 'M12 2a10 10 0 0 1 10 10'],
+  'circle-ellipsis': [RING, 'M17 12h.01', 'M12 12h.01', 'M7 12h.01'],
+  'x-circle': [RING, 'm15 9-6 6', 'm9 9 6 6'],
+  'alert-circle': [RING, ['line', { x1: 12, x2: 12, y1: 8, y2: 12 }], ['line', { x1: 12, x2: 12.01, y1: 16, y2: 16 }]],
+  // ellipsis
+  more: [['circle', { cx: 12, cy: 12, r: 1 }], ['circle', { cx: 19, cy: 12, r: 1 }], ['circle', { cx: 5, cy: 12, r: 1 }]],
 } as const satisfies Record<IconName, IconSpec>
 
 export function icon(name: IconName, className = 'icon'): SVGSVGElement {
   const spec: IconSpec = ICONS[name]
   const svg = document.createElementNS(SVG_NS, 'svg')
   svg.setAttribute('class', className)
-  svg.setAttribute('viewBox', '0 0 16 16')
-  svg.setAttribute('width', '16')
-  svg.setAttribute('height', '16')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('width', '24')
+  svg.setAttribute('height', '24')
+  svg.setAttribute('fill', 'none')
+  svg.setAttribute('stroke', 'currentColor')
+  svg.setAttribute('stroke-width', '2')
+  svg.setAttribute('stroke-linecap', 'round')
+  svg.setAttribute('stroke-linejoin', 'round')
   // Decorative by default: every caller sits inside a button that already
   // carries an `aria-label`, and a second name would be read out twice.
   svg.setAttribute('aria-hidden', 'true')
   svg.setAttribute('focusable', 'false')
 
-  for (const data of spec.paths) {
-    const path = document.createElementNS(SVG_NS, 'path')
-    path.setAttribute('d', data)
-    if (spec.filled) {
-      path.setAttribute('fill', 'currentColor')
-    } else {
-      path.setAttribute('fill', 'none')
-      path.setAttribute('stroke', 'currentColor')
-      path.setAttribute('stroke-width', '1.5')
-      path.setAttribute('stroke-linecap', 'round')
-      path.setAttribute('stroke-linejoin', 'round')
-    }
+  for (const shape of spec) {
+    const [tag, attrs] = typeof shape === 'string' ? ['path', { d: shape }] : shape
+    const node = document.createElementNS(SVG_NS, tag)
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value))
     // `append()` in `dom.ts` is typed for an HTMLElement parent; an SVG element
     // is not one, so this file does its own appending.
-    svg.appendChild(path)
+    svg.appendChild(node)
   }
   return svg
 }

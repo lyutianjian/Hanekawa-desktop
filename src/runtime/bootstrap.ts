@@ -19,7 +19,7 @@ import { BackgroundTaskRegistry } from '../services/backgroundTasks/registry.js'
 import { ImageAttachmentService, attachmentSendVersionPath } from '../services/imageAttachments/imageAttachmentService.js'
 import type { AttachmentFactsResolver } from '../harness/turnImages.js'
 import { removeLegacyShadowGit } from '../services/fileHistory/legacyShadowGit.js'
-import { clearProjectContextCache, getProjectContext } from '../services/context/projectContext.js'
+import { clearProjectContextCache, getProjectEntries } from '../services/context/projectContext.js'
 import type { SessionMeta } from '../sessions/service.js'
 import { registerBuiltinCommands } from '../commands/index.js'
 import { CommandRegistry } from '../commands/registry.js'
@@ -135,10 +135,10 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
     )
   }
 
-  // `AGENTS.md` / `CLAUDE.md` and the rules files above them, merged once here.
-  // Mutable for the same reason `settings` is: `reloadSettings()` re-reads it
-  // and the next runtime built picks up the new contents.
-  let projectContext = await getProjectContext(cwd)
+  // `AGENTS.md` / `CLAUDE.md` from cwd upwards, read once here. Mutable for the
+  // same reason `settings` is: `reloadSettings()` re-reads them and the next
+  // runtime built picks up the new contents.
+  let projectEntries = await getProjectEntries(cwd)
 
   // Read live rather than captured: the default model is editable from the
   // settings screen, and a new session opened afterwards has to start on the
@@ -203,10 +203,12 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
    * runtime for those; `needsRuntimeRebuild` says so rather than leaving the
    * caller to guess.
    *
-   * The project context (`AGENTS.md` / `CLAUDE.md`) rides along: it is not a
-   * settings layer, but it is captured per runtime the same way, and this is
-   * the one reload every host already calls, so an edited instructions file
-   * reaches the next runtime instead of waiting for a restart.
+   * The project's instruction files (`AGENTS.md` / `CLAUDE.md`) ride along:
+   * they are not a settings layer, but they are captured per runtime the same
+   * way, and this is the one reload every host already calls, so an edited
+   * file reaches the next runtime instead of waiting for a restart. The global
+   * `~/.myagent/AGENTS.md` is not here: each session snapshots it when it
+   * starts (`createRuntimeFactory`), and an open session keeps its snapshot.
    *
    * Every open scope gets the new rules, not just the newest one: each holds
    * its own `PermissionGate`, so reaching only one would leave the other tabs
@@ -229,13 +231,13 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
     const configChanged = previousConfig !== JSON.stringify(config.get())
 
     clearProjectContextCache(cwd)
-    const nextProjectContext = await getProjectContext(cwd)
-    const projectContextChanged = nextProjectContext !== projectContext
-    projectContext = nextProjectContext
+    const nextProjectEntries = await getProjectEntries(cwd)
+    const projectEntriesChanged = JSON.stringify(nextProjectEntries) !== JSON.stringify(projectEntries)
+    projectEntries = nextProjectEntries
 
     const rules = permissionRulesFromSettings(settings.permissions)
     for (const scope of scopes) scope.permissionGate.setConfigRules(rules)
-    return { needsRuntimeRebuild: hooksChanged || projectContextChanged || configChanged }
+    return { needsRuntimeRebuild: hooksChanged || projectEntriesChanged || configChanged }
   }
 
   // Fail-open: a server that fails to connect is reported but does not block
@@ -303,7 +305,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
     getSettings: () => settings,
     getSkills: () => skills,
     getAgentDefinitions: () => agentDefinitions,
-    getProjectContext: () => projectContext,
+    getProjectEntries: () => projectEntries,
     toolRegistry,
     backgroundTasks,
     contextManagement,
@@ -358,7 +360,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
     createActiveModelRuntime,
     openScope,
     getSettings: () => settings,
-    getProjectContext: () => projectContext,
+    getProjectEntries: () => projectEntries,
     listAgentDefinitions: () => agentDefinitions,
     reloadAgentDefinitions,
     reloadSkills,

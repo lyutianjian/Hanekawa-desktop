@@ -5,7 +5,7 @@ import { existsSync, mkdtempSync } from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
 import { z } from 'zod/v3'
-import { bootstrap, RuntimeStartupError } from '../src/runtime/index.js'
+import { bootstrap, RuntimeStartupError, switchToNewSession } from '../src/runtime/index.js'
 import { SessionStore } from '../src/sessions/service.js'
 import type { SessionMeta } from '../src/sessions/service.js'
 import type { SessionRecord, Tool } from '../src/harness/types.js'
@@ -14,6 +14,7 @@ import { createSessionPane } from '../src/runtime/sessionWorkspace.js'
 import { refreshRuntimeSlot } from '../src/runtime/providerRuntime.js'
 import { localSettingsPath } from '../src/config/settings.js'
 import { resolveContextWindow } from '../src/runtime/createRuntime.js'
+import { writeUserInstructions } from '../src/services/context/projectContext.js'
 
 // `config.json` lives in `~/.myagent` alone and `loadMergedSettings` layers a
 // shared `~/.myagent` beneath the project one, so every test needs its own home.
@@ -424,14 +425,48 @@ test('project instructions are loaded and re-read on reload', async () => {
   await writeFile(path.join(cwd, 'AGENTS.md'), 'always answer in haiku', 'utf8')
 
   const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
-  assert.match(host.getProjectContext(), /always answer in haiku/)
+  assert.match(host.getProjectEntries().join('\n'), /always answer in haiku/)
 
   await writeFile(path.join(cwd, 'AGENTS.md'), 'always answer in limericks', 'utf8')
 
   // Captured per runtime, like hooks: the caller has to rebuild for it to land.
   assert.equal((await host.reloadSettings()).needsRuntimeRebuild, true)
-  assert.match(host.getProjectContext(), /always answer in limericks/)
+  assert.match(host.getProjectEntries().join('\n'), /always answer in limericks/)
   await host.shutdown('test over')
+})
+
+test('the global instructions file is read once per session: a rebuild keeps it, a new session sees an edit', async () => {
+  const { cwd, store, session } = await createProject()
+  await writeFile(path.join(cwd, 'AGENTS.md'), 'project v1', 'utf8')
+  const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
+  const pane = createSessionPane(host, host)
+  type Opts = { projectContext?: string; memoryPrompt?: string }
+  const opts = (): Opts => (pane.runtimeSlot.requireCurrent().loop as unknown as { options: Opts }).options
+  try {
+    assert.doesNotMatch(opts().projectContext ?? '', /global v2/)
+    assert.match(opts().memoryPrompt ?? '', /\(currently empty\)/)
+
+    await writeUserInstructions('global v2')
+    await writeFile(path.join(cwd, 'AGENTS.md'), 'project v2', 'utf8')
+    assert.equal((await host.reloadSettings()).needsRuntimeRebuild, true)
+    refreshRuntimeSlot({ config: host.config, runtimeSlot: pane.runtimeSlot, createRuntime: host.createRuntime, modelKey: host.initialModelKey, session })
+    // The open session takes the repo file's edit on the rebuild but keeps its global snapshot.
+    assert.match(opts().projectContext ?? '', /project v2/)
+    assert.doesNotMatch(opts().projectContext ?? '', /global v2/)
+    assert.match(opts().memoryPrompt ?? '', /\(currently empty\)/)
+
+    // `/clear` and a new session go through the switch, not `openScope`.
+    await switchToNewSession(
+      { host, runtimeSlot: pane.runtimeSlot, controller: pane.controller, backgroundTasks: host.backgroundTasks },
+      { previousSessionId: session.id },
+    )
+    assert.match(opts().projectContext ?? '', /global instructions for all projects\):\n\nglobal v2/)
+    assert.match(opts().projectContext ?? '', /project v2/)
+    assert.match(opts().memoryPrompt ?? '', /its contents are loaded at the start of the conversation/)
+  } finally {
+    await pane.close()
+    await host.shutdown('test over')
+  }
 })
 
 test('invalid settings on reload are rejected without clobbering the live ones', async () => {

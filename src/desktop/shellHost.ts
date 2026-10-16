@@ -1826,11 +1826,7 @@ export class ShellHost<
     if (effect.saveConfig) await entry.project.config.save()
     // Provider configuration is global. A project opened before first-time
     // setup must see the same saved models as the project editing settings.
-    // The user-wide instructions are global too: every open project re-reads them.
-    const affected =
-      change.scope === 'provider' || change.scope === 'personalization'
-        ? this.deps.directory.entries()
-        : [entry]
+    const affected = change.scope === 'provider' ? this.deps.directory.entries() : [entry]
     for (const target of affected) await target.project.reloadSettings()
     if (effect.afterReload) await effect.afterReload()
 
@@ -2075,7 +2071,7 @@ export class ShellHost<
       skillsDir: getSkillsDir(entry.cwd),
       mcpServers,
       contextManagement,
-      userInstructions: await readUserInstructions(),
+      userInstructions: readUserInstructions(),
       coordination: describeCoordination(merged),
       general: {
         localPath: localSettingsPath(entry.cwd),
@@ -2462,9 +2458,9 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
       return { saveConfig: false, rebuild: true, scope: 'models' }
     case 'set-user-instructions':
       await writeUserInstructions(change.content)
-      // The reload re-reads the file; the rebuild is what puts it in an open
-      // session's system prompt.
-      return { saveConfig: false, rebuild: true, scope: 'models' }
+      // No rebuild: each session snapshots the file when it starts, so the edit
+      // reaches the next new session and an open one keeps its cached prefix.
+      return { saveConfig: false, rebuild: false, scope: 'models' }
     case 'set-thinking':
       await setLocalThinking(entry.cwd, change.enabled)
       // Same reason as the cache TTL: the loop is handed its thinking config

@@ -2,8 +2,8 @@ import type { WireCoordinationThreads, WireThreadInfo, WireThreadStatus } from '
 
 /**
  * How a coordination thread's status reads in the renderer: its label, its
- * colour tone, which list section it sits in, and the counts the project row
- * badges. Pure, from wire types only.
+ * colour tone, and the counts the project row badges. Pure, from wire types
+ * only.
  *
  * The table's nine statuses read as five: 运行中, 阻塞 (waiting on the user or
  * the coordinator), 空闲 (its turn is over; it can still be messaged), 失败 (its
@@ -55,15 +55,6 @@ export function threadTone(status: WireThreadStatus): ThreadTone {
     case 'stale':
       return 'muted'
   }
-}
-
-export type ThreadBucket = 'active' | 'quiet' | 'resolved'
-
-/** A stale thread (its session is gone) is as finished as a resolved one. */
-export function threadBucket(status: WireThreadStatus): ThreadBucket {
-  if (status === 'quiet') return 'quiet'
-  if (status === 'resolved' || status === 'stale') return 'resolved'
-  return 'active'
 }
 
 /** Waiting on the user or the coordinator; what the counts call 需要你. */

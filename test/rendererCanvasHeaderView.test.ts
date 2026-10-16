@@ -76,6 +76,7 @@ interface Rendered {
     pendingDelete?: string
     role?: 'coordinator' | 'thread'
     thread?: CanvasHeaderThread
+    blockedThreads?: number
   }): void
   identity(): StubView
   titleNode(): StubView | undefined
@@ -126,6 +127,7 @@ function render(t: { after(fn: () => void): void }): Rendered {
         hasConversation: true,
         role: state.role,
         thread: state.thread,
+        blockedThreads: state.blockedThreads,
       }))
     },
     identity,
@@ -477,4 +479,14 @@ test('the 概览 button is shown for either coordination role and toggles the ov
   assert.equal(r.threadsButton()?.text, '概览')
   r.stub.click(r.threadsButton()!.node)
   assert.deepEqual(r.events, ['open-threads', 'open-threads'])
+})
+
+test('the 概览 button shows its badge only when there is a count', (t) => {
+  const r = render(t)
+  const badge = () => r.threadsButton()!.children.find((child) => child.classes.includes('canvas-threads-badge'))!
+  r.paint({ role: 'coordinator' })
+  assert.equal(badge().hidden, true)
+  r.paint({ role: 'coordinator', blockedThreads: 2 })
+  assert.equal(badge().hidden, false)
+  assert.equal(badge().text, '2')
 })

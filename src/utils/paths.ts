@@ -210,14 +210,15 @@ export function getThreadWorktreeDir(projectDir: string, threadId: string): stri
  * that grade, as it does for Bash. The one hard wall is Hanekawa's own
  * `~/.myagent` — only the places there the model is *told* to use stay
  * reachable: this session's spilled tool output (the preview hands it the path
- * to Read), the project's plan files (plan mode has it Write them) and its
- * memory directory. The session transcripts least of all.
+ * to Read), the project's plan files (plan mode has it Write them), its
+ * memory directory and the user's global instructions file. The session
+ * transcripts least of all.
  */
 export function resolveToolPath(context: { cwd: string; projectDir?: string; sessionId?: string }, filePath: string): string {
   const absolute = path.resolve(context.cwd, filePath)
   if (!isUnderRoot(getGlobalMyAgentDir(), absolute)) return absolute
   const projectDir = context.projectDir ?? context.cwd
-  const roots = [getProjectPlansDir(projectDir), getProjectMemoryDir(projectDir), getCoordinationNotesDir(projectDir)]
+  const roots = [getProjectPlansDir(projectDir), getProjectMemoryDir(projectDir), getCoordinationNotesDir(projectDir), getUserInstructionsPath()]
   if (context.sessionId) roots.push(getToolResultSpillDir(projectDir, context.sessionId))
   if (roots.some((root) => isUnderRoot(root, absolute))) return absolute
   throw new Error(`Path "${filePath}" is inside Hanekawa's runtime data (~/.myagent), which file tools cannot reach`)

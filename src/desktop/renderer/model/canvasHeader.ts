@@ -65,6 +65,8 @@ export interface CanvasHeaderView {
   readonly openLocationTitle: string
   /** The 线程 button, shown for either coordination role. */
   readonly threadsButton: boolean
+  /** The button's badge: threads waiting on someone, `9+` past nine; empty for none. */
+  readonly threadsBadge: string
   /** Present on a thread session; replaces the title while not renaming. */
   readonly breadcrumb: CanvasHeaderBreadcrumb | undefined
 }
@@ -84,6 +86,7 @@ const EMPTY: CanvasHeaderView = {
   openLocationLabel: '',
   openLocationTitle: '',
   threadsButton: false,
+  threadsBadge: '',
   breadcrumb: undefined,
 }
 
@@ -112,6 +115,8 @@ export function canvasHeaderView(input: {
   role?: 'coordinator' | 'thread'
   /** The thread this session runs, already labelled by the caller. Used only with `role: 'thread'`. */
   thread?: CanvasHeaderThread
+  /** The project's blocked threads, for the 概览 button's badge. */
+  blockedThreads?: number
 }): CanvasHeaderView {
   const { lane } = input
   if (!lane || !input.hasConversation) return EMPTY
@@ -146,6 +151,7 @@ export function canvasHeaderView(input: {
     openLocationLabel: 'VS Code',
     openLocationTitle: `在 VS Code 中打开 ${lane.projectName}`,
     threadsButton: input.role !== undefined,
+    threadsBadge: input.role === undefined || !input.blockedThreads ? '' : input.blockedThreads > 9 ? '9+' : String(input.blockedThreads),
     breadcrumb: input.role === 'thread' && input.thread
       ? {
           backLabel: '← 协调',

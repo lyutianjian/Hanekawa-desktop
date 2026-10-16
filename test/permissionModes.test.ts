@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import path from 'node:path'
 import os from 'node:os'
-import { mkdir, mkdtemp, realpath, rm, symlink } from 'node:fs/promises'
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises'
 import { z } from 'zod/v3'
 import {
   PermissionGate,
@@ -17,7 +17,7 @@ import { bashTool } from '../src/tools/BashTool/BashTool.js'
 import { configTool } from '../src/tools/ConfigTool/ConfigTool.js'
 import { resolveSubagentPermissionMode } from '../src/tools/AgentTool/AgentTool.js'
 import type { Tool, ToolContext } from '../src/harness/types.js'
-import { getProjectMemoryDir, getProjectPlansDir } from '../src/utils/paths.js'
+import { getProjectMemoryDir, getProjectPlansDir, getUserInstructionsPath } from '../src/utils/paths.js'
 
 function fileTool(name: string, readOnly: boolean): Tool {
   return {
@@ -467,6 +467,57 @@ test('memory files: no prompt in any mode, but only direct *.md and only with me
   assert.equal(await gateFor('default')(bashTool, bash(`rm ${note}`)), 'ask')
   assert.equal(await gateFor('default', {}, false)(bashTool, bash(`ls ${memoryDir}`)), 'ask')
   assert.equal(await gateFor('default', { deny: [`Read(${memoryDir}/**)`] })(bashTool, bash(`cat ${note}`)), 'deny')
+})
+
+test('global instructions file: no prompt outside plan and readonly, and only on a session gate', async (t) => {
+  const cwd = await scratch(t)
+  const file = getUserInstructionsPath()
+  const gateFor = (mode: PermissionMode, rules: { deny?: string[]; ask?: string[] } = {}, withFile = true, instructionsFile = file) => {
+    const requests: PermissionRequest[] = []
+    const gate = new PermissionGate(async (request) => { requests.push(request); return false }, permissionRulesFromSettings(rules), {
+      mode, cwd, ...(withFile ? { userInstructionsFile: instructionsFile } : {}),
+    })
+    return async (tool: Tool, input: unknown): Promise<Outcome> => {
+      const decision = await gate.approveDetailed(tool, input)
+      return requests.length > 0 ? 'ask' : decision.approved ? 'allow' : 'deny'
+    }
+  }
+
+  // default and auto are the modes that prove the exemption: bypass allows the write anyway.
+  for (const mode of ['default', 'auto', 'bypass'] as PermissionMode[]) {
+    for (const tool of [readTool, writeTool, editTool]) {
+      assert.equal(await gateFor(mode)(tool, { filePath: file }), 'allow', `${mode} ${tool.name}`)
+    }
+  }
+  assert.equal(await gateFor('default', {}, false)(writeTool, { filePath: file }), 'ask', 'without the exemption a write asks')
+  // Any spelling of the path that resolves to the file.
+  assert.equal(await gateFor('default')(writeTool, { filePath: path.relative(cwd, file) }), 'allow')
+  assert.equal(await gateFor('default')(writeTool, { filePath: `${path.dirname(file)}/../.myagent/AGENTS.md` }), 'allow')
+  assert.equal(await gateFor('plan')(writeTool, { filePath: file }), 'deny')
+  assert.equal(await gateFor('readonly')(writeTool, { filePath: file }), 'deny')
+  // Only the file itself, never a delete, and not for a sub-agent's gate.
+  assert.notEqual(await gateFor('default')(fileTool('Delete', false), { filePath: file }), 'allow')
+  assert.notEqual(await gateFor('default')(writeTool, { filePath: path.join(path.dirname(file), 'settings.json') }), 'allow')
+  assert.notEqual(await gateFor('default', {}, false)(writeTool, { filePath: file }), 'allow')
+
+  assert.equal(await gateFor('bypass', { deny: ['Write'] })(writeTool, { filePath: file }), 'deny')
+  assert.equal(await gateFor('default', { ask: ['Write'] })(writeTool, { filePath: file }), 'ask')
+
+  // A symlinked AGENTS.md does not carry the exemption to its target, whether
+  // or not the target exists yet. Kept off the shared home's real file, which
+  // other test files read concurrently.
+  const linked = path.join(await scratch(t), 'AGENTS.md')
+  const target = path.join(os.homedir(), '.zshrc')
+  await symlink(target, linked)
+  t.after(() => rm(target, { force: true }))
+  for (const exists of [false, true]) {
+    if (exists) await writeFile(target, 'export PATH=$PATH', 'utf8')
+    for (const filePath of [linked, target]) {
+      for (const mode of ['default', 'auto'] as PermissionMode[]) {
+        assert.notEqual(await gateFor(mode, {}, true, linked)(writeTool, { filePath }), 'allow', `${mode} ${filePath} exists=${exists}`)
+      }
+    }
+  }
 })
 
 test('a locked readonly gate denies a normal write without prompting', async (t) => {

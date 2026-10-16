@@ -269,6 +269,21 @@ test('shutdown resolves even when the host dies before replying', async () => {
   harness.client.dispose()
 })
 
+test('closing its own pane resolves even though the close takes the channel with it', async () => {
+  const harness = createHarness()
+  harness.post({ type: 'session-changed', session: { id: 's1', shortId: 's1', title: 'Draft', messageCount: 0, createdAt: 'now', updatedAt: 'now' } })
+  await settle()
+
+  const closing = harness.client.closePane('s1')
+  const other = assert.rejects(harness.client.closePane('s2'), /host disconnected/)
+  await settle()
+  harness.hostSide.close()
+
+  await closing
+  await other
+  harness.client.dispose()
+})
+
 test('the two rewind commands unwrap to the records the host wrote', async () => {
   const harness = createHarness()
 

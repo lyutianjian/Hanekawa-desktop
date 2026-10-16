@@ -832,13 +832,12 @@ test('single window: two lanes on one transport, opened, listed, closed through 
     // Closing a pane through its own lane tears that lane down end to end:
     // the workspace drops the pane, the shell detaches, and the close control
     // frame is what the renderer-side lane sees. The `close-pane` reply never
-    // lands — the lane closed underneath it — so the pending request fails
-    // with the disconnect, the same failure the client absorbs when a window
-    // used to die.
+    // lands — the lane closed underneath it — and the client counts that as
+    // the close succeeding, since it was its own pane.
     rendererMux.lane('2').onClose(() => {
       laneTwoCloses += 1
     })
-    await assert.rejects(client2.closePane(second.pane.paneId), /disconnected/)
+    await client2.closePane(second.pane.paneId)
     await settle()
     assert.equal(laneTwoCloses, 1, 'the lane close reached the renderer side')
     assert.deepEqual(shellClient.getLanes().map((lane) => lane.lane), ['1'])

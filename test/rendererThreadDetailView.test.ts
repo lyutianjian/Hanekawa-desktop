@@ -185,7 +185,7 @@ test('the head is pinned outside the scrolling body, and back leads to a list wh
     detailRoot.hidden = page === undefined
     detail.render(page)
     if (page === undefined) {
-      list.render(threadPanelView({ state: coordination, now: Date.now(), activeSessionId: undefined, expanded: new Set(), pending: new Set() }))
+      list.render(threadPanelView({ state: coordination, now: Date.now(), activeSessionId: undefined, toggled: new Set(), pending: new Set(), seen: new Map() }))
     }
   }
   const all = (root: HTMLElement, className: string): StubView[] => {
@@ -199,7 +199,7 @@ test('the head is pinned outside the scrolling body, and back leads to a list wh
   }
 
   paint()
-  stub.click(all(listRoot, 'thread-row-title')[0]!.node)
+  stub.click(all(listRoot, 'thread-row-main')[0]!.node)
   await flush()
   assert.deepEqual(opened, ['a'])
   const head = all(detailRoot, 'thread-detail-head')[0]!
@@ -213,7 +213,7 @@ test('the head is pinned outside the scrolling body, and back leads to a list wh
   assert.equal(listRoot.hidden, false)
   assert.equal(detailRoot.hidden, true)
 
-  stub.click(all(listRoot, 'thread-row-title')[1]!.node)
+  stub.click(all(listRoot, 'thread-row-main')[1]!.node)
   await flush()
   assert.deepEqual(opened, ['a', 'b'])
   assert.equal(detailRoot.hidden, false)

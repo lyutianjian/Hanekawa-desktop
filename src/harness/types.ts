@@ -460,6 +460,8 @@ export interface TaskItem {
   blocks?: string[]
   blockedBy?: string[]
   metadata?: Record<string, unknown>
+  /** The request (`ToolContext.requestTurnId`) whose list this task is on. */
+  requestTurnId?: string
 }
 
 export interface PlanModeBridge {
@@ -559,6 +561,12 @@ export interface ToolContext {
   readFileState?: Map<string, ReadFileState>
   invokedSkills?: Map<string, { content: string; timestamp: number }>
   taskState?: Map<string, TaskItem>
+  /**
+   * The turn of the user's latest request — a turn started by the user's own
+   * words, not by a system reminder; set by the loop. The task list belongs to
+   * one request: the first `TaskCreate` of a later one replaces it.
+   */
+  requestTurnId?: string
   /**
    * The session's attachment store, used by the Read tool's image branch.
    * Absent where no store is wired (test loops) — image reads then fail with a
