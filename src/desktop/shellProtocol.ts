@@ -487,7 +487,7 @@ export interface WireMcpServerInfo {
 }
 
 /**
- * The six context-budget numbers, in the order the screen draws them.
+ * The context-budget numbers, in the order the screen draws them.
  *
  * Exported as a value because both the schema and the rows iterate it; spelled
  * once so a seventh field cannot be added to one and forgotten in the other.
@@ -495,10 +495,9 @@ export interface WireMcpServerInfo {
 export const CONTEXT_MANAGEMENT_FIELDS = [
   'contextWindow',
   'summaryOutputTokens',
-  'autoCompactBufferTokens',
+  'autoCompactReserveRatio',
   'manualCompactBufferTokens',
   'microCompactThresholdRatio',
-  'autoCompactThresholdRatio',
 ] as const
 
 export type WireContextManagementField = (typeof CONTEXT_MANAGEMENT_FIELDS)[number]

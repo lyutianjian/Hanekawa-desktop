@@ -2352,7 +2352,7 @@ test('the cache toggle rebuilds the lanes; the context numbers do not', async ()
     assert.equal(
       context.settings.contextManagement.summaryOutputTokens,
       20_000,
-      'the other five keep their values',
+      'the others keep their values',
     )
   })
 })
@@ -2363,7 +2363,7 @@ test('a context number that cannot mean anything is rejected and saves nothing',
       h.client.changeSettings(h.entry.root, {
         scope: 'general',
         kind: 'set-context-management',
-        field: 'autoCompactThresholdRatio',
+        field: 'autoCompactReserveRatio',
         value: 1.5,
       }),
       /ratio in \(0, 1]/,
@@ -2680,7 +2680,7 @@ test('get-settings projects the agent definitions and the context budget', async
     // by field — a spread would put `getSystemPrompt` on the wire.
     assert.ok(!JSON.stringify(settings.agents).includes('review it'))
 
-    assert.equal(settings.contextManagement.contextWindow, 200_000, 'merged over the defaults')
+    assert.equal(settings.contextManagement.contextWindow, 272_000, 'merged over the defaults')
     assert.equal(settings.general.cacheTtl1h, undefined, 'unset is not false')
   })
 })

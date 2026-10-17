@@ -148,10 +148,9 @@ function snapshotOf(overrides: Partial<WireSettingsSnapshot> = {}): WireSettings
     contextManagement: {
       contextWindow: 200_000,
       summaryOutputTokens: 20_000,
-      autoCompactBufferTokens: 13_000,
+      autoCompactReserveRatio: 0.083,
       manualCompactBufferTokens: 3_000,
       microCompactThresholdRatio: 0.9,
-      autoCompactThresholdRatio: 0.93,
     },
     coordination: { quietDays: 7, autoResolveDays: 14 },
     general: { localPath: 'C:\\repo\\alpha\\.myagent\\settings.local.json' },
@@ -738,7 +737,7 @@ test('a card that does not match itself keeps only its matching rows', () => {
   assert.deepEqual(view.cards.map((card) => card.id), ['context'])
   assert.deepEqual(
     view.cards[0]?.rows.map((row) => row.id),
-    ['context:autoCompactBufferTokens', 'context:manualCompactBufferTokens'],
+    ['context:autoCompactReserveRatio', 'context:manualCompactBufferTokens'],
   )
 })
 
@@ -1359,10 +1358,9 @@ test('the context card names its file and says the numbers need a restart', () =
     [
       'context:contextWindow',
       'context:summaryOutputTokens',
-      'context:autoCompactBufferTokens',
+      'context:autoCompactReserveRatio',
       'context:manualCompactBufferTokens',
       'context:microCompactThresholdRatio',
-      'context:autoCompactThresholdRatio',
     ],
   )
   const window = card?.rows[0]
@@ -1381,13 +1379,13 @@ test('the context card names its file and says the numbers need a restart', () =
 
 test('a context number is validated here, so a typo is not a host error', () => {
   const state = openState({ category: 'general' })
-  const cases: Array<{ field: 'contextWindow' | 'autoCompactThresholdRatio'; value: string; error: RegExp }> = [
+  const cases: Array<{ field: 'contextWindow' | 'autoCompactReserveRatio'; value: string; error: RegExp }> = [
     { field: 'contextWindow', value: '', error: /不能为空/ },
     { field: 'contextWindow', value: '2e5x', error: /必须是数字/ },
     { field: 'contextWindow', value: '0', error: /正整数/ },
     { field: 'contextWindow', value: '1.5', error: /正整数/ },
-    { field: 'autoCompactThresholdRatio', value: '150', error: /百分比/ },
-    { field: 'autoCompactThresholdRatio', value: '0', error: /百分比/ },
+    { field: 'autoCompactReserveRatio', value: '150', error: /百分比/ },
+    { field: 'autoCompactReserveRatio', value: '0', error: /百分比/ },
   ]
   for (const { field, value, error } of cases) {
     const outcome = applySettingsIntent(state, { kind: 'set-context-value', field, value })
@@ -1395,17 +1393,16 @@ test('a context number is validated here, so a typo is not a host error', () => 
     assert.match(outcome.state.error ?? '', error)
   }
 
-  // A ratio is typed as a percentage; 100% is legitimate: compact only when the
-  // window is full.
+  // A ratio is typed as a percentage, and 100% is inside the accepted range.
   const accepted = applySettingsIntent(state, {
     kind: 'set-context-value',
-    field: 'autoCompactThresholdRatio',
+    field: 'autoCompactReserveRatio',
     value: '100%',
   })
   assert.deepEqual(accepted.changes, [
-    { scope: 'general', kind: 'set-context-management', field: 'autoCompactThresholdRatio', value: 1 },
+    { scope: 'general', kind: 'set-context-management', field: 'autoCompactReserveRatio', value: 1 },
   ])
-  const ninety = applySettingsIntent(state, { kind: 'set-context-value', field: 'autoCompactThresholdRatio', value: '90' })
+  const ninety = applySettingsIntent(state, { kind: 'set-context-value', field: 'autoCompactReserveRatio', value: '90' })
   assert.equal(ninety.changes?.[0] && 'value' in ninety.changes[0] ? ninety.changes[0].value : undefined, 0.9)
 
   // The separators the field is drawn with, and a `k`, read back as the number.

@@ -81,6 +81,8 @@ export function endpointLabel(baseUrl: string | undefined, providerName: string 
 
 /** What the transcript's error card draws. `retryable` is the transcript's to decide; see `withFailureActions`. */
 export interface TurnFailureCard {
+  /** The failure record's id: what 「重试」 names. */
+  readonly id: string
   readonly kind: TurnFailureKind
   /** The title: what went wrong, in plain words. */
   readonly reason: string
@@ -107,6 +109,7 @@ export function turnFailureCard(record: TurnFailureRecord): TurnFailureCard {
     endpoint === undefined ? undefined : `服务商 ${endpoint}`,
   ].filter((part): part is string => part !== undefined).join(' · ')
   return {
+    id: record.id,
     kind,
     ...COPY[kind],
     ...(target === '' ? {} : { target }),

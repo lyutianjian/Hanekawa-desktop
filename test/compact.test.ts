@@ -58,9 +58,8 @@ test('autoCompactIfNeeded writes compact boundary when threshold is exceeded', a
     model: 'fake-model',
     tools: [],
     contextManagement: {
-      contextWindow: 600,
+      contextWindow: 2_550,
       summaryOutputTokens: 100,
-      autoCompactBufferTokens: 50,
     },
     appendRecord: async (record) => { appended.push(record) },
   })
@@ -127,9 +126,8 @@ test('autoCompactIfNeeded uses configured compact model when provided', async ()
     },
     tools: [],
     contextManagement: {
-      contextWindow: 600,
+      contextWindow: 2_550,
       summaryOutputTokens: 100,
-      autoCompactBufferTokens: 50,
     },
     appendRecord: async () => {},
   })
@@ -165,7 +163,6 @@ test('autoCompactIfNeeded skips compacting below threshold', async () => {
     contextManagement: {
       contextWindow: 10_000,
       summaryOutputTokens: 100,
-      autoCompactBufferTokens: 50,
     },
     appendRecord: async () => {},
   })
@@ -213,9 +210,8 @@ test('autoCompactIfNeeded prefers last model usage token count over rough estima
     model: 'fake-model',
     tools: [],
     contextManagement: {
-      contextWindow: 600,
+      contextWindow: 2_550,
       summaryOutputTokens: 100,
-      autoCompactBufferTokens: 50,
     },
     lastResponseTokenCount: 500,
     appendRecord: async (record) => { appended.push(record) },
@@ -783,9 +779,8 @@ function compactableRecords(): SessionRecord[] {
 
 function compactTestBudget() {
   return {
-    contextWindow: 600,
+    contextWindow: 2_550,
     summaryOutputTokens: 100,
-    autoCompactBufferTokens: 50,
   }
 }
 
@@ -980,7 +975,7 @@ test('the summary request is text only: images become placeholders naming name, 
     provider,
     model: 'text-only-compact-model',
     tools: [],
-    contextManagement: { contextWindow: 600, summaryOutputTokens: 100, autoCompactBufferTokens: 50 },
+    contextManagement: { contextWindow: 2_550, summaryOutputTokens: 100 },
     attachmentFacts: {
       resolveAttachmentFacts: async (ref) => ({
         ok: true,

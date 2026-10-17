@@ -55,6 +55,7 @@ function okResult(overrides: Partial<AgentRunResult> = {}): AgentRunResult {
 
 async function createHarness(options: {
   run?: LoopRun
+  retry?: (failure: { id: string; userMessageId: string }) => Promise<AgentRunResult>
   /** The history cannot be read back, so the session runs without one. */
   fileHistoryInitFails?: boolean
   /** No title yet — the state a session is in until its first message. */
@@ -83,6 +84,7 @@ async function createHarness(options: {
 
   const loop = {
     run: options.run ?? (async () => okResult()),
+    retry: options.retry ?? (async () => okResult()),
     getSideModel: () => ({
       model: 'side-model',
       provider: { name: 'stub', createMessage: async () => ({ content: options.titleReply ?? '' }) },
@@ -218,6 +220,28 @@ test('a failed turn persists why it stopped but is not aborted, so the duration 
   assert.equal(end.aborted, false)
   assert.equal(end.failed, true)
   assert.equal(end.usage, undefined)
+})
+
+test('retrying a failed turn runs it again on its own message, and only the newest failure can be', async () => {
+  const retried: unknown[] = []
+  const harness = await createHarness({
+    run: async () => { throw Object.assign(new Error('provider exploded'), { status: 500 }) },
+    retry: async (failure) => {
+      retried.push(failure)
+      return okResult()
+    },
+  })
+  await harness.controller.submit({ text: 'hello' })
+  const failure = failureRecord(harness)!
+
+  await harness.controller.retryTurn(failure.id)
+  const start = harness.events.filter((event) => event.type === 'turn-start').at(-1)
+  assert.equal(start?.type === 'turn-start' ? start.retryOf : undefined, failure.id)
+  assert.equal(start?.type === 'turn-start' ? start.messageId : undefined, failure.userMessageId)
+  assert.equal((retried[0] as { id: string }).id, failure.id)
+  assert.equal(harness.events.at(-1)?.type, 'turn-end')
+
+  await assert.rejects(harness.controller.retryTurn('unknown'), /newest failed turn/)
 })
 
 test('a stop that surfaces as a provider error of its own is an interruption, not a failure', async () => {

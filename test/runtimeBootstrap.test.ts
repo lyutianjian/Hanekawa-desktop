@@ -604,7 +604,7 @@ test('a model without its own context window falls back to agent.contextManageme
   const model = { provider: 'anthropic', model: 'claude-test' } as const
   assert.equal(resolveContextWindow({ ...model, contextWindow: 1_000_000 }, { contextWindow: 64_000 }), 1_000_000)
   assert.equal(resolveContextWindow(model, { contextWindow: 64_000 }), 64_000)
-  assert.equal(resolveContextWindow(model, undefined), 200_000)
+  assert.equal(resolveContextWindow(model, undefined), 272_000)
 })
 
 test('a priced provider attaches each response\'s cost to its usage', async () => {

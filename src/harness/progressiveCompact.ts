@@ -173,6 +173,8 @@ function countPendingRecordTokens(
   if (boundaryIndex === undefined) return undefined
 
   const pendingRecords = records.slice(boundaryIndex + 1)
+  // A compaction since that response made its count describe a context that is gone.
+  if (pendingRecords.some((record) => record.type === 'compact_boundary')) return undefined
   let skippedResponseMessage = false
   return pendingRecords.reduce((sum, record) => {
     if (!skippedResponseMessage && record.type === 'message' && record.role === 'assistant') {

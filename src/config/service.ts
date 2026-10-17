@@ -129,12 +129,11 @@ const DEFAULT_CONFIG: Config = {
   models: {},
   agent: {
     contextManagement: {
-      contextWindow: 200_000,
+      contextWindow: 272_000,
       summaryOutputTokens: 20_000,
-      autoCompactBufferTokens: 13_000,
+      autoCompactReserveRatio: 0.083,
       manualCompactBufferTokens: 3_000,
       microCompactThresholdRatio: 0.9,
-      autoCompactThresholdRatio: 0.93,
     },
   },
 }
@@ -533,7 +532,7 @@ export class ConfigService {
    * `config.json` that names the same field.
    *
    * Throws on a value that cannot mean anything, the way `removeModel` does:
-   * these six numbers feed the token budget, and a zero context window or a
+   * these numbers feed the token budget, and a zero context window or a
    * ratio above 1 does not degrade — it makes every turn either compact
    * immediately or never.
    */
@@ -541,7 +540,7 @@ export class ConfigService {
     const sanitized = sanitizeContextManagement(patch)
     if (!sanitized) return
     for (const [field, value] of Object.entries(sanitized) as Array<[keyof ContextManagementConfig, number]>) {
-      const isRatio = field === 'microCompactThresholdRatio' || field === 'autoCompactThresholdRatio'
+      const isRatio = field === 'microCompactThresholdRatio' || field === 'autoCompactReserveRatio'
       if (isRatio) {
         if (!Number.isFinite(value) || value <= 0 || value > 1) {
           throw new Error(`agent.contextManagement.${field} must be a ratio in (0, 1].`)
@@ -616,9 +615,8 @@ function sanitizeContextManagement(
   return {
     ...(config.contextWindow !== undefined ? { contextWindow: config.contextWindow } : {}),
     ...(config.summaryOutputTokens !== undefined ? { summaryOutputTokens: config.summaryOutputTokens } : {}),
-    ...(config.autoCompactBufferTokens !== undefined ? { autoCompactBufferTokens: config.autoCompactBufferTokens } : {}),
+    ...(config.autoCompactReserveRatio !== undefined ? { autoCompactReserveRatio: config.autoCompactReserveRatio } : {}),
     ...(config.manualCompactBufferTokens !== undefined ? { manualCompactBufferTokens: config.manualCompactBufferTokens } : {}),
     ...(config.microCompactThresholdRatio !== undefined ? { microCompactThresholdRatio: config.microCompactThresholdRatio } : {}),
-    ...(config.autoCompactThresholdRatio !== undefined ? { autoCompactThresholdRatio: config.autoCompactThresholdRatio } : {}),
   }
 }

@@ -776,6 +776,13 @@ test('SessionStore marks a session whose last turn failed until a newer message 
     assert.equal(truncated.success, true)
     assert.equal((await store.load(session.id))?.lastTurnFailed, true)
 
+    // A retry clears it, like a new message does.
+    await store.appendRecord(session.id, {
+      type: 'turn_retry', id: 'r-1', failureId: 'f-1', userMessageId: 'u-1', createdAt: '2026-06-01T00:00:03.000Z',
+    })
+    assert.equal((await store.load(session.id))?.lastTurnFailed, undefined)
+    await store.appendRecord(session.id, { ...failure, id: 'f-2' })
+
     await store.appendRecord(session.id, user('u-2'))
     assert.equal((await store.load(session.id))?.lastTurnFailed, undefined)
   } finally {

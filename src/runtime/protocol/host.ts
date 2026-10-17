@@ -831,6 +831,10 @@ export class SessionHost implements CoordinationLaneControl {
         this.controller.interrupt(command.reason)
         return null
 
+      case 'retry-turn':
+        await this.controller.retryTurn(command.failureId)
+        return null
+
       case 'reload': {
         const records = await this.controller.reload()
         this.ledger.rebase(records)

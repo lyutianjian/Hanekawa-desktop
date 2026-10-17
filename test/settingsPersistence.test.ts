@@ -208,15 +208,15 @@ test('a routing value naming a model that no longer exists degrades to inherit',
 
 // --- context management -------------------------------------------------------
 
-test('the six context numbers survive a fresh load, in config.json', async () => {
+test('the context numbers survive a fresh load, in config.json', async () => {
   await withProject(async (cwd, config) => {
-    config.setContextManagement({ contextWindow: 400_000, autoCompactThresholdRatio: 0.8 })
+    config.setContextManagement({ contextWindow: 400_000, autoCompactReserveRatio: 0.2 })
     await config.save()
 
     const reloaded = await reload(cwd)
     assert.equal(reloaded.get().agent.contextManagement?.contextWindow, 400_000)
-    assert.equal(reloaded.get().agent.contextManagement?.autoCompactThresholdRatio, 0.8)
-    // Patching one field must not blank the other five, which is what a plain
+    assert.equal(reloaded.get().agent.contextManagement?.autoCompactReserveRatio, 0.2)
+    // Patching one field must not blank the others, which is what a plain
     // assignment of the patch would do.
     assert.equal(reloaded.get().agent.contextManagement?.summaryOutputTokens, 20_000)
   })
@@ -224,16 +224,16 @@ test('the six context numbers survive a fresh load, in config.json', async () =>
 
 test('a context value that cannot mean anything is rejected instead of stored', async () => {
   await withProject(async (cwd, config) => {
-    assert.throws(() => config.setContextManagement({ autoCompactThresholdRatio: 1.5 }), /ratio in \(0, 1]/)
+    assert.throws(() => config.setContextManagement({ autoCompactReserveRatio: 1.5 }), /ratio in \(0, 1]/)
     assert.throws(() => config.setContextManagement({ microCompactThresholdRatio: 0 }), /ratio in \(0, 1]/)
     assert.throws(() => config.setContextManagement({ contextWindow: 0 }), /positive integer/)
     assert.throws(() => config.setContextManagement({ summaryOutputTokens: 1.5 }), /positive integer/)
 
     // Nothing was half-applied: a rejected patch leaves the live config alone.
-    assert.equal(config.get().agent.contextManagement?.contextWindow, 200_000)
+    assert.equal(config.get().agent.contextManagement?.contextWindow, 272_000)
     await config.save()
     const reloaded = await reload(cwd)
-    assert.equal(reloaded.get().agent.contextManagement?.autoCompactThresholdRatio, 0.93)
+    assert.equal(reloaded.get().agent.contextManagement?.autoCompactReserveRatio, 0.083)
   })
 })
 

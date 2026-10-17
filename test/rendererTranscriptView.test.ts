@@ -2454,7 +2454,7 @@ test('a failed turn draws a card: reason, target, hint, the provider\'s words, a
   const failure = (retryable: boolean): TranscriptItem => ({
     id: 'f1', kind: 'turn-failure', text: '连不上服务商',
     failure: {
-      kind: 'network', reason: '连不上服务商', hint: '检查网络。', target: '模型 m · 服务商 h/v1',
+      id: 'f1', kind: 'network', reason: '连不上服务商', hint: '检查网络。', target: '模型 m · 服务商 h/v1',
       detail: 'Connection error.', userMessageId: 'u1', retryable,
     },
   })
@@ -2472,7 +2472,7 @@ test('a failed turn draws a card: reason, target, hint, the provider\'s words, a
   stub.dispatch(actions[0]!.node, 'click', {})
   stub.dispatch(actions[1]!.node, 'click', {})
   assert.equal(providerSettings, 1)
-  assert.deepEqual(retried, ['u1'])
+  assert.deepEqual(retried, ['f1'])
 
   // Once something has been sent since, the card keeps its words and loses 重试.
   real.render({ ...createTranscriptState(), items: [failure(false)] }, NO_DISCLOSURE)

@@ -1612,24 +1612,22 @@ function agentDetail(agent: WireAgentDefinitionInfo): string {
 const CONTEXT_LABELS: Record<WireContextManagementField, string> = {
   contextWindow: '上下文窗口',
   summaryOutputTokens: '摘要输出上限',
-  autoCompactBufferTokens: '自动压缩预留',
+  autoCompactReserveRatio: '自动压缩预留比例',
   manualCompactBufferTokens: '手动压缩预留',
   microCompactThresholdRatio: '微压缩触发比例',
-  autoCompactThresholdRatio: '自动压缩触发比例',
 }
 
 const CONTEXT_DETAILS: Record<WireContextManagementField, string> = {
   contextWindow: '模型没有单独配置上下文窗口时使用的默认值。',
   summaryOutputTokens: '压缩摘要自身允许占用的输出 token。',
-  autoCompactBufferTokens: '自动压缩时预留出来的空间。',
+  autoCompactReserveRatio: '占模型窗口的比例，其余用满时自动压缩；不低于摘要输出上限加 2,000。',
   manualCompactBufferTokens: '手动压缩时预留出来的空间。',
   microCompactThresholdRatio: '占用超过这个比例时开始微压缩。',
-  autoCompactThresholdRatio: '占用超过这个比例时自动压缩。',
 }
 
 const CONTEXT_RATIO_FIELDS: readonly WireContextManagementField[] = [
+  'autoCompactReserveRatio',
   'microCompactThresholdRatio',
-  'autoCompactThresholdRatio',
 ]
 
 function generalCards(snapshot: WireSettingsSnapshot): SettingsCard[] {

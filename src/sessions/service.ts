@@ -1078,7 +1078,7 @@ export class SessionStore {
     const title = current.title ?? deriveSessionTitle(record)
     const { lastTurnFailed, ...rest } = current
     const failed = record.type === 'turn_failure'
-      || (lastTurnFailed === true && !(record.type === 'message' && record.role === 'user'))
+      || (lastTurnFailed === true && !(record.type === 'message' && record.role === 'user') && record.type !== 'turn_retry')
     return {
       ...rest,
       updatedAt,
@@ -1258,12 +1258,12 @@ export function deriveSessionTitle(record: SessionRecord): string | undefined {
   return first ? `${first.kind === 'folder' ? '文件夹' : '文件'}：${attachedPathName(first)}`.slice(0, SESSION_TITLE_LENGTH) : undefined
 }
 
-/** Whether the newest turn — everything after the last user message — ended on a failure. */
+/** Whether the newest turn — everything after the last user message or retry — ended on a failure. */
 function failedAfterLastUserMessage(records: readonly SessionRecord[]): boolean {
   for (let index = records.length - 1; index >= 0; index -= 1) {
     const record = records[index]!
     if (record.type === 'turn_failure') return true
-    if (record.type === 'message' && record.role === 'user') return false
+    if ((record.type === 'message' && record.role === 'user') || record.type === 'turn_retry') return false
   }
   return false
 }

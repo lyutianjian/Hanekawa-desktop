@@ -56,10 +56,9 @@ function snapshotOf(): WireSettingsSnapshot {
     contextManagement: {
       contextWindow: 200_000,
       summaryOutputTokens: 20_000,
-      autoCompactBufferTokens: 13_000,
+      autoCompactReserveRatio: 0.083,
       manualCompactBufferTokens: 3_000,
       microCompactThresholdRatio: 0.9,
-      autoCompactThresholdRatio: 0.93,
     },
     coordination: { quietDays: 7, autoResolveDays: 14 },
     general: { localPath: 'C:\\repo\\alpha\\.myagent\\settings.local.json' },

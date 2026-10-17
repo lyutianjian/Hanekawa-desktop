@@ -287,6 +287,11 @@ export class SessionClient {
     })
   }
 
+  /** Runs the newest failed turn again on its own message instead of sending it anew. */
+  async retryTurn(failureId: string): Promise<void> {
+    await this.send({ type: 'retry-turn', id: randomUUID(), failureId })
+  }
+
   async interrupt(reason: InterruptReason = 'user-cancel'): Promise<void> {
     await this.send({ type: 'interrupt', id: randomUUID(), reason })
   }

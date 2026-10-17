@@ -128,6 +128,8 @@ export type HostCommand =
    * `turn_interruption` record, `'exit'` deliberately does not.
    */
   | { type: 'interrupt'; id: string; reason: InterruptReason }
+  /** Runs the newest failed turn again on its own message; see `SessionController.retryTurn`. */
+  | { type: 'retry-turn'; id: string; failureId: string }
   /** Reloads *records*, unlike the `reload-*` commands below. */
   | { type: 'reload'; id: string }
   | { type: 'retarget'; id: string; sessionId: string }

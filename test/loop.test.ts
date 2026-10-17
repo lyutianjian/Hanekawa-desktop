@@ -128,6 +128,45 @@ test('agent loop appends user and assistant messages', async () => {
   assert.equal(metrics[0]?.tool_calls, 0)
 })
 
+test('a retry runs the failed turn again on its own message instead of a new one', async () => {
+  const records: SessionRecord[] = []
+  const requests: ModelRequest[] = []
+  let calls = 0
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage(request) {
+      requests.push(request)
+      calls += 1
+      if (calls === 1) throw Object.assign(new Error('overloaded'), { status: 500 })
+      return { content: 'hello back', toolCalls: [] }
+    },
+  }
+  const runner = new ToolRunner([], new PermissionGate(async () => true), {
+    onRecord: async (record) => { records.push(record) },
+  })
+  const loop = new AgentLoop({
+    provider,
+    model: 'fake-model',
+    tools: [],
+    contextBuilder: new ContextBuilder(),
+    toolRunner: runner,
+    toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
+    recordStream: recordStreamFor(records),
+  })
+  await assert.rejects(loop.run({ text: 'hello' }, undefined, 'u1'), /overloaded/)
+
+  const response = await loop.retry({ id: 'f1', userMessageId: 'u1' })
+  assert.equal(response.content, 'hello back')
+  assert.deepEqual(records.map((record) => record.type === 'message' ? `${record.role}` : record.type), ['user', 'turn_retry', 'assistant'])
+  const retry = records[1]
+  assert.equal(retry?.type === 'turn_retry' ? retry.failureId : undefined, 'f1')
+  assert.equal(retry?.turnId, records[0]?.turnId, 'the retry carries on the failed turn')
+  const sentUserMessages = requests[1]!.messages.filter((message) => message.role === 'user' && JSON.stringify(message.content).includes('hello'))
+  assert.equal(sentUserMessages.length, 1, 'the message is sent once, not twice')
+
+  await assert.rejects(loop.retry({ id: 'f2', userMessageId: 'gone' }), /no longer in this session/)
+})
+
 test('a UserInput with images persists the refs on the user message record', async () => {
   const records: SessionRecord[] = []
   const provider: ModelProvider = {
@@ -1979,8 +2018,7 @@ test('agent loop excludes compact summarizer usage from status usage', async () 
     contextManagement: {
       contextWindow: 1000,
       summaryOutputTokens: 0,
-      autoCompactBufferTokens: 0,
-      autoCompactThresholdRatio: 0.5,
+      autoCompactReserveRatio: 0.5,
     },
     recordStream: recordStreamFor(records),
   })
@@ -2704,8 +2742,7 @@ test('agent loop auto-compacts without preparing records twice in the same itera
     contextManagement: {
       contextWindow: 10_000,
       summaryOutputTokens: 100,
-      autoCompactBufferTokens: 50,
-      autoCompactThresholdRatio: 0.05,
+      autoCompactReserveRatio: 0.95,
     },
     recordStream: recordStreamFor(records, undefined, () => { loadRecordsCount += 1 }),
   })
@@ -2756,7 +2793,7 @@ test('auto-compaction sends the conversation\'s own request with the compact pro
     }),
     toolContext: { cwd: process.cwd(), sessionId: 'shared-prefix-compact', readFiles: new Set() },
     contextWindow: 10_000,
-    contextManagement: { contextWindow: 10_000, summaryOutputTokens: 100, autoCompactBufferTokens: 50, autoCompactThresholdRatio: 0.05 },
+    contextManagement: { contextWindow: 10_000, summaryOutputTokens: 100, autoCompactReserveRatio: 0.95 },
     recordStream: recordStreamFor(records),
   })
 
@@ -2815,7 +2852,7 @@ test('an inheriting fork auto-compacts its own records behind the unchanged pare
     }),
     toolContext: { cwd: process.cwd(), sessionId: 'fork-compact', readFiles: new Set() },
     contextWindow: 10_000,
-    contextManagement: { contextWindow: 10_000, summaryOutputTokens: 100, autoCompactBufferTokens: 50, autoCompactThresholdRatio: 0.05 },
+    contextManagement: { contextWindow: 10_000, summaryOutputTokens: 100, autoCompactReserveRatio: 0.95 },
     recordStream: recordStreamFor(records),
     inheritedRequest,
   })
@@ -2901,8 +2938,7 @@ test('agent loop includes compact summary on the next user turn after compaction
     contextManagement: {
       contextWindow: 10_000,
       summaryOutputTokens: 100,
-      autoCompactBufferTokens: 50,
-      autoCompactThresholdRatio: 0.05,
+      autoCompactReserveRatio: 0.95,
     },
     recordStream: recordStreamFor(records),
   })
@@ -2954,11 +2990,10 @@ test('agent loop runs preCompact and postCompact hooks around successful compact
     contextBuilder: new ContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
-    contextWindow: 600,
+    contextWindow: 2_550,
     contextManagement: {
-      contextWindow: 600,
+      contextWindow: 2_550,
       summaryOutputTokens: 100,
-      autoCompactBufferTokens: 50,
     },
     hooks: {
       preCompact: [{ matcher: 'auto', command: hookCommand }],
@@ -3049,11 +3084,10 @@ test('agent loop checks auto-compact before later model requests in a tool loop'
     contextBuilder: new ContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
-    contextWindow: 200,
+    contextWindow: 2_150,
     contextManagement: {
-      contextWindow: 200,
+      contextWindow: 2_150,
       summaryOutputTokens: 100,
-      autoCompactBufferTokens: 50,
     },
     tokenBudget: 200,
     tokenWarningThreshold: 0.4,
@@ -3165,11 +3199,10 @@ test('agent loop counts pending records against the prepared request baseline af
     contextBuilder: new ContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 'prepared-baseline-session', readFiles: new Set() },
-    contextWindow: 200,
+    contextWindow: 2_180,
     contextManagement: {
-      contextWindow: 200,
+      contextWindow: 2_180,
       summaryOutputTokens: 100,
-      autoCompactBufferTokens: 20,
     },
     recordStream: recordStreamFor(records),
   })
@@ -3232,11 +3265,10 @@ test('agent loop continues the turn when auto-compact summary fails', async () =
     contextBuilder: new ContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 'compact-failure-session', readFiles: new Set() },
-    contextWindow: 600,
+    contextWindow: 2_550,
     contextManagement: {
-      contextWindow: 600,
+      contextWindow: 2_550,
       summaryOutputTokens: 100,
-      autoCompactBufferTokens: 50,
     },
     recordStream: recordStreamFor(records),
   })
@@ -3598,11 +3630,10 @@ test('agent loop uses last response usage, not cumulative usage, for auto-compac
     contextBuilder: new ContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
-    contextWindow: 200,
+    contextWindow: 2_180,
     contextManagement: {
-      contextWindow: 200,
+      contextWindow: 2_180,
       summaryOutputTokens: 100,
-      autoCompactBufferTokens: 20,
     },
     recordStream: recordStreamFor(records),
   })
@@ -3611,6 +3642,47 @@ test('agent loop uses last response usage, not cumulative usage, for auto-compac
 
   assert.equal(response.content, 'done')
   assert.deepEqual(providerCalls, ['model-1', 'model-2'])
+  assert.equal(records.filter((record) => record.type === 'compact_boundary').length, 0)
+})
+
+test('the next turn checks auto-compact against the last response usage, not a re-estimate', async () => {
+  resetAutoCompactFailureState()
+  const records: SessionRecord[] = []
+  const providerCalls: string[] = []
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage(request) {
+      const isCompactRequest = request.contextItems?.some(
+        (item) => item.kind === 'message' && item.message.id === 'compact-request',
+      ) ?? false
+      providerCalls.push(isCompactRequest ? 'compact' : 'model')
+      // Estimated near 1000 tokens, reported as 10: only the estimate crosses the threshold.
+      return {
+        content: 'long answer '.repeat(250),
+        toolCalls: [],
+        usage: { cacheReadInputTokens: 0, inputTokens: 10, outputTokens: 10 },
+      }
+    },
+  }
+  const runner = new ToolRunner([], new PermissionGate(async () => true), {
+    onRecord: async (record) => { records.push(record) },
+  })
+  const loop = new AgentLoop({
+    provider,
+    model: 'fake-model',
+    tools: [],
+    contextBuilder: new ContextBuilder(),
+    toolRunner: runner,
+    toolContext: { cwd: process.cwd(), sessionId: 'cross-turn-baseline', readFiles: new Set() },
+    contextWindow: 2_180,
+    contextManagement: { contextWindow: 2_180, summaryOutputTokens: 100 },
+    recordStream: recordStreamFor(records),
+  })
+
+  await loop.run({ text: 'first' })
+  await loop.run({ text: 'second' })
+
+  assert.deepEqual(providerCalls, ['model', 'model'])
   assert.equal(records.filter((record) => record.type === 'compact_boundary').length, 0)
 })
 
@@ -4258,11 +4330,11 @@ test('a mid-run model switch drops the usage baseline and re-estimates with imag
     contextBuilder: new ContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 's16-baseline', readFiles: new Set() },
-    // Threshold 2000: the projected text-only request stays below it, but the
+    // Threshold ~2000: the projected text-only request stays below it, but the
     // capable fallback's request (with the image's ~5.3k estimated tokens)
     // crosses it — but only when the baseline is dropped and the records are
     // re-counted.
-    contextManagement: { contextWindow: 35_000 },
+    contextManagement: { contextWindow: 35_000, autoCompactReserveRatio: 0.9428 },
     recordStream: recordStreamFor(records),
   })
 

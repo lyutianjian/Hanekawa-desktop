@@ -119,6 +119,7 @@ const COMMAND_SCHEMAS = {
   interrupt: z
     .object({ type: z.literal('interrupt'), id: commandId, reason: z.enum(['user-cancel', 'exit']) })
     .strict(),
+  'retry-turn': z.object({ type: z.literal('retry-turn'), id: commandId, failureId: z.string() }).strict(),
   reload: z.object({ type: z.literal('reload'), id: commandId }).strict(),
   retarget: z.object({ type: z.literal('retarget'), id: commandId, sessionId: z.string() }).strict(),
   // `input` is deliberately unvalidated: the tool's own zod schema runs

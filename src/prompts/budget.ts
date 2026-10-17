@@ -10,33 +10,33 @@ export interface TokenCount {
   messages: number[]
 }
 
-export const MODEL_CONTEXT_WINDOW_DEFAULT = 200_000
+export const MODEL_CONTEXT_WINDOW_DEFAULT = 272_000
 /** One-shot escalation when a response is truncated by `max_tokens`. */
 export const ESCALATED_MAX_TOKENS = 128_000
 export const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000
-export const AUTOCOMPACT_BUFFER_TOKENS = 13_000
+export const AUTOCOMPACT_RESERVE_RATIO = 0.083
+/** Room for the compact prompt itself, on top of the summary's output. */
+export const COMPACT_PROMPT_RESERVE_TOKENS = 2_000
 export const MANUAL_COMPACT_BUFFER_TOKENS = 3_000
 export const MICROCOMPACT_THRESHOLD_RATIO = 0.9
-export const AUTOCOMPACT_THRESHOLD_RATIO = 0.93
 export const TIME_BASED_MC_GAP_THRESHOLD_MINUTES = 60
 export const TIME_BASED_MC_KEEP_RECENT = 5
 
 export interface ContextManagementConfig {
   contextWindow: number
   summaryOutputTokens: number
-  autoCompactBufferTokens: number
+  /** Share of the raw window kept free below the autocompact threshold. */
+  autoCompactReserveRatio: number
   manualCompactBufferTokens: number
   microCompactThresholdRatio: number
-  autoCompactThresholdRatio: number
 }
 
 export const DEFAULT_CONTEXT_MANAGEMENT: ContextManagementConfig = {
   contextWindow: MODEL_CONTEXT_WINDOW_DEFAULT,
   summaryOutputTokens: MAX_OUTPUT_TOKENS_FOR_SUMMARY,
-  autoCompactBufferTokens: AUTOCOMPACT_BUFFER_TOKENS,
+  autoCompactReserveRatio: AUTOCOMPACT_RESERVE_RATIO,
   manualCompactBufferTokens: MANUAL_COMPACT_BUFFER_TOKENS,
   microCompactThresholdRatio: MICROCOMPACT_THRESHOLD_RATIO,
-  autoCompactThresholdRatio: AUTOCOMPACT_THRESHOLD_RATIO,
 }
 
 /**
@@ -63,14 +63,20 @@ export function getEffectiveContextWindowSize(
   return Math.max(0, contextWindow - merged.summaryOutputTokens)
 }
 
+/**
+ * The raw window minus the reserve ratio's share, but never less reserve than
+ * the compaction request needs: it sends the whole context plus the compact
+ * prompt and gets the summary back in the same window.
+ */
 export function getAutoCompactThreshold(
   config: Partial<ContextManagementConfig> = {},
 ): number {
   const merged = { ...DEFAULT_CONTEXT_MANAGEMENT, ...config }
-  const effectiveContextWindow = getEffectiveContextWindowSize(merged)
-  const ratioThreshold = Math.floor(effectiveContextWindow * merged.autoCompactThresholdRatio)
-  const bufferThreshold = effectiveContextWindow - merged.autoCompactBufferTokens
-  return Math.max(0, Math.min(ratioThreshold, bufferThreshold))
+  const reserve = Math.max(
+    Math.ceil(merged.contextWindow * merged.autoCompactReserveRatio),
+    merged.summaryOutputTokens + COMPACT_PROMPT_RESERVE_TOKENS,
+  )
+  return Math.max(0, merged.contextWindow - reserve)
 }
 
 export function getMicroCompactThreshold(
@@ -93,9 +99,14 @@ export function countTextTokens(text: string): number {
   // multiplier (~length / 3). We use per-character-class ratios instead:
   //   ASCII:  ~3 chars/token  (code, JSON, Markdown — denser than English)
   //   non-ASCII: ~1.2 chars/token  (CJK characters typically 1-2 chars/token)
+  return Math.ceil(textTokenWeight(text))
+}
+
+/** {@link countTextTokens} unrounded, so pieces of one text can be summed without a ceiling each. */
+export function textTokenWeight(text: string): number {
   const asciiChars = text.replace(/[^\x00-\x7F]/g, '').length
   const nonAsciiChars = text.length - asciiChars
-  return Math.ceil(asciiChars / 3.0 + nonAsciiChars / 1.2)
+  return asciiChars / 3.0 + nonAsciiChars / 1.2
 }
 
 /**
@@ -244,10 +255,6 @@ export function countSessionRecordTokens(
 
   if (record.type === 'compact_boundary') {
     return countTextTokens(record.summary) + (record.restoredContext ? countTextTokens(record.restoredContext) : 0)
-  }
-
-  if (record.type === 'tool_approval') {
-    return countTextTokens(`${record.tool}\n${JSON.stringify(record.input ?? {})}`)
   }
 
   if (record.type === 'coordination_update') {

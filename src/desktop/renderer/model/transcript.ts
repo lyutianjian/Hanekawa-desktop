@@ -393,8 +393,11 @@ export function createTranscriptState(
   // unanswered call of that tool». Matching over collapsed items would let a
   // finished call's approval clear a later, still-waiting one of the same name.
   const context: ItemContext = { toolDisplays, approved: approvedToolUseIds(records) }
+  const retried = new Set(records.flatMap((record) => (record.type === 'turn_retry' ? [record.failureId] : [])))
   return {
-    items: mergeAdjacentThinking(collapseById(records.flatMap((record) => recordItems(record, context)))),
+    items: mergeAdjacentThinking(collapseById(records
+      .filter((record) => !retried.has(record.id))
+      .flatMap((record) => recordItems(record, context)))),
     generation: 0,
     toolProgress: undefined,
     isThinking: false,
@@ -457,8 +460,8 @@ export function withQueuedMessages(
 
 /**
  * Marks the newest turn failure as retryable: nothing has been sent since, and
- * the message it failed on is still on screen to be sent again. Any later user
- * message — a retry included — retires the buttons.
+ * the message it failed on is still on screen to run again. A later user
+ * message retires the buttons; a retry removes the card.
  */
 export function withFailureActions(state: TranscriptState): TranscriptState {
   let index = -1
@@ -478,16 +481,6 @@ export function withFailureActions(state: TranscriptState): TranscriptState {
   }
 }
 
-/** What 「重试」 sends again: the failed turn's own message, words and pictures. */
-export function failedTurnInput(
-  state: TranscriptState,
-  userMessageId: string,
-): { readonly text: string; readonly imageIds: string[] } | undefined {
-  const message = state.items.find((item) => item.kind === 'user' && item.id === userMessageId)
-  if (message === undefined) return undefined
-  return { text: message.text, imageIds: message.images?.map((image) => image.id) ?? [] }
-}
-
 export function applySessionEvent(
   state: TranscriptState,
   event: SessionEvent,
@@ -497,6 +490,10 @@ export function applySessionEvent(
 ): TranscriptOutcome {
   switch (event.type) {
     case 'turn-start':
+      // A retry runs on the message already on screen; the failure it retries goes.
+      if (event.retryOf !== undefined) {
+        return { state: { ...state, items: state.items.filter((item) => item.id !== event.retryOf), isThinking: false } }
+      }
       // A wake turn's input is reminders for the model, hidden on replay too.
       if (isSystemReminderBlock(event.displayInput)) return { state: { ...state, isThinking: false } }
       // The user message arrives as a record too, but only after the turn has
@@ -879,6 +876,9 @@ function applyRecord(
   // same tool cannot be recorded while this one holds the gate.
   if (record.type === 'tool_approval') {
     return { ...state, turnId, items: clearAwaitingApproval(state.items, record) }
+  }
+  if (record.type === 'turn_retry') {
+    return { ...state, turnId, items: state.items.filter((item) => item.id !== record.failureId) }
   }
 
   const produced = recordItems(record, { toolDisplays })

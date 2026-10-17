@@ -137,7 +137,7 @@ Hanekawa 每次请求都会把指令文件放在对话开头的一条 `<system-r
 
 ### 模型上下文窗口
 
-服务商支持的上下文窗口不是默认的 200,000 token 时，在模型上显式设置 `contextWindow`：
+服务商支持的上下文窗口不是默认的 272,000 token 时，在模型上显式设置 `contextWindow`：
 
 ```json
 {
@@ -151,7 +151,7 @@ Hanekawa 每次请求都会把指令文件放在对话开头的一条 `<system-r
 }
 ```
 
-不填时先回落到 `agent.contextManagement.contextWindow`，再回落到 200,000。这个值决定上下文预算、历史选择、压缩阈值、ToolSearch 阈值和状态显示；Hanekawa 不会根据模型名推断它。
+不填时先回落到 `agent.contextManagement.contextWindow`，再回落到 272,000。这个值决定上下文预算、历史选择、压缩阈值、ToolSearch 阈值和状态显示；Hanekawa 不会根据模型名推断它。
 
 ### 模型价格
 

@@ -18,7 +18,7 @@ import { breakDownContext, type ContextBreakdown } from '../harness/contextBreak
 import { promptCacheTtlMs } from '../harness/cacheControl.js'
 import { shouldIdleCompact } from './coordination/contextPolicy.js'
 import { isSystemReminderBlock } from '../harness/systemReminder.js'
-import { countSessionRecordsTokens } from '../prompts/budget.js'
+import { countSessionRecordTokens, countSessionRecordsTokens, textTokenWeight } from '../prompts/budget.js'
 import { generateSessionTitle } from '../harness/sessionTitle.js'
 import { deriveSessionTitle, type SessionMeta, type SessionStore } from '../sessions/service.js'
 import { FileHistoryService } from '../services/fileHistory/fileHistoryService.js'
@@ -59,7 +59,8 @@ import type { AgentSession } from './types.js'
  */
 export type SessionEvent =
   /** A turn is beginning. Emitted synchronously before any I/O. */
-  | { type: 'turn-start'; messageId: string; displayInput: string; createdAt: string; images?: ImageAttachmentRef[]; queuedMessageId?: string; origin?: TurnOrigin }
+  /** `retryOf` names the failure a retry runs again; `messageId` is then the failed turn's existing message. */
+  | { type: 'turn-start'; messageId: string; displayInput: string; createdAt: string; images?: ImageAttachmentRef[]; queuedMessageId?: string; origin?: TurnOrigin; retryOf?: string }
   /** A record reached the UI. `approvalToolUseId`/`subagentProgress` are the correlations the controller tracks. */
   | { type: 'record'; record: SessionRecord; approvalToolUseId?: string; subagentProgress?: string }
   /**
@@ -166,6 +167,9 @@ export interface SubagentActivity {
   agentId?: string
 }
 
+/** A streaming response moves the context readout in steps of this many estimated tokens, not per chunk. */
+const STREAMED_PUBLISH_STEP_TOKENS = 1_000
+
 /**
  * The headless half of a chat session: turn lifecycle, token accounting,
  * file history, tool-progress correlation and interrupt rollback.
@@ -218,6 +222,8 @@ export class SessionController {
   private usageAnchorRecordId: string | undefined
   /** When the last provider response landed; idle compaction measures from here. */
   private lastRequestAt: number | undefined
+  /** The response still streaming, estimated: context it adds before its records land. */
+  private streamedTokens = 0
   /** Memo for {@link contextUsed}, invalidated by either input that feeds it. */
   private contextUsedMemo:
     | { anchor: string | undefined; size: number; base: number | undefined; tokens: number }
@@ -316,15 +322,12 @@ export class SessionController {
     if (this.streaming) {
       throw new Error('A turn is already running; queue the message instead of submitting it.')
     }
-    const agentSession = this.getSession()
-    const loop = agentSession.loop
+    const loop = this.getSession().loop
     const messageId = randomUUID()
-    const origin: TurnOrigin = options?.origin ?? 'user'
     let runOverrides: AgentRunOverrides | undefined = handoff
       ? { ...options, sourceQueuedMessageId: handoff.queuedMessageId }
       : options
     if (this.shouldCompactIdle(loop)) runOverrides = { ...runOverrides, compactBeforeSend: true }
-    let failed = false
 
     // Submission preparation (design §9.2): the new-image gate runs before
     // turn-start is emitted and before any record exists, so a blocked input
@@ -333,15 +336,77 @@ export class SessionController {
     // re-checks per request; @-mentioned images are gated inside run().
     loop.assertImagesAllowedForSubmission(input, runOverrides)
 
-    this.emit({
-      type: 'turn-start',
-      messageId,
-      origin,
-      displayInput: options?.displayInput ?? input.text,
-      createdAt: new Date().toISOString(),
-      ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
-      ...(handoff ? { queuedMessageId: handoff.queuedMessageId } : {}),
+    await this.runTurn({
+      start: {
+        type: 'turn-start',
+        messageId,
+        origin: options?.origin ?? 'user',
+        displayInput: options?.displayInput ?? input.text,
+        createdAt: new Date().toISOString(),
+        ...(input.images && input.images.length > 0 ? { images: input.images } : {}),
+        ...(handoff ? { queuedMessageId: handoff.queuedMessageId } : {}),
+      },
+      prepare: async () => {
+        await this.snapshotFileHistory(messageId)
+        // Armed for the whole run, not just the first record: the user record is
+        // the *only* thing that resolves it, and nothing else may.
+        if (handoff) this.pendingAcceptance = { messageId, notify: handoff.onAccepted }
+      },
+      run: (signal) => loop.run(input, signal, messageId, runOverrides),
+      restore: (signal) => this.tryRestoreInterruptedPrompt(signal, messageId, input),
     })
+  }
+
+  /**
+   * 「重试」 on the newest failed turn: runs it again on its own user message
+   * (`AgentLoop.retry`) rather than sending that message a second time. The
+   * turn's file-history snapshot is the one its message already opened.
+   */
+  async retryTurn(failureId: string): Promise<void> {
+    const { records } = await this.store.loadRecordsWithDiagnostics(this.session.id)
+    // Checked after the load: a turn may have started while it ran.
+    if (this.streaming) {
+      throw new Error('A turn is already running.')
+    }
+    const index = records.findIndex((record) => record.type === 'turn_failure' && record.id === failureId)
+    const failure = records[index]
+    const superseded = records.slice(index + 1).some((record) =>
+      record.type === 'turn_failure' || record.type === 'turn_retry' || (record.type === 'message' && record.role === 'user'))
+    if (failure?.type !== 'turn_failure' || superseded) {
+      throw new Error('Only the newest failed turn can be retried.')
+    }
+    const loop = this.getSession().loop
+    await this.runTurn({
+      start: {
+        type: 'turn-start',
+        messageId: failure.userMessageId,
+        origin: 'user',
+        displayInput: '',
+        createdAt: new Date().toISOString(),
+        retryOf: failure.id,
+      },
+      run: (signal) => loop.retry(failure, signal),
+    })
+  }
+
+  /**
+   * One turn from turn-start to turn-end. `restore` may roll an interrupted
+   * turn back and hand its input to the composer; otherwise an interruption is
+   * a notice.
+   */
+  private async runTurn(turn: {
+    start: Extract<SessionEvent, { type: 'turn-start' }>
+    prepare?: () => Promise<void>
+    run: (signal: AbortSignal) => Promise<AgentRunResult>
+    restore?: (signal: AbortSignal) => Promise<boolean>
+  }): Promise<void> {
+    const agentSession = this.getSession()
+    const loop = agentSession.loop
+    const { messageId } = turn.start
+    const origin: TurnOrigin = turn.start.origin ?? 'user'
+    let failed = false
+
+    this.emit(turn.start)
 
     this.streaming = true
     this.spinnerSubText = undefined
@@ -360,7 +425,7 @@ export class SessionController {
     try {
       this.publish()
 
-      await this.snapshotFileHistory(messageId)
+      await turn.prepare?.()
 
       this.abortController = ac
       this.didRollback = false
@@ -369,11 +434,7 @@ export class SessionController {
       // aborted or failed run never reaches the settle below, and a leftover
       // accumulator would be subtracted from the *next* run's total.
       this.runReportedUsage = createEmptyUsage()
-      // Armed for the whole run, not just the first record: the user record is
-      // the *only* thing that resolves it, and nothing else may.
-      if (handoff) this.pendingAcceptance = { messageId, notify: handoff.onAccepted }
-
-      const result = await loop.run(input, ac.signal, messageId, runOverrides)
+      const result = await turn.run(ac.signal)
       completedResult = result
       this.usage = {
         // Already live from `handleRequestUsage`; this is the settle, not the
@@ -395,7 +456,7 @@ export class SessionController {
     } catch (err: unknown) {
       // The OpenAI SDK reports a cancelled request as `APIUserAbortError`, not `AbortError`.
       if (ac.signal.aborted || (err instanceof Error && (err.name === 'AbortError' || (err as Error & { aborted?: boolean }).aborted))) {
-        const restored = await this.tryRestoreInterruptedPrompt(ac.signal, messageId, input)
+        const restored = await turn.restore?.(ac.signal) ?? false
         if (restored) {
           this.didRollback = true
         } else {
@@ -419,6 +480,7 @@ export class SessionController {
       this.subagentProgress.clear()
       this.subagentActivity.clear()
       this.streaming = false
+      this.streamedTokens = 0
       this.spinnerSubText = undefined
       this.publish()
 
@@ -690,13 +752,15 @@ export class SessionController {
     const size = this.ledger.size
     const base = this.usage.lastRequest ? promptTokens(this.usage.lastRequest) : undefined
     if (base === undefined && size === 0) return undefined
-    const memo = this.contextUsedMemo
+    let memo = this.contextUsedMemo
     if (!memo || memo.anchor !== anchor || memo.size !== size || memo.base !== base) {
       const records = this.ledger.list()
       let anchorIndex = -1
       if (anchor !== undefined) {
         for (let i = records.length - 1; i >= 0; i--) {
           if (records[i]?.id === anchor) { anchorIndex = i; break }
+          // A request that ended before a compaction counted the context it replaced.
+          if (records[i]?.type === 'compact_boundary') break
         }
       }
       const tokens = base !== undefined && anchorIndex >= 0
@@ -706,10 +770,9 @@ export class SessionController {
         // accounts for. Counting the whole ledger bare reads low on a resumed
         // session and double-counts everything a compaction already dropped.
         : countSessionRecordsTokens(getRecordsAfterLastCompact([...records]), this.systemPromptForEstimate())
-      this.contextUsedMemo = { anchor, size, base, tokens }
-      return tokens
+      memo = this.contextUsedMemo = { anchor, size, base, tokens }
     }
-    return memo.tokens
+    return memo.tokens + Math.ceil(this.streamedTokens)
   }
 
   /**
@@ -758,6 +821,11 @@ export class SessionController {
     let approvalToolUseId: string | undefined
     let subagentProgress: string | undefined
 
+    // The response's records land one by one (tool calls as they run), each
+    // taking over its share of what the stream estimated.
+    if ((record.type === 'message' && record.role === 'assistant') || record.type === 'tool_use') {
+      this.streamedTokens = Math.max(0, this.streamedTokens - countSessionRecordTokens(record))
+    }
     // The context readout grows with the transcript, not just with responses,
     // so a turn that reads ten files shows it while the tools are still running.
     if (this.ledger.track(record)) this.publish()
@@ -828,6 +896,17 @@ export class SessionController {
   }
 
   private handleStreamEvent = (event: ModelStreamEvent): void => {
+    const text = event.type === 'text_delta' ? event.text
+      : event.type === 'tool_input_delta' ? event.partialJson
+        : event.type === 'thinking_delta' ? event.thinking
+          : undefined
+    if (text) {
+      const step = Math.floor(this.streamedTokens / STREAMED_PUBLISH_STEP_TOKENS)
+      this.streamedTokens += textTokenWeight(text)
+      if (Math.floor(this.streamedTokens / STREAMED_PUBLISH_STEP_TOKENS) !== step) this.publish()
+    } else if (event.type === 'message_start' || event.type === 'retry') {
+      this.streamedTokens = 0
+    }
     this.emit({ type: 'stream', event })
   }
 

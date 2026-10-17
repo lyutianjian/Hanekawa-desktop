@@ -138,3 +138,51 @@ test('the anchorless estimate counts the system prompt and stops at the last com
     `records before the boundary are gone from the request, got ${withSystem} -> ${afterCompact}`,
   )
 })
+
+test('a request anchored before a compaction no longer counts as the readout', async () => {
+  const { controller, proxy } = await createHarness()
+
+  proxy.onRecord(toolResult('r1', 100))
+  proxy.onRequestUsage({ inputTokens: 1_000, cacheReadInputTokens: 199_000, outputTokens: 0 }, 'r1')
+  proxy.onRecord({
+    id: 'c1',
+    type: 'compact_boundary',
+    createdAt: new Date().toISOString(),
+    summary: 'compacted',
+    preTokens: 0,
+    postTokens: 0,
+  } as unknown as SessionRecord)
+  const afterCompact = used(controller) ?? 0
+  assert.ok(afterCompact < 1_000, `the pre-compaction count must not survive, got ${afterCompact}`)
+
+  // The request sent right after compaction still ended on a pre-boundary record.
+  proxy.onRequestUsage({ inputTokens: 1_000, cacheReadInputTokens: 199_500, outputTokens: 0 }, 'r1')
+  assert.ok((used(controller) ?? 0) < 1_000)
+})
+
+test('a streaming response moves the readout before its records land', async () => {
+  const { controller, proxy } = await createHarness()
+
+  proxy.onRecord(toolResult('r1', 100))
+  proxy.onRequestUsage({ inputTokens: 1_000, cacheReadInputTokens: 99_000, outputTokens: 0 }, 'r1')
+  assert.equal(used(controller), 100_000)
+
+  proxy.onStreamEvent({ type: 'message_start' })
+  proxy.onStreamEvent({ type: 'tool_input_delta', partialJson: 'x'.repeat(9_000) })
+  const streaming = used(controller) ?? 0
+  assert.ok(streaming >= 102_900 && streaming <= 103_100, `the streamed input counts, got ${streaming}`)
+
+  // Each record takes over its share of the stream: nothing dips, nothing is counted twice.
+  proxy.onRecord({ id: 'a1', type: 'message', role: 'assistant', content: 'done', createdAt: new Date().toISOString() })
+  const afterMessage = used(controller) ?? 0
+  assert.ok(afterMessage >= 102_900, `the tool input is still pending, got ${afterMessage}`)
+  proxy.onRecord({
+    id: 'u1',
+    type: 'tool_use',
+    tool: 'Write',
+    input: { content: 'x'.repeat(9_000) },
+    createdAt: new Date().toISOString(),
+  } as SessionRecord)
+  const afterToolUse = used(controller) ?? 0
+  assert.ok(afterToolUse >= 102_900 && afterToolUse <= 103_200, `counted once, got ${afterToolUse}`)
+})

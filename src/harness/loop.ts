@@ -40,7 +40,7 @@ import type { SkillDefinition } from '../services/skills/skillsService.js'
 import type { CacheRuntime } from './cacheControl.js'
 import type { PermissionMode } from './permissions.js'
 import type { PlanModeManager } from './planModeManager.js'
-import type { AgentRunResult, AttachmentBytesLoader, ChatMessage, ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, RequestImageBytes, SessionRecord, SteerSource, Tool, ToolCall, ToolContext, ToolResultRecord, ToolUseSummaryRecord, TokenUsage, TurnOrigin } from './types.js'
+import type { AgentRunResult, AttachmentBytesLoader, ChatMessage, TurnFailureRecord, ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, RequestImageBytes, SessionRecord, SteerSource, Tool, ToolCall, ToolContext, ToolResultRecord, ToolUseSummaryRecord, TokenUsage, TurnOrigin } from './types.js'
 import type { CompactPromptVariant } from '../prompts/compactPrompt.js'
 import { formatTaskLine, remainingTasksFromState, sortedTasks } from '../tools/taskFormat.js'
 import { describeShell } from '../tools/BashTool/BashTool.js'
@@ -277,6 +277,8 @@ const DEFAULT_FALLBACK_RETRY_DELAY_MS = 5 * 60 * 1000
 /** Safe calls in one response run at most this many at a time, so a burst of shell commands cannot swamp the machine. */
 const MAX_CONCURRENT_TOOL_CALLS = 10
 
+type TurnRetryStart = { readonly retryOf: Pick<TurnFailureRecord, 'id' | 'userMessageId'> }
+
 export class AgentLoop {
   private readonly modelState: {
     current: ActiveModelRuntime
@@ -288,6 +290,12 @@ export class AgentLoop {
   private recordsCacheHasCleanToolProtocol = false
   /** Frozen tool-result trim decisions; see `ToolResultTrimState`. */
   private trimState: ToolResultTrimState | undefined
+  /**
+   * The provider's count for the last foreground request and the record it
+   * ended on. Kept across turns, so a turn's first compaction check adds the
+   * new records to a real count instead of estimating the whole transcript.
+   */
+  private responseBaseline: { tokens: number; recordCount: number; recordId: string | undefined } | undefined
   private pendingSubagentTranscriptUsage: TokenUsage = { ...EMPTY_TOKEN_USAGE }
   private readonly pendingToolUseSummaries: PendingToolUseSummary[] = []
   // Serializes run() and runTool() against each other. Both helpers funnel
@@ -413,6 +421,7 @@ export class AgentLoop {
   invalidateRecordsCache(): void {
     this.recordsCache = undefined
     this.recordsCacheHasCleanToolProtocol = false
+    this.responseBaseline = undefined
   }
 
   /** Update effort level at runtime; takes effect on the next turn. */
@@ -437,6 +446,15 @@ export class AgentLoop {
 
   async run(userInput: UserInput, signal?: AbortSignal, messageId?: string, overrides?: AgentRunOverrides): Promise<AgentRunResult> {
     return this.enqueue(() => this.runWithOverrides(userInput, signal, messageId, overrides))
+  }
+
+  /**
+   * Runs a failed turn again on its own user message: no new message, no
+   * prompt hooks. What the turn finished before failing stays, so it carries
+   * on from the request that failed.
+   */
+  async retry(failure: TurnRetryStart['retryOf'], signal?: AbortSignal): Promise<AgentRunResult> {
+    return this.enqueue(() => this.runInternal({ retryOf: failure }, signal))
   }
 
   /**
@@ -631,6 +649,23 @@ export class AgentLoop {
     return userMessage
   }
 
+  private async recordTurnRetry(failure: TurnRetryStart['retryOf']): Promise<{ turnId: string; userMessage: ChatMessage & { type: 'message' } }> {
+    const { records } = await this.loadRecordsOnce()
+    const userMessage = records.find((record): record is ChatMessage & { type: 'message' } =>
+      record.type === 'message' && record.role === 'user' && record.id === failure.userMessageId)
+    if (!userMessage) throw new Error('The failed turn\'s message is no longer in this session.')
+    const turnId = userMessage.turnId ?? randomUUID()
+    await this.appendRecord({
+      type: 'turn_retry',
+      id: randomUUID(),
+      failureId: failure.id,
+      userMessageId: userMessage.id,
+      turnId,
+      createdAt: new Date().toISOString(),
+    })
+    return { turnId, userMessage }
+  }
+
   /**
    * Steering: messages the user sent mid-turn join the turn at the next step,
    * in order. A slash command stops the walk — it runs as a turn of its own —
@@ -704,29 +739,33 @@ export class AgentLoop {
     }
   }
 
-  private async runInternal(userInput: UserInput, signal?: AbortSignal, messageId?: string): Promise<AgentRunResult> {
+  private async runInternal(start: UserInput | TurnRetryStart, signal?: AbortSignal, messageId?: string): Promise<AgentRunResult> {
     let usage = { ...EMPTY_TOKEN_USAGE }
     let lastForegroundResponseUsage: TokenUsage | undefined
     let pendingAssistantStreamContent = ''
     this.pendingSubagentTranscriptUsage = { ...EMPTY_TOKEN_USAGE }
     this.currentRequestNewImages = []
-    const turnId = randomUUID()
-    const userMessage = await this.recordUserInput(userInput, turnId, {
-      id: messageId ?? randomUUID(),
-      ...(this.activeRunOverrides?.displayInput ? { displayContent: this.activeRunOverrides.displayInput } : {}),
-      ...(this.activeRunOverrides?.sourceQueuedMessageId
-        ? { sourceQueuedMessageId: this.activeRunOverrides.sourceQueuedMessageId }
-        : {}),
-    })
+    const retrying = 'retryOf' in start
+    let turnId: string
+    let userMessage: ChatMessage & { type: 'message' }
+    if (retrying) {
+      ({ turnId, userMessage } = await this.recordTurnRetry(start.retryOf))
+    } else {
+      turnId = randomUUID()
+      userMessage = await this.recordUserInput(start, turnId, {
+        id: messageId ?? randomUUID(),
+        ...(this.activeRunOverrides?.displayInput ? { displayContent: this.activeRunOverrides.displayInput } : {}),
+        ...(this.activeRunOverrides?.sourceQueuedMessageId
+          ? { sourceQueuedMessageId: this.activeRunOverrides.sourceQueuedMessageId }
+          : {}),
+      })
+    }
     // A turn woken by notifications alone carries on the request before it;
     // messages steered in mid-turn amend this one.
-    if (!isSystemReminderBlock(userInput.text)) this.options.toolContext.requestTurnId = turnId
+    if (!isSystemReminderBlock(userMessage.content)) this.options.toolContext.requestTurnId = turnId
     try {
-      await this.runUserPromptSubmitHooks(userMessageInput(userMessage), turnId, signal)
-      let lastResponseTokenCount: number | undefined
-      let lastResponseRecordCount: number | undefined
-      let lastResponseRecordId: string | undefined
-
+      // A retry's prompt was already submitted; its hooks ran then.
+      if (!retrying) await this.runUserPromptSubmitHooks(userMessageInput(userMessage), turnId, signal)
       const maxTurns = this.options.maxTurns
       const tokenBudget = this.options.tokenBudget
       const tokenWarnThreshold = this.options.tokenWarningThreshold ?? 0.8
@@ -744,9 +783,7 @@ export class AgentLoop {
         // response's cost described a request shaped for the previous model
         // — its image-token strategy included (design §11.2) — so the next
         // estimate must be recomputed from the records.
-        lastResponseTokenCount = undefined
-        lastResponseRecordCount = undefined
-        lastResponseRecordId = undefined
+        this.responseBaseline = undefined
         maxOutputTokensOverride = this.options.maxOutputTokens
         maxOutputTokensRecoveryCount = 0
       }
@@ -782,14 +819,14 @@ export class AgentLoop {
           this.activeModel.providerName,
           this.activeModel.supportsImageInput,
         )
-        const interruptionContext = await this.consumeTurnInterruptionContext(preparedRecords, userInput.text)
+        const interruptionContext = await this.consumeTurnInterruptionContext(preparedRecords, userMessage.content)
         const progressive = applyProgressiveCompaction({
           records: preparedRecords,
           system: this.options.system,
           contextManagement: this.activeContextManagement,
-          lastResponseTokenCount,
-          lastResponseRecordCount,
-          lastResponseRecordId,
+          lastResponseTokenCount: this.responseBaseline?.tokens,
+          lastResponseRecordCount: this.responseBaseline?.recordCount,
+          lastResponseRecordId: this.responseBaseline?.recordId,
           imageTokenStrategy,
           now: new Date(),
           trimState: this.trimState,
@@ -799,9 +836,9 @@ export class AgentLoop {
         let recordsBeforeCompact = progressive.records
         const useCachedTokenEstimate = !progressive.microCompacted && !progressive.snipped
         const compactResult = await this.runCompaction(autoCompactIfNeeded, recordsBeforeCompact, turnId, userMessage.id, cacheSource, {
-          lastResponseTokenCount: useCachedTokenEstimate ? lastResponseTokenCount : undefined,
-          lastResponseRecordCount: useCachedTokenEstimate ? lastResponseRecordCount : undefined,
-          lastResponseRecordId: useCachedTokenEstimate ? lastResponseRecordId : undefined,
+          lastResponseTokenCount: useCachedTokenEstimate ? this.responseBaseline?.tokens : undefined,
+          lastResponseRecordCount: useCachedTokenEstimate ? this.responseBaseline?.recordCount : undefined,
+          lastResponseRecordId: useCachedTokenEstimate ? this.responseBaseline?.recordId : undefined,
           ...(iteration === 0 && this.activeRunOverrides?.compactBeforeSend === true ? { force: true } : {}),
         }, signal)
         usage = addTokenUsage(usage, compactResult.usage)
@@ -882,11 +919,10 @@ export class AgentLoop {
       // count and get a context readout that keeps up mid-turn.
       if (response.usage) this.options.onRequestUsage?.(response.usage, records.at(-1)?.id)
       await this.emitTurnMetric(modelStartedAt, response.usage ?? EMPTY_TOKEN_USAGE, response.toolCalls.length)
-      lastResponseTokenCount = canReuseResponseTokenEstimate
-        ? requestTokenCountFromUsage(response.usage)
-        : undefined
-      lastResponseRecordCount = lastResponseTokenCount === undefined ? undefined : requestRecordCount
-      lastResponseRecordId = lastResponseTokenCount === undefined ? undefined : records.at(-1)?.id
+      const responseTokens = canReuseResponseTokenEstimate ? requestTokenCountFromUsage(response.usage) : undefined
+      this.responseBaseline = responseTokens === undefined
+        ? undefined
+        : { tokens: responseTokens, recordCount: requestRecordCount, recordId: records.at(-1)?.id }
       lastRequestId = response.requestId
       if (response.cacheBreak) {
         await this.emitMetric({
@@ -2355,6 +2391,7 @@ export class AgentLoop {
   private switchActiveModel(next: ActiveModelRuntime, cacheSource: ReturnType<typeof agentCacheSource>): void {
     this.modelState.current = next
     this.stripAllThinkingBlocksFromRequests = true
+    this.responseBaseline = undefined
     resetCacheBreakDetection(cacheSource)
     this.options.contextBuilder.clearCachedSections()
   }

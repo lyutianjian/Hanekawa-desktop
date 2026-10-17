@@ -10,7 +10,6 @@ import {
 import {
   applySessionEvent,
   createTranscriptState,
-  failedTurnInput,
   withFailureActions,
 } from '../src/desktop/renderer/model/transcript.js'
 import type { SessionRecord, TurnFailureRecord } from '../src/harness/types.js'
@@ -102,14 +101,18 @@ test('only the newest failure, with nothing sent since, is offered a retry', () 
   assert.deepEqual(retryable([failure()]), [false], 'a message that is no longer on screen cannot be sent again')
 })
 
-test('retrying sends the failed message again, pictures included', () => {
-  const state = createTranscriptState([
-    {
-      type: 'message', id: 'u1', role: 'user', content: '看看这张图', createdAt: 'now',
-      images: [{ id: 'img1', name: 'a.png', mediaType: 'image/png', bytes: 3, width: 1, height: 1 }],
-    } as unknown as SessionRecord,
-    failure(),
-  ])
-  assert.deepEqual(failedTurnInput(state, 'u1'), { text: '看看这张图', imageIds: ['img1'] })
-  assert.equal(failedTurnInput(state, 'nope'), undefined)
+test('a retry runs on the message on screen: no second bubble, and the card it retries goes', () => {
+  const before = createTranscriptState([user('u1'), failure()])
+  const started = applySessionEvent(before, {
+    type: 'turn-start', messageId: 'u1', displayInput: '', createdAt: 'now', retryOf: 'f1',
+  }).state
+  assert.deepEqual(started.items.map((item) => item.kind), ['user'])
+
+  const retry: SessionRecord = { type: 'turn_retry', id: 'r1', failureId: 'f1', userMessageId: 'u1', createdAt: 'now' }
+  const live = applySessionEvent(before, { type: 'record', record: retry }).state
+  assert.deepEqual(live.items.map((item) => item.kind), ['user'])
+
+  const replayed = createTranscriptState([user('u1'), failure(), retry, failure({ id: 'f2' })])
+  assert.deepEqual(replayed.items.map((item) => item.id), ['u1', 'f2'], 'a retried failure stays gone on reload; a new one shows')
+  assert.deepEqual(withFailureActions(replayed).items.map((item) => item.failure?.retryable), [undefined, true])
 })

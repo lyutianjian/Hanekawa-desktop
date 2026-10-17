@@ -390,6 +390,19 @@ export interface TurnFailureRecord {
   turnId?: string
 }
 
+/**
+ * 「重试」 on a failed turn: the turn runs again on its existing user message
+ * instead of a new one, and the failure it retries is no longer shown.
+ */
+export interface TurnRetryRecord {
+  id: string
+  type: 'turn_retry'
+  failureId: string
+  userMessageId: string
+  createdAt: string
+  turnId?: string
+}
+
 /** Who drove a turn: the user, a coordinator session, or an automatic wake. */
 export type TurnOrigin = 'user' | 'coordinator' | 'wake'
 
@@ -459,6 +472,7 @@ export type SessionRecord =
   | PlanModeOutcomeRecord
   | TurnInterruptionRecord
   | TurnFailureRecord
+  | TurnRetryRecord
   | MessageQueueRecord
 
 export interface TaskItem {

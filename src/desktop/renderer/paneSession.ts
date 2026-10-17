@@ -101,7 +101,6 @@ import {
   withDetachedRuns,
   withQueuedMessages,
   withFailureActions,
-  failedTurnInput,
   type ToolDisplayLookup,
   type TranscriptState,
 } from './model/transcript.js'
@@ -1559,7 +1558,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // drops the list without a case of its own.
     if (event.type === 'transcript-reset') taskList = taskListState(event.records)
     // A new request, a beat before its record lands.
-    if (event.type === 'turn-start') taskList = taskListAtTurnStart(taskList, event.displayInput)
+    if (event.type === 'turn-start' && event.retryOf === undefined) taskList = taskListAtTurnStart(taskList, event.displayInput)
 
     // One paint for both, at most once a frame: `stream` deltas arrive per token
     // and each paint is linear in the conversation.
@@ -1918,24 +1917,16 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   }
 
   /**
-   * 「重试」 on a failed turn: its message goes through the same door it came in
-   * by, so a slash input runs as a command again. The failed attempt stays in
-   * the history, followed by the new one.
+   * 「重试」 on a failed turn: the host runs the turn again on the message
+   * already on screen, carrying on from the request that failed.
    */
-  async function retryTurn(userMessageId: string): Promise<void> {
-    const input = failedTurnInput(transcript, userMessageId)
-    if (input === undefined || retrying || client.getSnapshot().isStreaming) return
-    const classified = classifyInput(input.text)
+  async function retryTurn(failureId: string): Promise<void> {
+    if (retrying || client.getSnapshot().isStreaming) return
     retrying = true
     renderTranscript()
     try {
-      if (classified.kind === 'command') {
-        const result = await client.runCommand(classified.line)
-        if (result.exit) deps.onExit()
-        return
-      }
       deps.onUserMessage?.()
-      await client.submit(classified.kind === 'prompt' ? classified.text : '', input.imageIds.length > 0 ? { imageIds: input.imageIds } : {})
+      await client.retryTurn(failureId)
     } catch (error) {
       note(`重试失败：${describe(error)}`, 'error')
     } finally {

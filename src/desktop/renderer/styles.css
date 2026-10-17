@@ -3594,7 +3594,13 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   cursor: pointer;
 }
 .process-chip:hover { color: var(--text-primary); background: var(--surface-hover); }
-.process-chip .icon { width: 8px; height: 8px; color: var(--text-success); }
+/* 14px box draws a 7px dot; the soft halo is what reads as a live status light. */
+.process-chip .icon {
+  width: 14px;
+  height: 14px;
+  color: var(--text-success);
+  filter: drop-shadow(0 0 3px color-mix(in srgb, currentColor 60%, transparent));
+}
 /* The thread chip under a coordination session's messages. */
 .thread-chip-row { margin-bottom: var(--space-5); }
 .thread-chip {

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   countMessageTokens,
   countMessagesTokens,
+  countSessionRecordTokens,
   getAutoCompactThreshold,
   getContextWindowForModel,
   getEffectiveContextWindowSize,
@@ -44,11 +45,18 @@ test('an assistant message counts the reasoning it replays to its provider', () 
   assert.ok(withItems >= plain + 1000 && withItems < plain + 1100)
 })
 
-test('context management thresholds follow Claude Code style defaults', () => {
-  assert.equal(getEffectiveContextWindowSize(), 180_000)
-  assert.equal(getMicroCompactThreshold(), 162_000)
-  assert.equal(getAutoCompactThreshold(), 167_000)
-  assert.equal(getManualCompactThreshold(), 177_000)
+test('context management thresholds follow the defaults', () => {
+  assert.equal(getEffectiveContextWindowSize(), 252_000)
+  assert.equal(getMicroCompactThreshold(), 226_800)
+  // 8.3% of 272k reserved.
+  assert.equal(getAutoCompactThreshold(), 249_424)
+  assert.equal(getManualCompactThreshold(), 249_000)
+})
+
+test('the autocompact reserve never drops below the summary output plus the compact prompt', () => {
+  // 8.3% of 200k is 16.6k, less than the 20k summary plus 2k prompt.
+  assert.equal(getAutoCompactThreshold({ contextWindow: 200_000 }), 178_000)
+  assert.equal(getAutoCompactThreshold({ contextWindow: 272_000, autoCompactReserveRatio: 0.2 }), 217_600)
 })
 
 test('context management uses an explicitly configured context window', () => {
@@ -57,12 +65,24 @@ test('context management uses an explicitly configured context window', () => {
   assert.equal(getContextWindowForModel(contextManagement), 1_000_000)
   assert.equal(getEffectiveContextWindowSize(contextManagement), 980_000)
   assert.equal(getMicroCompactThreshold(contextManagement), 882_000)
-  assert.equal(getAutoCompactThreshold(contextManagement), 911_400)
+  assert.equal(getAutoCompactThreshold(contextManagement), 917_000)
   assert.equal(getManualCompactThreshold(contextManagement), 977_000)
 })
 
-test('context management defaults to 200k without an explicit context window', () => {
-  assert.equal(getContextWindowForModel(), 200_000)
+test('an approval record costs nothing: it never reaches the model', () => {
+  assert.equal(countSessionRecordTokens({
+    type: 'tool_approval',
+    id: 'approval',
+    tool: 'Write',
+    input: { file_path: '/tmp/a.ts', content: 'x'.repeat(30_000) },
+    approved: true,
+    riskLevel: 'safe',
+    createdAt: new Date().toISOString(),
+  }), 0)
+})
+
+test('context management defaults to 272k without an explicit context window', () => {
+  assert.equal(getContextWindowForModel(), 272_000)
 })
 
 test('context management selects messages within configured window', () => {

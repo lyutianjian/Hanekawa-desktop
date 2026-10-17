@@ -164,8 +164,8 @@ export interface TranscriptHandlers {
   onOpenThread?(threadId: string): void
   /** A failed turn's 「打开服务商设置」. Absent (the sub-agent panel) draws no button. */
   onOpenProviderSettings?(): void
-  /** A failed turn's 「重试」: send `userMessageId`'s message again. Absent draws no button. */
-  onRetryTurn?(userMessageId: string): void
+  /** A failed turn's 「重试」: run the turn again on its own message. Absent draws no button. */
+  onRetryTurn?(failureId: string): void
   /** An edited-files card's row or 查看全部: the turn's changes in the side panel, `path` scrolled to. Absent draws no card. */
   onViewEdits?(edits: TurnEdits, path: string | undefined): void
 }
@@ -1754,7 +1754,7 @@ function turnFailureNode(painter: Painter, failure: TurnFailureCard, classes: st
           onOpenProviderSettings === undefined
             ? undefined
             : button('failure-action', '打开服务商设置', '打开服务商设置', () => onOpenProviderSettings()),
-          retry ? button('failure-action primary', '重试', '重试这条消息', () => onRetryTurn(failure.userMessageId)) : undefined,
+          retry ? button('failure-action primary', '重试', '重新发送这次请求', () => onRetryTurn(failure.id)) : undefined,
         )
         : undefined,
     ],

@@ -19,6 +19,7 @@ const SAMPLES = {
   hello: { type: 'hello', id: '1' },
   submit: { type: 'submit', id: '1', input: 'hi' },
   interrupt: { type: 'interrupt', id: '1', reason: 'user-cancel' },
+  'retry-turn': { type: 'retry-turn', id: '1', failureId: 'f-1' },
   reload: { type: 'reload', id: '1' },
   retarget: { type: 'retarget', id: '1', sessionId: 's' },
   'run-tool': { type: 'run-tool', id: '1', name: 'Read', input: { file_path: '/tmp/x' } },
