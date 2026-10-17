@@ -348,6 +348,16 @@ test('within the byte budget nothing is stripped and the input array is returned
   )
 })
 
+test('a byte budget that moves without changing what is kept leaves the signature alone', () => {
+  // The budget is the body limit minus the text bytes, so it shifts every step.
+  const records = currentTurnRecords([sizedImage('img-cur', 3000)], [])
+  const options = { currentTurnId: 'turn-now', currentUserMessageId: 'current-user' }
+  assert.equal(
+    stripExcessImageBytes(records, { ...options, maxImageRequestBytes: 100_000 }).signature,
+    stripExcessImageBytes(records, { ...options, maxImageRequestBytes: 90_000 }).signature,
+  )
+})
+
 test('over the byte budget the oldest historical images are omitted first', () => {
   const records = [
     historyMessage('h1', [sizedImage('img-1', 3000)]),

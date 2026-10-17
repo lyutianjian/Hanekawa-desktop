@@ -110,7 +110,18 @@ export function countMessageTokens(
   imageTokenStrategy: ImageTokenStrategy = DEFAULT_IMAGE_TOKEN_STRATEGY,
 ): number {
   return countTextTokens(message.content)
+    + countReasoningReplayTokens(message)
     + countImageTokens(message.images, imageTokenStrategy)
+}
+
+/** Reasoning an assistant message hands back to its provider: outside `content`, but in the request. */
+function countReasoningReplayTokens(message: ChatMessage): number {
+  // Responses items also repeat the message text and tool calls, which are counted elsewhere.
+  const opaque = message.responseItems?.filter((item) => (item as { type?: unknown }).type === 'reasoning')
+    ?? message.reasoningDetails
+  if (opaque?.length) return countTextTokens(JSON.stringify(opaque))
+  return countTextTokens(message.reasoningContent ?? '')
+    + (message.thinkingBlocks ?? []).reduce((sum, block) => sum + countTextTokens(block.thinking ?? block.data ?? ''), 0)
 }
 
 export function countMessagesTokens(

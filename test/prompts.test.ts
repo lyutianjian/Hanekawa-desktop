@@ -29,6 +29,21 @@ test('context management counts tokens', () => {
   assert.ok(multiTokens.total > tokens)
 })
 
+test('an assistant message counts the reasoning it replays to its provider', () => {
+  const base: ChatMessage = { id: 'a', role: 'assistant', content: 'ok', createdAt: new Date().toISOString() }
+  const reasoning = 'x'.repeat(3000)
+  const plain = countMessageTokens(base)
+  assert.ok(countMessageTokens({ ...base, reasoningContent: reasoning }) >= plain + 1000)
+  assert.ok(countMessageTokens({ ...base, thinkingBlocks: [{ type: 'thinking', thinking: reasoning }] }) >= plain + 1000)
+  // Only the reasoning items: the message and call items repeat what is counted elsewhere.
+  const items = [
+    { type: 'reasoning', content: [{ type: 'reasoning_text', text: reasoning }] },
+    { type: 'function_call', arguments: 'y'.repeat(3000) },
+  ]
+  const withItems = countMessageTokens({ ...base, reasoningContent: reasoning, responseItems: items })
+  assert.ok(withItems >= plain + 1000 && withItems < plain + 1100)
+})
+
 test('context management thresholds follow Claude Code style defaults', () => {
   assert.equal(getEffectiveContextWindowSize(), 180_000)
   assert.equal(getMicroCompactThreshold(), 162_000)

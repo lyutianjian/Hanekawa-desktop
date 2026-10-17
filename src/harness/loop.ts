@@ -1638,7 +1638,7 @@ export class AgentLoop {
 
   /**
    * Remembers the image state the request was built from. Any move —
-   * capability flip, a different omitted set, a different cap or byte budget —
+   * capability flip, a different omitted set or a different cap —
    * means the usage baseline from the previous response describes a request
    * whose image content no longer matches, so it must be re-estimated rather
    * than reused (design §11.2). Model switches cover this too (via the

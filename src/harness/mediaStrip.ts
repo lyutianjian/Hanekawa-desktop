@@ -275,7 +275,7 @@ export function stripExcessImageBytes(
       omittedImages: [],
       keptImageBytes: totalBytes,
       maxImageRequestBytes: budget,
-      signature: imageByteStripSignature(budget, occurrences),
+      signature: imageByteStripSignature(occurrences),
     }
   }
 
@@ -346,7 +346,7 @@ export function stripExcessImageBytes(
     })),
     keptImageBytes: runningBytes,
     maxImageRequestBytes: budget,
-    signature: imageByteStripSignature(budget, occurrences.filter((occurrence) => !omittedKeys.has(occurrence.key))),
+    signature: imageByteStripSignature(occurrences.filter((occurrence) => !omittedKeys.has(occurrence.key))),
   }
 }
 
@@ -458,10 +458,14 @@ function formatOmittedImageBytesPlaceholder(
     + `${ref.name} (attachment ${ref.id}). The pixels are not present in this request.]`
 }
 
-function imageByteStripSignature(maxImageRequestBytes: number, occurrences: readonly ImageOccurrence[]): string {
+/**
+ * The kept set only: the budget is the body limit minus the text bytes, so it
+ * moves with every step even when the images sent stay the same.
+ */
+function imageByteStripSignature(occurrences: readonly ImageOccurrence[]): string {
   const kept = occurrences
     .map((occurrence) => `${occurrence.ref.id}:${occurrence.ref.byteLength}`)
     .sort()
     .join(',')
-  return `bytes:${maxImageRequestBytes}|kept:${kept}`
+  return `kept:${kept}`
 }
