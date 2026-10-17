@@ -12,6 +12,9 @@
  * traffic.
  */
 
+import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
+
 export type RetryCallerKind = 'interactive' | 'background'
 
 export type RetryErrorCategory =
@@ -191,6 +194,8 @@ export function calculateRetryDelay(
   jitterFactor: number = 0.25,
 ): number {
   if (category === 'transient' && categoryRetryCount === 1) return 0
+  // 5xx backs off linearly: 2s, 3s, 4s, ...
+  if (category === 'server_error') return Math.min((categoryRetryCount + 1) * 1000, maxDelayMs)
   return calculateDelay(attempt, baseDelayMs, maxDelayMs, jitterFactor)
 }
 
@@ -201,6 +206,8 @@ export function calculateRetryDelay(
  */
 export function classifyError(error: unknown): RetryErrorCategory {
   if (!(error instanceof Error)) return 'unknown'
+  // SDK network failures and timeouts ("Connection error.", "Request timed out.") carry no status.
+  if (error instanceof OpenAI.APIConnectionError || error instanceof Anthropic.APIConnectionError) return 'transient'
 
   const status = (error as Error & { status?: number }).status
   if (status === 401 || status === 403) return 'auth'

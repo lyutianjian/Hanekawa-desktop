@@ -1,4 +1,6 @@
 import test from 'node:test'
+import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import assert from 'node:assert/strict'
 import {
   calculateRetryDelay,
@@ -43,6 +45,9 @@ test('classifyError uses message fallback for network errors', () => {
   assert.equal(classifyError(new Error('write EPIPE')), 'transient')
   assert.equal(classifyError(new Error('Stream ended unexpectedly')), 'transient')
   assert.equal(classifyError(new Error('Read timeout after 90s')), 'transient')
+  assert.equal(classifyError(new OpenAI.APIConnectionTimeoutError()), 'transient')
+  assert.equal(classifyError(new OpenAI.APIConnectionError({ message: undefined })), 'transient')
+  assert.equal(classifyError(new Anthropic.APIConnectionTimeoutError()), 'transient')
 })
 
 test('classifyError uses message fallback for overload without status', () => {
@@ -230,7 +235,11 @@ test('withRetry retries network errors (ECONNRESET)', async () => {
 test('withRetry uses immediate delay for the first transient retry', () => {
   assert.equal(calculateRetryDelay('transient', 1, 1, 500, 32_000, 0), 0)
   assert.equal(calculateRetryDelay('transient', 2, 2, 500, 32_000, 0), 1000)
-  assert.equal(calculateRetryDelay('server_error', 1, 1, 500, 32_000, 0), 500)
+})
+
+test('5xx retries back off linearly from 2s', () => {
+  assert.deepEqual([1, 2, 3, 4, 5].map((n) => calculateRetryDelay('server_error', n, n, 500, 32_000, 0.25)), [2000, 3000, 4000, 5000, 6000])
+  assert.equal(calculateRetryDelay('server_error', 3, 3, 500, 0, 0), 0)
 })
 
 test('withRetry persistent mode expands 5xx retry budget and caps delay at 5 minutes', async () => {
@@ -247,10 +256,11 @@ test('withRetry persistent mode expands 5xx retry budget and caps delay at 5 min
     persistent: true,
     baseDelayMs: 0,
     jitterFactor: 0,
+    maxDelayMs: 0,
   })
   assert.equal(result, 'ok')
   assert.equal(calls.length, 5)
-  assert.equal(calculateRetryDelay('server_error', 12, 12, 500, PERSISTENT_MAX_DELAY_MS, 0), PERSISTENT_MAX_DELAY_MS)
+  assert.equal(calculateRetryDelay('rate_limit', 12, 12, 500, PERSISTENT_MAX_DELAY_MS, 0), PERSISTENT_MAX_DELAY_MS)
 })
 
 test('withRetry persistent mode still fails fast on background 529', async () => {
