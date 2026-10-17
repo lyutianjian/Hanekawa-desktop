@@ -324,7 +324,6 @@ test('the header project picker and the single-choice form fields stay native se
 test('an error sits in the open form, under its row, or pins to the screen', (t) => {
   const { view, apply } = mount(t)
   apply({ kind: 'new-endpoint' })
-  apply({ kind: 'pick-preset', preset: 'openai' })
   apply({ kind: 'submit-draft' })
   assert.equal(findAll(dialogOf(view()), 'settings-error').length, 1, 'the error is drawn away from its form')
   assert.equal(findAll(child(view(), 'settings-body'), 'settings-error').length, 0)
@@ -706,7 +705,6 @@ test('a repaint keeps the card and row nodes rather than rebuilding them', (t) =
 test('typing in a form field keeps that input node, so the caret survives', (t) => {
   const { view, apply } = mount(t)
   apply({ kind: 'new-endpoint' })
-  apply({ kind: 'pick-preset', preset: 'openai' })
   const first = findAll(dialogOf(view()), 'settings-input')[0]
   assert.ok(first)
 
@@ -724,7 +722,6 @@ test('typing in a form field keeps that input node, so the caret survives', (t) 
 test('typing in a form field keeps the caret, because the cell around it is kept too', (t) => {
   const { view, apply, stub } = mount(t)
   apply({ kind: 'new-endpoint' })
-  apply({ kind: 'pick-preset', preset: 'openai' })
   const form = dialogOf(view())
   const input = findAll(form, 'settings-input')[0]
   const cell = findAll(form, 'settings-field')[0]
@@ -783,7 +780,7 @@ test('a form opens as a dialog over the screen, and the page behind it goes iner
   apply({ kind: 'new-endpoint' })
   assert.equal(child(view(), 'settings-dialog-layer').hidden, false)
   assert.equal(dialogOf(view()).attributes.get('aria-modal'), 'true')
-  assert.equal(findOne(dialogOf(view()), 'settings-dialog-title').text, '添加服务商')
+  assert.equal(findOne(dialogOf(view()), 'settings-dialog-title').text, '新服务商')
   for (const region of ['settings-nav', 'settings-body']) {
     assert.ok(child(view(), region).attributes.has('inert'), `.${region} is still reachable behind the dialog`)
   }
@@ -844,23 +841,16 @@ test('the key field is a password box with a show switch', (t) => {
   assert.equal((keyOf()?.node as { type: string } | undefined)?.type, 'text')
 })
 
-test('a new provider draws service cards, then one form with the model table', (t) => {
-  const { view, apply, stub, intents } = mount(t)
+test('a new provider opens on one form with the model table', (t) => {
+  const { view, apply, stub } = mount(t)
   apply({ kind: 'new-endpoint' })
-  const cards = findAll(dialogOf(view()), 'settings-preset')
-  assert.ok(cards.length >= 8)
-  assert.equal(stub.activeElement(), cards[0]!.node, 'the first card takes focus')
-  const foot = (): string[] => findAll(findOne(dialogOf(view()), 'settings-dialog-foot'), 'settings-btn').map((btn) => btn.text)
-  assert.deepEqual(foot(), ['取消'])
-  stub.click(cards[2]!.node)
-  assert.deepEqual(intents.at(-1), { kind: 'pick-preset', preset: 'deepseek' })
-
-  apply({ kind: 'pick-preset', preset: 'deepseek' })
+  apply({ kind: 'draft-field', field: 'name', value: 'deepseek' })
   assert.equal(findOne(dialogOf(view()), 'settings-dialog-title').text, 'deepseek')
   assert.equal(findOne(dialogOf(view()), 'settings-provider-avatar').text, 'D')
   const name = findAll(dialogOf(view()), 'settings-input')[0]!
-  assert.equal(stub.activeElement(), name.node, 'a new page focuses its first field')
-  assert.deepEqual(foot(), ['上一步', '取消', '保存'])
+  assert.equal(stub.activeElement(), name.node, 'a new form focuses its first field')
+  const foot = (): string[] => findAll(findOne(dialogOf(view()), 'settings-dialog-foot'), 'settings-btn').map((btn) => btn.text)
+  assert.deepEqual(foot(), ['取消', '保存'])
   assert.match(findOne(dialogOf(view()), 'settings-model-empty').text, /还没有模型/)
 
   const fetch = findAll(findOne(dialogOf(view()), 'settings-models-head'), 'settings-btn')[0]!

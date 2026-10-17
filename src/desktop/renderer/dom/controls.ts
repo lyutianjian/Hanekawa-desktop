@@ -87,7 +87,8 @@ export function textField(options: {
   if (options.live) node.addEventListener('input', () => options.onCommit(node.value))
   else node.addEventListener('change', () => options.onCommit(node.value))
   node.addEventListener('keydown', (event) => {
-    if (event.key !== 'Enter') return
+    // Mid-IME composition Enter commits the pinyin letters, not the field.
+    if (event.key !== 'Enter' || event.isComposing || event.keyCode === 229) return
     event.preventDefault()
     event.stopPropagation()
     options.onCommit(node.value)

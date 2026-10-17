@@ -17,6 +17,10 @@
  */
 
 const { app, BaseWindow, nativeImage } = require('electron')
+
+// A window covered by another app stops producing frames on macOS, which
+// stalls rAF, transitions and input under whatever the user is doing meanwhile.
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
 const { createServer } = require('node:http')
 
 const profile = process.argv.find((arg) => arg.startsWith('--smoke-profile='))?.slice('--smoke-profile='.length)
@@ -148,7 +152,9 @@ async function run() {
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
   origin = `http://127.0.0.1:${server.address().port}`
   await app.whenReady()
-  const window = new BaseWindow({ width: 1000, height: 800, show: true })
+  const window = new BaseWindow({ width: 1000, height: 800, show: false })
+  // Inactive, so the user's typing elsewhere never lands in the tab as a takeover.
+  window.showInactive()
   const tabs = new BrowserTabHost()
   tabs.attachWindow(window)
   const host = new DesktopBrowserHost({ tabs, laneForSession: () => 'lane' })
@@ -280,8 +286,11 @@ async function run() {
   check('bounds stay out unless asked for', !/bounds/.test(unbounded.text), unbounded.text)
   const pressed = await host.clickAt(caller, tab.tabId, { x: 30, y: 240 }).catch((error) => error)
   check('click_at names what it landed on', /landed on <canvas/.test(pressed?.text ?? ''), pressed?.text ?? pressed?.message)
-  await new Promise((resolve) => setTimeout(resolve, 200))
-  const pad = (await host.listTabs(caller)).find((entry) => entry.tabId === tab.tabId)
+  let pad
+  for (const started = Date.now(); Date.now() - started < 2000; await new Promise((resolve) => setTimeout(resolve, 50))) {
+    pad = (await host.listTabs(caller)).find((entry) => entry.tabId === tab.tabId)
+    if (pad?.title !== 'Coords') break
+  }
   check('click_at pressed at that CSS point', pad?.title === 'pad 30,40', pad?.title)
   const outside = await codeOf(host.clickAt(caller, tab.tabId, { x: 5000, y: 10 }))
   check('click_at refuses a point off the viewport', outside === 'INVALID_REQUEST', outside)
@@ -390,6 +399,8 @@ async function run() {
     const bitmap = image.crop({ x: Math.floor(width / 2), y: Math.floor(height / 2), width: 1, height: 1 }).toBitmap()
     return `${bitmap[2]},${bitmap[1]},${bitmap[0]}` // BGRA
   }
+  // A capture off a hidden window goes through colour management and can land a step or two off.
+  const near = (shot, rgb) => centre(shot).split(',').every((channel, index) => Math.abs(Number(channel) - rgb[index]) <= 8)
   const paint = async (colour) => {
     await contents.executeJavaScript(`document.documentElement.style.background = '${colour}'; document.body.style.visibility = 'hidden'`)
     await settle()
@@ -402,18 +413,18 @@ async function run() {
   const red = await host.screenshot(shooter, tab.tabId).catch((error) => error)
   check('a hidden tab can still be captured', red?.bytes !== undefined, red?.message)
   check('the hidden capture keeps the last shown size', red?.width === 1000 && red?.height === 800, `${red?.width}x${red?.height}`)
-  check('the hidden capture shows the page as it is now', red?.bytes !== undefined && centre(red) === '255,0,0', red?.bytes && centre(red))
+  check('the hidden capture shows the page as it is now', red?.bytes !== undefined && near(red, [255, 0, 0]), red?.bytes && centre(red))
   await paint('rgb(0, 0, 255)')
   const blue = await host.screenshot(shooter, tab.tabId).catch((error) => error)
-  check('a second hidden capture is a fresh frame', blue?.bytes !== undefined && centre(blue) === '0,0,255', blue?.bytes && centre(blue))
+  check('a second hidden capture is a fresh frame', blue?.bytes !== undefined && near(blue, [0, 0, 255]), blue?.bytes && centre(blue))
   window.hide()
   await paint('rgb(0, 255, 0)')
   const green = await host.screenshot(shooter, tab.tabId).catch((error) => error)
-  check('a capture works with the main window hidden', green?.bytes !== undefined && centre(green) === '0,255,0', green?.bytes ? centre(green) : green?.message)
-  window.show()
+  check('a capture works with the main window hidden', green?.bytes !== undefined && near(green, [0, 255, 0]), green?.bytes ? centre(green) : green?.message)
+  window.showInactive()
   tabs.setBounds(tab.tabId, { x: 0, y: 0, width: 1000, height: 800 }, true)
   const shownAgain = await host.screenshot(shooter, tab.tabId).catch((error) => error)
-  check('the tab captures again once shown', shownAgain?.bytes !== undefined && centre(shownAgain) === '0,255,0', shownAgain?.bytes ? centre(shownAgain) : shownAgain?.message)
+  check('the tab captures again once shown', shownAgain?.bytes !== undefined && near(shownAgain, [0, 255, 0]), shownAgain?.bytes ? centre(shownAgain) : shownAgain?.message)
 
   // M: device emulation holds across a DevTools round trip and resets cleanly.
   host.turnEnded(caller.sessionId)
@@ -465,7 +476,7 @@ async function run() {
   const settledShot = await host.screenshot(settler, tab.tabId).catch((error) => error)
   const atShot = await moving()
   const shotWaitMs = Number(/after (\d+)ms/.exec(settledShot?.settle ?? '')?.[1] ?? 0)
-  check('a screenshot right after load waits for the page to settle', !early.data && atShot.data && atShot.transform === 'none' && /^The page was settled/.test(settledShot?.settle ?? '') && shotWaitMs >= 500, `${settledShot?.settle ?? settledShot?.message} before=${JSON.stringify(early)}`)
+  check('a screenshot right after load waits for the page to settle', !early.data && atShot.data && atShot.transform === 'none' && /^The page was settled/.test(settledShot?.settle ?? '') && shotWaitMs >= 500, `${settledShot?.settle ?? settledShot?.message} before=${JSON.stringify(early)} at=${JSON.stringify(atShot)}`)
   const rushed = await host.screenshot(settler, tab.tabId, { settle: false }).catch((error) => error)
   check('settle: false captures without waiting or reporting', rushed?.bytes !== undefined && rushed.settle === undefined, rushed?.message)
   await host.navigate(settler, tab.tabId, `${origin}/poll`)

@@ -78,6 +78,8 @@ export function createSettingsView(
     // this screen's documented way out, and `settingsKeyToIntent` is what decides
     // whether it clears the query or closes the screen.
     if (event.target === search && event.key !== 'Escape') return
+    // Mid-IME composition Escape cancels the pinyin, not the form.
+    if (event.isComposing || event.keyCode === 229) return
     const consumed = onKey({
       key: event.key,
       shiftKey: event.shiftKey,
@@ -184,7 +186,6 @@ export function createSettingsView(
   // the name of the control that opened it — the node itself may be rebuilt
   // while the dialog is up, so focus goes back to whatever answers to that name.
   let lastFormKey: string | undefined
-  let lastStep: string | undefined
   let lastRowIds = new Set<string>()
   let lastConfirmDiscard = false
   let opener: string | undefined
@@ -348,21 +349,16 @@ export function createSettingsView(
             keptButton(`${key}:keep`, 'settings-btn', '继续编辑', { kind: 'keep-editing' }, { title: '继续编辑（Esc）' }),
             keptButton(`${key}:discard`, 'settings-btn danger', '放弃修改', { kind: 'discard-draft' }),
           ]
-        : form.kind === 'provider' && form.step === 'preset'
-          ? [cancel]
-          : [
-              form.kind === 'provider' && form.canGoBack
-                ? keptButton(`${key}:back`, 'settings-btn lead', '上一步', { kind: 'wizard-back' })
-                : null,
-              cancel,
-              keptButton(
-                `${key}:submit`,
-                'settings-btn primary',
-                form.submitting ? '保存中…' : form.submitLabel,
-                { kind: 'submit-draft' },
-                { title: `${form.submitLabel}（Enter）`, enabled: !form.submitting },
-              ),
-            ],
+        : [
+            cancel,
+            keptButton(
+              `${key}:submit`,
+              'settings-btn primary',
+              form.submitting ? '保存中…' : form.submitLabel,
+              { kind: 'submit-draft' },
+              { title: `${form.submitLabel}（Enter）`, enabled: !form.submitting },
+            ),
+          ],
     )
     return [head, content, error ? el('div', 'settings-error', error) : null, foot]
   }
@@ -378,23 +374,12 @@ export function createSettingsView(
     return line
   }
 
-  /** The provider dialog: the preset grid, or the connection fields and the model table. */
+  /** The provider dialog: the connection fields and the model table. */
   function providerNodes(
     form: Extract<SettingsForm, { kind: 'provider' }>,
     key: string,
     fields: () => Node[],
   ): Array<Node | null> {
-    if (form.step === 'preset') {
-      const grid = node(`${key}:presets`, 'div', 'settings-presets')
-      reconcile(grid, form.presets.map((preset) =>
-        node(`${key}:preset:${preset.id}`, 'button', preset.selected ? 'settings-preset selected' : 'settings-preset', (made) => {
-          made.type = 'button'
-          made.appendChild(el('span', 'settings-preset-label', preset.label))
-          made.appendChild(el('span', 'settings-preset-note', preset.note))
-          made.addEventListener('click', () => onIntent({ kind: 'pick-preset', preset: preset.id }))
-        })))
-      return [grid]
-    }
     const connection = form.fields.length > 0 ? node(`${key}:fields`, 'div', 'settings-provider-fields') : null
     if (connection) reconcile(connection, fields())
 
@@ -711,7 +696,7 @@ export function createSettingsView(
       // The dialog keeps its last content while it closes; only an open form repaints it.
       const formKey = form ? formKeyOf(form) : undefined
       if (form) reconcile(dialog, dialogNodes(form, view.error, menus))
-      dialog.classList.toggle('wide', form?.kind === 'provider' && form.step === 'form')
+      dialog.classList.toggle('wide', form?.kind === 'provider')
       for (const region of [nav, body]) {
         if (form) region.setAttribute('inert', '')
         else region.removeAttribute('inert')
@@ -721,9 +706,6 @@ export function createSettingsView(
         dialog.querySelector('.settings-dialog-body')?.querySelector('input, select, button') as HTMLElement | null
       if (formKey !== undefined && lastFormKey === undefined) {
         opener = activeLabel
-        const first = firstField()
-        if (first) pendingFocus.unshift(first)
-      } else if (form?.kind === 'provider' && formKey === lastFormKey && form.step !== lastStep) {
         const first = firstField()
         if (first) pendingFocus.unshift(first)
       } else if (form?.kind === 'provider' && formKey === lastFormKey) {
@@ -747,7 +729,6 @@ export function createSettingsView(
         if (keep) pendingFocus.unshift(keep)
       }
       lastFormKey = formKey
-      lastStep = form?.kind === 'provider' ? form.step : undefined
       lastRowIds = new Set(form?.kind === 'provider' ? form.models.map((row) => row.rowId) : [])
       lastConfirmDiscard = form?.confirmDiscard === true
 

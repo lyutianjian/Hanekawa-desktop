@@ -6155,49 +6155,6 @@ body.projects-open #browser-resizer,
   gap: var(--space-2);
 }
 
-/* The footer's lead action (上一步) sits apart from the closing pair. */
-.settings-dialog-foot > .settings-btn.lead { margin-right: auto; }
-
-/* The new-endpoint wizard: service cards, two to a row. */
-.settings-presets {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-
-.settings-preset {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px;
-  min-width: 0;
-  padding: var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--text-primary);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.settings-preset:hover,
-.settings-preset.selected {
-  background: var(--surface-hover);
-}
-
-.settings-preset.selected { border-color: var(--border-strong); }
-
-.settings-preset-label {
-  font-size: var(--type-ui);
-  font-weight: 600;
-}
-
-.settings-preset-note {
-  color: var(--text-tertiary);
-  font-size: var(--type-meta);
-}
-
 .settings-probe {
   display: flex;
   align-items: flex-start;
@@ -6388,7 +6345,6 @@ body.projects-open #browser-resizer,
 .mcp-segmented-btn,
 .mcp-btn-trash,
 .mcp-form-add-btn,
-.settings-preset,
 .settings-model-row,
 .settings-secret-toggle,
 .settings-model-expand,

@@ -124,8 +124,8 @@ export type ShellCommand =
   | { type: 'settings-change'; id: string; projectRoot: string; change: SettingsChange }
   /**
    * Lists an endpoint's models — the settings screen's connection test. With
-   * `endpointName` and no `apiKey` the key saved for that endpoint is used: the
-   * renderer only ever holds its mask. Never rejects for a failed connection;
+   * `endpointName` and no `apiKey` the key saved for that endpoint is used.
+   * Never rejects for a failed connection;
    * the reason is in the answer.
    */
   | {
@@ -333,18 +333,12 @@ export type SettingsCategory =
   | 'personalization'
   | 'appearance'
 
-/**
- * An endpoint as the screen shows it.
- *
- * The field is `apiKeyMasked`, never `apiKey`, and that naming is the actual
- * safeguard: a masked value is then not assignable to any `SettingsChange`
- * field, so "render the key, send it back on save" cannot typecheck.
- */
+/** An endpoint as the screen shows it; the edit form shows the real key. */
 export interface WireEndpointInfo {
   name: string
   provider: string
   baseUrl?: string
-  apiKeyMasked?: string
+  apiKey?: string
 }
 
 export interface WireModelInfo {
@@ -580,8 +574,7 @@ export interface WireSettingsSnapshot {
  *
  * `apiKey` absent means "leave it alone"; clearing is its own variant rather
  * than `apiKey: null`, because an optional field cannot distinguish "the user
- * did not touch this" from "the user emptied it" once it has round-tripped
- * through a form whose input was seeded with a mask.
+ * did not touch this" from "the user emptied it".
  */
 export type SettingsChange =
   | { scope: 'provider'; kind: 'set-endpoint'; name: string; provider: string; baseUrl?: string; apiKey?: string }

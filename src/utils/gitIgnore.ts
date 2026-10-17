@@ -23,6 +23,8 @@ export async function gitIgnoredPaths(cwd: string, filePaths: string[]): Promise
       output += chunk
     })
     child.on('error', () => finish(new Set()))
+    // git exits before reading stdin outside a repository; `close` still settles.
+    child.stdin.on('error', () => {})
     child.on('close', (code) => {
       if (code === 0 || code === 1) {
         for (const line of output.split(/\r?\n/)) {

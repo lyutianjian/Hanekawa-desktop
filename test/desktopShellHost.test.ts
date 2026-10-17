@@ -1815,21 +1815,16 @@ function seedConfig(project: FakeProject): void {
   }
 }
 
-test('get-settings never lets a raw api key across the wire', async () => {
+test('get-settings sends an endpoint its own key and no model a resolved one', async () => {
   const h = createHarness()
   seedConfig(h.project)
 
   const result = await h.client.getSettings(h.entry.root)
 
-  // Asserted on the whole serialized reply rather than field by field: that is
-  // the assertion that survives someone adding a spread of `resolveModel()`
-  // later, which is the one bug here that leaks every key the user owns.
-  assert.ok(
-    !JSON.stringify(result).includes('sk-abcdefghijkl'),
-    'the raw key must not appear anywhere in the reply',
-  )
-  assert.equal(result.settings.endpoints[0]?.apiKeyMasked, 'sk-a...ijkl')
+  assert.equal(result.settings.endpoints[0]?.apiKey, 'sk-abcdefghijkl')
   assert.equal(result.settings.endpoints[0]?.baseUrl, 'https://api.example')
+  // A spread of `resolveModel()` would copy the endpoint's key onto every model.
+  assert.ok(!JSON.stringify(result.settings.models).includes('sk-abcdefghijkl'))
 })
 
 test('get-settings projects models, routing and the save target', async () => {

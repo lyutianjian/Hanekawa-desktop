@@ -17,7 +17,7 @@ import {
   type ProbedModel,
   type WireShellProbeEndpointResult,
 } from '../../shellProtocol.js'
-import { PLACEHOLDER_KEY, PROVIDER_PRESETS, presetById, providerLabel, type ProviderPreset } from './providerPresets.js'
+import { providerLabel } from './providerLabels.js'
 import { DEFAULT_THEME_PREFERENCE, THEME_PREFERENCES, type ThemePreference } from './theme.js'
 import { EFFORT_LABELS } from './composer.js'
 import { agentDescription } from './builtinLabels.js'
@@ -85,11 +85,6 @@ export type SettingsDraft =
        */
       readonly keyTouched: boolean
       readonly keyVisible?: boolean
-      /** A new provider starts on the preset grid, then fills in this same form. */
-      readonly step?: 'preset' | 'form'
-      readonly preset?: string
-      /** The user typed a name, so picking another service no longer renames it. */
-      readonly nameTouched?: boolean
       readonly models: readonly ModelDraftRow[]
       /** Saved models this dialog deleted; sent as `remove-model`. */
       readonly removedKeys: readonly string[]
@@ -445,15 +440,9 @@ export type SettingsForm =
       readonly title: string
       readonly submitLabel: string
       readonly anchor: SettingsAnchor
-      readonly step: 'preset' | 'form'
-      /** The preset grid; empty past it. */
-      readonly presets: readonly SettingsPresetChoice[]
-      /** Absent on the preset grid. */
-      readonly header?: { readonly initial: string; readonly name: string; readonly protocol?: string }
+      readonly header: { readonly initial: string; readonly name: string; readonly protocol?: string }
       /** Name, protocol, key and address; empty for the unassigned pseudo-provider. */
       readonly fields: readonly SettingsFormField[]
-      /** A new provider: the footer offers 上一步 back to the grid. */
-      readonly canGoBack: boolean
       /** Absent where there is nothing to list from. */
       readonly probe?: SettingsProbeView
       readonly picker?: SettingsModelPicker
@@ -473,13 +462,6 @@ export type SettingsForm =
 export interface SettingsProbeView {
   readonly status: 'idle' | 'running' | 'ok' | 'failed'
   readonly message?: string
-}
-
-export interface SettingsPresetChoice {
-  readonly id: string
-  readonly label: string
-  readonly note: string
-  readonly selected: boolean
 }
 
 /** What 获取模型列表 found; checking a row adds it to the table. */
@@ -708,15 +690,12 @@ function projectOne(snapshot: WireSettingsSnapshot, change: SettingsChange): Wir
         ...(snapshot.defaultModel === change.from ? { defaultModel: change.to } : {}),
       }
     case 'set-endpoint': {
+      const apiKey = change.apiKey ?? existingEndpoint(snapshot, change.name)?.apiKey
       const row: WireEndpointInfo = {
         name: change.name,
         provider: change.provider,
         ...(change.baseUrl !== undefined ? { baseUrl: change.baseUrl } : {}),
-        // The mask is the host's to compute; until it answers, a row that is
-        // *being* created says nothing rather than guessing at a key.
-        ...(existingEndpoint(snapshot, change.name)?.apiKeyMasked !== undefined
-          ? { apiKeyMasked: existingEndpoint(snapshot, change.name)!.apiKeyMasked }
-          : {}),
+        ...(apiKey !== undefined ? { apiKey } : {}),
       }
       return { ...snapshot, endpoints: upsert(snapshot.endpoints, row, (item) => item.name) }
     }
@@ -1934,9 +1913,9 @@ function draftForm(
 }
 
 function providerForm(draft: EndpointDraft, snapshot: WireSettingsSnapshot, probe: SettingsProbe | undefined): SettingsForm {
-  const step = draft.step ?? 'form'
-  const base = {
-    kind: 'provider' as const,
+  const name = draft.unassigned ? '未归属服务商的模型' : draft.name.trim() || '新服务商'
+  return {
+    kind: 'provider',
     submitLabel: '保存',
     // `originalName`, never the live `name`: the anchor keys the form's kept
     // nodes, and one that moves per keystroke rebuilds the field being typed in.
@@ -1946,38 +1925,14 @@ function providerForm(draft: EndpointDraft, snapshot: WireSettingsSnapshot, prob
         ? { rowId: UNASSIGNED_ROW }
         : draft.originalName === undefined ? {} : { rowId: `endpoint:${draft.originalName}` }),
     },
-    step,
-    canGoBack: draft.step !== undefined,
-  }
-  if (step === 'preset') {
-    return {
-      ...base,
-      title: '添加服务商',
-      presets: PROVIDER_PRESETS.map((choice) => ({
-        id: choice.id,
-        label: choice.label,
-        note: choice.note,
-        selected: choice.id === draft.preset,
-      })),
-      fields: [],
-      models: [],
-      modelCount: '',
-      canAddModel: false,
-    }
-  }
-  const preset = presetById(draft.preset)
-  const name = draft.unassigned ? '未归属服务商的模型' : draft.name.trim() || preset?.label || '新服务商'
-  return {
-    ...base,
     title: draft.unassigned ? name : draft.isNew ? '添加服务商' : `编辑服务商 ${draft.originalName ?? draft.name}`,
-    presets: [],
     header: {
       initial: [...name][0]!.toUpperCase(),
       name,
       ...(draft.unassigned || !draft.provider ? {} : { protocol: providerLabel(draft.provider) }),
     },
     fields: draft.unassigned ? [] : [
-      { id: 'name', label: '名称', value: draft.name, placeholder: preset?.id ?? '例如 main' },
+      { id: 'name', label: '名称', value: draft.name, placeholder: '输入名称' },
       {
         id: 'provider',
         label: 'API 协议',
@@ -1991,17 +1946,17 @@ function providerForm(draft: EndpointDraft, snapshot: WireSettingsSnapshot, prob
         mono: true,
         secret: true,
         reveal: { visible: draft.keyVisible === true, intent: { kind: 'toggle-key-visible' } },
-        placeholder: !draft.isNew ? '留空表示不修改' : preset?.keyOptional ? '本机服务可不填' : '粘贴 API key',
+        placeholder: draft.isNew ? '粘贴 API key' : '留空表示不修改',
       },
       {
         id: 'baseUrl',
         label: 'Base URL',
         value: draft.baseUrl,
         mono: true,
-        placeholder: preset?.defaultUrl ?? (draft.isNew ? 'https://' : '留空使用官方地址'),
+        placeholder: draft.isNew ? 'https://' : '留空使用官方地址',
       },
     ],
-    ...(draft.unassigned ? {} : { probe: probeView(probe, preset) }),
+    ...(draft.unassigned ? {} : { probe: probeView(probe) }),
     ...(draft.listed ? { picker: modelPicker(draft) } : {}),
     models: draft.models.map((row) => modelRowView(row, snapshot)),
     modelCount: `${draft.models.length} 个模型`,
@@ -2320,10 +2275,8 @@ function editProviderDraft(snapshot: WireSettingsSnapshot, name: string | undefi
     ...(endpoint ? { originalName: endpoint.name } : { unassigned: true }),
     provider: endpoint?.provider ?? '',
     baseUrl: endpoint?.baseUrl ?? '',
-    // Seeded empty rather than with the mask: an empty field with a
-    // 留空表示不修改 placeholder cannot be mistaken for the real key, and
-    // `keyTouched` is what actually decides whether it is sent.
-    apiKey: '',
+    // `keyTouched` still decides whether it is sent: an untouched field leaves the key alone.
+    apiKey: endpoint?.apiKey ?? '',
     keyTouched: false,
     models,
     removedKeys: [],
@@ -2335,11 +2288,10 @@ const NEW_ENDPOINT_DRAFT: SettingsDraft = {
   kind: 'endpoint',
   name: '',
   isNew: true,
-  provider: '',
+  provider: 'openai',
   baseUrl: '',
   apiKey: '',
   keyTouched: false,
-  step: 'preset',
   models: [],
   removedKeys: [],
   rowSeq: 0,
@@ -2371,31 +2323,20 @@ function resumable(draft: SettingsDraft | undefined, snapshot: WireSettingsSnaps
   return {
     draft: {
       ...draft,
-      ...(endpointLanded ? { isNew: false, originalName: name, step: undefined } : {}),
+      ...(endpointLanded ? { isNew: false, originalName: name } : {}),
       models,
       removedKeys: draft.removedKeys.filter((key) => saved(key) !== undefined),
     },
   }
 }
 
-/** `base`, or the first of `base-2`, `base-3`… that `taken` lacks. */
-function freeName(base: string, taken: readonly string[]): string {
-  if (!taken.includes(base)) return base
-  for (let n = 2; ; n++) {
-    if (!taken.includes(`${base}-${n}`)) return `${base}-${n}`
-  }
-}
-
 /**
- * The key a provider form sends: what was typed, the stand-in a key-optional
- * local server is stored with, or nothing — which the host reads as "leave it",
- * the promise the edit form's 留空表示不修改 makes.
+ * The key a provider form sends: what was typed, or nothing — which the host
+ * reads as "leave it", the promise the edit form's 留空表示不修改 makes.
  */
 function typedKey(draft: EndpointDraft): string | undefined {
   const typed = draft.keyTouched ? draft.apiKey.trim() : ''
-  if (typed) return typed
-  if (draft.isNew && presetById(draft.preset)?.keyOptional) return PLACEHOLDER_KEY
-  return undefined
+  return typed || undefined
 }
 
 function startProbe(state: SettingsState, cleared: SettingsState): SettingsOutcome {
@@ -2438,14 +2379,13 @@ const PROBE_FAILURES: Record<Exclude<WireShellProbeEndpointResult, { ok: true }>
   other: '连接失败。',
 }
 
-function probeView(probe: SettingsProbe | undefined, preset?: ProviderPreset): SettingsProbeView {
+function probeView(probe: SettingsProbe | undefined): SettingsProbeView {
   if (!probe) return { status: 'idle' }
   if (probe.status === 'running') return { status: 'running', message: '正在获取模型列表…' }
   const { result } = probe
   if (result.ok) {
     const moved = result.baseUrl ? ` · 地址已改为 ${result.baseUrl}` : ''
-    const unverified = preset?.publicModels ? '。这个服务的模型列表不校验 key，key 要到第一次对话时才能确认' : ''
-    return { status: 'ok', message: `已连接 · ${result.latencyMs} ms${moved}${unverified}` }
+    return { status: 'ok', message: `已连接 · ${result.latencyMs} ms${moved}` }
   }
   const status = result.status !== undefined ? `（${result.status}）` : ''
   const detail = result.reason === 'other' && result.detail ? ` ${result.detail}` : ''
@@ -2515,8 +2455,6 @@ export type SettingsIntent =
   | { kind: 'select-category'; category: SettingsCategory }
   | { kind: 'select-project'; projectRoot: string }
   | { kind: 'new-endpoint' }
-  | { kind: 'pick-preset'; preset: string }
-  | { kind: 'wizard-back' }
   /** 获取模型列表: the connection test, whose listing opens the picker. */
   | { kind: 'test-endpoint' }
   | { kind: 'probe-result'; seq: number; result: WireShellProbeEndpointResult }
@@ -2725,31 +2663,6 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
 
     case 'new-endpoint':
       return { state: { ...cleared, ...NO_DRAFT, draft: NEW_ENDPOINT_DRAFT } }
-    case 'pick-preset': {
-      const draft = state.draft
-      const preset = presetById(intent.preset)
-      if (draft?.kind !== 'endpoint' || draft.step === undefined || !preset) return { state }
-      const same = draft.preset === preset.id
-      return {
-        state: {
-          ...cleared,
-          ...(same ? {} : { probe: undefined }),
-          draft: {
-            ...draft,
-            ...(same ? {} : { baseUrl: preset.baseUrl ?? '', apiKey: '', keyTouched: false, listed: undefined }),
-            step: 'form',
-            preset: preset.id,
-            provider: preset.provider,
-            name: draft.nameTouched ? draft.name : freeName(preset.id, state.snapshot?.endpoints.map((e) => e.name) ?? []),
-          },
-        },
-      }
-    }
-    case 'wizard-back': {
-      const draft = state.draft
-      if (draft?.kind !== 'endpoint' || draft.step !== 'form') return { state }
-      return { state: { ...cleared, draft: { ...draft, step: 'preset' } } }
-    }
     case 'test-endpoint':
       return startProbe(state, cleared)
     case 'probe-result': {
@@ -3051,7 +2964,6 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return { state: { ...state, discardArmed: undefined } }
     case 'submit-draft': {
       if (!state.draft || !state.snapshot || state.draftSubmit !== undefined) return { state }
-      if (state.draft.kind === 'endpoint' && state.draft.step === 'preset') return { state }
       const changes = draftToChanges(state.draft, state.snapshot)
       if ('error' in changes) return { state: { ...state, error: changes.error, openMenu: undefined } }
       if (changes.length === 0) return { state: { ...cleared, ...NO_DRAFT } }
@@ -3262,7 +3174,7 @@ function withField(draft: SettingsDraft, field: string, value: string): Settings
   if (draft.kind === 'endpoint') {
     switch (field) {
       case 'name':
-        return { ...draft, name: value, nameTouched: true }
+        return { ...draft, name: value }
       case 'provider':
         return { ...draft, provider: value }
       case 'baseUrl':

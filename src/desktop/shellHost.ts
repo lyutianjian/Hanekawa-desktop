@@ -1965,7 +1965,7 @@ export class ShellHost<
     const endpoints = Object.entries(raw.endpoints ?? {}).map(([name, endpoint]) => {
       const info: WireEndpointInfo = { name, provider: endpoint.provider }
       if (endpoint.baseUrl !== undefined) info.baseUrl = endpoint.baseUrl
-      if (endpoint.apiKey) info.apiKeyMasked = maskKey(endpoint.apiKey)
+      if (endpoint.apiKey) info.apiKey = endpoint.apiKey
       return info
     })
 

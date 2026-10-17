@@ -60,15 +60,6 @@ async function click(ctx, label) {
   })()`)
 }
 
-async function preset(ctx, label) {
-  await evaluate(ctx.cdp, `(() => {
-    const card = [...document.querySelectorAll('#settings .settings-preset')]
-      .find((node) => node.querySelector('.settings-preset-label')?.textContent === ${JSON.stringify(label)})
-    if (!card) throw new Error('No provider preset: ' + ${JSON.stringify(label)})
-    card.click()
-  })()`)
-}
-
 const dialogOpen = (ctx) => evaluate(ctx.cdp, "!!document.querySelector('#settings .settings-dialog-layer:not([hidden]) .settings-dialog')")
 
 async function field(ctx, label, value) {
@@ -100,7 +91,7 @@ async function send(ctx, lane, prompt) {
 
 async function firstRun(ctx) {
   await waitFor('first-run provider setup', async () => await settingsOpen(ctx)
-    && await evaluate(ctx.cdp, "!!document.querySelector('#settings .settings-dialog .settings-preset')"))
+    && await evaluate(ctx.cdp, "!!document.querySelector('#settings .settings-dialog .settings-provider-fields')"))
   const { lanes } = await app.shell(ctx.app, { type: 'panes' })
   const lane = lanes[0].lane
   ctx.eq('the app starts without creating a model config', existsSync(globalConfigPath(ctx.home)), false)
@@ -119,7 +110,6 @@ async function firstRun(ctx) {
   ctx.eq('the unconfigured send preserves the draft', await evaluate(ctx.cdp, "document.getElementById('input').value"), 'draft before setup')
 
   await click(ctx, '添加服务商')
-  await preset(ctx, '其他 OpenAI 兼容服务')
   await field(ctx, '名称', 'first-run')
   await field(ctx, 'Base URL', ctx.firstRunFixture.baseUrl)
   await field(ctx, 'API Key', 'local-fixture-key')

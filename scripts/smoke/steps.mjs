@@ -155,8 +155,8 @@ async function raisePrompt(ctx, lane, fileName) {
 
 // --- S7: Ctrl+B ---------------------------------------------------------------
 
-/** `.transcript`'s padding in `styles.css`; the only gap under the reading column. */
-const TRANSCRIPT_PADDING = 8
+/** `.transcript`'s top padding in `styles.css`: `--space-2` plus the 8px `--transcript-tuck` under the title bar. */
+const TRANSCRIPT_PADDING = 16
 /**
  * `ANCHOR_REST_PX` in `model/transcriptAnchor.ts`: where the pad rests once a
  * turn is over. A fixture conversation is settled by definition — no turn is in
@@ -173,9 +173,9 @@ async function step7(ctx) {
   const launch = (await lanes(ctx))[0]
   const hero = await waitFor('the welcome hero to come up', async () => {
     const view = await read(ctx, probes.welcome())
-    return view !== null && view.title.includes('projA') ? view : undefined
+    return view !== null && view.project.includes('projA') ? view : undefined
   })
-  ctx.ok('startup shows the welcome hero naming the project', hero.title.includes('projA'), hero.title)
+  ctx.ok('startup shows the welcome hero naming the project', hero.project.includes('projA'), hero.project)
   const initial = await waitFor('the fixture sessions to be listed', async () => {
     const view = await read(ctx, probes.sidebar())
     return view.rowCount >= 8 ? view : undefined
@@ -708,7 +708,7 @@ async function step4b(ctx) {
   // pane, not a row going active.
   await waitFor('the replacement to activate and show its welcome screen', async () => {
     const hero = await read(ctx, probes.welcome())
-    return hero !== null && hero.title.includes('projA') ? hero : undefined
+    return hero !== null && hero.project.includes('projA') ? hero : undefined
   })
   const view = await read(ctx, probes.sidebar())
   ctx.ok('the row for the deleted session is gone', rowFor(view, only.paneId) === undefined)
@@ -753,7 +753,7 @@ async function step5(ctx) {
   )
   await waitFor('project B to land in its welcome screen', async () => {
     const hero = await read(ctx, probes.welcome())
-    return hero !== null && hero.title.includes('projB') ? hero : undefined
+    return hero !== null && hero.project.includes('projB') ? hero : undefined
   })
 
   // The sidebar lists every *added* project — the registry — not just open
@@ -849,20 +849,16 @@ async function step8(ctx) {
     `bodyOpen=${open.bodyOpen} sidebarBoxes=${open.sidebarBoxes}`,
   )
   // `ALL_CATEGORIES` in `renderer/model/settings.ts`: provider, extensions,
-  // permissions, agent, general, appearance. A number rather than a derivation —
-  // the smoke reads the built renderer, and a category silently disappearing from
-  // the nav is exactly what this is here to catch.
-  ctx.eq('all six categories are live', open.nav.length, 6)
+  // permissions, agent, general, personalization, appearance. A number rather
+  // than a derivation — the smoke reads the built renderer, and a category
+  // silently disappearing from the nav is exactly what this is here to catch.
+  ctx.eq('all seven categories are live', open.nav.length, 7)
   ctx.eq('the screen loaded without an error', open.error, '')
   ctx.note(`focus after opening: ${open.focus} (inside the screen: ${open.focusInside})`)
 
-  // 8a2 — todo V1. The other half of S2's "the scrim covers exactly the canvas":
+  // 8a2 — the other half of S2's "the scrim covers exactly the canvas":
   // a border here would inset the full-window layers by 1px on every side.
-  ctx.ok(
-    'the canvas floats on an outline, not on a border',
-    open.canvasHairline?.outlineWidth === '1px' && open.canvasHairline?.borderTopWidth === '0px',
-    JSON.stringify(open.canvasHairline),
-  )
+  ctx.eq('the canvas has no border', open.canvasBorder, '0px')
 
   let longest = { rowCount: -1, label: '' }
   for (const item of open.nav) {
@@ -871,7 +867,7 @@ async function step8(ctx) {
       const view = await read(ctx, probes.settings())
       return view.nav.find((entry) => entry.label === item.label)?.selected ? view : undefined
     })
-    ctx.ok(`the ${item.label} page draws cards`, page.cards.length > 0, page.cards.join(' | '))
+    ctx.ok(`the ${item.label} page draws cards or its editor`, page.cards.length > 0 || page.editor, page.cards.join(' | '))
     if (page.rowCount > longest.rowCount) longest = { ...page, label: item.label }
     await ctx.shot(`08a-settings-${item.label}`, `the ${item.label} category: column layout, row density, control alignment`)
 
@@ -902,16 +898,16 @@ async function step8(ctx) {
   ctx.note(`longest page: ${longest.label}, ${longest.rowCount} rows, ${longest.toggles} toggles`)
 
   // 8a3 — todo V7, the reading column, which only a wide window can show: at the
-  // default 1200 the body's content box is already narrower than 880, so the
+  // default 1200 the body's content box may already be narrower than 760, so the
   // clamp never engages and any `max-width` would pass. Widen, then assert the
-  // measure exactly (not `<= 880`) and that the scroller kept its own full width.
+  // measure exactly (not `<= 760`) and that the scroller kept its own full width.
   const columnAt = async (label) => {
     const view = await read(ctx, probes.settings())
     const available = view.bodyContent ? view.bodyContent.right - view.bodyContent.left : 0
     const gaps = view.column && view.bodyContent
       ? [view.column.left - view.bodyContent.left, view.bodyContent.right - view.column.right]
       : []
-    ctx.eq(`the settings body reads in an 880px column at ${label}`, view.column?.width, Math.min(880, available))
+    ctx.eq(`the settings body reads in an 760px column at ${label}`, view.column?.width, Math.min(760, available))
     // 2px, not 1: both edges of both boxes are `Math.round`ed by the probe, and
     // on a scaled display (a 200%-DPI screen is a normal Windows laptop) the
     // layout points land on fractional CSS pixels, so each edge can round a
@@ -926,7 +922,7 @@ async function step8(ctx) {
   await setViewport(ctx.cdp, 1600, 900)
   await sleep(300)
   await columnAt('1600x900')
-  await ctx.shot('08a-settings-wide', 'the settings body at 1600x900: the cards stay in an 880px column, the scroller keeps the panel width')
+  await ctx.shot('08a-settings-wide', 'the settings body at 1600x900: the cards stay in an 760px column, the scroller keeps the panel width')
   await clearViewport(ctx.cdp)
   await sleep(300)
 

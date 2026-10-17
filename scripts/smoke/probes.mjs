@@ -155,7 +155,8 @@ export const welcome = () => `(() => {
   const welcome = pane ? pane.querySelector('.welcome') : null
   if (!welcome || welcome.hidden) return null
   const title = (welcome.querySelector('.welcome-title') || {}).textContent || ''
-  return { title: title.trim() }
+  const project = (welcome.querySelector('.welcome-pill.project') || {}).textContent || ''
+  return { title: title.trim(), project: project.trim() }
 })()`
 
 /** One pane, found by the fixture marker its transcript contains. */
@@ -542,6 +543,7 @@ export const settings = () => `(() => {
     })),
     title: (container.querySelector('.settings-title') || {}).textContent || '',
     cards: [...container.querySelectorAll('.settings-card-title')].map((node) => node.textContent),
+    editor: container.querySelector('.settings-editor-page') !== null,
     rowCount: container.querySelectorAll('.settings-row').length,
     toggles: container.querySelectorAll('[role="switch"]').length,
     error: (container.querySelector('.settings-error') || {}).textContent || '',
@@ -570,11 +572,8 @@ export const settings = () => `(() => {
           return { left, right: left + width }
         })()
       : null,
-    // todo V1/S8: the canvas hairline is an \`outline\`, never a \`border\` — a border
-    // would inset \`#overlay\`'s \`inset: 0\` by 1px and break S2's per-edge equality.
-    canvasHairline: canvasStyle
-      ? { outlineWidth: canvasStyle.outlineWidth, borderTopWidth: canvasStyle.borderTopWidth }
-      : null,
+    // A border on the canvas would inset \`#overlay\`'s \`inset: 0\` by 1px and break S2's per-edge equality.
+    canvasBorder: canvasStyle ? canvasStyle.borderTopWidth : null,
   }
 })()`
 
