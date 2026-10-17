@@ -57,9 +57,15 @@ import {
 /** A form. At most one is open at a time — see `applySettingsIntent`. */
 export type SettingsDraft =
   | {
+      /**
+       * One provider and its models, edited in one dialog and saved as one batch.
+       * `unassigned` is the pseudo-provider for hand-written models that name no
+       * endpoint: only its model table is shown, and nothing endpoint-side is sent.
+       */
       readonly kind: 'endpoint'
       readonly name: string
       readonly isNew: boolean
+      readonly unassigned?: boolean
       /**
        * Set when editing: a changed `name` becomes a rename, not a second
        * endpoint — and it is what the form is *anchored* by. Anchoring on the
@@ -73,47 +79,25 @@ export type SettingsDraft =
       /**
        * Whether the user typed in the key field.
        *
-       * The field is seeded with a *mask*, so sending it unconditionally would
-       * write `sk-a...ijkl` into the config as if it were the key. False means
-       * the change omits `apiKey` entirely, which the host reads as "leave it".
+       * The field is seeded empty, so sending it unconditionally would clear the
+       * saved key. False means the change omits `apiKey` entirely, which the host
+       * reads as "leave it".
        */
       readonly keyTouched: boolean
-      /**
-       * The wizard's page, set only for a new endpoint. An endpoint on its own
-       * routes nothing — every model names one — so the wizard ends by creating
-       * the endpoint's models in the same submit.
-       */
-      readonly step?: 'preset' | 'connect' | 'models'
+      readonly keyVisible?: boolean
+      /** A new provider starts on the preset grid, then fills in this same form. */
+      readonly step?: 'preset' | 'form'
       readonly preset?: string
       /** The user typed a name, so picking another service no longer renames it. */
       readonly nameTouched?: boolean
-      /** What the last successful connection test listed. */
+      readonly models: readonly ModelDraftRow[]
+      /** Saved models this dialog deleted; sent as `remove-model`. */
+      readonly removedKeys: readonly string[]
+      /** Mints `ModelDraftRow.rowId`. */
+      readonly rowSeq: number
+      /** What the last 获取模型列表 listed; the picker is open while this is set. */
       readonly listed?: readonly ProbedModel[]
-      /** Model ids to create with the endpoint, listed or typed in. */
-      readonly picked?: readonly string[]
       readonly modelFilter?: string
-      readonly manualModel?: string
-    }
-  | {
-      readonly kind: 'model'
-      readonly key: string
-      readonly isNew: boolean
-      /** Set when editing: a changed `key` becomes a rename, not a second model. */
-      readonly originalKey?: string
-      readonly model: string
-      readonly endpoint: string
-      readonly provider: string
-      readonly contextWindow: string
-      /** `'on'` or `''` — a form field is a string, like every other one here. */
-      readonly longContext1m: string
-      /** `'on'` or `''` — the image-input switch, same off-is-absence rule. */
-      readonly supportsImageInput: string
-      readonly maxOutputTokens: string
-      /**
-       * The effort levels the model accepts. Empty means "no restriction", the
-       * same thing a full selection means — the config stores neither.
-       */
-      readonly supportedEfforts: readonly EffortLevel[]
     }
   | {
       readonly kind: 'permission-rule'
@@ -136,6 +120,29 @@ export type SettingsDraft =
       readonly headers: readonly { readonly key: string; readonly value: string }[]
     }
 
+/** One model in the provider dialog's table. */
+export interface ModelDraftRow {
+  /** Keys the row's nodes; stable across edits, unlike the model id. */
+  readonly rowId: string
+  /** The saved key this row edits; absent for a row added in this dialog. */
+  readonly originalKey?: string
+  readonly model: string
+  /** Empty means the model id is the key. */
+  readonly displayName: string
+  readonly contextWindow: string
+  readonly maxOutputTokens: string
+  readonly supportsImageInput: boolean
+  readonly thinkingOff: boolean
+  /** Empty means every level, as in the config. */
+  readonly supportedEfforts: readonly EffortLevel[]
+  /** A model-level `provider` override from a hand-written config, carried as is. */
+  readonly provider?: string
+  /** An unassigned row's endpoint reference, carried as is: it may name one not configured. */
+  readonly endpoint?: string
+  readonly expanded?: boolean
+  readonly effortsOpen?: boolean
+}
+
 /**
  * One change that has been sent and not yet answered.
  *
@@ -151,14 +158,13 @@ export interface PendingMutation {
 }
 
 export type SettingsProbe =
-  /** `advance`: started by 下一步, so a success moves the wizard on by itself. */
-  | { readonly seq: number; readonly status: 'running'; readonly advance: boolean }
+  | { readonly seq: number; readonly status: 'running' }
   | { readonly seq: number; readonly status: 'done'; readonly result: WireShellProbeEndpointResult }
 
 /** A connection test for the caller to run; its answer comes back as `probe-result`. */
 export interface SettingsProbeRequest {
   readonly seq: number
-  readonly provider: 'anthropic' | 'openai'
+  readonly provider: 'anthropic' | 'openai' | 'openai-responses'
   readonly baseUrl?: string
   readonly apiKey?: string
   /** No key typed while editing: the host tests with the one it has saved. */
@@ -176,7 +182,7 @@ export interface SettingsState {
   readonly pendingSeq: number
   /** Mints `SettingsProbe.seq`; a reply whose seq is not the current probe's is stale. */
   readonly probeSeq: number
-  /** The open endpoint form's connection test. */
+  /** The open provider form's 获取模型列表. */
   readonly probe?: SettingsProbe
   /** First-run setup: once the snapshot shows no endpoint, the wizard opens by itself. */
   readonly setupWizard?: boolean
@@ -193,7 +199,7 @@ export interface SettingsState {
    * until that batch answers: closed on success, kept with the error on failure.
    */
   readonly draftSubmit?: number
-  readonly confirmingRemove?: { readonly kind: 'endpoint' | 'model' | 'mcp-server'; readonly name: string }
+  readonly confirmingRemove?: { readonly kind: 'endpoint' | 'mcp-server'; readonly name: string }
   readonly error?: string
   /** The rows the error is about, so the view can draw it under them. */
   readonly errorRows?: readonly string[]
@@ -386,6 +392,8 @@ export interface SettingsFormField {
   readonly mono?: boolean
   /** Typed into a password field: an API key is not read back over a shoulder. */
   readonly secret?: boolean
+  /** A secret field's eye button: whether it is showing, and the intent that flips it. */
+  readonly reveal?: { readonly visible: boolean; readonly intent: SettingsIntent }
   readonly choices?: ReadonlyArray<{ value: string; label: string }>
   /** An on/off field, drawn as a switch; `value` is `'on'` or `''`. */
   readonly toggle?: boolean
@@ -431,20 +439,27 @@ export type SettingsForm =
       readonly fields: readonly SettingsFormField[]
       readonly submitLabel: string
       readonly anchor: SettingsAnchor
-      /** An endpoint being edited: the footer offers 测试连接 and this is its outcome. */
-      readonly probe?: SettingsProbeView
     }
   | {
-      readonly kind: 'endpoint-wizard'
+      readonly kind: 'provider'
       readonly title: string
-      /** The connect page's fields; empty on the other two. */
-      readonly fields: readonly SettingsFormField[]
       readonly submitLabel: string
       readonly anchor: SettingsAnchor
-      readonly step: 'preset' | 'connect' | 'models'
+      readonly step: 'preset' | 'form'
+      /** The preset grid; empty past it. */
       readonly presets: readonly SettingsPresetChoice[]
-      readonly probe: SettingsProbeView
+      /** Absent on the preset grid. */
+      readonly header?: { readonly initial: string; readonly name: string; readonly protocol?: string }
+      /** Name, protocol, key and address; empty for the unassigned pseudo-provider. */
+      readonly fields: readonly SettingsFormField[]
+      /** A new provider: the footer offers 上一步 back to the grid. */
+      readonly canGoBack: boolean
+      /** Absent where there is nothing to list from. */
+      readonly probe?: SettingsProbeView
       readonly picker?: SettingsModelPicker
+      readonly models: readonly SettingsModelRowView[]
+      readonly modelCount: string
+      readonly canAddModel: boolean
     }
   | {
       readonly kind: 'mcp-server'
@@ -458,8 +473,6 @@ export type SettingsForm =
 export interface SettingsProbeView {
   readonly status: 'idle' | 'running' | 'ok' | 'failed'
   readonly message?: string
-  /** The wizard's way past a failed test: some services list no models. */
-  readonly skippable?: boolean
 }
 
 export interface SettingsPresetChoice {
@@ -469,15 +482,35 @@ export interface SettingsPresetChoice {
   readonly selected: boolean
 }
 
+/** What 获取模型列表 found; checking a row adds it to the table. */
 export interface SettingsModelPicker {
   /** The filter box's text; absent while the list is short enough to scan. */
   readonly filter?: string
   readonly rows: ReadonlyArray<{ readonly id: string; readonly meta?: string; readonly picked: boolean }>
-  readonly summary?: string
+  readonly summary: string
   /** In place of rows: nothing was listed, or nothing matches the filter. */
   readonly empty?: string
-  readonly manual: string
-  readonly manualPlaceholder: string
+}
+
+export interface SettingsModelRowView {
+  readonly rowId: string
+  readonly model: string
+  readonly displayName: string
+  /** The key an empty display name falls back to. */
+  readonly displayPlaceholder: string
+  /** The table's read-only context column: 「200K」 or 「—」. */
+  readonly context: string
+  readonly contextWindow: string
+  readonly maxOutputTokens: string
+  readonly expanded: boolean
+  readonly thinking: boolean
+  readonly imageInput: boolean
+  readonly effortsOpen: boolean
+  readonly effortSummary: string
+  /** `locked`: the last level still on, which cannot be switched off. */
+  readonly efforts: ReadonlyArray<{ readonly level: EffortLevel; readonly label: string; readonly on: boolean; readonly locked: boolean }>
+  /** Saved but not resolvable — the warning the old model list drew. */
+  readonly warning?: string
 }
 
 /** The open form's dialog state, beside what `draftForm` builds. */
@@ -695,10 +728,10 @@ function projectOne(snapshot: WireSettingsSnapshot, change: SettingsChange): Wir
         ...(change.endpoint !== undefined ? { endpoint: change.endpoint } : {}),
         ...(change.provider !== undefined ? { provider: change.provider } : {}),
         ...(change.contextWindow !== undefined ? { contextWindow: change.contextWindow } : {}),
-        ...(change.longContext1m !== undefined ? { longContext1m: change.longContext1m } : {}),
         ...(change.supportsImageInput !== undefined ? { supportsImageInput: change.supportsImageInput } : {}),
         ...(change.maxOutputTokens !== undefined ? { maxOutputTokens: change.maxOutputTokens } : {}),
         ...(change.supportedEfforts !== undefined ? { supportedEfforts: change.supportedEfforts } : {}),
+        ...(change.thinkingOff ? { thinkingOff: true } : {}),
         // The raw switch projects, but the effective marker cannot: it is the
         // host's registry call, so it is kept from the previous row only while
         // the switch stays on and re-arrives with the next snapshot. Turning
@@ -881,11 +914,10 @@ export function pendingRowIds(pending: readonly PendingMutation[]): Set<string> 
         ids.add(`endpoint:${change.name}`)
         break
       case 'set-model':
-      case 'set-default-model':
-        ids.add(`model:${change.key}`)
+        ids.add(change.endpoint ? `endpoint:${change.endpoint}` : UNASSIGNED_ROW)
         break
-      case 'rename-model':
-        ids.add(`model:${change.to}`)
+      case 'set-default-model':
+        ids.add('routing:default')
         break
       case 'rename-endpoint':
         ids.add(`endpoint:${change.to}`)
@@ -1029,7 +1061,7 @@ export function settingsView(state: SettingsState): SettingsViewModel {
     ...(state.draft
       ? {
           form: {
-            ...draftForm(state.draft, projected, state.openMenu, state.probe),
+            ...draftForm(state.draft, projected, state.probe),
             confirmDiscard: state.discardArmed === true,
             submitting: state.draftSubmit !== undefined,
           },
@@ -1133,11 +1165,10 @@ function appearanceCards(pref: ThemePreference): SettingsCard[] {
  * — no wire field was added for this.
  */
 function removeConfirmMessage(
-  target: { kind: 'endpoint' | 'model' | 'mcp-server'; name: string },
+  target: { kind: 'endpoint' | 'mcp-server'; name: string },
   snapshot: WireSettingsSnapshot,
 ): string {
   if (target.kind === 'mcp-server') return `删除 MCP 服务器 ${target.name}？`
-  if (target.kind === 'model') return `删除模型 ${target.name}？`
   const cascade = snapshot.models
     .filter((model) => model.endpoint === target.name)
     .map((model) => model.key)
@@ -1145,11 +1176,9 @@ function removeConfirmMessage(
   return `删除服务商 ${target.name}？将同时删除模型 ${cascade.join('、')}。`
 }
 
-function confirmAnchor(target: { kind: 'endpoint' | 'model' | 'mcp-server'; name: string }): SettingsAnchor {
+function confirmAnchor(target: { kind: 'endpoint' | 'mcp-server'; name: string }): SettingsAnchor {
   if (target.kind === 'mcp-server') return { cardId: 'mcp', rowId: `mcp:${target.name}` }
-  return target.kind === 'endpoint'
-    ? { cardId: 'endpoints', rowId: `endpoint:${target.name}` }
-    : { cardId: 'models', rowId: `model:${target.name}` }
+  return { cardId: 'providers', rowId: `endpoint:${target.name}` }
 }
 
 /**
@@ -1161,51 +1190,70 @@ const SAVED_GLOBAL = '保存在全局配置，所有项目共用。'
 const SAVED_LOCAL = '保存在本项目。'
 
 function providerCards(snapshot: WireSettingsSnapshot): SettingsCard[] {
-  return [endpointsCard(snapshot), modelsCard(snapshot), routingCard(snapshot)]
+  return [providersCard(snapshot), routingCard(snapshot)]
 }
 
-function endpointsCard(snapshot: WireSettingsSnapshot): SettingsCard {
-  return {
-    id: 'endpoints',
-    title: '服务商接入点',
-    note: 'API key 只在本机保存，界面上始终以掩码显示。',
-    empty: '还没有接入点。',
-    rows: snapshot.endpoints.map((endpoint) => ({
+/** The row for hand-written models that name no endpoint. */
+const UNASSIGNED_ROW = 'endpoint:'
+
+/** No endpoint, or one that is not configured: a hand-written config can name either. */
+function isUnassigned(model: WireModelInfo, snapshot: WireSettingsSnapshot): boolean {
+  return !snapshot.endpoints.some((endpoint) => endpoint.name === model.endpoint)
+}
+
+function providersCard(snapshot: WireSettingsSnapshot): SettingsCard {
+  const unassigned = snapshot.models.filter((model) => isUnassigned(model, snapshot))
+  const rows: SettingsRow[] = snapshot.endpoints.map((endpoint) => {
+    const models = snapshot.models.filter((model) => model.endpoint === endpoint.name)
+    return {
       id: `endpoint:${endpoint.name}`,
       label: endpoint.name,
-      detail: endpointDetail(endpoint),
+      detail: `${providerLabel(endpoint.provider)} · ${models.length} 个模型`,
+      ...unresolvedWarning(models),
       control: {
-        kind: 'buttons' as const,
+        kind: 'buttons',
         buttons: [
-          {
-            label: '编辑',
-            title: `编辑 ${endpoint.name}`,
-            intent: { kind: 'edit-endpoint', name: endpoint.name } as SettingsIntent,
-          },
+          { label: '编辑', title: `编辑 ${endpoint.name}`, intent: { kind: 'edit-endpoint', name: endpoint.name } },
           {
             label: '',
             title: `删除 ${endpoint.name}`,
-            icon: 'trash' as const,
+            icon: 'trash',
             danger: true,
-            intent: {
-              kind: 'request-remove',
-              target: { kind: 'endpoint', name: endpoint.name },
-            } as SettingsIntent,
+            intent: { kind: 'request-remove', target: { kind: 'endpoint', name: endpoint.name } },
           },
         ],
       },
-    })),
-    footerButtons: [
-      { label: '新增接入点', title: '新增接入点', icon: 'plus', intent: { kind: 'new-endpoint' } },
-    ],
+    }
+  })
+  if (unassigned.length > 0) {
+    rows.push({
+      id: UNASSIGNED_ROW,
+      label: '未归属服务商的模型',
+      detail: `${unassigned.length} 个模型`,
+      ...unresolvedWarning(unassigned),
+      control: {
+        kind: 'buttons',
+        buttons: [{ label: '编辑', title: '编辑未归属服务商的模型', intent: { kind: 'edit-unassigned' } }],
+      },
+    })
+  }
+  return {
+    id: 'providers',
+    title: '服务商',
+    note: 'API key 只在本机保存，界面上始终以掩码显示。',
+    empty: '还没有服务商。',
+    rows,
+    footerButtons: [{ label: '添加服务商', title: '添加服务商', icon: 'plus', intent: { kind: 'new-endpoint' } }],
   }
 }
 
-function endpointDetail(endpoint: WireEndpointInfo): string {
-  const parts = [providerLabel(endpoint.provider)]
-  if (endpoint.baseUrl) parts.push(endpoint.baseUrl)
-  parts.push(endpoint.apiKeyMasked ? `key ${endpoint.apiKeyMasked}` : '未设置 key')
-  return parts.join(' · ')
+/**
+ * A model that is configured but cannot run has to say why, or the user is
+ * left with a key that silently does nothing wherever it is routed.
+ */
+function unresolvedWarning(models: readonly WireModelInfo[]): { warning?: string } {
+  const broken = models.filter((model) => !model.resolves).map((model) => model.key)
+  return broken.length > 0 ? { warning: `无法解析：${broken.join('、')}` } : {}
 }
 
 /**
@@ -1230,76 +1278,6 @@ export function effectiveMainModelKey(snapshot: WireSettingsSnapshot): string | 
   return resolves(snapshot.defaultModel)
 }
 
-function modelsCard(snapshot: WireSettingsSnapshot): SettingsCard {
-  const effective = effectiveMainModelKey(snapshot)
-  const overridden = effective !== undefined && effective !== snapshot.defaultModel
-  return {
-    id: 'models',
-    title: '模型',
-    note: overridden
-      ? `默认模型：${snapshot.defaultModel ?? '未设置'} · 被「路由 · 主对话」覆盖，新会话实际从 ${effective} 开始`
-      : `默认模型：${snapshot.defaultModel ?? '未设置'}`,
-    empty: '还没有配置模型。',
-    rows: snapshot.models.map((model) => {
-      const row: SettingsRow = {
-        id: `model:${model.key}`,
-        label: model.key,
-        detail: modelDetail(model),
-        // Drawn rather than filtered: a model that is configured but cannot run
-        // has to say why, or the user is left with a key that silently does
-        // nothing wherever it is routed.
-        ...(model.resolves ? {} : { warning: '无法解析：检查它的接入点' }),
-        control: {
-          kind: 'buttons' as const,
-          buttons: [
-            ...(snapshot.defaultModel === model.key
-              ? []
-              : [
-                  {
-                    label: '设为默认',
-                    title: `把 ${model.key} 设为默认模型`,
-                    intent: { kind: 'set-default-model', key: model.key } as SettingsIntent,
-                  },
-                ]),
-            {
-              label: '编辑',
-              title: `编辑 ${model.key}`,
-              intent: { kind: 'edit-model', key: model.key } as SettingsIntent,
-            },
-            {
-              label: '',
-              title: `删除 ${model.key}`,
-              icon: 'trash' as const,
-              danger: true,
-              intent: {
-                kind: 'request-remove',
-                target: { kind: 'model', name: model.key },
-              } as SettingsIntent,
-            },
-          ],
-        },
-      }
-      return row
-    }),
-    footerButtons: [{ label: '新增模型', title: '新增模型', icon: 'plus', intent: { kind: 'new-model' } }],
-  }
-}
-
-function modelDetail(model: WireModelInfo): string {
-  const parts = [model.model]
-  if (model.endpoint) parts.push(`接入点 ${model.endpoint}`)
-  else if (model.provider) parts.push(model.provider)
-  if (model.contextWindow) parts.push(`${Math.round(model.contextWindow / 1000)}k 上下文`)
-  if (model.longContext1m) parts.push('1M 请求头')
-  // The host-resolved capability (`resolveImageCapability`), never the raw
-  // switch: the list answers "which model can I send this image to".
-  if (model.imageCapable) parts.push('支持图像')
-  if (model.supportedEfforts?.length) {
-    parts.push(`思考等级 ${model.supportedEfforts.map((level) => EFFORT_LABELS[level]).join('、')}`)
-  }
-  return parts.join(' · ')
-}
-
 const ROUTING_ROLE_LABELS: Record<'main' | 'plan' | 'compact', string> = {
   main: '主对话',
   plan: '计划模式',
@@ -1309,6 +1287,21 @@ const ROUTING_ROLE_LABELS: Record<'main' | 'plan' | 'compact', string> = {
 function routingCard(snapshot: WireSettingsSnapshot): SettingsCard {
   const choices = routingOptions(snapshot)
   const effective = effectiveMainModelKey(snapshot)
+  const overridden = effective !== undefined && effective !== snapshot.defaultModel
+  const defaultRow: SettingsRow[] = snapshot.models.length === 0 ? [] : [{
+    id: 'routing:default',
+    label: '默认模型',
+    detail: overridden ? `被「主对话」覆盖，新会话实际从 ${effective} 开始` : '新会话使用的模型',
+    control: {
+      kind: 'select',
+      value: snapshot.defaultModel ?? '',
+      choices: [
+        ...(snapshot.defaultModel === undefined ? [{ value: '', label: '未设置' }] : []),
+        ...choices.slice(1),
+      ],
+      intentOnChange: (key: string): SettingsIntent => key ? { kind: 'set-default-model', key } : { kind: 'none' },
+    },
+  }]
   const roles = (['main', 'plan', 'compact'] as const).map((role) => ({
     id: `routing:${role}`,
     label: ROUTING_ROLE_LABELS[role],
@@ -1343,7 +1336,7 @@ function routingCard(snapshot: WireSettingsSnapshot): SettingsCard {
     id: 'routing',
     title: '路由',
     note: '「跟随主模型」表示和主对话用同一个模型。',
-    rows: [...roles, ...subagents],
+    rows: [...defaultRow, ...roles, ...subagents],
   }
 }
 
@@ -1901,19 +1894,11 @@ function parseContextValue(
 
 // --- forms -------------------------------------------------------------------
 
-/** The model form's effort menu, keyed in `SettingsState.openMenu`. */
-export const EFFORT_MENU_ID = 'model-supported-efforts'
-
-/**
- * The caveat under the image-input switch, verbatim from the design doc — the
- * switch is the user's declaration, not a probe, and the copy says so.
- */
-const IMAGE_INPUT_NOTE = '开启后，此模型可接收图片。请确认该模型及接入点支持当前协议的图像输入。'
+type EndpointDraft = Extract<SettingsDraft, { kind: 'endpoint' }>
 
 function draftForm(
   draft: SettingsDraft,
   snapshot: WireSettingsSnapshot,
-  openMenu: string | undefined,
   probe: SettingsProbe | undefined,
 ): SettingsForm {
   if (draft.kind === 'mcp-server') {
@@ -1945,114 +1930,144 @@ function draftForm(
       ],
     }
   }
-  if (draft.kind === 'endpoint' && draft.isNew) return wizardForm(draft, probe)
-  if (draft.kind === 'endpoint') {
+  return providerForm(draft, snapshot, probe)
+}
+
+function providerForm(draft: EndpointDraft, snapshot: WireSettingsSnapshot, probe: SettingsProbe | undefined): SettingsForm {
+  const step = draft.step ?? 'form'
+  const base = {
+    kind: 'provider' as const,
+    submitLabel: '保存',
+    // `originalName`, never the live `name`: the anchor keys the form's kept
+    // nodes, and one that moves per keystroke rebuilds the field being typed in.
+    anchor: {
+      cardId: 'providers',
+      ...(draft.unassigned
+        ? { rowId: UNASSIGNED_ROW }
+        : draft.originalName === undefined ? {} : { rowId: `endpoint:${draft.originalName}` }),
+    },
+    step,
+    canGoBack: draft.step !== undefined,
+  }
+  if (step === 'preset') {
     return {
-      // `originalName`, never the live `name`: both of these key the form's kept
-      // nodes, and a title or an anchor that moves per keystroke rebuilds the
-      // form around the field being typed in — which blurs it and, once the
-      // anchor matches no row, throws the whole form to the top of the column.
-      title: `编辑接入点 ${draft.originalName ?? draft.name}`,
-      submitLabel: '保存',
-      anchor: {
-        cardId: 'endpoints',
-        ...(draft.originalName === undefined ? {} : { rowId: `endpoint:${draft.originalName}` }),
-      },
-      probe: probeView(probe, false),
-      fields: [
-        { id: 'name', label: '名称', value: draft.name, placeholder: '例如 main' },
-        {
-          id: 'provider',
-          label: '接口类型',
-          value: draft.provider,
-          choices: snapshot.providers.map((provider) => ({ value: provider, label: providerLabel(provider) })),
-        },
-        { id: 'baseUrl', label: '地址', value: draft.baseUrl, mono: true, placeholder: '留空使用官方地址' },
-        {
-          id: 'apiKey',
-          label: 'API key',
-          value: draft.apiKey,
-          mono: true,
-          secret: true,
-          placeholder: '留空表示不修改',
-        },
-      ],
+      ...base,
+      title: '添加服务商',
+      presets: PROVIDER_PRESETS.map((choice) => ({
+        id: choice.id,
+        label: choice.label,
+        note: choice.note,
+        selected: choice.id === draft.preset,
+      })),
+      fields: [],
+      models: [],
+      modelCount: '',
+      canAddModel: false,
     }
   }
+  const preset = presetById(draft.preset)
+  const name = draft.unassigned ? '未归属服务商的模型' : draft.name.trim() || preset?.label || '新服务商'
   return {
-    title: draft.isNew ? '新增模型' : `编辑模型 ${draft.originalKey ?? draft.key}`,
-    submitLabel: '保存',
-    anchor: {
-      cardId: 'models',
-      ...(draft.originalKey === undefined ? {} : { rowId: `model:${draft.originalKey}` }),
+    ...base,
+    title: draft.unassigned ? name : draft.isNew ? '添加服务商' : `编辑服务商 ${draft.originalName ?? draft.name}`,
+    presets: [],
+    header: {
+      initial: [...name][0]!.toUpperCase(),
+      name,
+      ...(draft.unassigned || !draft.provider ? {} : { protocol: providerLabel(draft.provider) }),
     },
-    fields: [
-      { id: 'key', label: '键名', value: draft.key, placeholder: '例如 big' },
-      { id: 'model', label: '模型 id', value: draft.model, mono: true, placeholder: '例如 claude-opus-5' },
-      {
-        id: 'endpoint',
-        label: '接入点',
-        value: draft.endpoint,
-        choices: [
-          { value: '', label: '不使用接入点' },
-          ...snapshot.endpoints.map((endpoint) => ({ value: endpoint.name, label: endpoint.name })),
-        ],
-      },
+    fields: draft.unassigned ? [] : [
+      { id: 'name', label: '名称', value: draft.name, placeholder: preset?.id ?? '例如 main' },
       {
         id: 'provider',
-        label: '接口类型',
+        label: 'API 协议',
         value: draft.provider,
-        choices: [
-          { value: '', label: '与接入点相同' },
-          ...snapshot.providers.map((provider) => ({ value: provider, label: providerLabel(provider) })),
-        ],
-      },
-      { id: 'contextWindow', label: '上下文窗口', value: draft.contextWindow, placeholder: '留空使用默认值', note: '单位 token。常见值：200000、128000、1000000。' },
-      {
-        id: 'supportedEfforts',
-        label: '思考等级',
-        value: '',
-        multi: {
-          options: VALID_EFFORT_LEVELS.map((level) => ({ value: level, label: EFFORT_LABELS[level] })),
-          selected: draft.supportedEfforts,
-          summary: draft.supportedEfforts.length === 0
-            ? '全部'
-            : draft.supportedEfforts.map((level) => EFFORT_LABELS[level]).join('、'),
-          menuId: EFFORT_MENU_ID,
-          open: openMenu === EFFORT_MENU_ID,
-          intentOnToggleMenu: { kind: 'toggle-menu', menu: EFFORT_MENU_ID },
-          intentOnToggle: (value) => ({ kind: 'model-toggle-effort', level: value as EffortLevel }),
-        },
+        choices: snapshot.providers.map((provider) => ({ value: provider, label: providerLabel(provider) })),
       },
       {
-        id: 'longContext1m',
-        label: '1M 上下文',
-        value: draft.longContext1m,
-        toggle: true,
-        note: '开启后请求带上 context-1m beta 请求头。',
+        id: 'apiKey',
+        label: 'API Key',
+        value: draft.apiKey,
+        mono: true,
+        secret: true,
+        reveal: { visible: draft.keyVisible === true, intent: { kind: 'toggle-key-visible' } },
+        placeholder: !draft.isNew ? '留空表示不修改' : preset?.keyOptional ? '本机服务可不填' : '粘贴 API key',
       },
       {
-        id: 'supportsImageInput',
-        label: '支持图像输入',
-        value: draft.supportsImageInput,
-        toggle: true,
-        note: IMAGE_INPUT_NOTE,
+        id: 'baseUrl',
+        label: 'Base URL',
+        value: draft.baseUrl,
+        mono: true,
+        placeholder: preset?.defaultUrl ?? (draft.isNew ? 'https://' : '留空使用官方地址'),
       },
-      { id: 'maxOutputTokens', label: '最大输出 token', value: draft.maxOutputTokens, placeholder: '可留空' },
     ],
+    ...(draft.unassigned ? {} : { probe: probeView(probe, preset) }),
+    ...(draft.listed ? { picker: modelPicker(draft) } : {}),
+    models: draft.models.map((row) => modelRowView(row, snapshot)),
+    modelCount: `${draft.models.length} 个模型`,
+    canAddModel: !draft.unassigned,
   }
 }
 
-/**
- * A form's fields → the change to send, or the reason it cannot be sent.
- *
- * The `apiKey` rule is the load-bearing one: an untouched key field is showing
- * a mask, so the field is omitted rather than sent. Emptying a key that was set
- * is a `clear-endpoint-key`, which is why an empty *touched* field on an
- * existing endpoint does not simply send `apiKey: ''`.
- */
+function modelRowView(row: ModelDraftRow, snapshot: WireSettingsSnapshot): SettingsModelRowView {
+  const on = (level: EffortLevel): boolean => row.supportedEfforts.length === 0 || row.supportedEfforts.includes(level)
+  const levels = VALID_EFFORT_LEVELS.filter(on)
+  const context = parseCount(row.contextWindow)
+  const saved = row.originalKey === undefined ? undefined : snapshot.models.find((model) => model.key === row.originalKey)
+  return {
+    rowId: row.rowId,
+    model: row.model,
+    displayName: row.displayName,
+    displayPlaceholder: row.model.trim() || '同模型 ID',
+    context: typeof context === 'number' ? formatTokenCount(context) : '—',
+    contextWindow: row.contextWindow,
+    maxOutputTokens: row.maxOutputTokens,
+    expanded: row.expanded === true,
+    thinking: !row.thinkingOff,
+    imageInput: row.supportsImageInput,
+    effortsOpen: row.effortsOpen === true,
+    effortSummary: levels.length === VALID_EFFORT_LEVELS.length ? '全部' : levels.map((level) => EFFORT_LABELS[level]).join('、'),
+    efforts: VALID_EFFORT_LEVELS.map((level) => ({
+      level,
+      label: EFFORT_LABELS[level],
+      on: on(level),
+      locked: on(level) && levels.length === 1,
+    })),
+    ...(saved && !saved.resolves ? { warning: '无法解析' } : {}),
+  }
+}
+
+/** 200000 → 200K, 1000000 → 1M. */
+function formatTokenCount(count: number): string {
+  return count >= 1_000_000 && count % 1_000_000 === 0 ? `${count / 1_000_000}M` : `${Math.round(count / 1000)}K`
+}
+
+function modelPicker(draft: EndpointDraft): SettingsModelPicker {
+  const listed = draft.listed ?? []
+  const inTable = new Set(draft.models.map((row) => row.model.trim()))
+  const query = (draft.modelFilter ?? '').trim().toLowerCase()
+  const shown = query
+    ? listed.filter((model) => model.id.toLowerCase().includes(query) || model.name?.toLowerCase().includes(query))
+    : listed
+  return {
+    ...(listed.length > 8 ? { filter: draft.modelFilter ?? '' } : {}),
+    rows: shown.map((model) => ({
+      id: model.id,
+      ...(modelMeta(model) ? { meta: modelMeta(model) } : {}),
+      picked: inTable.has(model.id),
+    })),
+    summary: `找到 ${listed.length} 个，已添加 ${listed.filter((model) => inTable.has(model.id)).length} 个`,
+    ...(listed.length === 0
+      ? { empty: '这个服务没有列出模型，用「添加模型」手动填写。' }
+      : shown.length === 0
+        ? { empty: '没有匹配的模型。' }
+        : {}),
+  }
+}
+
+/** A form's fields → the change to send, or the reason it cannot be sent. */
 export function draftToChange(
-  draft: SettingsDraft,
+  draft: Exclude<SettingsDraft, { kind: 'endpoint' }>,
   snapshot: WireSettingsSnapshot,
 ): SettingsChange | { error: string } {
   if (draft.kind === 'permission-rule') {
@@ -2071,108 +2086,60 @@ export function draftToChange(
       entries: [...local, entry],
     }
   }
-  if (draft.kind === 'mcp-server') {
-    const name = draft.name.trim()
-    if (!name) return { error: '名称不能为空。' }
-    // Checked on a rename too, not just on a new server: the save is a delete of
-    // the old name plus a write of the new one, so landing on a name that is
-    // already taken would replace *that* server's config with this one's.
-    // `snapshot.mcpServers` spans every layer, which also stops a rename from
-    // silently shadowing an inherited server.
-    if (name !== draft.originalName && snapshot.mcpServers.some((candidate) => candidate.name === name)) {
-      return { error: `已经有一个叫 ${name} 的 MCP 服务器。` }
+  const name = draft.name.trim()
+  if (!name) return { error: '名称不能为空。' }
+  // Checked on a rename too, not just on a new server: the save is a delete of
+  // the old name plus a write of the new one, so landing on a name that is
+  // already taken would replace *that* server's config with this one's.
+  // `snapshot.mcpServers` spans every layer, which also stops a rename from
+  // silently shadowing an inherited server.
+  if (name !== draft.originalName && snapshot.mcpServers.some((candidate) => candidate.name === name)) {
+    return { error: `已经有一个叫 ${name} 的 MCP 服务器。` }
+  }
+  // A rename travels *with* the write so the host can move the trust entry
+  // rather than see a delete and an unrelated new server.
+  const renamed: { previousName?: string } =
+    !draft.isNew && draft.originalName && draft.originalName !== name
+      ? { previousName: draft.originalName }
+      : {}
+  if (draft.transport === 'stdio') {
+    const command = draft.command.trim()
+    if (!command) return { error: '启动命令不能为空。' }
+    const args = draft.args.map((a) => a.trim()).filter((a) => a !== '')
+    const envObj: Record<string, string> = {}
+    for (const pair of draft.env) {
+      const k = pair.key.trim()
+      if (k) envObj[k] = pair.value
     }
-    // A rename travels *with* the write so the host can move the trust entry
-    // rather than see a delete and an unrelated new server.
-    const renamed: { previousName?: string } =
-      !draft.isNew && draft.originalName && draft.originalName !== name
-        ? { previousName: draft.originalName }
-        : {}
-    if (draft.transport === 'stdio') {
-      const command = draft.command.trim()
-      if (!command) return { error: '启动命令不能为空。' }
-      const args = draft.args.map((a) => a.trim()).filter((a) => a !== '')
-      const envObj: Record<string, string> = {}
-      for (const pair of draft.env) {
-        const k = pair.key.trim()
-        if (k) envObj[k] = pair.value
-      }
-      const envPassthrough = draft.envPassthrough.map((v) => v.trim()).filter((v) => v !== '')
-      const cwd = draft.cwd.trim()
-      const server: McpServerConfig = {
-        transport: 'stdio',
-        command,
-        ...(args.length > 0 ? { args } : {}),
-        ...(Object.keys(envObj).length > 0 ? { env: envObj } : {}),
-        ...(envPassthrough.length > 0 ? { envPassthrough } : {}),
-        ...(cwd ? { cwd } : {}),
-      }
-      return { scope: 'extensions', kind: 'set-mcp-server', name, server, ...renamed }
-    } else {
-      const url = draft.url.trim()
-      if (!url) return { error: 'URL 不能为空。' }
-      if (!/^https?:\/\//i.test(url)) return { error: '请输入有效的 HTTP 或 HTTPS URL。' }
-      // Headers, not `env`: a remote server is reached over HTTP, and nothing
-      // this process could put in an environment would follow the request.
-      const headersObj: Record<string, string> = {}
-      for (const pair of draft.headers) {
-        const k = pair.key.trim()
-        if (k) headersObj[k] = pair.value
-      }
-      const server: McpServerConfig = {
-        transport: 'sse',
-        url,
-        ...(Object.keys(headersObj).length > 0 ? { headers: headersObj } : {}),
-      }
-      return { scope: 'extensions', kind: 'set-mcp-server', name, server, ...renamed }
+    const envPassthrough = draft.envPassthrough.map((v) => v.trim()).filter((v) => v !== '')
+    const cwd = draft.cwd.trim()
+    const server: McpServerConfig = {
+      transport: 'stdio',
+      command,
+      ...(args.length > 0 ? { args } : {}),
+      ...(Object.keys(envObj).length > 0 ? { env: envObj } : {}),
+      ...(envPassthrough.length > 0 ? { envPassthrough } : {}),
+      ...(cwd ? { cwd } : {}),
     }
-  }
-  if (draft.kind === 'endpoint') {
-    const name = draft.name.trim()
-    if (!name) return { error: '名称不能为空。' }
-    // A rename collides the same way a creation does, so the check is on "this
-    // is not the row being edited" rather than on `isNew`.
-    if (name !== draft.originalName && snapshot.endpoints.some((endpoint) => endpoint.name === name)) {
-      return { error: `已经有一个叫 ${name} 的接入点。` }
+    return { scope: 'extensions', kind: 'set-mcp-server', name, server, ...renamed }
+  } else {
+    const url = draft.url.trim()
+    if (!url) return { error: 'URL 不能为空。' }
+    if (!/^https?:\/\//i.test(url)) return { error: '请输入有效的 HTTP 或 HTTPS URL。' }
+    // Headers, not `env`: a remote server is reached over HTTP, and nothing
+    // this process could put in an environment would follow the request.
+    const headersObj: Record<string, string> = {}
+    for (const pair of draft.headers) {
+      const k = pair.key.trim()
+      if (k) headersObj[k] = pair.value
     }
-    if (!draft.provider) return { error: '请选择服务商。' }
-    const change: SettingsChange = { scope: 'provider', kind: 'set-endpoint', name, provider: draft.provider }
-    const baseUrl = draft.baseUrl.trim()
-    if (baseUrl) change.baseUrl = baseUrl
-    const apiKey = typedKey(draft)
-    if (apiKey !== undefined) change.apiKey = apiKey
-    return change
+    const server: McpServerConfig = {
+      transport: 'sse',
+      url,
+      ...(Object.keys(headersObj).length > 0 ? { headers: headersObj } : {}),
+    }
+    return { scope: 'extensions', kind: 'set-mcp-server', name, server, ...renamed }
   }
-
-  const key = draft.key.trim()
-  if (!key) return { error: '键名不能为空。' }
-  const model = draft.model.trim()
-  if (!model) return { error: '模型 id 不能为空。' }
-  if (key !== draft.originalKey && snapshot.models.some((existing) => existing.key === key)) {
-    return { error: `已经有一个叫 ${key} 的模型。` }
-  }
-  if (!draft.endpoint && !draft.provider) {
-    return { error: '请选择接入点，或直接指定服务商。' }
-  }
-  const contextWindow = parseCount(draft.contextWindow)
-  if (contextWindow === 'invalid') return { error: '上下文窗口必须是数字。' }
-  const maxOutputTokens = parseCount(draft.maxOutputTokens)
-  if (maxOutputTokens === 'invalid') return { error: '最大输出 token 必须是数字。' }
-
-  const change: SettingsChange = { scope: 'provider', kind: 'set-model', key, model }
-  if (draft.endpoint) change.endpoint = draft.endpoint
-  if (draft.provider) change.provider = draft.provider
-  if (contextWindow !== undefined) change.contextWindow = contextWindow
-  // Only written when on, so switching it off removes the field rather than
-  // storing a `false` — the same shape an emptied `contextWindow` sends.
-  if (draft.longContext1m === 'on') change.longContext1m = true
-  if (draft.supportsImageInput === 'on') change.supportsImageInput = true
-  if (maxOutputTokens !== undefined) change.maxOutputTokens = maxOutputTokens
-  // Nothing picked and everything picked both mean "no restriction", so both
-  // omit the field — the same shape an emptied `contextWindow` sends.
-  const supportedEfforts = normalizeSupportedEfforts(draft.supportedEfforts)
-  if (supportedEfforts !== undefined) change.supportedEfforts = supportedEfforts
-  return change
 }
 
 function parseCount(raw: string): number | undefined | 'invalid' {
@@ -2189,66 +2156,179 @@ function localEntries(snapshot: WireSettingsSnapshot, behavior: PermissionBehavi
 }
 
 /**
- * Renaming a model is its own command, so a submitted model form can be *two*
- * changes. The rename must go first: `set-model` under the new key would
- * otherwise create a second model and leave the old one behind.
+ * A form → the changes to send, in order, or the reason it cannot be sent.
+ *
+ * The provider dialog is one batch, ordered so each step finds what it needs:
+ * removals first, so a freed name can be taken again; the endpoint (renamed,
+ * then written) before the models that point at it; model renames before the
+ * writes under the new names. A rename travels as `rename-model`, never as a
+ * remove plus an add, so routing that names the model follows it.
  */
 export function draftToChanges(
   draft: SettingsDraft,
   snapshot: WireSettingsSnapshot,
 ): SettingsChange[] | { error: string } {
-  const change = draftToChange(draft, snapshot)
-  if ('error' in change) return change
-  if (draft.kind === 'model' && draft.originalKey && draft.originalKey !== draft.key.trim()) {
-    return [
-      { scope: 'provider', kind: 'rename-model', from: draft.originalKey, to: draft.key.trim() },
-      change,
-    ]
+  if (draft.kind !== 'endpoint') {
+    const change = draftToChange(draft, snapshot)
+    return 'error' in change ? change : [change]
   }
-  // The same two-step a model rename takes, and for a stronger reason: a
-  // `set-endpoint` under the new name would leave the old endpoint behind with
-  // every model still pointing at it, and deleting that leftover would take
-  // those models with it (`ConfigService.removeEndpoint`).
-  if (draft.kind === 'endpoint' && draft.originalName && draft.originalName !== draft.name.trim()) {
-    return [
-      { scope: 'provider', kind: 'rename-endpoint', from: draft.originalName, to: draft.name.trim() },
-      change,
-    ]
-  }
-  // The wizard's endpoint carries its models. `runSettingsChanges` runs the batch
-  // in order and folds each reply, so every `set-model` sees the endpoint.
-  if (draft.kind === 'endpoint' && draft.step !== undefined) {
-    const picked = draft.picked ?? []
-    // A resumed batch (`originalName` set) may have nothing left but the endpoint itself.
-    if (picked.length === 0 && draft.originalName === undefined) return { error: '至少选择一个模型。' }
-    const name = draft.name.trim()
-    const taken = snapshot.models.map((model) => model.key)
-    const models = picked.map((id): Extract<SettingsChange, { kind: 'set-model' }> => {
-      const info = draft.listed?.find((model) => model.id === id)
-      const key = freeName(id, taken, `${name}/${id}`)
-      taken.push(key)
-      return {
+  const name = draft.name.trim()
+  const endpointChanges: SettingsChange[] = []
+  if (!draft.unassigned) {
+    if (!name) return { error: '名称不能为空。' }
+    // A rename collides the same way a creation does.
+    if (name !== draft.originalName && snapshot.endpoints.some((endpoint) => endpoint.name === name)) {
+      return { error: `已经有一个叫 ${name} 的服务商。` }
+    }
+    if (!draft.provider) return { error: '请选择 API 协议。' }
+    if (draft.originalName !== undefined && draft.originalName !== name) {
+      endpointChanges.push({ scope: 'provider', kind: 'rename-endpoint', from: draft.originalName, to: name })
+    }
+    const baseUrl = draft.baseUrl.trim()
+    const apiKey = typedKey(draft)
+    const saved = snapshot.endpoints.find((endpoint) => endpoint.name === draft.originalName)
+    if (!saved || saved.provider !== draft.provider || (saved.baseUrl ?? '') !== baseUrl || apiKey !== undefined) {
+      endpointChanges.push({
         scope: 'provider',
-        kind: 'set-model',
-        key,
-        model: id,
-        endpoint: name,
-        ...(info?.contextWindow ? { contextWindow: info.contextWindow } : {}),
-        ...(info?.maxOutputTokens ? { maxOutputTokens: info.maxOutputTokens } : {}),
-        ...(info?.imageInput ? { supportsImageInput: true } : {}),
-      }
-    })
-    return [
-      change,
-      ...models,
-      // Only when there is nothing to start from: a config that already names a
-      // default must not have it moved by adding an endpoint.
-      ...(snapshot.defaultModel === undefined && models[0]
-        ? [{ scope: 'provider', kind: 'set-default-model', key: models[0].key } as SettingsChange]
-        : []),
-    ]
+        kind: 'set-endpoint',
+        name,
+        provider: draft.provider,
+        ...(baseUrl ? { baseUrl } : {}),
+        ...(apiKey !== undefined ? { apiKey } : {}),
+      })
+    }
   }
-  return [change]
+
+  // A blank row the user added and never filled in is not a model.
+  const rows = draft.models.filter((row) => row.originalKey !== undefined || row.model.trim() !== '' || row.displayName.trim() !== '')
+  if (draft.isNew && rows.length === 0) return { error: '至少添加一个模型。' }
+  const own = new Set([...draft.models.flatMap((row) => row.originalKey ?? []), ...draft.removedKeys])
+  const taken = new Set(snapshot.models.map((model) => model.key).filter((key) => !own.has(key)))
+  const endpoint = draft.unassigned ? undefined : name
+  const writes: Array<{ row: ModelDraftRow; change: Extract<SettingsChange, { kind: 'set-model' }> }> = []
+  for (const row of rows) {
+    const change = modelChange(row, endpoint)
+    if ('error' in change) return change
+    if (taken.has(change.key)) return { error: `模型名「${change.key}」已被占用，请填写不同的显示名。` }
+    taken.add(change.key)
+    writes.push({ row, change })
+  }
+
+  let renames = writes.flatMap(({ row, change }) =>
+    row.originalKey !== undefined && row.originalKey !== change.key ? [{ from: row.originalKey, to: change.key }] : [])
+  const orderedRenames: SettingsChange[] = []
+  while (renames.length > 0) {
+    const free = renames.find((rename) => !renames.some((other) => other.from === rename.to))
+    if (!free) return { error: '有模型互换了名字，请分两次保存。' }
+    orderedRenames.push({ scope: 'provider', kind: 'rename-model', ...free })
+    renames = renames.filter((rename) => rename !== free)
+  }
+
+  // Only the rows that differ from what is saved: each write is a save, a
+  // reload and a rebuild of every open lane.
+  const modelWrites = writes.filter(({ row, change }) => {
+    const saved = snapshot.models.find((model) => model.key === row.originalKey)
+    if (!saved) return true
+    const before = modelChange(seedModelRow(saved, ''), endpoint)
+    return 'error' in before || JSON.stringify({ ...before, key: '' }) !== JSON.stringify({ ...change, key: '' })
+  }).map(({ change }) => change)
+
+  const first = writes[0]?.change.key
+  return [
+    ...draft.removedKeys.map((key): SettingsChange => ({ scope: 'provider', kind: 'remove-model', key })),
+    ...endpointChanges,
+    ...orderedRenames,
+    ...modelWrites,
+    // Only when there is nothing to start from: a config that already names a
+    // default must not have it moved by adding a provider.
+    ...(snapshot.defaultModel === undefined && first !== undefined
+      ? [{ scope: 'provider', kind: 'set-default-model', key: first } as SettingsChange]
+      : []),
+  ]
+}
+
+function modelChange(
+  row: ModelDraftRow,
+  endpoint: string | undefined,
+): Extract<SettingsChange, { kind: 'set-model' }> | { error: string } {
+  const model = row.model.trim()
+  if (!model) return { error: '模型 ID 不能为空。' }
+  const key = row.displayName.trim() || model
+  const target = endpoint ?? row.endpoint
+  const contextWindow = parseCount(row.contextWindow)
+  if (contextWindow === 'invalid') return { error: `${key} 的上下文长度必须是正整数。` }
+  const maxOutputTokens = parseCount(row.maxOutputTokens)
+  if (maxOutputTokens === 'invalid') return { error: `${key} 的最大输出 Token 必须是正整数。` }
+  const supportedEfforts = normalizeSupportedEfforts(row.supportedEfforts)
+  // Switches are written only when they differ from the default, so turning
+  // one back removes the field instead of storing it.
+  return {
+    scope: 'provider',
+    kind: 'set-model',
+    key,
+    model,
+    ...(target !== undefined ? { endpoint: target } : {}),
+    ...(row.provider ? { provider: row.provider } : {}),
+    ...(contextWindow !== undefined ? { contextWindow } : {}),
+    ...(row.supportsImageInput ? { supportsImageInput: true } : {}),
+    ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
+    ...(supportedEfforts !== undefined ? { supportedEfforts } : {}),
+    ...(row.thinkingOff ? { thinkingOff: true } : {}),
+  }
+}
+
+function seedModelRow(model: WireModelInfo, rowId: string): ModelDraftRow {
+  return {
+    rowId,
+    originalKey: model.key,
+    model: model.model,
+    displayName: model.key === model.model ? '' : model.key,
+    contextWindow: model.contextWindow === undefined ? '' : String(model.contextWindow),
+    maxOutputTokens: model.maxOutputTokens === undefined ? '' : String(model.maxOutputTokens),
+    supportsImageInput: model.supportsImageInput === true,
+    thinkingOff: model.thinkingOff === true,
+    supportedEfforts: model.supportedEfforts ?? [],
+    ...(model.provider ? { provider: model.provider } : {}),
+    ...(model.endpoint ? { endpoint: model.endpoint } : {}),
+  }
+}
+
+function newModelRow(seq: number, listed?: ProbedModel): ModelDraftRow {
+  return {
+    rowId: `new-${seq}`,
+    model: listed?.id ?? '',
+    displayName: '',
+    contextWindow: listed?.contextWindow ? String(listed.contextWindow) : '',
+    maxOutputTokens: listed?.maxOutputTokens ? String(listed.maxOutputTokens) : '',
+    supportsImageInput: listed?.imageInput === true,
+    thinkingOff: false,
+    supportedEfforts: [],
+  }
+}
+
+/** The dialog for an endpoint already saved, or for the models that name none. */
+function editProviderDraft(snapshot: WireSettingsSnapshot, name: string | undefined): EndpointDraft | undefined {
+  const endpoint = name === undefined ? undefined : snapshot.endpoints.find((candidate) => candidate.name === name)
+  if (name !== undefined && !endpoint) return undefined
+  const models = snapshot.models
+    .filter((model) => (name === undefined ? isUnassigned(model, snapshot) : model.endpoint === name))
+    .map((model, index) => seedModelRow(model, `saved-${index}`))
+  return {
+    kind: 'endpoint',
+    name: endpoint?.name ?? '',
+    isNew: false,
+    ...(endpoint ? { originalName: endpoint.name } : { unassigned: true }),
+    provider: endpoint?.provider ?? '',
+    baseUrl: endpoint?.baseUrl ?? '',
+    // Seeded empty rather than with the mask: an empty field with a
+    // 留空表示不修改 placeholder cannot be mistaken for the real key, and
+    // `keyTouched` is what actually decides whether it is sent.
+    apiKey: '',
+    keyTouched: false,
+    models,
+    removedKeys: [],
+    rowSeq: 0,
+  }
 }
 
 const NEW_ENDPOINT_DRAFT: SettingsDraft = {
@@ -2260,66 +2340,76 @@ const NEW_ENDPOINT_DRAFT: SettingsDraft = {
   apiKey: '',
   keyTouched: false,
   step: 'preset',
-  picked: [],
+  models: [],
+  removedKeys: [],
+  rowSeq: 0,
 }
 
 const PROBED_FIELDS: ReadonlySet<string> = new Set(['provider', 'baseUrl', 'apiKey'])
 
 /**
- * A wizard batch that failed part-way: the endpoint may already exist, and so
- * may some of its models. The retry has to edit that endpoint rather than
- * collide with it, and send only the models still missing.
+ * A provider batch that failed part-way: the endpoint may already exist, and
+ * so may some of its models. The retry has to edit what landed rather than
+ * collide with it, so the draft adopts every name the snapshot now holds.
  */
 function resumable(draft: SettingsDraft | undefined, snapshot: WireSettingsSnapshot | undefined): { draft?: SettingsDraft } {
-  if (draft?.kind !== 'endpoint' || draft.step === undefined || !snapshot) return {}
+  if (draft?.kind !== 'endpoint' || !snapshot) return {}
   const name = draft.name.trim()
-  if (!snapshot.endpoints.some((endpoint) => endpoint.name === name)) return {}
-  const made = (id: string): boolean => snapshot.models.some((model) => model.endpoint === name && model.model === id)
-  return { draft: { ...draft, originalName: name, picked: (draft.picked ?? []).filter((id) => !made(id)) } }
+  const saved = (key: string): WireModelInfo | undefined => snapshot.models.find((model) => model.key === key)
+  const endpointLanded = !draft.unassigned
+    && snapshot.endpoints.some((endpoint) => endpoint.name === name)
+    && !snapshot.endpoints.some((endpoint) => endpoint.name === draft.originalName && endpoint.name !== name)
+  const models = draft.models.map((row) => {
+    const key = row.displayName.trim() || row.model.trim()
+    if (row.originalKey === key || !key) return row
+    const landed = saved(key)
+    const moved = row.originalKey === undefined
+      ? landed?.model === row.model.trim() && (draft.unassigned ? !landed.endpoint : landed.endpoint === name)
+      : landed !== undefined && !saved(row.originalKey)
+    return moved ? { ...row, originalKey: key } : row
+  })
+  return {
+    draft: {
+      ...draft,
+      ...(endpointLanded ? { isNew: false, originalName: name, step: undefined } : {}),
+      models,
+      removedKeys: draft.removedKeys.filter((key) => saved(key) !== undefined),
+    },
+  }
 }
 
-/** `base`, or the first of `alternate`, `base-2`, `base-3`… that `taken` lacks. */
-function freeName(base: string, taken: readonly string[], alternate?: string): string {
+/** `base`, or the first of `base-2`, `base-3`… that `taken` lacks. */
+function freeName(base: string, taken: readonly string[]): string {
   if (!taken.includes(base)) return base
-  if (alternate !== undefined && !taken.includes(alternate)) return alternate
   for (let n = 2; ; n++) {
     if (!taken.includes(`${base}-${n}`)) return `${base}-${n}`
   }
 }
 
 /**
- * The key an endpoint form sends: what was typed, the stand-in a key-optional
+ * The key a provider form sends: what was typed, the stand-in a key-optional
  * local server is stored with, or nothing — which the host reads as "leave it",
  * the promise the edit form's 留空表示不修改 makes.
  */
-function typedKey(draft: Extract<SettingsDraft, { kind: 'endpoint' }>): string | undefined {
+function typedKey(draft: EndpointDraft): string | undefined {
   const typed = draft.keyTouched ? draft.apiKey.trim() : ''
   if (typed) return typed
   if (draft.isNew && presetById(draft.preset)?.keyOptional) return PLACEHOLDER_KEY
   return undefined
 }
 
-function startProbe(
-  state: SettingsState,
-  cleared: SettingsState,
-  advance: boolean,
-): SettingsOutcome {
+function startProbe(state: SettingsState, cleared: SettingsState): SettingsOutcome {
   const draft = state.draft
-  if (draft?.kind !== 'endpoint' || state.probe?.status === 'running') return { state }
+  if (draft?.kind !== 'endpoint' || draft.unassigned || state.probe?.status === 'running') return { state }
   const provider = draft.provider
-  if (provider !== 'anthropic' && provider !== 'openai') {
-    return { state: { ...state, error: '请选择服务商。', openMenu: undefined } }
-  }
-  // 下一步 checks the form before spending a request on it.
-  if (advance && state.snapshot) {
-    const checked = draftToChange(draft, state.snapshot)
-    if ('error' in checked) return { state: { ...state, error: checked.error, openMenu: undefined } }
+  if (provider !== 'anthropic' && provider !== 'openai' && provider !== 'openai-responses') {
+    return { state: { ...state, error: '请选择 API 协议。', openMenu: undefined } }
   }
   const seq = state.probeSeq + 1
   const baseUrl = draft.baseUrl.trim()
   const apiKey = typedKey(draft)
   return {
-    state: { ...cleared, probeSeq: seq, probe: { seq, status: 'running', advance } },
+    state: { ...cleared, probeSeq: seq, probe: { seq, status: 'running' } },
     probe: {
       seq,
       provider,
@@ -2348,102 +2438,18 @@ const PROBE_FAILURES: Record<Exclude<WireShellProbeEndpointResult, { ok: true }>
   other: '连接失败。',
 }
 
-function probeView(
-  probe: SettingsProbe | undefined,
-  wizard: boolean,
-  preset?: ProviderPreset,
-): SettingsProbeView {
+function probeView(probe: SettingsProbe | undefined, preset?: ProviderPreset): SettingsProbeView {
   if (!probe) return { status: 'idle' }
-  if (probe.status === 'running') return { status: 'running', message: '正在连接…' }
+  if (probe.status === 'running') return { status: 'running', message: '正在获取模型列表…' }
   const { result } = probe
   if (result.ok) {
-    const found = result.models.length > 0 ? `找到 ${result.models.length} 个模型` : '这个服务没有列出模型'
-    const moved = result.baseUrl ? `，地址已改为 ${result.baseUrl}` : ''
+    const moved = result.baseUrl ? ` · 地址已改为 ${result.baseUrl}` : ''
     const unverified = preset?.publicModels ? '。这个服务的模型列表不校验 key，key 要到第一次对话时才能确认' : ''
-    return { status: 'ok', message: `已连接 · ${result.latencyMs} ms · ${found}${moved}${unverified}` }
+    return { status: 'ok', message: `已连接 · ${result.latencyMs} ms${moved}${unverified}` }
   }
   const status = result.status !== undefined ? `（${result.status}）` : ''
   const detail = result.reason === 'other' && result.detail ? ` ${result.detail}` : ''
-  return { status: 'failed', message: `${PROBE_FAILURES[result.reason]}${status}${detail}`, skippable: wizard }
-}
-
-function wizardForm(
-  draft: Extract<SettingsDraft, { kind: 'endpoint' }>,
-  probe: SettingsProbe | undefined,
-): SettingsForm {
-  const preset = presetById(draft.preset)
-  const step = draft.step ?? 'preset'
-  const base = {
-    kind: 'endpoint-wizard' as const,
-    anchor: { cardId: 'endpoints' },
-    step,
-    presets: PROVIDER_PRESETS.map((choice) => ({
-      id: choice.id,
-      label: choice.label,
-      note: choice.note,
-      selected: choice.id === draft.preset,
-    })),
-    probe: probeView(probe, true, preset),
-  }
-  if (step === 'preset') return { ...base, title: '添加服务商', fields: [], submitLabel: '下一步' }
-  if (step === 'connect') {
-    return {
-      ...base,
-      title: `连接 ${preset?.service ?? preset?.label ?? '服务'}`,
-      submitLabel: '下一步',
-      fields: [
-        {
-          id: 'baseUrl',
-          label: '地址',
-          value: draft.baseUrl,
-          mono: true,
-          placeholder: preset?.defaultUrl ?? 'https://',
-          ...(preset?.defaultUrl ? { note: '留空使用官方地址。' } : {}),
-        },
-        {
-          id: 'apiKey',
-          label: 'API key',
-          value: draft.apiKey,
-          mono: true,
-          secret: true,
-          placeholder: preset?.keyOptional ? '本机服务可不填' : '粘贴 API key',
-        },
-        { id: 'name', label: '名称', value: draft.name, placeholder: preset?.id ?? '例如 main', note: '模型设置里用这个名字指代它。' },
-      ],
-    }
-  }
-  const listed = draft.listed ?? []
-  const picked = draft.picked ?? []
-  const typed = picked.filter((id) => !listed.some((model) => model.id === id)).map((id) => ({ id }))
-  const all: readonly ProbedModel[] = [...typed, ...listed]
-  const query = (draft.modelFilter ?? '').trim().toLowerCase()
-  const shown = query
-    ? all.filter((model) => model.id.toLowerCase().includes(query) || model.name?.toLowerCase().includes(query))
-    : all
-  return {
-    ...base,
-    title: '选择模型',
-    submitLabel: '完成',
-    fields: [],
-    picker: {
-      ...(listed.length > 8 ? { filter: draft.modelFilter ?? '' } : {}),
-      rows: shown.map((model) => ({
-        id: model.id,
-        ...(modelMeta(model) ? { meta: modelMeta(model) } : {}),
-        picked: picked.includes(model.id),
-      })),
-      ...(picked.length > 0 || listed.length > 0
-        ? { summary: listed.length > 0 ? `已选 ${picked.length} 个，共 ${listed.length} 个` : `已选 ${picked.length} 个` }
-        : {}),
-      ...(all.length === 0
-        ? { empty: '没有拿到模型列表。在下面填写模型 id 添加。' }
-        : shown.length === 0
-          ? { empty: '没有匹配的模型。' }
-          : {}),
-      manual: draft.manualModel ?? '',
-      manualPlaceholder: preset?.exampleModel ? `模型 id，例如 ${preset.exampleModel}` : '模型 id',
-    },
-  }
+  return { status: 'failed', message: `${PROBE_FAILURES[result.reason]}${status}${detail}` }
 }
 
 function modelMeta(model: ProbedModel): string | undefined {
@@ -2511,16 +2517,23 @@ export type SettingsIntent =
   | { kind: 'new-endpoint' }
   | { kind: 'pick-preset'; preset: string }
   | { kind: 'wizard-back' }
-  /** Runs the connection test for the open endpoint form. */
+  /** 获取模型列表: the connection test, whose listing opens the picker. */
   | { kind: 'test-endpoint' }
-  /** Past a failed test, to the model page with whatever could be listed. */
-  | { kind: 'skip-test' }
   | { kind: 'probe-result'; seq: number; result: WireShellProbeEndpointResult }
+  /** Adds the listed model to the table, or takes it back out. */
   | { kind: 'toggle-picked-model'; id: string }
-  | { kind: 'add-manual-model' }
+  | { kind: 'close-model-picker' }
   | { kind: 'edit-endpoint'; name: string }
-  | { kind: 'new-model' }
-  | { kind: 'edit-model'; key: string }
+  | { kind: 'edit-unassigned' }
+  | { kind: 'toggle-key-visible' }
+  | { kind: 'add-model-row' }
+  | { kind: 'remove-model-row'; rowId: string }
+  | { kind: 'toggle-model-row'; rowId: string }
+  | { kind: 'model-row-field'; rowId: string; field: 'model' | 'displayName' | 'contextWindow' | 'maxOutputTokens'; value: string }
+  | { kind: 'model-row-switch'; rowId: string; field: 'thinking' | 'imageInput'; value: boolean }
+  | { kind: 'toggle-row-efforts'; rowId: string }
+  /** Switches one level; the last level still on stays on. */
+  | { kind: 'model-row-effort'; rowId: string; level: EffortLevel }
   | { kind: 'new-mcp-server' }
   | { kind: 'edit-mcp-server'; name: string }
   | { kind: 'mcp-add-arg' }
@@ -2541,7 +2554,7 @@ export type SettingsIntent =
   | { kind: 'cancel-draft' }
   | { kind: 'discard-draft' }
   | { kind: 'keep-editing' }
-  | { kind: 'request-remove'; target: { kind: 'endpoint' | 'model' | 'mcp-server'; name: string } }
+  | { kind: 'request-remove'; target: { kind: 'endpoint' | 'mcp-server'; name: string } }
   | { kind: 'confirm-remove' }
   | { kind: 'cancel-remove' }
   | { kind: 'set-default-model'; key: string }
@@ -2572,8 +2585,6 @@ export type SettingsIntent =
   | { kind: 'toggle-menu'; menu: string }
   /** Idempotent on purpose: focus loss and Escape both mean "closed", not "flipped". */
   | { kind: 'close-menu' }
-  /** Adds or removes one level in the model form's `supportedEfforts` set. */
-  | { kind: 'model-toggle-effort'; level: EffortLevel }
   | { kind: 'none' }
 
 export interface SettingsOutcome {
@@ -2725,10 +2736,8 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
           ...(same ? {} : { probe: undefined }),
           draft: {
             ...draft,
-            ...(same
-              ? {}
-              : { baseUrl: preset.baseUrl ?? '', apiKey: '', keyTouched: false, listed: undefined, picked: [] }),
-            step: 'connect',
+            ...(same ? {} : { baseUrl: preset.baseUrl ?? '', apiKey: '', keyTouched: false, listed: undefined }),
+            step: 'form',
             preset: preset.id,
             provider: preset.provider,
             name: draft.nameTouched ? draft.name : freeName(preset.id, state.snapshot?.endpoints.map((e) => e.name) ?? []),
@@ -2738,131 +2747,91 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
     }
     case 'wizard-back': {
       const draft = state.draft
-      if (draft?.kind !== 'endpoint' || draft.step === undefined || draft.step === 'preset') return { state }
-      return { state: { ...cleared, draft: { ...draft, step: draft.step === 'models' ? 'connect' : 'preset' } } }
+      if (draft?.kind !== 'endpoint' || draft.step !== 'form') return { state }
+      return { state: { ...cleared, draft: { ...draft, step: 'preset' } } }
     }
     case 'test-endpoint':
-      return startProbe(state, cleared, false)
-    case 'skip-test': {
-      const draft = state.draft
-      if (draft?.kind !== 'endpoint' || draft.step !== 'connect') return { state }
-      return { state: { ...cleared, draft: { ...draft, step: 'models' } } }
-    }
+      return startProbe(state, cleared)
     case 'probe-result': {
       const draft = state.draft
       if (state.probe?.status !== 'running' || state.probe.seq !== intent.seq || draft?.kind !== 'endpoint') {
         return { state }
       }
       const { result } = intent
-      const advance = state.probe.advance && result.ok && draft.step === 'connect'
       return {
         state: {
           ...state,
           probe: { seq: intent.seq, status: 'done', result },
           draft: result.ok
-            ? {
-                ...draft,
-                ...(result.baseUrl ? { baseUrl: result.baseUrl } : {}),
-                listed: result.models,
-                ...(advance ? { step: 'models' as const } : {}),
-              }
+            ? { ...draft, ...(result.baseUrl ? { baseUrl: result.baseUrl } : {}), listed: result.models, modelFilter: undefined }
             : draft,
         },
       }
     }
     case 'toggle-picked-model': {
       const draft = state.draft
-      if (draft?.kind !== 'endpoint') return { state }
-      const picked = draft.picked ?? []
-      return {
-        state: {
-          ...cleared,
-          draftEdited: true,
-          draft: {
-            ...draft,
-            picked: picked.includes(intent.id) ? picked.filter((id) => id !== intent.id) : [...picked, intent.id],
-          },
-        },
-      }
+      const listed = draft?.kind === 'endpoint' ? draft.listed?.find((model) => model.id === intent.id) : undefined
+      if (draft?.kind !== 'endpoint' || !listed) return { state }
+      const present = draft.models.filter((row) => row.model.trim() === intent.id)
+      const next = present.length > 0
+        ? withoutRows(draft, new Set(present.map((row) => row.rowId)))
+        : { ...draft, models: [...draft.models, newModelRow(draft.rowSeq, listed)], rowSeq: draft.rowSeq + 1 }
+      return { state: { ...cleared, draftEdited: true, draft: next } }
     }
-    case 'add-manual-model': {
+    case 'close-model-picker': {
       const draft = state.draft
-      const id = draft?.kind === 'endpoint' ? draft.manualModel?.trim() : undefined
-      if (draft?.kind !== 'endpoint' || !id) return { state }
-      const picked = draft.picked ?? []
+      if (draft?.kind !== 'endpoint') return { state }
+      return { state: { ...cleared, draft: { ...draft, listed: undefined, modelFilter: undefined } } }
+    }
+    case 'edit-endpoint':
+    case 'edit-unassigned': {
+      const draft = state.snapshot && editProviderDraft(state.snapshot, intent.kind === 'edit-endpoint' ? intent.name : undefined)
+      if (!draft) return { state }
+      return { state: { ...cleared, ...NO_DRAFT, draft } }
+    }
+    case 'toggle-key-visible': {
+      const draft = state.draft
+      if (draft?.kind !== 'endpoint') return { state }
+      return { state: { ...state, draft: { ...draft, keyVisible: !draft.keyVisible } } }
+    }
+    case 'add-model-row': {
+      const draft = state.draft
+      if (draft?.kind !== 'endpoint' || draft.unassigned) return { state }
       return {
         state: {
           ...cleared,
           draftEdited: true,
-          draft: { ...draft, manualModel: '', picked: picked.includes(id) ? picked : [id, ...picked] },
+          draft: { ...draft, models: [...draft.models, newModelRow(draft.rowSeq)], rowSeq: draft.rowSeq + 1 },
         },
       }
     }
-    case 'edit-endpoint': {
-      const endpoint = state.snapshot?.endpoints.find((candidate) => candidate.name === intent.name)
-      if (!endpoint) return { state }
-      return {
-        state: {
-          ...cleared,
-          draft: {
-            kind: 'endpoint',
-            name: endpoint.name,
-            isNew: false,
-            originalName: endpoint.name,
-            provider: endpoint.provider,
-            baseUrl: endpoint.baseUrl ?? '',
-            // Seeded empty rather than with the mask: an empty field with a
-            // "留空表示不修改" placeholder cannot be mistaken for the real key,
-            // and `keyTouched` is what actually decides whether it is sent.
-            apiKey: '',
-            keyTouched: false,
-          },
-          probe: undefined,
-        },
-      }
+    case 'remove-model-row': {
+      const draft = state.draft
+      if (draft?.kind !== 'endpoint') return { state }
+      return { state: { ...cleared, draftEdited: true, draft: withoutRows(draft, new Set([intent.rowId])) } }
     }
-    case 'new-model':
-      return {
-        state: {
-          ...cleared,
-          draft: {
-            kind: 'model',
-            key: '',
-            isNew: true,
-            model: '',
-            endpoint: state.snapshot?.endpoints[0]?.name ?? '',
-            provider: '',
-            contextWindow: '',
-            longContext1m: '',
-            supportsImageInput: '',
-            maxOutputTokens: '',
-            supportedEfforts: [],
-          },
-        },
-      }
-    case 'edit-model': {
-      const model = state.snapshot?.models.find((candidate) => candidate.key === intent.key)
-      if (!model) return { state }
-      return {
-        state: {
-          ...cleared,
-          draft: {
-            kind: 'model',
-            key: model.key,
-            isNew: false,
-            originalKey: model.key,
-            model: model.model,
-            endpoint: model.endpoint ?? '',
-            provider: model.provider ?? '',
-            contextWindow: model.contextWindow === undefined ? '' : String(model.contextWindow),
-            longContext1m: model.longContext1m ? 'on' : '',
-            supportsImageInput: model.supportsImageInput ? 'on' : '',
-            maxOutputTokens: model.maxOutputTokens === undefined ? '' : String(model.maxOutputTokens),
-            supportedEfforts: model.supportedEfforts ?? [],
-          },
-        },
-      }
+    // Display only: opening a row or its level list is not an edit.
+    case 'toggle-model-row':
+      return withModelRow(state, intent.rowId, (row) => ({ ...row, expanded: !row.expanded }), false)
+    case 'toggle-row-efforts':
+      return withModelRow(state, intent.rowId, (row) => ({ ...row, effortsOpen: !row.effortsOpen }), false)
+    case 'model-row-field': {
+      // A field also commits its unchanged value on blur and Enter; that is not an edit.
+      const row = state.draft?.kind === 'endpoint' ? state.draft.models.find((item) => item.rowId === intent.rowId) : undefined
+      if (row?.[intent.field] === intent.value) return { state }
+      return withModelRow(state, intent.rowId, (item) => ({ ...item, [intent.field]: intent.value }), true)
     }
+    case 'model-row-switch':
+      return withModelRow(state, intent.rowId, (row) =>
+        intent.field === 'thinking' ? { ...row, thinkingOff: !intent.value } : { ...row, supportsImageInput: intent.value }, true)
+    case 'model-row-effort':
+      return withModelRow(state, intent.rowId, (row) => {
+        const on = new Set(row.supportedEfforts.length === 0 ? VALID_EFFORT_LEVELS : row.supportedEfforts)
+        if (!on.delete(intent.level)) on.add(intent.level)
+        if (on.size === 0) return row
+        // Every level on is stored as no restriction, as the config does.
+        return { ...row, supportedEfforts: on.size === VALID_EFFORT_LEVELS.length ? [] : VALID_EFFORT_LEVELS.filter((level) => on.has(level)) }
+      }, true)
     case 'new-mcp-server':
       return {
         state: {
@@ -2905,15 +2874,6 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
           },
         },
       }
-    }
-    case 'model-toggle-effort': {
-      if (state.draft?.kind !== 'model') return { state }
-      const picked = new Set(state.draft.supportedEfforts)
-      if (!picked.delete(intent.level)) picked.add(intent.level)
-      // Kept in ladder order rather than click order, so the summary and the
-      // saved list read the way the picker does.
-      const supportedEfforts = VALID_EFFORT_LEVELS.filter((level) => picked.has(level))
-      return { state: { ...state, draft: { ...state.draft, supportedEfforts }, draftEdited: true } }
     }
     case 'mcp-add-arg': {
       if (state.draft?.kind !== 'mcp-server') return { state }
@@ -3073,10 +3033,9 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: {
           ...cleared,
-          draft: stale && draft.listed
-            ? { ...draft, listed: undefined, picked: draft.picked?.filter((id) => !draft.listed!.some((model) => model.id === id)) }
-            : draft,
-          draftEdited: true,
+          draft: stale && draft.listed ? { ...draft, listed: undefined, modelFilter: undefined } : draft,
+          // Filtering the picker is not an edit.
+          draftEdited: state.draftEdited || intent.field !== 'modelFilter',
           ...(stale ? { probe: undefined } : {}),
         },
       }
@@ -3092,16 +3051,10 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return { state: { ...state, discardArmed: undefined } }
     case 'submit-draft': {
       if (!state.draft || !state.snapshot || state.draftSubmit !== undefined) return { state }
-      // Enter on the wizard's earlier pages means 下一步, which tests first.
       if (state.draft.kind === 'endpoint' && state.draft.step === 'preset') return { state }
-      if (state.draft.kind === 'endpoint' && state.draft.step === 'connect') {
-        if (state.probe?.status === 'done' && state.probe.result.ok) {
-          return { state: { ...cleared, draft: { ...state.draft, step: 'models' } } }
-        }
-        return startProbe(state, cleared, true)
-      }
       const changes = draftToChanges(state.draft, state.snapshot)
       if ('error' in changes) return { state: { ...state, error: changes.error, openMenu: undefined } }
+      if (changes.length === 0) return { state: { ...cleared, ...NO_DRAFT } }
       // The draft stays: a refused change must not eat what the user typed.
       // `applySettingsIntent` mints this batch's ids from `pendingSeq`.
       return { state: { ...cleared, busy: true, draftSubmit: state.pendingSeq }, changes }
@@ -3119,9 +3072,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
         changes: [
           target.kind === 'endpoint'
             ? { scope: 'provider', kind: 'remove-endpoint', name: target.name }
-            : target.kind === 'model'
-              ? { scope: 'provider', kind: 'remove-model', key: target.name }
-              : { scope: 'extensions', kind: 'remove-mcp-server', name: target.name },
+            : { scope: 'extensions', kind: 'remove-mcp-server', name: target.name },
         ],
       }
     }
@@ -3321,32 +3272,33 @@ function withField(draft: SettingsDraft, field: string, value: string): Settings
         return { ...draft, apiKey: value, keyTouched: true }
       case 'modelFilter':
         return { ...draft, modelFilter: value }
-      case 'manualModel':
-        return { ...draft, manualModel: value }
       default:
         return draft
     }
   }
-  switch (field) {
-    case 'key':
-      return { ...draft, key: value }
-    case 'model':
-      return { ...draft, model: value }
-    case 'endpoint':
-      return { ...draft, endpoint: value }
-    case 'provider':
-      return { ...draft, provider: value }
-    case 'contextWindow':
-      return { ...draft, contextWindow: value }
-    case 'longContext1m':
-      return { ...draft, longContext1m: value }
-    case 'supportsImageInput':
-      return { ...draft, supportsImageInput: value }
-    case 'maxOutputTokens':
-      return { ...draft, maxOutputTokens: value }
-    default:
-      return draft
+  return draft
+}
+
+/** Drops rows from the table; a saved one is remembered for `remove-model`. */
+function withoutRows(draft: EndpointDraft, rowIds: ReadonlySet<string>): EndpointDraft {
+  const gone = draft.models.filter((row) => rowIds.has(row.rowId))
+  return {
+    ...draft,
+    models: draft.models.filter((row) => !rowIds.has(row.rowId)),
+    removedKeys: [...draft.removedKeys, ...gone.flatMap((row) => row.originalKey ?? [])],
   }
+}
+
+function withModelRow(
+  state: SettingsState,
+  rowId: string,
+  update: (row: ModelDraftRow) => ModelDraftRow,
+  edit: boolean,
+): SettingsOutcome {
+  const draft = state.draft
+  if (draft?.kind !== 'endpoint') return { state }
+  const models = draft.models.map((row) => (row.rowId === rowId ? update(row) : row))
+  return { state: { ...state, draft: { ...draft, models }, ...(edit ? { draftEdited: true } : {}) } }
 }
 
 // --- effects -----------------------------------------------------------------

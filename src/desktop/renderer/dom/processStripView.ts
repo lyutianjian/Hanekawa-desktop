@@ -43,7 +43,7 @@ export function threadChip(view: ThreadStripView, onOpen: (target: ThreadStripVi
     text.blocked ? el('span', 'thread-chip-blocked', text.blocked) : undefined,
   )
   chip.type = 'button'
-  chip.title = view.target.kind === 'thread' ? '在主画布打开需要你的线程' : '查看概览'
+  chip.title = view.target.kind === 'thread' ? '在主画布打开需要你的线程' : '查看线程'
   chip.addEventListener('click', () => onOpen(view.target))
   return el('div', 'thread-chip-row', chip)
 }

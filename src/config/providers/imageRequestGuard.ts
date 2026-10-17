@@ -163,6 +163,7 @@ function countImageBlocks(value: unknown): number {
   ) {
     count += 1
   }
+  if (value.type === 'input_image' && typeof value.image_url === 'string' && value.image_url.startsWith('data:')) count += 1
   for (const child of Object.values(value)) count += countImageBlocks(child)
   return count
 }

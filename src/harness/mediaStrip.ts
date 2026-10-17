@@ -396,12 +396,23 @@ export function formatImageBytesBlockedMessage(
 }
 
 /**
- * Estimates the non-image bytes a request will serialize into, from exactly
- * the pieces the payload builds from: the system prompt, every text-bearing
- * record's content plus structure, and the tool schemas. The loop subtracts
- * this from the request-body limit to get the images' budget (design §11.1
- * step 3: "估计文字与图像预算"). An estimate, deliberately without loading
- * anything — the providers' final check measures the real serialized body.
+ * Share of the request-body limit reserved for what the context builder adds
+ * after this budget pass and the records do not hold: the instructions
+ * reminder, the user context, active skills and transient attachments.
+ */
+export function requestContextReserveBytes(maxRequestBodyBytes: number): number {
+  return Math.floor(maxRequestBodyBytes / 20)
+}
+
+/**
+ * Estimates the non-image bytes a request will serialize into, from the
+ * pieces the payload builds from: the system prompt, every record field the
+ * context builder forwards (content, thinking blocks, reasoning, tool inputs,
+ * pre-mapped result blocks) JSON-encoded plus structure, and the tool schemas.
+ * The loop subtracts this and {@link requestContextReserveBytes} from the
+ * request-body limit to get the images' budget (design §11.1 step 3:
+ * "估计文字与图像预算"). An estimate, deliberately without loading anything —
+ * the providers' final check measures the real serialized body.
  */
 export function estimateRequestTextBytes(
   records: readonly SessionRecord[],
@@ -409,15 +420,24 @@ export function estimateRequestTextBytes(
 ): number {
   let bytes = Buffer.byteLength(options.system ?? '', 'utf8')
   for (const record of records) {
-    const content = record.type === 'message' || record.type === 'tool_result' || record.type === 'coordination_update'
-      ? record.content
-      : record.type === 'compact_boundary'
-        ? record.summary
-        : record.type === 'tool_use_summary'
-          ? record.summary
-          : ''
+    const parts: unknown[] = record.type === 'message'
+      ? [record.content, record.reasoningContent, record.thinkingBlocks, record.reasoningDetails]
+      : record.type === 'tool_use'
+        ? [record.input]
+        : record.type === 'tool_result'
+          ? [record.content, record.apiResultBlock]
+          : record.type === 'compact_boundary'
+            ? [record.summary, record.restoredContext]
+            : record.type === 'tool_use_summary'
+              ? [record.summary]
+              : record.type === 'coordination_update' || record.type === 'at_mention_context'
+                ? [record.content]
+                : []
     // Per-record JSON structure (ids, timestamps, wrapper objects).
-    bytes += Buffer.byteLength(content, 'utf8') + 256
+    bytes += 256
+    for (const part of parts) {
+      if (part !== undefined) bytes += Buffer.byteLength(JSON.stringify(part), 'utf8')
+    }
   }
   if (options.tools && options.tools.length > 0) {
     bytes += Buffer.byteLength(

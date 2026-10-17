@@ -65,16 +65,6 @@ export function createSurfacePanel(container: HTMLElement, onActivate: SurfaceAc
           node.setAttribute('aria-selected', String(index === selectedIndex))
           node.addEventListener('click', () => onActivate(action))
         }
-        const secondary = row.secondary
-        if (secondary) {
-          const control = el('button', `row-action${secondary.danger ? ' danger' : ''}`, secondary.label)
-          control.setAttribute('type', 'button')
-          control.addEventListener('click', (event) => {
-            event.stopPropagation()
-            onActivate(secondary.action)
-          })
-          node.appendChild(control)
-        }
         return node
       })
       paint(

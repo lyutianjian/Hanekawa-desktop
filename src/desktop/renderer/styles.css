@@ -59,9 +59,8 @@
   /* Metadata, and only metadata: anything the user can click asks for one of
      the two rungs above. */
   --text-tertiary: #858584;
-  /* Links are brand-coloured text, and the *strong* brand rung is the one
-     cleared for text — `--accent-brand` itself carries only 4.0:1 on the paper
-     (design_guidance 二.2). An alias, so the equality cannot drift. */
+  /* Links are brand-coloured text: the *strong* brand rung. An alias, so the
+     equality cannot drift. */
   --link: var(--accent-brand-strong);
 
   /* --- accents ---
@@ -70,14 +69,12 @@
      colour means something when it does appear.
      `test/rendererStyleTokens.test.ts` enforces the property list.
 
-     The brand is two tokens, not one. `--accent-brand` is the clay for
-     glyphs, hairlines and indicator bars — 4.0:1 on the paper, enough for a
-     rule, not for text. `--accent-brand-strong` is the rung cleared for text
-     and fills (5.5:1 on paper, 5.7:1 under its own white). Dark keeps both at
-     the lighter clay: on graphite the deep variant would read as mud, and the
-     fill pairs with dark text instead (design_guidance 二.2/二.3). */
-  --accent-brand: #d4806a;
-  --accent-brand-strong: #d4806a;
+     The brand is two tokens: `--accent-brand` for glyphs, hairlines and
+     indicator bars, `--accent-brand-strong` for text and fills. Both themes set
+     both to the working mark's own clay (`sprites/*.png`), so every brand
+     surface matches the spinner. */
+  --accent-brand: #d97757;
+  --accent-brand-strong: #d97757;
   /* The colour cleared to sit *on* a brand fill. Not `--surface-knob`: the knob
      is white in both themes, while this flips — white on clay in light, the
      canvas's own near-black in dark. */
@@ -207,9 +204,11 @@
      Declared so a first run — and every test that never touches localStorage —
      resolves to the resting width: half of what the sidebar leaves for the
      browser, so a site keeps its desktop layout; a column of text for the
-     overview. */
+     task and thread pages. */
   --browser-panel-width: clamp(240px, (100vw - var(--sidebar-width)) / 2, 900px);
-  --overview-panel-width: 320px;
+  --tasks-panel-width: 320px;
+  --threads-panel-width: 320px;
+  --changes-panel-width: clamp(300px, (100vw - var(--sidebar-width)) * 0.45, 640px);
   /* The seam from the sidebar's content edge to the canvas, and the part of it
      the sidebar's scrollbar is allowed to occupy. The overhang is the 10px seam
      minus 2px of air and the 1px sash line, so the scrollbar owns 7px and the
@@ -314,10 +313,10 @@
      for the same reason `theme.markdown` and `theme.syntax` are exempt in
      `src/tui/theme.ts`: red and green *are* the meaning here. Values
      tuned for the graphite ladder (design_guidance 二.3). */
-  --diff-add-fg: #93c77a;
-  --diff-add-bg: #1f2a20;
-  --diff-del-fg: #e98a94;
-  --diff-del-bg: #33201f;
+  --diff-add-fg: #5fd96b;
+  --diff-add-bg: #1f3a24;
+  --diff-del-fg: #ff4d6a;
+  --diff-del-bg: #4a1c26;
 }
 
 /* --- light theme ---
@@ -350,11 +349,10 @@
   --text-secondary: #575756;
   --text-tertiary: #777776;
 
-  /* Here the two brand rungs split: #c2603f is the icon/hairline clay, #a44d30
-     the text-and-fill clay (5.7:1 on the paper). Dark has no use for the split
-     and keeps both at the lighter value. */
-  --accent-brand: #c2603f;
-  --accent-brand-strong: #a44d30;
+  /* The working mark's clay, as in dark: ~3.1:1 on the paper and under white,
+     traded for matching the spinner. */
+  --accent-brand: #d97757;
+  --accent-brand-strong: #d97757;
   --on-brand: #ffffff;
   --accent-info: #33689f;
   --accent-tool: #6e4fa3;
@@ -574,16 +572,45 @@ body.resizing #frame::after { transition: none; }
   cursor: pointer;
 }
 .titlebar-rail:hover { color: var(--text-primary); background: var(--surface-hover); }
-/* The browser's rail, pushed to the far end of the strip — the panel it opens is
-   on that side. `margin-left: auto` rather than a spacer element: the bar is a
-   flex row, and the gap between the menus and this control is not a thing that
-   needs to exist in the document. The window's own `padding-right` already
-   reserves the native controls' band, so this lands inside it on Windows too. */
-.titlebar-rail-end { margin-left: auto; margin-right: 0; }
-/* Open reads as pressed, the one state the sidebar's rail does not need: that
-   one's column is visible behind it, while a hidden browser panel leaves the
-   control with nothing to say for itself. */
+/* The side panel's page buttons, pushed to the far end of the strip — the panel
+   they open is on that side. `margin-left: auto` rather than a spacer element:
+   the bar is a flex row. The window's own `padding-right` already reserves the
+   native controls' band, so this lands inside it on Windows too. */
+.titlebar-side { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; }
+.titlebar-side-button { position: relative; margin-right: 0; }
+.titlebar-side-button .icon { width: 16px; height: 16px; }
+/* The page on screen reads as pressed, the one state the sidebar's rail does
+   not need: that one's column is visible behind it. */
 .titlebar-rail.open { color: var(--text-primary); background: var(--surface-active); }
+/* 任务 with something running: a dot on the icon's corner. */
+.titlebar-side-dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--text-success);
+  box-shadow: 0 0 0 1.5px var(--surface-canvas);
+}
+.titlebar-side-dot[hidden] { display: none; }
+/* 线程 with threads waiting on someone: the count in the warn tone. */
+.titlebar-side-badge {
+  position: absolute;
+  top: 0;
+  right: -2px;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 3px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-active);
+  color: var(--text-warn);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 14px;
+  text-align: center;
+}
+.titlebar-side-badge[hidden] { display: none; }
 /* Positioned so the menu hangs off its trigger; the bar is not inside a
    scroller, so `overflow` can stay visible here. */
 .titlebar-menu-shell { position: relative; display: inline-flex; }
@@ -1010,15 +1037,23 @@ body.resizing #sidebar { transition: none; }
   border-radius: var(--radius-md);
   overflow: hidden;
 }
-#browser-panel.overview { flex-basis: var(--overview-panel-width); }
+#browser-panel.tasks { flex-basis: var(--tasks-panel-width); }
+#browser-panel.threads { flex-basis: var(--threads-panel-width); }
+#browser-panel.changes { flex-basis: var(--changes-panel-width); }
 #browser-panel[hidden] { display: none; }
 /* The panel's 8px gutter is `body` showing through; painted in the canvas's
    colour so canvas and gutter read as one surface around the card. */
 body:has(> #browser-panel:not([hidden])) {
   background: linear-gradient(var(--surface-canvas) 0 0) right / calc(var(--browser-panel-width) + 2 * var(--space-2)) 100% no-repeat var(--surface-base);
 }
-body:has(> #browser-panel.overview:not([hidden])) {
-  background-size: calc(var(--overview-panel-width) + 2 * var(--space-2)) 100%;
+body:has(> #browser-panel.tasks:not([hidden])) {
+  background-size: calc(var(--tasks-panel-width) + 2 * var(--space-2)) 100%;
+}
+body:has(> #browser-panel.threads:not([hidden])) {
+  background-size: calc(var(--threads-panel-width) + 2 * var(--space-2)) 100%;
+}
+body:has(> #browser-panel.changes:not([hidden])) {
+  background-size: calc(var(--changes-panel-width) + 2 * var(--space-2)) 100%;
 }
 /* With the panel up, the caption buttons are above it, not above the title bar. */
 body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-3); }
@@ -1077,7 +1112,8 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   display: flex;
   align-items: stretch;
   gap: var(--space-1);
-  padding: var(--space-1) var(--space-1) 0;
+  /* The panel's ✕ sits over the strip's right end. */
+  padding: var(--space-1) 40px 0 var(--space-1);
 }
 /* Tabs shrink rather than the strip scrolling: nothing in this window scrolls
    sideways but a diff, and a horizontal scrollbar is the wrong answer here
@@ -1243,53 +1279,200 @@ body.settings-open #browser-resizer { display: none; }
   flex-direction: column;
 }
 #browser-view[hidden] { display: none; }
-/* Section heads and the solo close button share one 36px row, so the × sits on the first title's midline.
-   The mode switch (浏览器 / 概览) and the close button. Drawn when both modes
-   exist; alone in the overview it shrinks to the close button, laid over the
-   first section's head so no row is spent on it. */
-#side-tabs {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-1);
-  border-bottom: 1px solid var(--border-subtle);
-}
-#side-tabs[hidden] { display: none; }
-#side-tabs.solo {
+/* The panel's close button, laid over the first row's right end (a section
+   head, the 改动 head, the 线程 title, the browser's tab strip), so no row is
+   spent on it. */
+.side-close {
   position: absolute;
   top: 0;
   right: var(--space-1);
   z-index: 1;
   height: 36px;
-  padding: 0;
-  border-bottom: 0;
-}
-.side-tab {
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: var(--type-meta);
-  padding: var(--space-1) var(--space-2);
-  cursor: pointer;
-}
-.side-tab:hover { background: var(--surface-hover); }
-.side-tab.active { background: var(--surface-active); color: var(--text-primary); }
-.side-tab-close {
-  margin-left: auto;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-tertiary);
   font: inherit;
   font-size: var(--type-meta);
-  padding: var(--space-1) var(--space-2);
+  padding: 0 var(--space-2);
   cursor: pointer;
 }
-.side-tab-close:hover { background: var(--surface-active); color: var(--text-primary); }
-/* The overview: sections stacked in one scroller, hairlines between them. A
+.side-close[hidden] { display: none; }
+.side-close:hover { color: var(--text-primary); }
+/* --- 改动: one turn's edited files ---
+   A head with the totals, then one section per file under a head that sticks
+   while its rows scroll by. Rows wrap rather than scroll sideways: the panel is
+   a column, and the gutter keeps a wrapped line readable. */
+#changes-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+#changes-view[hidden] { display: none; }
+.changes-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 36px;
+  padding: 0 var(--space-3);
+  border-bottom: 1px solid var(--border-subtle);
+}
+/* The panel's ✕ is laid over this row. */
+#changes-view .changes-head { padding-right: 40px; }
+.changes-title { color: var(--text-primary); font-size: var(--type-ui); font-weight: 500; }
+.changes-scroll {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: clip;
+  padding-bottom: var(--space-3);
+}
+.changes-file { position: relative; }
+.changes-file + .changes-file { border-top: 1px solid var(--border-subtle); }
+.changes-file.flash::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border: 1px solid;
+  border-color: var(--accent-brand);
+  pointer-events: none;
+  animation: task-flash var(--motion-locate) var(--ease-out);
+}
+.changes-file-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 36px;
+  padding: 0 var(--space-2) 0 var(--space-1);
+  background: var(--surface-card);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.changes-file-toggle {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--type-ui);
+  text-align: left;
+  cursor: pointer;
+}
+.changes-file-toggle:hover { background: var(--surface-hover); }
+.changes-file-toggle:focus-visible,
+.changes-file-open:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.changes-file-toggle > .icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-tertiary);
+  transition: transform var(--motion-micro) var(--ease-out);
+}
+.changes-file-toggle[aria-expanded="false"] > .icon { transform: rotate(-90deg); }
+.changes-file-name { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.changes-file-dir {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+  font-size: var(--type-meta);
+}
+.changes-file-toggle .diff-stat { margin-left: auto; padding-left: var(--space-2); }
+.changes-file-open {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-micro) var(--ease-out);
+}
+.changes-file-open .icon { width: 14px; height: 14px; }
+.changes-file-head:hover .changes-file-open,
+.changes-file-open:focus-visible { opacity: 1; }
+.changes-file-open:hover { background: var(--surface-hover); color: var(--text-primary); }
+.changes-diff {
+  padding: var(--space-1) 0;
+  font-family: var(--font-mono);
+  font-size: var(--type-meta);
+  line-height: 20px;
+}
+.changes-diff[hidden] { display: none; }
+.changes-row {
+  display: flex;
+  align-items: flex-start;
+  min-height: 20px;
+  border-left: 2px solid transparent;
+}
+.changes-row.add { background: var(--diff-add-bg); border-left-color: var(--diff-add-fg); }
+.changes-row.del { background: var(--diff-del-bg); border-left-color: var(--diff-del-fg); }
+.changes-num {
+  flex: none;
+  min-width: 4ch;
+  padding: 0 var(--space-2);
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  text-align: right;
+  user-select: none;
+  font-variant-numeric: tabular-nums;
+}
+.changes-sign {
+  flex: 0 0 2ch;
+  font-family: var(--font-mono);
+  color: var(--text-tertiary);
+  user-select: none;
+}
+.changes-row.add .changes-sign { color: var(--diff-add-fg); }
+.changes-row.del .changes-sign { color: var(--diff-del-fg); }
+.changes-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding-right: var(--space-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+.changes-row.ctx .changes-text { color: var(--text-secondary); }
+.changes-mark { border-radius: 3px; }
+.changes-row.add .changes-mark { background: color-mix(in srgb, var(--diff-add-fg) 28%, transparent); }
+.changes-row.del .changes-mark { background: color-mix(in srgb, var(--diff-del-fg) 28%, transparent); }
+/* Lines a hunk skipped: a quiet band between the hunks, the count in words. */
+.changes-row.elided {
+  align-items: center;
+  margin: var(--space-1) 0;
+  padding: 2px 0;
+  background: var(--surface-hover);
+  border-left: 0;
+}
+.changes-row.elided .changes-text {
+  color: var(--text-tertiary);
+  font-family: var(--font-ui);
+  font-size: var(--type-micro);
+}
+.changes-row.elided:first-child { margin-top: 0; }
+.changes-row.elided:last-child { margin-bottom: 0; }
+/* 任务: sections stacked in one scroller, hairlines between them. A
    section holding a page (a sub-agent's or thread's transcript) stands alone
    and takes the column's height. */
 #side-sections {
@@ -1319,7 +1502,13 @@ body.settings-open #browser-resizer { display: none; }
   text-align: left;
   cursor: pointer;
 }
-#side-sections > .side-section:not([hidden]):first-child .side-section-head { padding-right: 40px; }
+/* Room for the panel's ✕ over whichever section comes first. */
+.side-section-head { padding-right: 40px; }
+#tasks-empty { margin: 0; padding: var(--space-3); padding-right: 40px; color: var(--text-tertiary); font-size: var(--type-meta); }
+#tasks-empty[hidden] { display: none; }
+/* 线程: the project's head over its thread list, or one thread's page. */
+#threads-page { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+#threads-page[hidden] { display: none; }
 .side-section-head .icon { width: 14px; height: 14px; color: var(--text-tertiary); transition: transform var(--motion-micro) var(--ease-out); }
 .side-section-head[aria-expanded="false"] .icon { transform: rotate(-90deg); }
 .side-section-head:hover .icon { color: var(--text-primary); }
@@ -1345,6 +1534,85 @@ body.settings-open #browser-resizer { display: none; }
   padding: 0 var(--space-2) var(--space-2);
 }
 #subagent-view[hidden] { display: none; }
+/* 命令: one row per background process, unfolding into its output's tail. */
+#commands-view {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  padding: 0 var(--space-2) var(--space-2);
+}
+.command-row { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.command-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+  min-width: 0;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.command-head:hover { background: var(--surface-hover); }
+.command-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+/* A running row's 停止 sits on the meta line's right end. */
+.command-row:has(.command-stop) .command-head { padding-right: 56px; }
+.command-title { display: flex; align-items: baseline; gap: var(--space-2); min-width: 0; }
+.command-title .step-bead { transform: translateY(-1px); }
+.command-text {
+  min-width: 0;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--type-code);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.command-meta {
+  display: flex;
+  gap: var(--space-2);
+  padding-left: calc(7px + var(--space-2));
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+  font-variant-numeric: tabular-nums;
+}
+.command-stop {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-meta);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+}
+.command-stop:hover { background: var(--surface-hover); color: var(--text-danger); }
+.command-output {
+  margin: 0 var(--space-2) var(--space-2);
+  max-height: 240px;
+  overflow-y: auto;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: var(--type-micro);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 #thread-detail-view {
   flex: 1 1 auto;
   min-height: 0;
@@ -2456,8 +2724,7 @@ body.settings-open #browser-resizer { display: none; }
 .agent-entry .step-live { padding: var(--space-1) 0 0 10px; }
 .agent-verb, .agent-model { color: var(--text-tertiary); font-weight: 400; }
 .step-label .agent-model { color: var(--text-tertiary); }
-.step.failed .step-head,
-.step.failed .step-label strong { color: var(--text-danger); }
+.step-fail { color: var(--text-danger); }
 /* The name and summary of a sub-agent's latest tool, in `.step-live` below. */
 .step-name { min-width: 0; color: var(--text-secondary); font-family: var(--font-mono); overflow-wrap: anywhere; }
 .step-summary { min-width: 0; color: var(--text-tertiary); font-family: var(--font-mono); overflow-wrap: anywhere; }
@@ -3163,29 +3430,12 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    deep path) used to overflow its box and print over the value beside it. */
 #surface .row .label { flex: 0 1 auto; min-width: min(11rem, 50%); overflow-wrap: anywhere; }
 #surface .row .value { color: var(--text-secondary); flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-/* Background tasks invert the usual shape: the label is the long part (the
-   command), the value a short status that should stay on one line. */
-#surface[data-surface="background-tasks"] .row .label { flex: 1 1 auto; font-family: var(--font-mono); font-size: var(--type-code); }
-#surface[data-surface="background-tasks"] .row .value { flex: 0 0 auto; white-space: nowrap; }
 #surface .row.current .label { color: var(--text-primary); }
 #surface .row.disabled { opacity: 0.55; }
 #surface .row.heading .label { color: var(--text-primary); }
 #surface .row.tone-success .value { color: var(--text-success); }
 #surface .row.tone-warning .value { color: var(--text-warn); }
 #surface .row.tone-error .value { color: var(--text-danger); }
-#surface .row-action {
-  flex: 0 0 auto;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: var(--type-meta);
-  padding: 0 var(--space-2);
-  cursor: pointer;
-}
-#surface .row-action:hover { background: var(--surface-hover); color: var(--text-danger); }
-#surface .row-action.danger { color: var(--text-danger); }
 #surface .hint { color: var(--text-secondary); font-size: var(--type-micro); margin-top: var(--space-1); }
 
 /* --- completions --- */
@@ -3336,6 +3586,124 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   animation: task-flash var(--motion-locate) var(--ease-out);
 }
 @keyframes task-flash { from { opacity: 1; } to { opacity: 0; } }
+/* --- the edited-files card ---
+   Under a turn that changed files: the same hairline ring as the task card, a
+   head that says how many, a row per file and 查看全部 with the turn's totals.
+   Every row opens the side panel's 改动 page. */
+.edits-card {
+  margin: var(--space-3) 0 var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  font-size: var(--type-ui);
+  line-height: 1.5;
+  animation: fade-in var(--motion-panel-in) var(--ease-out);
+}
+.edits-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: 38px;
+  padding: 0 var(--space-2) 0 var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+}
+.edits-title { font-weight: 500; }
+.edits-undo {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font: inherit;
+  font-size: var(--type-meta);
+  padding: var(--space-1) var(--space-2);
+  cursor: pointer;
+  transition: background-color var(--motion-micro) var(--ease-out), color var(--motion-micro) var(--ease-out);
+}
+.edits-undo:hover { background: var(--surface-hover); color: var(--text-primary); }
+.edits-rows { display: flex; flex-direction: column; padding: var(--space-1) 0; }
+.edits-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 var(--space-4);
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--motion-micro) var(--ease-out);
+}
+.edits-row:hover { background: var(--surface-hover); }
+.edits-row:focus-visible,
+.edits-undo:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.edits-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.edits-all .edits-name { color: var(--text-secondary); }
+.edits-all:hover .edits-name { color: var(--text-primary); }
+.edits-more { flex: 0 1 auto; min-width: 0; color: var(--text-tertiary); font-size: var(--type-meta); white-space: nowrap; }
+.edits-row .diff-stat { margin-left: auto; }
+/* +12 −3: the two counts every changed-file row ends in. */
+.diff-stat {
+  display: inline-flex;
+  flex: none;
+  gap: 0.4em;
+  font-family: var(--font-mono);
+  font-size: var(--type-meta);
+  font-variant-numeric: tabular-nums;
+}
+.diff-stat-add { color: var(--diff-add-fg); }
+.diff-stat-del { color: var(--diff-del-fg); }
+/* A file's extension as a small tile, tinted by its family. */
+.file-badge {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 16px;
+  border-radius: 4px;
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+}
+.file-badge.wide { width: 24px; }
+.file-badge .icon { width: 11px; height: 11px; }
+.file-badge[data-ext="ts"],
+.file-badge[data-ext="tsx"],
+.file-badge[data-ext="py"],
+.file-badge[data-ext="go"],
+.file-badge[data-ext="c"],
+.file-badge[data-ext="cpp"],
+.file-badge[data-ext="h"] { color: var(--accent-info); }
+.file-badge[data-ext="js"],
+.file-badge[data-ext="jsx"],
+.file-badge[data-ext="mjs"],
+.file-badge[data-ext="cjs"],
+.file-badge[data-ext="json"],
+.file-badge[data-ext="yaml"],
+.file-badge[data-ext="yml"],
+.file-badge[data-ext="toml"] { color: var(--accent-warn); }
+.file-badge[data-ext="css"],
+.file-badge[data-ext="scss"],
+.file-badge[data-ext="html"],
+.file-badge[data-ext="vue"],
+.file-badge[data-ext="svg"] { color: var(--accent-tool); }
+.file-badge[data-ext="rs"],
+.file-badge[data-ext="java"],
+.file-badge[data-ext="kt"],
+.file-badge[data-ext="rb"],
+.file-badge[data-ext="sh"] { color: var(--accent-danger); }
+.file-badge[data-ext="md"],
+.file-badge[data-ext="txt"] { color: var(--text-secondary); }
 .task-more {
   margin: 0;
   padding-left: calc(16px + var(--space-2));
@@ -5573,7 +5941,221 @@ body.projects-open #browser-resizer,
   color: var(--text-primary);
 }
 
-/* The footer's lead action (测试连接) sits apart from the closing pair. */
+/* --- the provider dialog ---
+   Wider than the other forms: it holds the model table. */
+.settings-dialog.wide { width: min(680px, 100%); }
+
+.settings-provider-identity {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.settings-provider-identity > .settings-dialog-title {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings-provider-avatar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+  font-weight: 600;
+}
+
+.settings-provider-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+  white-space: nowrap;
+}
+
+/* Name beside protocol, key beside address. */
+.settings-provider-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3) var(--space-4);
+}
+
+.settings-secret {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.settings-secret > .settings-input { flex: 1 1 auto; }
+
+.settings-secret-toggle,
+.settings-model-expand {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+
+.settings-secret-toggle:hover,
+.settings-model-expand:hover { background: var(--surface-hover); color: var(--text-primary); }
+
+.settings-secret-toggle > svg,
+.settings-model-expand > svg { width: 14px; height: 14px; }
+
+.settings-models-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding-top: var(--space-3);
+  border-top: 1px solid var(--border-subtle);
+}
+
+.settings-models-title {
+  color: var(--text-primary);
+  font-size: var(--type-meta);
+  font-weight: 500;
+}
+
+.settings-models-count {
+  flex: 1 1 auto;
+  color: var(--text-tertiary);
+  font-size: var(--type-meta);
+}
+
+.settings-model-table {
+  display: flex;
+  /* The dialog body scrolls; the table must not shrink into a scroller of its own. */
+  flex: 0 0 auto;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+
+/* One grid for the header and every line, so the columns agree. */
+.settings-model-head,
+.settings-model-line {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1.4fr) 52px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-2);
+}
+
+.settings-model-head {
+  height: 30px;
+  color: var(--text-tertiary);
+  font-size: var(--type-micro);
+}
+
+.settings-model-item { border-top: 1px solid var(--border-subtle); }
+.settings-model-line { padding-top: 6px; padding-bottom: 6px; }
+
+.settings-model-line > .settings-input,
+.settings-model-number > .settings-input {
+  width: 100%;
+  min-width: 0;
+  background: var(--surface-canvas);
+}
+
+.settings-model-context {
+  color: var(--text-tertiary);
+  font-size: var(--type-meta);
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-model-expand > svg,
+.settings-levels-trigger > svg { transition: transform var(--motion-micro) var(--ease-out); }
+.settings-model-expand.open > svg,
+.settings-levels-trigger.open > svg { transform: rotate(90deg); }
+
+/* Indented to the model id's column: the detail belongs to the line above. */
+.settings-model-item > .settings-row-warning { padding: 0 var(--space-2) 6px 44px; }
+
+.settings-model-detail {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-3) 44px;
+}
+
+.settings-model-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 28px;
+  color: var(--text-primary);
+  font-size: var(--type-meta);
+}
+
+.settings-model-numbers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.settings-model-number {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+}
+
+.settings-model-levels {
+  display: flex;
+  flex-direction: column;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.settings-levels-trigger {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  height: 32px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--type-meta);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-levels-trigger > svg { width: 14px; height: 14px; color: var(--text-tertiary); }
+.settings-levels-summary { margin-left: auto; color: var(--text-tertiary); }
+.settings-model-switch.level { padding-left: 18px; }
+
+.settings-model-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* The footer's lead action (上一步) sits apart from the closing pair. */
 .settings-dialog-foot > .settings-btn.lead { margin-right: auto; }
 
 /* The new-endpoint wizard: service cards, two to a row. */
@@ -5656,6 +6238,10 @@ body.projects-open #browser-resizer,
 .settings-probe-skip:hover { color: var(--text-primary); }
 
 .settings-model-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
   color: var(--text-tertiary);
   font-size: var(--type-meta);
 }
@@ -5736,12 +6322,6 @@ body.projects-open #browser-resizer,
   font-size: var(--type-meta);
 }
 
-.settings-model-manual {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.settings-model-manual > .settings-input,
 .settings-dialog-body > .settings-input {
   flex: 1 1 auto;
   width: 100%;
@@ -5810,6 +6390,9 @@ body.projects-open #browser-resizer,
 .mcp-form-add-btn,
 .settings-preset,
 .settings-model-row,
+.settings-secret-toggle,
+.settings-model-expand,
+.settings-levels-trigger,
 #surface .row,
 #suggestions .suggestion,
 #rewind-panel .row,
@@ -6049,37 +6632,8 @@ body.projects-open #browser-resizer,
 .canvas-stop-thread:disabled,
 .thread-row-open:disabled,
 .thread-row-stop:disabled { opacity: 0.5; cursor: default; }
-.canvas-threads-open {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: var(--space-1);
-  padding: 0 var(--space-2);
-  min-width: 28px;
-  height: 28px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.canvas-threads-open:hover { color: var(--text-primary); background: var(--surface-hover); }
-/* Threads waiting on someone: the count in the warn tone on a neutral chip. */
-.canvas-threads-badge {
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: var(--radius-pill);
-  background: var(--surface-active);
-  color: var(--text-warn);
-  font-size: var(--type-micro);
-  font-weight: 600;
-  line-height: 16px;
-  text-align: center;
-}
-.canvas-threads-badge[hidden] { display: none; }
 
-/* The overview's head over a coordination project's sections: the title and
+/* The 线程 page's head over a coordination project's threads: the title and
    the thread counts, 全部停止 at the end of the counts. The title keeps clear of
    the panel's close button, which sits over this corner when it is alone. */
 #overview-head {

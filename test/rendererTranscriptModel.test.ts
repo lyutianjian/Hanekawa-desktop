@@ -222,6 +222,17 @@ test('the assistant record supersedes the streamed segment in place, under its o
   assert.equal(state.liveThinkingId, undefined, 'the segment is committed; a later delta opens a new one')
 })
 
+test('an OpenAI-format record supersedes the streamed segment from its reasoningContent', () => {
+  const record: SessionRecord = {
+    type: 'message', id: 'a1', role: 'assistant', content: 'done', createdAt: 'now', reasoningContent: 'reasoned',
+  }
+
+  const { state } = fold([thinkingDelta('reas'), thinkingDelta('oned'), { type: 'record', record }])
+
+  assert.deepEqual(state.items.map((item) => [item.id, item.kind]), [['a1-thinking', 'thinking'], ['a1', 'assistant']])
+  assert.equal(thinkingItems(state)[0]?.text, 'reasoned')
+})
+
 test('a record without thinkingBlocks keeps what streamed instead of deleting it', () => {
   const { state } = fold([
     thinkingDelta('reasoned'),

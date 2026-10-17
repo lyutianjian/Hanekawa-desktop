@@ -16,7 +16,6 @@ import {
   SUPPORTED_SURFACES,
   activateSurfaceRow,
   activateSurfaceRowById,
-  backgroundTasksView,
   runningProcessCount,
   effortPickerView,
   initialSurfaceSelection,
@@ -327,20 +326,7 @@ test('the effort picker shows levels the model does not support as unavailable',
   assert.equal(unclamped.rows.some((row) => row.disabled), false)
 })
 
-test('background tasks and sessions render with their status and counts', () => {
-  const tasks = backgroundTasksView([
-    { id: 't2', sessionId: 's', kind: 'agent', status: 'completed', agentType: 'explore', description: 'find it', startedAt: 5_000, finishedAt: 8_000, exitCode: 0, outputBytes: 0, unreadBytes: 0 },
-    { id: 't1', sessionId: 's', kind: 'shell', status: 'running', command: 'npm test', startedAt: 0, outputBytes: 10, unreadBytes: 4 },
-  ], 75_000)
-  // Running first, whatever the start order.
-  assert.equal(tasks.rows[0]?.label, 'npm test')
-  assert.equal(tasks.rows[0]?.detail, '运行中 · 1m15s · 4 字节新输出')
-  assert.equal(tasks.rows[1]?.label, 'explore: find it')
-  assert.equal(tasks.rows[1]?.detail, '已完成 · 3s · exit 0')
-  assert.equal(tasks.rows[1]?.secondary, undefined, 'a finished task has nothing to stop')
-  assert.equal(backgroundTasksView([], 0).rows.length, 0)
-  assert.equal(backgroundTasksView([], 0).emptyMessage, '没有后台任务。')
-
+test('sessions render with their counts', () => {
   const sessions = resumePickerView({
     sessions: [
       { id: 'a', shortId: 'a1', createdAt: 'x', updatedAt: 'y', title: 'First', messageCount: 1 },
@@ -365,7 +351,7 @@ test('the provider panel is outside SUPPORTED_SURFACES but is still reachable', 
   const providerPanel: CommandSurface = 'provider-panel'
   assert.equal(isSupportedSurface(providerPanel), false)
   assert.equal((SUPPORTED_SURFACES as readonly CommandSurface[]).includes(providerPanel), false)
-  for (const surface of ['model-picker', 'effort-picker', 'background-tasks', 'resume-picker'] as const) {
+  for (const surface of ['model-picker', 'effort-picker', 'resume-picker'] as const) {
     assert.equal(isSupportedSurface(surface), true)
   }
 })
@@ -415,15 +401,10 @@ test('resuming opens the pane that owns the session; a task row peeks its output
   })
   assert.deepEqual(activateSurfaceRowById(sessions, 'a'), { kind: 'open-pane', sessionId: 'a' })
 
-  // The row peeks; stopping is a separate button that takes two presses.
   const running = [
     { id: 't1', sessionId: 's', kind: 'shell', status: 'running', command: 'npm test', startedAt: 0, outputBytes: 10, unreadBytes: 4 },
     { id: 't3', sessionId: 's', kind: 'shell', status: 'killed', command: 'sleep 9', startedAt: 0, finishedAt: 1, outputBytes: 0, unreadBytes: 0 },
   ] as const
-  const tasks = backgroundTasksView(running, 0)
-  assert.deepEqual(activateSurfaceRowById(tasks, 't1'), { kind: 'peek-task', taskId: 't1' })
-  assert.deepEqual(tasks.rows[0]?.secondary?.action, { kind: 'arm-kill', taskId: 't1' })
-  assert.deepEqual(backgroundTasksView(running, 0, 't1').rows[0]?.secondary?.action, { kind: 'kill-task', taskId: 't1' })
   assert.equal(runningProcessCount(running), 1)
 })
 

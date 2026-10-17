@@ -19,20 +19,25 @@ import type { SideMode } from './sidePanel.js'
 // Stored and clamped exactly the way `model/sidebarWidth.ts` stores the rail's,
 // because it is the same kind of thing: a local view preference that never rides
 // the wire and never enters project state. Each mode keeps its own: the browser
-// needs room for a site's desktop layout, the overview only a column of text.
+// needs room for a site's desktop layout, the task and thread pages only a column of text.
 //
 // No stored width means the stylesheet's default — for the browser a share of
 // the window rather than a number, so it is not written from here at all.
 
 export const SIDE_WIDTH_STORAGE_KEYS: Readonly<Record<SideMode, string>> = {
   browser: 'hanekawa.browserPanelWidth.v3',
-  overview: 'hanekawa.overviewPanelWidth.v1',
+  // The task page took over the overview's column, and its width with it.
+  tasks: 'hanekawa.overviewPanelWidth.v1',
+  threads: 'hanekawa.threadsPanelWidth.v1',
+  changes: 'hanekawa.changesPanelWidth.v1',
 }
 
 /** The CSS custom properties the panel rule reads, one per mode. */
 export const SIDE_WIDTH_VARIABLES: Readonly<Record<SideMode, string>> = {
   browser: '--browser-panel-width',
-  overview: '--overview-panel-width',
+  tasks: '--tasks-panel-width',
+  threads: '--threads-panel-width',
+  changes: '--changes-panel-width',
 }
 
 /** Under this the address bar cannot show a host *and* its controls. */

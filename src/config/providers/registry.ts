@@ -3,8 +3,9 @@ import type { ModelConfig } from '../service.js'
 import type { Endpoint } from '../routing.js'
 import { AnthropicProvider } from './anthropicProvider.js'
 import { OpenAIProvider } from './openaiProvider.js'
+import { ResponsesProvider } from './responsesProvider.js'
 
-export const SUPPORTED_PROVIDER_NAMES = ['anthropic', 'openai'] as const
+export const SUPPORTED_PROVIDER_NAMES = ['anthropic', 'openai', 'openai-responses'] as const
 
 export type SupportedProviderName = typeof SUPPORTED_PROVIDER_NAMES[number]
 
@@ -15,6 +16,7 @@ export function isSupportedProviderName(value: string): value is SupportedProvid
 const PROVIDER_FACTORIES: Record<SupportedProviderName, (config: ModelConfig) => ModelProvider> = {
   anthropic: (config) => new AnthropicProvider(config),
   openai: (config) => new OpenAIProvider(config),
+  'openai-responses': (config) => new ResponsesProvider(config),
 }
 
 /**
@@ -26,6 +28,7 @@ const PROVIDER_FACTORIES: Record<SupportedProviderName, (config: ModelConfig) =>
 const PROVIDER_IMAGE_INPUT: Readonly<Record<SupportedProviderName, boolean>> = {
   anthropic: AnthropicProvider.supportsImageInput,
   openai: OpenAIProvider.supportsImageInput,
+  'openai-responses': ResponsesProvider.supportsImageInput,
 }
 
 /** Whether the adapter a provider name resolves to implements image input. */
@@ -52,8 +55,7 @@ export function resolveImageCapability(
   endpoint?: Pick<Endpoint, 'provider'>,
 ): boolean {
   if (!model) return false
-  // Strict `=== true`: absent, false, "true", 1 — everything but true is off,
-  // the same rule `longContext1m` applies to its switch.
+  // Strict `=== true`: absent, false, "true", 1 — everything but true is off.
   if (model.supportsImageInput !== true) return false
   return providerSupportsImageInput(model.provider ?? endpoint?.provider)
 }

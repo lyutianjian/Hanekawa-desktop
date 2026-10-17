@@ -99,6 +99,7 @@ import { createDockedCard } from './dom/dockedCard.js'
 import { createPermissionRequestView } from './dom/permissionRequestView.js'
 import { createPlanCardView } from './dom/planCardView.js'
 import { createPlanPanelView } from './dom/planPanelView.js'
+import { createChangesPanelView } from './dom/changesPanelView.js'
 import { createQuestionCardView } from './dom/questionCardView.js'
 import { createRewindView } from './dom/rewindView.js'
 import { createSurfacePanel } from './dom/surfaceView.js'
@@ -109,7 +110,7 @@ import { createStatusView } from './dom/statusView.js'
 import { createSuggestionsView } from './dom/suggestionsView.js'
 import { createSidebarView } from './dom/sidebarView.js'
 import { createTitleBarView } from './dom/titleBarView.js'
-import { titleBarMenus, type TitleBarAction } from './model/titleBar.js'
+import { sideRailView, titleBarMenus, type TitleBarAction } from './model/titleBar.js'
 import { createBrowserPanelView, browserPanelNodes } from './dom/browserPanelView.js'
 import { createSubagentPanelView } from './dom/subagentPanelView.js'
 import {
@@ -129,17 +130,17 @@ import { THREAD_STATUS_LABEL, coordinationCounts, threadBySession, threadFinishe
 import { nextThreadSeen, threadPanelView, type ThreadGroup, type ThreadPanelIntent } from './model/threadPanel.js'
 import { mergeBarView, type MergeBarIntent } from './model/mergeBar.js'
 import {
-  OVERVIEW_CLOSED_STORAGE_KEY,
+  PANEL_CLOSED_STORAGE_KEY,
   SECTIONS_COLLAPSED_STORAGE_KEY,
   SIDE_SECTIONS,
-  autoOpensOverview,
+  autoOpensThreads,
   isSectionCollapsed,
-  parseOverviewClosed,
+  parsePanelClosed,
   parseSectionsCollapsed,
-  serializeOverviewClosed,
+  serializePanelClosed,
   serializeSectionsCollapsed,
   keepSelectedSubagent,
-  overviewHeadView,
+  threadsHeadView,
   sidePanelView,
   threadStripView,
   visibleSections,
@@ -148,6 +149,9 @@ import {
   type SidePanelInput,
   type SideSection,
 } from './model/sidePanel.js'
+import { commandRows } from './model/commandsPanel.js'
+import { createCommandsPanelView } from './dom/commandsPanelView.js'
+import type { TurnEdits } from './model/turnEdits.js'
 import { threadPage, type ThreadSelection } from './model/threadDetail.js'
 import { createThreadPanelView } from './dom/threadPanelView.js'
 import { createThreadDetailView } from './dom/threadDetailView.js'
@@ -247,7 +251,7 @@ const surface = createSurfacePanel(required('surface'), (action) => {
 const suggestions = createSuggestionsView(required('suggestions'), (index) => {
   void activePane()?.acceptCompletionAt(index)
 })
-const processStrip = createProcessStripView(required('process-strip'), () => activePane()?.toggleBackgroundTasks())
+const processStrip = createProcessStripView(required('process-strip'), () => showSideTab('commands'))
 const status = createStatusView({
   usage: required('status-usage'),
   cost: required('status-cost'),
@@ -376,6 +380,8 @@ function attachPaneSession(lane: string): void {
     // the host knows.
     onOpenFile: (path, line) => openInEditor(lane, path, line),
     onOpenSubagent: (id) => openSubagent(id),
+    onViewEdits: (edits, path) => viewEdits(lane, edits, path),
+    onOpenTasks: () => showSideTab('commands'),
     // A wake note's [查看]: the thread table of this lane's project names the
     // thread's session, which then opens like any other.
     onOpenThread: (threadId) => {
@@ -499,7 +505,7 @@ function removePaneSession(lane: string): void {
   paneSessions.delete(lane)
   lastActiveTick.delete(lane)
   evicting.delete(lane)
-  browserOpenLanes.delete(lane)
+  panelOpenLanes.delete(lane)
   session.dispose()
   if (activeLane === lane) {
     activeLane = undefined
@@ -703,7 +709,7 @@ function renderSidebar(): void {
     menus: titleMenus,
     openMenu: titleBarMenu,
     sidebarCollapsed: view.collapsed,
-    browserOpen: browserPanelShown(),
+    side: sideRail(),
     canCreate: view.canCreate,
   })
 }
@@ -722,6 +728,20 @@ function revealProject(projectRoot: string): void {
   collapsedProjects = toggleProject(collapsedProjects, projectRoot, false)
   if (recentOnly && projectRoot !== globalRoot) recentOnly = false
   renderSidebar()
+}
+
+/** The title bar's side buttons, from the session on screen. */
+function sideRail() {
+  const view = sidePanelView(sidePanelInput())
+  const pane = activePane()
+  const info = activeLaneInfo()
+  return sideRailView({
+    modes: view.modes,
+    open: view.open && !settingsState.open && !projectsOpen ? view.mode : undefined,
+    running: (pane?.client.getBackgroundTasks().some((task) => task.status === 'running') ?? false)
+      || (pane?.subagents().some((entry) => entry.status === 'running' || entry.status === 'awaiting-approval') ?? false),
+    blockedThreads: info === undefined ? 0 : coordinationCounts(coordinationByRoot.get(info.projectRoot)?.threads ?? []).blocked,
+  })
 }
 
 function renderTitleBar(): void {
@@ -1234,7 +1254,7 @@ shellClient.onCoordinationThreads((state) => {
   const started = previous !== undefined
     && state.threads.some((thread) => !previous.threads.some((known) => known.threadId === thread.threadId))
   if (state.projectRoot === activeLaneInfo()?.projectRoot) {
-    if (autoOpensOverview(started, overviewClosed.has(state.projectRoot)) && !coordinated()) showSideTab('threads')
+    if (autoOpensThreads(started, panelClosed.has(state.projectRoot)) && !coordinated()) showSideTab('threads')
     activePane()?.refreshWelcome()
   }
   renderSidebar()
@@ -1287,7 +1307,6 @@ function renderCanvasHeader(): void {
             canStop: STOPPABLE_THREAD.has(thread.status) && !pendingThreads.has(thread.threadId),
           },
         }),
-    blockedThreads: info === undefined ? 0 : coordinationCounts(coordinationByRoot.get(info.projectRoot)?.threads ?? []).blocked,
     menuOpen: headerMenuOpen,
     renaming: headerRenaming,
     pendingDelete: headerPendingDelete,
@@ -1377,7 +1396,6 @@ const canvasHeader = createCanvasHeaderView(required('canvas-header'), {
     const thread = activeThread()
     if (lane && thread) runThreadCommand(lane.projectRoot, thread.threadId, 'stop')
   },
-  onOpenThreads: () => toggleOverview(),
 })
 
 // --- the projects page ---------------------------------------------------------
@@ -1574,8 +1592,17 @@ function runTitleBarAction(action: TitleBarAction): void {
     case 'toggle-sidebar':
       runSidebarIntent({ kind: 'toggle-collapse' })
       return
+    case 'toggle-tasks':
+      toggleSide('tasks')
+      return
+    case 'toggle-threads':
+      toggleSide('threads')
+      return
+    case 'toggle-changes':
+      toggleSide('changes')
+      return
     case 'toggle-browser':
-      toggleBrowserPanel()
+      toggleSide('browser')
       return
     case 'toggle-help':
       // Opening the chord panel means showing the sidebar it lives in.
@@ -1598,7 +1625,7 @@ function applySideWidth(mode: SideMode, px: number | undefined): void {
   // An empty value removes the declaration (CSSOM `setProperty`).
   document.documentElement.style.setProperty(SIDE_WIDTH_VARIABLES[mode], px === undefined ? '' : `${clampSideWidth(px)}px`)
 }
-for (const mode of ['browser', 'overview'] as const) {
+for (const mode of ['tasks', 'threads', 'changes', 'browser'] as const) {
   applySideWidth(mode, parseSideWidth(localStorage.getItem(SIDE_WIDTH_STORAGE_KEYS[mode])))
 }
 
@@ -1607,22 +1634,14 @@ for (const mode of ['browser', 'overview'] as const) {
  * has tabs", because it has to be possible to *close* a panel whose lane still
  * has tabs — a derived flag would spring straight back open.
  */
-const browserOpenLanes = new Set<string>()
-/**
- * Which mode the ordinary session's panel is in while it is open: the browser,
- * or the overview's stack of sections.
- */
-let sideMode: SideMode = 'browser'
-/**
- * A coordinator or thread session ignores `browserOpenLanes`: its 概览 switch is
- * remembered per project, and the browser is a second mode beside it.
- */
-let overviewClosed = parseOverviewClosed(localStorage.getItem(OVERVIEW_CLOSED_STORAGE_KEY))
-/** The browser has been raised in a coordination session, so its strip offers it. */
-let coordBrowser = false
-/** The mode a coordination session has up, kept apart from the ordinary session's `sideMode`. */
-let coordMode: SideMode = 'overview'
-/** The sections each project's user folded; the overview's memory, like `overviewClosed`. */
+const panelOpenLanes = new Set<string>()
+/** The page an ordinary session's panel shows while it is open. */
+let sideMode: SideMode = 'tasks'
+/** A coordinator or thread session ignores `panelOpenLanes`: its switch is remembered per project. */
+let panelClosed = parsePanelClosed(localStorage.getItem(PANEL_CLOSED_STORAGE_KEY))
+/** The page a coordination session has up, kept apart from the ordinary session's `sideMode`. */
+let coordMode: SideMode = 'threads'
+/** The sections each project's user folded; the task page's memory, like `panelClosed`. */
 let sectionsCollapsed = parseSectionsCollapsed(localStorage.getItem(SECTIONS_COLLAPSED_STORAGE_KEY))
 
 function coordinated(): boolean {
@@ -1635,21 +1654,16 @@ function sidePanelInput(): SidePanelInput {
   const isCoordinated = coordinated()
   return {
     coordinated: isCoordinated,
-    browserOpen: activeLane !== undefined && browserOpenLanes.has(activeLane),
+    laneOpen: activeLane !== undefined && panelOpenLanes.has(activeLane),
     mode: isCoordinated ? coordMode : sideMode,
-    overviewClosed: root !== undefined && overviewClosed.has(root),
+    panelClosed: root !== undefined && panelClosed.has(root),
     has: {
-      browser: !isCoordinated || (coordBrowser && laneHasBrowserTabs()),
       plan: pane?.plan() !== undefined,
+      commands: pane?.client.getBackgroundTasks().some((task) => task.kind === 'shell') ?? false,
       subagents: (pane?.subagents().length ?? 0) > 0,
       threads: isCoordinated || hasCoordination(activeCoordination()),
     },
   }
-}
-
-function laneHasBrowserTabs(): boolean {
-  const lane = activeLane
-  return mintingTabs > 0 || (lane !== undefined && tabsForLane(shellClient.getBrowserTabs(), lane).length > 0)
 }
 
 function setMode(mode: SideMode): void {
@@ -1657,9 +1671,8 @@ function setMode(mode: SideMode): void {
   else sideMode = mode
 }
 
-/** Drops what the session on screen has nothing behind: the raised browser, a sub-agent selection. */
+/** Drops a sub-agent selection the session on screen has nothing behind. */
 function pruneSidePanel(): void {
-  if (!laneHasBrowserTabs()) coordBrowser = false
   const entries = activePane()?.subagents() ?? []
   selectedSubagent = keepSelectedSubagent(selectedSubagent, entries.map((entry) => entry.id))
 }
@@ -1669,22 +1682,22 @@ function browserPanelShown(): boolean {
   return open && mode === 'browser'
 }
 
-/** Opens or collapses the panel: the 概览 switch in a coordination session, the browser switch elsewhere. */
+/** Opens or collapses the panel: per project in a coordination session, per lane elsewhere. */
 function setPanelOpen(open: boolean): void {
   const root = activeLaneInfo()?.projectRoot
   if (coordinated() && root !== undefined) {
-    const next = new Set(overviewClosed)
+    const next = new Set(panelClosed)
     if (open) next.delete(root)
     else next.add(root)
-    overviewClosed = next
+    panelClosed = next
     try {
-      localStorage.setItem(OVERVIEW_CLOSED_STORAGE_KEY, serializeOverviewClosed(next))
+      localStorage.setItem(PANEL_CLOSED_STORAGE_KEY, serializePanelClosed(next))
     } catch {
       // Storage full or blocked: the choice still holds for this window.
     }
   } else if (activeLane !== undefined) {
-    if (open) browserOpenLanes.add(activeLane)
-    else browserOpenLanes.delete(activeLane)
+    if (open) panelOpenLanes.add(activeLane)
+    else panelOpenLanes.delete(activeLane)
   }
 }
 
@@ -1697,6 +1710,15 @@ function setSectionCollapsed(section: SideSection, fold: boolean): void {
   } catch {
     // Storage full or blocked: the choice still holds for this window.
   }
+}
+
+/** The file an edited-files card asked the 改动 page to scroll to; `seq` moves on every ask. */
+let changesFocus: { path: string | undefined; seq: number } = { path: undefined, seq: 0 }
+
+function viewEdits(lane: string, edits: TurnEdits, path: string | undefined): void {
+  if (lane !== activeLane) return
+  changesFocus = { path: path ?? edits.files[0]?.path, seq: changesFocus.seq + 1 }
+  showSideTab('changes')
 }
 
 /** The sub-agent on its own page in the panel; `undefined` is the list. */
@@ -1752,7 +1774,12 @@ function renderBrowser(): void {
 // --- the side panel's other half: sub-agents -----------------------------------
 
 const sidePanel = required('browser-panel')
-const sideTabs = required('side-tabs')
+const sideClose = required('side-close')
+sideClose.addEventListener('click', () => {
+  setPanelOpen(false)
+  renderSidebar()
+  renderBrowser()
+})
 const sideResizer = required('browser-resizer')
 const subagentPanel = createSubagentPanelView(required('subagent-view'), {
   onSelect: (id) => {
@@ -1771,6 +1798,19 @@ const subagentPanel = createSubagentPanelView(required('subagent-view'), {
   onError: (message) => toastHost.push('error', message),
 })
 const planPanel = createPlanPanelView(required('plan-view'))
+const changesHost = required('changes-view')
+const changesPanel = createChangesPanelView(changesHost, {
+  onOpenPath: (path) => {
+    if (activeLane !== undefined) openInEditor(activeLane, path, undefined)
+  },
+})
+const commandsPanel = createCommandsPanelView(required('commands-view'), {
+  loadOutput: async (taskId) => (await activePane()?.client.peekTaskOutput(taskId, COMMAND_OUTPUT_BYTES)) ?? '',
+  onStop: (taskId) => {
+    void activePane()?.client.killTask(taskId).catch((error) => reportError({ action: '停止进程' }, error))
+  },
+})
+const threadsPage = required('threads-page')
 const threadView = required('thread-view')
 const threadPanel = createThreadPanelView(threadView, (intent) => runThreadPanelIntent(intent))
 const threadDetailHost = required('thread-detail-view')
@@ -1793,21 +1833,22 @@ const threadDetail = createThreadDetailView(threadDetailHost, {
   },
   onError: (message) => toastHost.push('error', message),
 })
-/** The thread on its own page in the 概览 tab; `undefined` is the list. */
+/** The thread on its own page in the 线程 page; `undefined` is the list. */
 let viewedThread: ThreadSelection | undefined
 /** Why the page the user was on went back to the list; gone after a few seconds. */
 let threadNotice: { readonly text: string; readonly tone?: 'error' } | undefined
 let threadNoticeTimer: ReturnType<typeof setTimeout> | undefined
-/** The strip's last paint, so a stream delta does not rebuild buttons under the pointer. */
-let sideTabsDrawn: string | undefined
 
 interface SectionNode { section: HTMLElement; head: HTMLElement; title: HTMLElement; count: HTMLElement; body: HTMLElement }
 const sectionNodes: Record<SideSection, SectionNode> = {
   plan: sectionNode('plan'),
+  commands: sectionNode('commands'),
   subagents: sectionNode('subagents'),
-  threads: sectionNode('threads'),
 }
 const sideSections = required('side-sections')
+const tasksEmpty = required('tasks-empty')
+/** The tail of a command's output the 命令 section shows. */
+const COMMAND_OUTPUT_BYTES = 16_000
 const overviewHead = required('overview-head')
 const overviewSummary = required('overview-summary')
 const overviewStopAll = button('overview-stop-all', '全部停止', '停止所有运行中的线程', () => {
@@ -1850,82 +1891,58 @@ function renderSubagents(): void {
   const visible = view.open && !settingsState.open && !projectsOpen
   show(sidePanel, visible)
   show(sideResizer, visible)
-  sidePanel.classList.toggle('overview', view.mode === 'overview')
+  for (const mode of ['tasks', 'threads', 'changes'] as const) sidePanel.classList.toggle(mode, view.mode === mode)
+  show(sideClose, visible)
   const pane = activePane()
   const root = activeLaneInfo()?.projectRoot
-  const onOverview = visible && view.mode === 'overview'
-  const entries = onOverview ? pane?.subagents() ?? [] : []
-  const coordination = activeCoordination()
-  const plan = onOverview ? pane?.plan() : undefined
+  const onChanges = visible && view.mode === 'changes'
+  show(changesHost, onChanges)
+  changesPanel.render(onChanges ? { edits: pane?.edits(), root, focus: changesFocus.path, focusSeq: changesFocus.seq } : undefined)
+
+  const onTasks = visible && view.mode === 'tasks'
+  const entries = onTasks ? pane?.subagents() ?? [] : []
+  const tasks = onTasks ? pane?.client.getBackgroundTasks() ?? [] : []
+  const commands = commandRows(tasks)
   const running = entries.filter((entry) => entry.status === 'running' || entry.status === 'awaiting-approval').length
-  const labels: Record<SideMode, string> = { browser: '浏览器', overview: '概览' }
-  const stripVisible = visible && (view.modes.length > 1 || view.mode === 'overview')
-  show(sideTabs, stripVisible)
-  sideTabs.classList.toggle('solo', view.modes.length < 2)
-  const strip = `${view.mode}|${view.modes.join(',')}`
-  if (strip !== sideTabsDrawn) {
-    sideTabsDrawn = strip
-    const tabNodes = view.modes.length < 2
-      ? []
-      : view.modes.map((mode) => {
-        const node = button(`side-tab${view.mode === mode ? ' active' : ''}`, labels[mode], labels[mode], () => showSideTab(mode === 'browser' ? 'browser' : undefined))
-        node.setAttribute('role', 'tab')
-        node.setAttribute('aria-selected', String(view.mode === mode))
-        return node
-      })
-    replace(
-      sideTabs,
-      ...tabNodes,
-      button('side-tab-close', '✕', '关闭侧栏', () => {
-        setPanelOpen(false)
-        renderSidebar()
-        renderBrowser()
-      }),
-    )
-  }
-  show(sideSections, onOverview)
-  // A page opened inside a section stands alone; it is the thread detail, or the sub-agent the user selected.
-  const page = onOverview && view.sections.includes('threads') ? threadPage(viewedThread, coordination, pendingThreads) : undefined
-  const detail = page?.kind === 'detail' ? page : undefined
+  const runningCommands = commands.filter((row) => row.running).length
+  show(sideSections, onTasks)
+  show(tasksEmpty, onTasks && view.sections.length === 0)
+  // The sub-agent the user selected stands alone as a page.
   const folded = new Set(SIDE_SECTIONS.filter((id) => isSectionCollapsed(sectionsCollapsed, root, id)))
-  const shown = visibleSections(
-    view.sections,
-    folded,
-    detail !== undefined ? 'threads' : selectedSubagent !== undefined ? 'subagents' : undefined,
-  )
-  const titles: Record<SideSection, string> = {
-    plan: '计划',
-    subagents: '子代理',
-    threads: '线程',
-  }
-  // The head stands over the sections; a page standing alone needs its height.
-  const head = onOverview && shown.focus === undefined ? overviewHeadView(threadStripView(coordinated(), coordination)) : undefined
-  show(overviewHead, head !== undefined)
-  if (head !== undefined) {
-    overviewSummary.textContent = head.summary
-    overviewStopAll.disabled = !head.canStopAll
-  }
+  const shown = visibleSections(view.sections, folded, selectedSubagent !== undefined ? 'subagents' : undefined)
+  const titles: Record<SideSection, string> = { plan: '计划', commands: '命令', subagents: '子代理' }
   const counts: Record<SideSection, string> = {
     plan: '',
+    commands: runningCommands > 0 ? `${runningCommands} 运行中` : '',
     subagents: running > 0 ? `${running} 运行中` : '',
-    // The head already counts them.
-    threads: head === undefined && hasCoordination(coordination) ? `${coordinationCounts(coordination!.threads).running} 运行中` : '',
   }
   for (const id of SIDE_SECTIONS) {
     const node = sectionNodes[id]
-    const present = onOverview && shown.sections.includes(id)
     const open = !folded.has(id)
-    show(node.section, present)
+    show(node.section, onTasks && shown.sections.includes(id))
     node.section.classList.toggle('focus', shown.focus === id)
     node.head.setAttribute('aria-expanded', String(open))
     node.title.textContent = titles[id]
     node.count.textContent = counts[id]
     show(node.body, open)
   }
-  const bodyOpen = (id: SideSection): boolean => onOverview && shown.sections.includes(id) && !folded.has(id)
-  if (bodyOpen('plan')) planPanel.render(plan)
+  const bodyOpen = (id: SideSection): boolean => onTasks && shown.sections.includes(id) && !folded.has(id)
+  if (bodyOpen('plan')) planPanel.render(pane?.plan())
+  commandsPanel.render(bodyOpen('commands') ? commands : undefined)
   if (bodyOpen('subagents')) subagentPanel.render({ entries, selected: selectedSubagent })
-  const onThreads = bodyOpen('threads')
+
+  const onThreads = visible && view.mode === 'threads'
+  const coordination = activeCoordination()
+  show(threadsPage, onThreads)
+  const page = onThreads ? threadPage(viewedThread, coordination, pendingThreads) : undefined
+  const detail = page?.kind === 'detail' ? page : undefined
+  // The head stands over the list; a thread's own page needs the height.
+  const head = onThreads && detail === undefined ? threadsHeadView(threadStripView(coordinated(), coordination)) : undefined
+  show(overviewHead, head !== undefined)
+  if (head !== undefined) {
+    overviewSummary.textContent = head.summary
+    overviewStopAll.disabled = !head.canStopAll
+  }
   if (page?.kind === 'list' && page.clear) {
     viewedThread = undefined
     if (page.notice !== undefined) {
@@ -1940,7 +1957,7 @@ function renderSubagents(): void {
     threadMenu = undefined
     threadPanel.closeMenu()
   }
-  if (onThreads && detail === undefined) {
+  if (threadListShown) {
     markThreadsSeen(coordination)
     threadPanel.render(threadPanelView({
       state: coordination,
@@ -1954,19 +1971,19 @@ function renderSubagents(): void {
     }))
   }
   // A folded section keeps its selection: unfolding brings the same page back.
-  pane?.setSelectedSubagent(onOverview && view.sections.includes('subagents') ? selectedSubagent : undefined)
+  pane?.setSelectedSubagent(onTasks && view.sections.includes('subagents') ? selectedSubagent : undefined)
 }
 
 /**
- * Raise the panel onto the browser or onto the overview. A section named here is
+ * Raise the panel onto a page. A section of the task page named here is
  * unfolded, so the thing the user asked to see is not behind a closed head.
  */
-function showSideTab(target: 'browser' | SideSection | undefined): void {
-  if (target === 'browser' && coordinated()) coordBrowser = true
-  if (target !== undefined && target !== 'browser') setSectionCollapsed(target, false)
+function showSideTab(target: SideMode | SideSection): void {
+  const isSection = (SIDE_SECTIONS as readonly string[]).includes(target)
+  if (isSection) setSectionCollapsed(target as SideSection, false)
   setPanelOpen(true)
-  setMode(target === 'browser' ? 'browser' : 'overview')
-  // The title bar's browser button draws the browser half only.
+  setMode(isSection ? 'tasks' : target as SideMode)
+  // The title bar's buttons draw which page is up.
   renderSidebar()
   // Opening onto nothing would be a blank panel, so the browser's first showing mints a tab.
   if (target === 'browser' && activeLane !== undefined && tabsForLane(shellClient.getBrowserTabs(), activeLane).length === 0) {
@@ -1975,23 +1992,16 @@ function showSideTab(target: 'browser' | SideSection | undefined): void {
   renderBrowser()
 }
 
-/** The title bar's browser button in a coordination session: back to the overview, the browser still on its strip's far side. */
-function leaveBrowserMode(): void {
-  coordBrowser = false
-  coordMode = 'overview'
-  renderSidebar()
-  renderBrowser()
-}
-
-/** The 概览 button: collapses the panel when it is up, otherwise raises it onto the overview. */
-function toggleOverview(): void {
-  if (!sidePanelView(sidePanelInput()).open) {
-    showSideTab(undefined)
+/** A title bar button: its page, or the panel closed when that page is already up. */
+function toggleSide(mode: SideMode): void {
+  const view = sidePanelView(sidePanelInput())
+  if (view.open && view.mode === mode) {
+    setPanelOpen(false)
+    renderSidebar()
+    renderBrowser()
     return
   }
-  setPanelOpen(false)
-  renderSidebar()
-  renderBrowser()
+  showSideTab(mode)
 }
 
 function openSubagent(id: string): void {
@@ -2042,25 +2052,6 @@ function createPanelTab(lane: string): void {
     .finally(() => {
       mintingTabs--
     })
-}
-
-/**
- * The title bar's browser button. With the panel on its sub-agents it switches to
- * the browser rather than closing. Closing never touches the tabs: they belong
- * to the lane, not to the panel.
- */
-function toggleBrowserPanel(): void {
-  if (browserPanelShown()) {
-    if (coordinated()) {
-      leaveBrowserMode()
-    } else {
-      setPanelOpen(false)
-      renderSidebar()
-      renderBrowser()
-    }
-    return
-  }
-  showSideTab('browser')
 }
 
 const titleBar = createTitleBarView(
@@ -2477,21 +2468,19 @@ shellClient.onBrowserState((tabs) => {
   // changing, a navigation, a failure are all the same tab going about its
   // business, and a panel the user closed would otherwise be shoved back open by
   // a page that is merely still loading. It never closes the panel either; that
-  // stays the user's decision, which is why `browserOpenLanes` is state.
+  // stays the user's decision, which is why `panelOpenLanes` is state.
   const arrived = newTabsForLane(tabs, activeLane, knownBrowserTabs)
   knownBrowserTabs = new Set(tabs.map((tab) => tab.tabId))
   const latest = arrived.at(-1)
   if (latest !== undefined && activeLane !== undefined && (sidePanelView(sidePanelInput()).open || mintingTabs === 0)) {
-    // A coordination session gets the browser as a tab beside 概览; a panel the
-    // user collapsed stays collapsed.
-    if (coordinated()) coordBrowser = true
-    else setPanelOpen(true)
+    // A coordination panel the user collapsed stays collapsed.
+    if (!coordinated()) setPanelOpen(true)
     setMode('browser')
     // Onto the new tab, not whichever one was last on screen: the page the agent
     // just opened is the one it is asking about.
     browserActiveTab.set(activeLane, latest.tabId)
-    // The title bar's browser button draws the panel's open state, and `renderSidebar` is
-    // the only call site that paints the bar.
+    // The title bar's buttons draw the panel's page, and `renderSidebar` is the
+    // only call site that paints the bar.
     renderSidebar()
   }
   pruneSidePanel()

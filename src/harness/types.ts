@@ -68,6 +68,17 @@ export interface ChatMessage {
   reasoningContent?: string
   thinkingBlocks?: ThinkingBlock[]
   /**
+   * OpenRouter's Chat Completions `reasoning_details`, kept verbatim: some
+   * entries are encrypted, and the model that wrote them needs them back.
+   */
+  reasoningDetails?: unknown[]
+  /**
+   * A Responses reply's output items (reasoning, message, function calls),
+   * kept verbatim when it reasoned: the encrypted reasoning only works handed
+   * back to the same model, together with the items it was paired with.
+   */
+  responseItems?: unknown[]
+  /**
    * Image refs submitted with this message. `content` stays the text of record
    * for display, search, and the existing commands; images ride beside it and
    * resolve through the owning session's attachment service, never inlined.
@@ -900,6 +911,14 @@ export interface ModelRequest {
    * buys a cache write, billed above the plain input rate.
    */
   promptCaching?: false
+  /**
+   * The conversation this request belongs to, for providers that route their
+   * cache by conversation (Responses `prompt_cache_key` and Codex session
+   * headers). A fork carries its parent's.
+   */
+  promptCacheKey?: string
+  /** The loop turn: a Codex sticky-routing token holds only within one. */
+  turnId?: string
   maxOutputTokens?: number
   previousRequestId?: string
   thinking?: { type: 'adaptive' } | { type: 'enabled'; budgetTokens: number } | { type: 'disabled' }
@@ -935,6 +954,8 @@ export interface ModelResponse {
   stopReason?: string
   reasoningContent?: string
   thinkingBlocks?: ThinkingBlock[]
+  reasoningDetails?: unknown[]
+  responseItems?: unknown[]
   cacheBreak?: CacheBreakResult
 }
 

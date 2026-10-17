@@ -33,9 +33,9 @@ export const IMAGE_PROCESS_DEFAULTS = {
    *  `media/imageRequestLimits.ts`. */
   maxSendBytes: MAX_IMAGE_SEND_BYTES,
   /** PNG rungs win only under this size; past it JPEG is several times
-   *  smaller, and every image's bytes stay in each later request of the
-   *  session. */
-  maxPngSendBytes: 1_000_000,
+   *  smaller (a desktop-sized page screenshot about 6x), and every image's
+   *  bytes stay in each later request of the session. */
+  maxPngSendBytes: 200_000,
 } as const
 
 export interface ImageProcessLimits {

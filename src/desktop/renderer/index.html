@@ -224,35 +224,39 @@
         the card's frame belongs to the panel around it.
       -->
       <aside id="browser-panel" hidden aria-label="侧栏">
-        <div id="side-tabs" role="tablist" aria-label="侧栏视图" hidden></div>
+        <button type="button" id="side-close" class="side-close" title="关闭侧栏" aria-label="关闭侧栏" hidden>✕</button>
         <div id="browser-view">
           <div id="browser-tabs" role="tablist" aria-label="标签页"></div>
           <div id="browser-address"></div>
           <div id="browser-banner" role="status" hidden></div>
           <div id="browser-hole"></div>
         </div>
-        <!-- A coordination project's overview head: its title, thread counts and 全部停止. -->
-        <div id="overview-head" hidden>
-          <h2 class="overview-title">概览</h2>
-          <div id="overview-summary-row" class="overview-summary-row"><span id="overview-summary"></span></div>
+        <!-- 改动: every file the session's tools edited. -->
+        <div id="changes-view" hidden></div>
+        <!-- 线程: a coordination project's head (counts, 全部停止) over its threads. -->
+        <div id="threads-page" hidden>
+          <div id="overview-head" hidden>
+            <h2 class="overview-title">线程</h2>
+            <div id="overview-summary-row" class="overview-summary-row"><span id="overview-summary"></span></div>
+          </div>
+          <div id="thread-view" hidden></div>
+          <div id="thread-detail-view" hidden></div>
         </div>
-        <!-- The overview: collapsible sections, each shown only while it has content. -->
+        <!-- 任务: collapsible sections, each shown only while it has content. -->
         <div id="side-sections" hidden>
           <section class="side-section" id="side-section-plan" hidden>
             <button type="button" id="side-section-plan-head" class="side-section-head" aria-expanded="true"></button>
             <div id="side-section-plan-body" class="side-section-body"><div id="plan-view"></div></div>
           </section>
+          <section class="side-section" id="side-section-commands" hidden>
+            <button type="button" id="side-section-commands-head" class="side-section-head" aria-expanded="true"></button>
+            <div id="side-section-commands-body" class="side-section-body"><div id="commands-view"></div></div>
+          </section>
           <section class="side-section" id="side-section-subagents" hidden>
             <button type="button" id="side-section-subagents-head" class="side-section-head" aria-expanded="true"></button>
             <div id="side-section-subagents-body" class="side-section-body"><div id="subagent-view"></div></div>
           </section>
-          <section class="side-section" id="side-section-threads" hidden>
-            <button type="button" id="side-section-threads-head" class="side-section-head" aria-expanded="true"></button>
-            <div id="side-section-threads-body" class="side-section-body">
-              <div id="thread-view" hidden></div>
-              <div id="thread-detail-view" hidden></div>
-            </div>
-          </section>
+          <p id="tasks-empty" hidden>暂无任务</p>
         </div>
       </aside>
     <!--

@@ -494,11 +494,35 @@ test('estimateRequestTextBytes counts system, record contents, structure, and to
   }] satisfies Tool[]
   const withTools = estimateRequestTextBytes(records, { system: 'sys', tools })
   const withoutTools = estimateRequestTextBytes(records, { system: 'sys' })
-  // Structure overhead is 256 per record; contents contribute their UTF-8 size.
+  // Structure overhead is 256 per record; forwarded fields contribute their JSON-encoded size.
   assert.ok(withTools > withoutTools, 'tool schemas are part of the estimate')
   assert.equal(
     withoutTools,
-    Buffer.byteLength('sys', 'utf8') + Buffer.byteLength('four', 'utf8') + Buffer.byteLength('summary text', 'utf8') + 256 * 3,
+    Buffer.byteLength('sys', 'utf8') + '"four"'.length + '"summary text"'.length + '{}'.length + 256 * 3,
   )
   assert.equal(estimateRequestTextBytes([]), 0)
+})
+
+test('estimateRequestTextBytes counts thinking blocks and tool inputs', () => {
+  const thinking = 'x'.repeat(50_000)
+  const input = { file_path: '/a.ts', content: 'y'.repeat(80_000) }
+  const records: SessionRecord[] = [
+    {
+      type: 'message',
+      id: 'a1',
+      role: 'assistant',
+      content: '',
+      thinkingBlocks: [{ type: 'thinking', thinking, signature: 'sig' }],
+      createdAt: '2026-09-09T00:00:00.000Z',
+    },
+    {
+      type: 'tool_use',
+      id: 'tu1',
+      tool: 'Write',
+      input,
+      riskLevel: 'safe',
+      createdAt: '2026-09-09T00:00:00.000Z',
+    },
+  ]
+  assert.ok(estimateRequestTextBytes(records) > thinking.length + input.content.length)
 })

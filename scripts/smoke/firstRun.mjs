@@ -10,6 +10,8 @@ const REPLY = 'First-run configuration works.'
 /** A local OpenAI-compatible endpoint, with no external credentials or traffic. */
 export async function startFirstRunFixture() {
   let requests = 0
+  // Conversation turns only: a new session's first message also asks for a title, which carries no tools.
+  let turns = 0
   const server = createServer(async (req, res) => {
     try {
       const chunks = []
@@ -20,14 +22,15 @@ export async function startFirstRunFixture() {
         return
       }
       requests += 1
-      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
-        id: `first-run-${requests}`,
-        object: 'chat.completion',
-        created: Math.floor(Date.now() / 1000),
-        model: request.model,
-        choices: [{ index: 0, message: { role: 'assistant', content: REPLY }, finish_reason: 'stop' }],
-        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
-      }))
+      if (request.tools?.length) turns += 1
+      const base = { id: `first-run-${requests}`, object: 'chat.completion.chunk', created: Math.floor(Date.now() / 1000), model: request.model }
+      const events = [
+        { ...base, choices: [{ index: 0, delta: { role: 'assistant', content: REPLY }, finish_reason: null }] },
+        { ...base, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] },
+        { ...base, choices: [], usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 } },
+      ]
+      res.writeHead(200, { 'content-type': 'text/event-stream' })
+        .end(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('') + 'data: [DONE]\n\n')
     } catch (error) {
       res.writeHead(500).end(String(error))
     }
@@ -39,6 +42,7 @@ export async function startFirstRunFixture() {
   return {
     baseUrl: `http://127.0.0.1:${server.address().port}/v1`,
     get requests() { return requests },
+    get turns() { return turns },
     async close() {
       server.closeAllConnections()
       await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
@@ -56,9 +60,20 @@ async function click(ctx, label) {
   })()`)
 }
 
+async function preset(ctx, label) {
+  await evaluate(ctx.cdp, `(() => {
+    const card = [...document.querySelectorAll('#settings .settings-preset')]
+      .find((node) => node.querySelector('.settings-preset-label')?.textContent === ${JSON.stringify(label)})
+    if (!card) throw new Error('No provider preset: ' + ${JSON.stringify(label)})
+    card.click()
+  })()`)
+}
+
+const dialogOpen = (ctx) => evaluate(ctx.cdp, "!!document.querySelector('#settings .settings-dialog-layer:not([hidden]) .settings-dialog')")
+
 async function field(ctx, label, value) {
   await evaluate(ctx.cdp, `(() => {
-    const input = [...document.querySelectorAll('#settings .settings-form input, #settings .settings-form select')]
+    const input = [...document.querySelectorAll('#settings .settings-dialog input, #settings .settings-dialog select')]
       .find((node) => node.getAttribute('aria-label') === ${JSON.stringify(label)})
     if (!input) throw new Error('No settings field: ' + ${JSON.stringify(label)})
     input.value = ${JSON.stringify(value)}
@@ -73,19 +88,19 @@ async function runtime(ctx, lane) {
 }
 
 async function send(ctx, lane, prompt) {
-  const count = ctx.firstRunFixture.requests
+  const count = ctx.firstRunFixture.turns
   await evaluate(ctx.cdp, submitLine(prompt))
   await waitFor('a reply from the configured local provider', async () => {
     const state = await app.laneState(ctx.app)
-    return ctx.firstRunFixture.requests > count && state.state[lane]?.streaming === false
+    return ctx.firstRunFixture.turns > count && state.state[lane]?.streaming === false
       && await evaluate(ctx.cdp, `document.body.innerText.includes(${JSON.stringify(REPLY)})`)
   })
-  ctx.eq('one message reached the local provider', ctx.firstRunFixture.requests, count + 1)
+  ctx.eq('one turn reached the local provider', ctx.firstRunFixture.turns, count + 1)
 }
 
 async function firstRun(ctx) {
-  await waitFor('first-run provider settings', async () => await settingsOpen(ctx)
-    && await evaluate(ctx.cdp, "document.querySelector('#settings').innerText.includes('新增接入点')"))
+  await waitFor('first-run provider setup', async () => await settingsOpen(ctx)
+    && await evaluate(ctx.cdp, "!!document.querySelector('#settings .settings-dialog .settings-preset')"))
   const { lanes } = await app.shell(ctx.app, { type: 'panes' })
   const lane = lanes[0].lane
   ctx.eq('the app starts without creating a model config', existsSync(globalConfigPath(ctx.home)), false)
@@ -94,6 +109,8 @@ async function firstRun(ctx) {
   await ctx.shot('first-run-settings', 'the real desktop window opens directly into provider settings without a config file')
 
   await key(ctx.cdp, 'Escape')
+  await waitFor('the untouched setup dialog to close', async () => !await dialogOpen(ctx))
+  await key(ctx.cdp, 'Escape')
   await waitFor('settings to close', async () => !await settingsOpen(ctx))
   await runtime(ctx, lane)
   ctx.eq('another runtime snapshot does not reopen dismissed setup', await settingsOpen(ctx), false)
@@ -101,25 +118,18 @@ async function firstRun(ctx) {
   await waitFor('the send action to open settings', () => settingsOpen(ctx))
   ctx.eq('the unconfigured send preserves the draft', await evaluate(ctx.cdp, "document.getElementById('input').value"), 'draft before setup')
 
-  await click(ctx, '新增接入点')
+  await click(ctx, '添加服务商')
+  await preset(ctx, '其他 OpenAI 兼容服务')
   await field(ctx, '名称', 'first-run')
-  await field(ctx, '服务商', 'openai')
   await field(ctx, 'Base URL', ctx.firstRunFixture.baseUrl)
-  await field(ctx, 'API key', 'local-fixture-key')
-  await click(ctx, '保存')
-  await waitFor('the endpoint to save without any model', async () => {
-    const result = await app.shell(ctx.app, { type: 'get-settings' })
-    return result.settings.endpoints.some((endpoint) => endpoint.name === 'first-run')
-  })
-  ctx.eq('saving an endpoint alone keeps setup available', (await runtime(ctx, lane)).status, 'needs_configuration')
-
-  await click(ctx, '新增模型')
-  await field(ctx, '键名', 'first-run-model')
-  await field(ctx, '模型 id', 'first-run-model')
-  await field(ctx, '接入点', 'first-run')
+  await field(ctx, 'API Key', 'local-fixture-key')
+  await click(ctx, '添加模型')
+  await field(ctx, '模型 ID', 'first-run-model')
   await click(ctx, '保存')
   await waitFor('the first model to become ready', async () => (await runtime(ctx, lane)).status === 'ready')
+  await waitFor('saving to close the provider dialog', async () => !await dialogOpen(ctx))
   const saved = JSON.parse(readFileSync(globalConfigPath(ctx.home), 'utf8'))
+  ctx.eq('the provider is saved with the dialog protocol', saved.endpoints?.['first-run']?.provider, 'openai')
   ctx.eq('the first model is saved as default', saved.defaultModel, 'first-run-model')
   ctx.eq('saving keeps the settings screen open', await settingsOpen(ctx), true)
   await key(ctx.cdp, 'Escape')

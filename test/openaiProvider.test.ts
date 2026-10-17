@@ -2,10 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { z } from 'zod/v3'
 import { OpenAIProvider } from '../src/config/providers/openaiProvider.js'
-import { buildOpenAIMessages } from '../src/config/providers/openaiPayload.js'
+import { buildOpenAIMessages, buildOpenAIPayload } from '../src/config/providers/openaiPayload.js'
 import { resetCacheBreakDetection, type CacheBreakSource } from '../src/harness/cacheBreakDetection.js'
 import { clearToolSchemaCache } from '../src/utils/toolSchemaCache.js'
 import { TurnImageBlockError } from '../src/harness/turnImages.js'
+import { consumeWithIdleTimeout } from '../src/config/providers/streamIdle.js'
+import { classifyError } from '../src/config/retry.js'
 import type { ModelRequest, RequestImageBytes, Tool } from '../src/harness/types.js'
 import type { ImageAttachmentRef, ImageMimeType } from '../src/media/types.js'
 
@@ -34,25 +36,46 @@ interface FakeOpenAIResponse {
   }
 }
 
+/** A whole response replayed as the stream the provider now reads: reasoning, text, tool calls, then usage. */
+function streamOf(response: FakeOpenAIResponse | unknown[]): AsyncIterable<unknown> & { controller: AbortController } {
+  const chunks = Array.isArray(response) ? response : chunksOf(response)
+  return {
+    controller: new AbortController(),
+    async *[Symbol.asyncIterator]() {
+      yield* chunks
+    },
+  }
+}
+
+function chunksOf(response: FakeOpenAIResponse): unknown[] {
+  const choice = response.choices[0]!
+  const delta = (fields: Record<string, unknown>, finish: string | null = null) =>
+    ({ id: response.id, choices: [{ index: 0, delta: fields, finish_reason: finish }] })
+  return [
+    ...(choice.message.reasoning_content ? [delta({ reasoning_content: choice.message.reasoning_content })] : []),
+    ...(choice.message.content ? [delta({ content: choice.message.content })] : []),
+    ...(choice.message.tool_calls ?? []).map((call, index) =>
+      delta({ tool_calls: [{ index, id: call.id, function: call.function }] })),
+    delta({}, choice.finish_reason),
+    ...(response.usage ? [{ id: response.id, choices: [], usage: response.usage }] : []),
+  ]
+}
+
 function installFakeClient(
   provider: OpenAIProvider,
-  create: (payload: unknown, options?: unknown) => Promise<FakeOpenAIResponse>,
+  create: (payload: unknown, options?: unknown) => Promise<FakeOpenAIResponse | unknown[]>,
   baseURL = 'https://api.openai.com/v1',
 ): void {
   ;(provider as unknown as {
     client: {
       baseURL: string
-      chat: {
-        completions: {
-          create: typeof create
-        }
-      }
+      chat: { completions: { create: (payload: unknown, options?: unknown) => Promise<unknown> } }
     }
   }).client = {
     baseURL,
     chat: {
       completions: {
-        create,
+        create: async (payload, options) => streamOf(await create(payload, options)),
       },
     },
   }
@@ -767,4 +790,282 @@ test('an endpoint rejection that echoes a data URL is redacted in the surfaced e
   } finally {
     resetCacheBreakDetection(source)
   }
+})
+
+// --- Chat Completions streaming and compatibility ---
+
+function chunk(fields: Record<string, unknown>, finish: string | null = null): unknown {
+  return { id: 'chatcmpl_stream', choices: [{ index: 0, delta: fields, finish_reason: finish }] }
+}
+
+function requestPayloads(provider: OpenAIProvider, baseURL: string, respond: (payload: Record<string, unknown>, call: number) => FakeOpenAIResponse | unknown[]): Array<Record<string, unknown>> {
+  const payloads: Array<Record<string, unknown>> = []
+  installFakeClient(provider, async (payload) => {
+    payloads.push(payload as Record<string, unknown>)
+    return respond(payload as Record<string, unknown>, payloads.length)
+  }, baseURL)
+  return payloads
+}
+
+test('a streamed response assembles reasoning, text and fragmented tool arguments, emitting stream events', async () => {
+  const source = 'agent:openai-stream-test'
+  resetCacheBreakDetection(source)
+  try {
+    const provider = new OpenAIProvider({ provider: 'openai', model: 'gpt-test', apiKey: 'test-key' })
+    requestPayloads(provider, 'https://api.openai.com/v1', () => [
+      chunk({ reasoning: 'think ' }),
+      chunk({ reasoning: 'hard' }),
+      chunk({ content: 'Reading.' }),
+      chunk({ tool_calls: [{ index: 0, id: 'call_1', function: { name: 'Read', arguments: '{"file_' } }] }),
+      chunk({ tool_calls: [{ index: 0, function: { arguments: 'path":"a.ts"}' } }] }),
+      chunk({}, 'tool_calls'),
+      { id: 'chatcmpl_stream', choices: [], usage: { prompt_tokens: 10, completion_tokens: 5 } },
+    ])
+    const events: string[] = []
+    const response = await provider.createMessage({
+      ...baseRequest(source),
+      onStreamEvent: (event) => events.push(event.type),
+    })
+
+    assert.equal(response.content, 'Reading.')
+    assert.equal(response.reasoningContent, 'think hard')
+    assert.deepEqual(response.toolCalls, [{ id: 'call_1', name: 'Read', input: { file_path: 'a.ts' } }])
+    assert.equal(response.stopReason, 'tool_calls')
+    assert.equal(response.requestId, 'chatcmpl_stream')
+    assert.deepEqual(response.usage, { inputTokens: 10, cacheReadInputTokens: 0, outputTokens: 5 })
+    assert.deepEqual(events, [
+      'message_start', 'thinking_start', 'thinking_delta', 'thinking_delta', 'thinking_stop',
+      'text_delta', 'tool_input_delta', 'tool_input_delta', 'message_stop',
+    ])
+  } finally {
+    resetCacheBreakDetection(source)
+  }
+})
+
+test('a stream that ends without finish_reason, or on content_filter, is an error', async () => {
+  const source = 'agent:openai-stream-end-test'
+  resetCacheBreakDetection(source)
+  try {
+    const provider = new OpenAIProvider({ provider: 'openai', model: 'gpt-test', apiKey: 'test-key' })
+    requestPayloads(provider, 'https://api.openai.com/v1', () => [chunk({ content: 'half' })])
+    await assert.rejects(provider.createMessage(baseRequest(source)), /Stream ended without finish_reason/)
+
+    requestPayloads(provider, 'https://api.openai.com/v1', () => [chunk({ content: 'x' }, 'content_filter')])
+    await assert.rejects(provider.createMessage(baseRequest(source)), /content_filter/)
+  } finally {
+    resetCacheBreakDetection(source)
+  }
+})
+
+test('each server gets its own request shape and thinking fields', async () => {
+  const cases: Array<{ url: string; format?: string; expect: Record<string, unknown>; absent: string[] }> = [
+    {
+      url: 'https://api.openai.com/v1',
+      expect: { max_completion_tokens: 1000, store: false, reasoning_effort: 'high' },
+      absent: ['max_tokens', 'thinking'],
+    },
+    {
+      url: 'https://api.deepseek.com',
+      expect: { max_tokens: 1000, thinking: { type: 'enabled' }, reasoning_effort: 'high' },
+      absent: ['store', 'max_completion_tokens'],
+    },
+    { url: 'https://dashscope.aliyuncs.com/compatible-mode/v1', expect: { enable_thinking: true }, absent: ['reasoning_effort'] },
+    { url: 'https://open.bigmodel.cn/api/paas/v4', expect: { thinking: { type: 'enabled' } }, absent: ['reasoning_effort'] },
+    { url: 'https://openrouter.ai/api/v1', expect: { reasoning: { effort: 'high' } }, absent: ['reasoning_effort'] },
+    { url: 'https://api.moonshot.cn/v1', expect: {}, absent: ['reasoning_effort', 'thinking', 'reasoning'] },
+    { url: 'https://relay.example/v1', expect: { reasoning_effort: 'high' }, absent: [] },
+    { url: 'https://relay.example/v1', format: 'deepseek', expect: { thinking: { type: 'enabled' } }, absent: [] },
+  ]
+  for (const entry of cases) {
+    const source = 'agent:openai-compat-test'
+    resetCacheBreakDetection(source)
+    const provider = new OpenAIProvider({
+      provider: 'openai',
+      model: 'm',
+      apiKey: 'k',
+      ...(entry.format ? { thinkingFormat: entry.format as 'deepseek' } : {}),
+    })
+    const payloads = requestPayloads(provider, entry.url, () => openAIResponse('r', 0))
+    await provider.createMessage({ ...baseRequest(source), maxOutputTokens: 1000, effort: 'high' })
+    const payload = payloads[0]!
+    for (const [key, value] of Object.entries(entry.expect)) assert.deepEqual(payload[key], value, `${entry.url} ${key}`)
+    for (const key of entry.absent) assert.equal(key in payload, false, `${entry.url} must not send ${key}`)
+    assert.match(String(payload.prompt_cache_key), /^myagent:/, `${entry.url} sends the cache key`)
+    assert.equal(payload.stream, true)
+    assert.deepEqual(payload.stream_options, { include_usage: true })
+    const instruction = (payload.messages as Array<{ role: string }>)[0]!.role
+    assert.equal(instruction, entry.url.includes('api.openai.com') ? 'developer' : 'system')
+  }
+  resetCacheBreakDetection('agent:openai-compat-test')
+})
+
+test('thinking off sends an explicit off only where the server has one', async () => {
+  const sent = async (url: string, config: Record<string, unknown>, request: Partial<ModelRequest> = {}) => {
+    const source = 'agent:openai-thinking-off-test'
+    resetCacheBreakDetection(source)
+    const provider = new OpenAIProvider({ provider: 'openai', model: 'm', apiKey: 'k', ...config })
+    const payloads = requestPayloads(provider, url, () => openAIResponse('r', 0))
+    await provider.createMessage({ ...baseRequest(source), effort: 'low', ...request })
+    resetCacheBreakDetection(source)
+    return payloads[0]!
+  }
+  const modelOff = { thinking: { type: 'disabled' as const } }
+  assert.deepEqual((await sent('https://api.deepseek.com', modelOff)).thinking, { type: 'disabled' })
+  assert.equal((await sent('https://dashscope.aliyuncs.com/compatible-mode/v1', modelOff)).enable_thinking, false)
+  assert.equal('reasoning_effort' in await sent('https://api.openai.com/v1', modelOff), false)
+  // The global switch turns it off the same way.
+  assert.deepEqual(
+    (await sent('https://api.deepseek.com', {}, { thinking: { type: 'disabled' } })).thinking,
+    { type: 'disabled' },
+  )
+})
+
+test('a model that rejects the thinking fields is sent again without them, and remembered', async () => {
+  const source = 'agent:openai-thinking-reject-test'
+  resetCacheBreakDetection(source)
+  try {
+    const provider = new OpenAIProvider({ provider: 'openai', model: 'gpt-4o', apiKey: 'k' })
+    const rejected = Object.assign(new Error("400 Unrecognized request argument supplied: reasoning_effort"), { status: 400 })
+    const payloads = requestPayloads(provider, 'https://reject-thinking.example/v1', (payload) => {
+      if ('reasoning_effort' in payload) throw rejected
+      return openAIResponse('r', 0)
+    })
+    const request = { ...baseRequest(source), model: 'gpt-4o', effort: 'high' as const }
+    assert.equal((await provider.createMessage(request)).content, 'visible answer')
+    await provider.createMessage(request)
+    assert.deepEqual(payloads.map((payload) => 'reasoning_effort' in payload), [true, false, false])
+
+    // Another model on the same server is still asked first.
+    await provider.createMessage({ ...request, model: 'gpt-5' })
+    assert.deepEqual(payloads.slice(3).map((payload) => 'reasoning_effort' in payload), [true, false])
+  } finally {
+    resetCacheBreakDetection(source)
+  }
+})
+
+test('an unrelated 400, or a retry that also fails, is not taken for a thinking rejection', async () => {
+  const source = 'agent:openai-thinking-unrelated-test'
+  resetCacheBreakDetection(source)
+  try {
+    const provider = new OpenAIProvider({ provider: 'openai', model: 'm', apiKey: 'k' })
+    const unrelated = Object.assign(new Error('400 max_tokens is too large'), { status: 400 })
+    const payloads = requestPayloads(provider, 'https://unrelated.example/v1', () => { throw unrelated })
+    const request = { ...baseRequest(source), effort: 'high' as const }
+    await assert.rejects(provider.createMessage(request), (error) => error === unrelated)
+    assert.equal(payloads.length, 1)
+
+    // An echoing proxy: the message names the field, but the bare retry fails too.
+    const echoed = Object.assign(new Error('400 bad request: {"reasoning_effort":"high"}'), { status: 400 })
+    const echoPayloads = requestPayloads(provider, 'https://echo.example/v1', () => { throw echoed })
+    await assert.rejects(provider.createMessage(request))
+    await assert.rejects(provider.createMessage(request))
+    assert.deepEqual(echoPayloads.map((payload) => 'reasoning_effort' in payload), [true, false, true, false])
+  } finally {
+    resetCacheBreakDetection(source)
+  }
+})
+
+test('a server that refuses prompt_cache_key is sent again without it, and remembered', async () => {
+  const source = 'agent:openai-cache-hint-reject-test'
+  resetCacheBreakDetection(source)
+  try {
+    const provider = new OpenAIProvider({ provider: 'openai', model: 'm', apiKey: 'k' })
+    const rejected = Object.assign(new Error('400 Unrecognized request argument supplied: prompt_cache_key'), { status: 400 })
+    const payloads = requestPayloads(provider, 'https://reject-cache.example/v1', (payload) => {
+      if ('prompt_cache_key' in payload) throw rejected
+      return openAIResponse('r', 0)
+    })
+    await provider.createMessage(baseRequest(source))
+    await provider.createMessage(baseRequest(source))
+    assert.deepEqual(payloads.map((payload) => 'prompt_cache_key' in payload), [true, false, false])
+  } finally {
+    resetCacheBreakDetection(source)
+  }
+})
+
+test('OpenRouter reasoning_details are merged, returned, and replayed only to the model that wrote them', async () => {
+  const source = 'agent:openai-reasoning-details-test'
+  resetCacheBreakDetection(source)
+  try {
+    const provider = new OpenAIProvider({ provider: 'openai', model: 'google/gemini', apiKey: 'k' })
+    requestPayloads(provider, 'https://openrouter.ai/api/v1', () => [
+      chunk({ reasoning: 'a', reasoning_details: [{ type: 'reasoning.text', text: 'a', index: 0 }] }),
+      chunk({ reasoning: 'b', reasoning_details: [{ type: 'reasoning.text', text: 'b', index: 0 }] }),
+      chunk({ reasoning_details: [{ type: 'reasoning.encrypted', data: 'opaque', index: 1 }] }),
+      chunk({ content: 'done' }, 'stop'),
+    ])
+    const response = await provider.createMessage({ ...baseRequest(source), model: 'google/gemini' })
+    assert.deepEqual(response.reasoningDetails, [
+      { type: 'reasoning.text', text: 'ab', index: 0 },
+      { type: 'reasoning.encrypted', data: 'opaque', index: 1 },
+    ])
+
+    const history = (model: string): ModelRequest => ({
+      ...baseRequest(source),
+      model,
+      messages: [
+        { id: 'u1', role: 'user', content: 'q', createdAt: imageCreatedAt },
+        {
+          id: 'a1', role: 'assistant', content: 'done', createdAt: imageCreatedAt, model: 'google/gemini',
+          reasoningContent: 'ab', reasoningDetails: response.reasoningDetails,
+        },
+        { id: 'u2', role: 'user', content: 'next', createdAt: imageCreatedAt },
+      ],
+    })
+    const same = buildOpenAIMessages(history('google/gemini'))[2] as unknown as Record<string, unknown>
+    assert.deepEqual(same.reasoning_details, response.reasoningDetails)
+    assert.equal('reasoning_content' in same, false)
+    const other = buildOpenAIMessages(history('openai/gpt-5'))[2] as unknown as Record<string, unknown>
+    assert.equal('reasoning_details' in other, false)
+    assert.equal(other.reasoning_content, 'ab')
+  } finally {
+    resetCacheBreakDetection(source)
+  }
+})
+
+test('history is tidied for strict servers', () => {
+  const at = imageCreatedAt
+  const request: ModelRequest = {
+    ...baseRequest('agent:openai-history-test'),
+    contextItems: [
+      { kind: 'message', message: { id: 'u1', role: 'user', content: 'q', createdAt: at } },
+      { kind: 'message', message: { id: 'a0', role: 'assistant', content: '', createdAt: at } },
+      { kind: 'message', message: { id: 'a1', role: 'assistant', content: '', createdAt: at } },
+      { kind: 'tool_use', id: 'call_1', tool: 'Read', input: { file_path: 'a' } },
+      { kind: 'tool_result', toolUseId: 'call_1', tool: 'Read', ok: true, content: 'text' },
+      { kind: 'message', message: { id: 'a2', role: 'assistant', content: 'ok', createdAt: at } },
+    ] as ModelRequest['contextItems'],
+  }
+  const payload = buildOpenAIPayload(request, {
+    compat: { official: false, thinkingFormat: 'deepseek', reasoningContentOnAssistant: true },
+    thinking: 'on',
+  })
+  const roles = payload.messages.map((message) => message.role)
+  // The empty interrupted assistant is gone; the one carrying a tool call stays.
+  assert.deepEqual(roles, ['system', 'user', 'assistant', 'tool', 'assistant'])
+  // No tools offered, but the history holds a call.
+  assert.deepEqual((payload as { tools?: unknown[] }).tools, [])
+  // DeepSeek thinking mode: every assistant message carries the field.
+  for (const message of payload.messages.filter((message) => message.role === 'assistant')) {
+    assert.equal((message as { reasoning_content?: string }).reasoning_content, '')
+  }
+})
+
+test('a silent stream warns, then is aborted as a transient idle timeout', async () => {
+  const controller = new AbortController()
+  const silent = {
+    controller,
+    async *[Symbol.asyncIterator]() {
+      yield 'first'
+      await new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(new Error('aborted'))))
+    },
+  }
+  const items: unknown[] = []
+  const events: string[] = []
+  await assert.rejects(
+    consumeWithIdleTimeout(silent, (item) => items.push(item), (event) => events.push(event.type), 40, 10),
+    (error: Error) => error.message === 'Stream idle timeout' && classifyError(error) === 'transient',
+  )
+  assert.deepEqual(items, ['first'])
+  assert.deepEqual(events, ['idle_warning'])
 })

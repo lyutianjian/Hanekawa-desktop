@@ -22,6 +22,7 @@
     "test/rendererBoot.test.ts",
     "test/rendererBrowserPanelView.test.ts",
     "test/rendererCanvasHeaderView.test.ts",
+    "test/rendererCommandsPanelView.test.ts",
     "test/rendererComposerView.test.ts",
     "test/rendererDismiss.test.ts",
     "test/rendererMarkdownView.test.ts",

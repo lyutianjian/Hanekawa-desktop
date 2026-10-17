@@ -319,6 +319,8 @@ export class ContextBuilder {
             model: record.model,
             ...(record.reasoningContent ? { reasoningContent: record.reasoningContent } : {}),
             ...(record.thinkingBlocks ? { thinkingBlocks: record.thinkingBlocks } : {}),
+            ...(record.reasoningDetails ? { reasoningDetails: record.reasoningDetails } : {}),
+            ...(record.responseItems ? { responseItems: record.responseItems } : {}),
             ...(record.images ? { images: record.images } : {}),
           },
         })

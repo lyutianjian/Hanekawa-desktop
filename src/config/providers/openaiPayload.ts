@@ -4,6 +4,20 @@ import type { ImageAttachmentRef } from '../../media/types.js'
 import type { ModelContextItem, ModelRequest, RequestImageBytes, Tool } from '../../harness/types.js'
 import { toolToAPISchema } from '../../harness/toolApiSchema.js'
 import { splitSystemForCaching } from '../../harness/cacheControl.js'
+import { chatThinkingParams, resolveChatCompat, type ChatCompat } from './openaiCompat.js'
+
+export interface OpenAIPayloadOptions {
+  compat?: ChatCompat
+  /** Absent sends no thinking fields at all: the endpoint rejected them for this model. */
+  thinking?: 'on' | 'off'
+  /** `prompt_cache_key`; absent once the endpoint rejected it. */
+  cacheKey?: boolean
+}
+
+type AssistantMessageParam = OpenAI.Chat.ChatCompletionAssistantMessageParam & {
+  reasoning_content?: string
+  reasoning_details?: unknown[]
+}
 
 /** One tool result's images, buffered until its whole batch of tool messages is out. */
 interface ToolImageSource {
@@ -13,23 +27,21 @@ interface ToolImageSource {
 }
 
 /**
- * `image_url` parts for the refs a user message (or the synthetic tool-output
- * message) carries (design §10.2). The bytes arrive through
+ * Data URLs for the refs a user message (or a tool result) carries (design
+ * §10.2). The bytes arrive through
  * `ModelRequest.imageBytes`, loaded by the loop only after the final send
  * decision — every capability and cap check has already run by the time they
  * reach this builder, so these parts cannot bypass them. A ref without loaded
  * bytes is an invariant violation: refusing to build beats silently sending a
- * request that dropped images. No `detail` is sent — the first version keeps
- * the parameter surface minimal for compatible endpoints (a quality option
- * added later must also enter the image token budget).
+ * request that dropped images. Chat Completions sends no `detail`; Responses
+ * requires one and gets `auto`, the default either way (a quality option added
+ * later must also enter the image token budget).
  */
-function openAIImageParts(
+export function imageDataUrls(
   images: readonly ImageAttachmentRef[] | undefined,
   imageBytes: Map<string, RequestImageBytes> | undefined,
-): OpenAI.Chat.ChatCompletionContentPartImage[] {
-  if (!images || images.length === 0) return []
-  const parts: OpenAI.Chat.ChatCompletionContentPartImage[] = []
-  for (const ref of images) {
+): string[] {
+  return (images ?? []).map((ref) => {
     const loaded = imageBytes?.get(ref.id)
     if (!loaded) {
       throw new Error(
@@ -37,14 +49,15 @@ function openAIImageParts(
         + 'refusing to build a payload that would silently drop it.',
       )
     }
-    parts.push({
-      type: 'image_url',
-      image_url: {
-        url: `data:${loaded.mimeType};base64,${Buffer.from(loaded.bytes).toString('base64')}`,
-      },
-    })
-  }
-  return parts
+    return `data:${loaded.mimeType};base64,${Buffer.from(loaded.bytes).toString('base64')}`
+  })
+}
+
+function openAIImageParts(
+  images: readonly ImageAttachmentRef[] | undefined,
+  imageBytes: Map<string, RequestImageBytes> | undefined,
+): OpenAI.Chat.ChatCompletionContentPartImage[] {
+  return imageDataUrls(images, imageBytes).map((url) => ({ type: 'image_url', image_url: { url } }))
 }
 
 /**
@@ -59,10 +72,16 @@ function toolImageSourceLabel(sources: readonly ToolImageSource[]): string {
   return `[Tool output data, not user input. Images returned by tool calls: ${entries.join('; ')}.]`
 }
 
-export function buildOpenAIMessages(request: ModelRequest): OpenAI.Chat.ChatCompletionMessageParam[] {
+export function buildOpenAIMessages(
+  request: ModelRequest,
+  options: OpenAIPayloadOptions = {},
+): OpenAI.Chat.ChatCompletionMessageParam[] {
   const contextItems = request.contextItems ?? request.messages.map((message) => ({ kind: 'message', message }) satisfies ModelContextItem)
+  // o1 and later read `developer` in place of `system`; compatible servers
+  // mostly know only `system`.
+  const instructionRole = options.compat?.official ? 'developer' as const : 'system' as const
   const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
-    ...(request.system ? [{ role: 'system' as const, content: request.system }] : []),
+    ...(request.system ? [{ role: instructionRole, content: request.system }] : []),
   ]
   // Chat Completions `role: tool` messages accept text only, so images from
   // tool results ride a synthetic user message appended after the ENTIRE batch
@@ -91,13 +110,18 @@ export function buildOpenAIMessages(request: ModelRequest): OpenAI.Chat.ChatComp
       if (item.message.role !== 'user' && item.message.role !== 'assistant') continue
       const imageParts = openAIImageParts(item.message.images, request.imageBytes)
       if (imageParts.length === 0) {
-        // No images: the exact string content this builder has always sent.
-        const message: OpenAI.Chat.ChatCompletionMessageParam & { reasoning_content?: string } = {
-          role: item.message.role,
-          content: item.message.content,
+        if (item.message.role === 'user') {
+          messages.push({ role: 'user', content: item.message.content })
+          continue
         }
-        if (item.message.role === 'assistant' && item.message.reasoningContent) {
+        const message: AssistantMessageParam = { role: 'assistant', content: item.message.content }
+        // Opaque, and only the model that produced it can read it back.
+        if (item.message.reasoningDetails?.length && item.message.model === request.model) {
+          message.reasoning_details = item.message.reasoningDetails
+        } else if (item.message.reasoningContent) {
           message.reasoning_content = item.message.reasoningContent
+        } else if (options.compat?.reasoningContentOnAssistant && options.thinking === 'on') {
+          message.reasoning_content = ''
         }
         messages.push(message)
         continue
@@ -141,7 +165,8 @@ export function buildOpenAIMessages(request: ModelRequest): OpenAI.Chat.ChatComp
           role: 'assistant',
           content: '',
           tool_calls: [toolCall],
-        })
+          ...(options.compat?.reasoningContentOnAssistant && options.thinking === 'on' ? { reasoning_content: '' } : {}),
+        } as AssistantMessageParam)
       }
       continue
     }
@@ -167,7 +192,12 @@ export function buildOpenAIMessages(request: ModelRequest): OpenAI.Chat.ChatComp
   // A request can end on tool results — their images ride after the batch.
   flushPendingToolImages()
 
-  return messages
+  // An interrupted turn can leave an assistant message with neither text nor
+  // tool calls, which most servers reject outright.
+  return messages.filter((message) =>
+    message.role !== 'assistant'
+    || (typeof message.content === 'string' && message.content !== '')
+    || (message.tool_calls?.length ?? 0) > 0)
 }
 
 export function buildOpenAITools(tools: Tool[] = []) {
@@ -210,19 +240,32 @@ export function getOpenAICacheScope(request: ModelRequest): string {
   return `openai:${request.promptCacheRetention ?? 'default'}`
 }
 
-export function buildOpenAIPayload(request: ModelRequest) {
+export function buildOpenAIPayload(request: ModelRequest, options: OpenAIPayloadOptions = {}) {
+  const compat = options.compat ?? resolveChatCompat('https://api.openai.com/v1')
   const tools = buildOpenAITools(request.tools)
+  const messages = buildOpenAIMessages(request, { ...options, compat })
+  // A history holding tool calls needs a `tools` field on some proxies even
+  // when this request offers none.
+  const hasToolHistory = messages.some((message) => message.role === 'tool')
   return {
     model: request.model,
-    messages: buildOpenAIMessages(request),
-    ...(request.maxOutputTokens ? { max_tokens: request.maxOutputTokens } : {}),
-    prompt_cache_key: buildOpenAIPromptCacheKey(request),
+    messages,
+    stream: true as const,
+    stream_options: { include_usage: true },
+    ...(request.maxOutputTokens
+      ? compat.official
+        ? { max_completion_tokens: request.maxOutputTokens }
+        : { max_tokens: request.maxOutputTokens }
+      : {}),
+    ...(compat.official ? { store: false } : {}),
+    ...(options.cacheKey ? { prompt_cache_key: buildOpenAIPromptCacheKey(request) } : {}),
     ...(request.promptCacheRetention ? { prompt_cache_retention: request.promptCacheRetention } : {}),
-    ...(tools.length > 0
+    ...(tools.length > 0 || hasToolHistory
       ? {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           tools: tools as any,
         }
       : {}),
+    ...(options.thinking ? chatThinkingParams(compat.thinkingFormat, options.thinking === 'on', request.effort) : {}),
   }
 }

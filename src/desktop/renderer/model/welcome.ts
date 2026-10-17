@@ -135,7 +135,7 @@ export function coordinatorWelcome(input: { projectName: string | undefined; ope
   const place = input.projectName === undefined ? '这个项目' : `「${input.projectName}」`
   return [
     [`你好，欢迎来到${place}。我负责协调这里的工作：有任何需要尽管提，我会直接回答，或者开几个线程并行处理。`],
-    ['线程会自己完成工作，你可以在', { link: 'overview', label: '概览' }, '里查看它们的状态。我会留意正在运行的内容，有任务完成或需要你处理时告诉你。'],
+    ['线程会自己完成工作，你可以在', { link: 'overview', label: '线程' }, '页里查看它们的状态。我会留意正在运行的内容，有任务完成或需要你处理时告诉你。'],
     ...(input.opening ? [['我先去了解一下这个项目，然后给你一些建议，马上回来。']] : []),
   ]
 }

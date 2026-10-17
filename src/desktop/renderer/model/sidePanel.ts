@@ -1,29 +1,37 @@
 /**
  * The right-hand panel's decisions, as data: which switch governs it for the
- * session on screen, which of its two modes it shows, which sections the
- * overview stacks, and what the thread tag above the composer says. Pure, from
- * wire types only.
+ * session on screen, which page it shows, which sections the task page stacks,
+ * and what the thread tag above the composer says. Pure, from wire types only.
  *
- * The panel has two modes. The browser is a native view that needs one steady
- * rectangle, so it never joins a stack; the overview is a column of collapsible
- * sections (plan, sub-agents, threads), each present only while it has something
- * to show. A coordinator or thread session has its own 概览 switch, remembered per
- * project; an ordinary session keeps the browser switch.
+ * Each page has its own button at the title bar's far end: 任务 (a column of
+ * collapsible sections — plan, background commands, sub-agents — each present
+ * only while it has something to show), 线程 (only where the project has
+ * coordination), 改动 (the session's edited files) and 浏览器, a native view
+ * that needs one steady rectangle. A coordinator or thread session's open state
+ * is remembered per project; an ordinary session's per lane.
  */
 
 import type { WireCoordinationThreads } from '../../shellProtocol.js'
 import { coordinationCounts, threadBlocked } from './coordinationStatus.js'
 
-export type SideMode = 'browser' | 'overview'
-export type SideSection = 'plan' | 'subagents' | 'threads'
+export type SideMode = 'tasks' | 'threads' | 'changes' | 'browser'
+export type SideSection = 'plan' | 'commands' | 'subagents'
 
-export const SIDE_SECTIONS: readonly SideSection[] = ['plan', 'subagents', 'threads']
+export const SIDE_SECTIONS: readonly SideSection[] = ['plan', 'commands', 'subagents']
 
-export const OVERVIEW_CLOSED_STORAGE_KEY = 'hanekawa.overviewClosed.v1'
+export const SIDE_MODE_LABELS: Readonly<Record<SideMode, string>> = {
+  tasks: '任务',
+  threads: '线程',
+  changes: '改动',
+  browser: '浏览器',
+}
+
+/** The key predates the task page; kept so the stored choice carries over. */
+export const PANEL_CLOSED_STORAGE_KEY = 'hanekawa.overviewClosed.v1'
 export const SECTIONS_COLLAPSED_STORAGE_KEY = 'hanekawa.sideSections.v1'
 
-/** The projects whose overview the user closed. Takes the raw `localStorage` string. */
-export function parseOverviewClosed(raw: string | null): ReadonlySet<string> {
+/** The coordination projects whose panel the user closed. Takes the raw `localStorage` string. */
+export function parsePanelClosed(raw: string | null): ReadonlySet<string> {
   try {
     const parsed: unknown = raw === null ? [] : JSON.parse(raw)
     return new Set(Array.isArray(parsed) ? parsed.filter((root): root is string => typeof root === 'string') : [])
@@ -32,7 +40,7 @@ export function parseOverviewClosed(raw: string | null): ReadonlySet<string> {
   }
 }
 
-export function serializeOverviewClosed(closed: ReadonlySet<string>): string {
+export function serializePanelClosed(closed: ReadonlySet<string>): string {
   return JSON.stringify([...closed])
 }
 
@@ -77,34 +85,35 @@ export function withSectionCollapsed(collapsed: SectionsCollapsed, root: string,
 export interface SidePanelInput {
   /** The session on screen is a coordinator or a thread. */
   readonly coordinated: boolean
-  readonly browserOpen: boolean
+  /** An ordinary session's switch, per lane. */
+  readonly laneOpen: boolean
   /** The mode the user last chose for this kind of session. */
   readonly mode: SideMode
-  readonly overviewClosed: boolean
-  /**
-   * What each part has behind it. `browser` is always true for an ordinary
-   * session; a coordination session has it only once the browser was raised
-   * there and its lane still has a tab.
-   */
-  readonly has: { readonly browser: boolean; readonly plan: boolean; readonly subagents: boolean; readonly threads: boolean }
+  /** A coordination session's switch, per project. */
+  readonly panelClosed: boolean
+  /** What each part has behind it. */
+  readonly has: {
+    readonly plan: boolean
+    readonly commands: boolean
+    readonly subagents: boolean
+    readonly threads: boolean
+  }
 }
 
 export interface SidePanelView {
   readonly open: boolean
   readonly mode: SideMode
-  /** Modes the strip offers; it is drawn only when there are two. */
+  /** The title bar's buttons, left to right. */
   readonly modes: readonly SideMode[]
-  /** The overview's sections that have content, in stacking order. */
+  /** The task page's sections that have content, in stacking order. */
   readonly sections: readonly SideSection[]
 }
 
 export function sidePanelView(input: SidePanelInput): SidePanelView {
   const sections = SIDE_SECTIONS.filter((section) => input.has[section])
-  const modes: SideMode[] = []
-  if (input.has.browser) modes.push('browser')
-  if (sections.length > 0) modes.push('overview')
-  const mode = modes.includes(input.mode) ? input.mode : modes[0] ?? 'browser'
-  return { open: input.coordinated ? !input.overviewClosed : input.browserOpen, mode, modes, sections }
+  const modes: SideMode[] = input.has.threads ? ['tasks', 'threads', 'changes', 'browser'] : ['tasks', 'changes', 'browser']
+  const mode = modes.includes(input.mode) ? input.mode : 'tasks'
+  return { open: input.coordinated ? !input.panelClosed : input.laneOpen, mode, modes, sections }
 }
 
 /**
@@ -122,8 +131,8 @@ export function visibleSections(
 }
 
 /** A new thread raises the panel only for a user who has not closed it for that project. */
-export function autoOpensOverview(started: boolean, overviewClosed: boolean): boolean {
-  return started && !overviewClosed
+export function autoOpensThreads(started: boolean, panelClosed: boolean): boolean {
+  return started && !panelClosed
 }
 
 export interface ThreadStripView {
@@ -131,7 +140,7 @@ export interface ThreadStripView {
   readonly total: number
   readonly running: number
   readonly blocked: number
-  /** One thread needing the user goes straight to the main canvas; otherwise the overview opens. */
+  /** One thread needing the user goes straight to the main canvas; otherwise the thread page opens. */
   readonly target: { readonly kind: 'thread'; readonly sessionId: string } | { readonly kind: 'overview' }
 }
 
@@ -158,8 +167,8 @@ export function threadStripText(view: ThreadStripView): { total: string; running
   }
 }
 
-/** The overview's head: the project's thread counts in one line, and whether 全部停止 has anything to stop. */
-export function overviewHeadView(strip: ThreadStripView | undefined): { readonly summary: string; readonly canStopAll: boolean } | undefined {
+/** The thread page's head: the project's thread counts in one line, and whether 全部停止 has anything to stop. */
+export function threadsHeadView(strip: ThreadStripView | undefined): { readonly summary: string; readonly canStopAll: boolean } | undefined {
   if (strip === undefined) return undefined
   const text = threadStripText(strip)
   return {

@@ -78,7 +78,7 @@ export function resolveImageTokenStrategy(
 ): ImageTokenStrategy {
   if (supportsImageInput !== true) return 'none'
   if (providerName === 'anthropic') return 'anthropic'
-  if (providerName === 'openai') return 'openai'
+  if (providerName === 'openai' || providerName === 'openai-responses') return 'openai'
   return 'conservative'
 }
 

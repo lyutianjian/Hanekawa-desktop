@@ -11,7 +11,7 @@ export const PROJECTS_PAGE_TITLE = '项目调度'
 export const PROJECTS_NEW_LABEL = '新建调度'
 export const PROJECTS_EMPTY_TITLE = '还没有项目调度'
 export const PROJECTS_EMPTY_TEXT =
-  '项目调度让一个协调者统领整个文件夹：你说需求，它直接回答或开出多个线程并行处理，进度都汇总在概览里。'
+  '项目调度让一个协调者统领整个文件夹：你说需求，它直接回答或开出多个线程并行处理，进度都汇总在线程页里。'
 /** The card's count line when no thread is running or waiting. */
 export const PROJECT_IDLE_TEXT = '空闲'
 

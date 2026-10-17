@@ -672,9 +672,6 @@ export function validateSettings(settings: MyAgentSettings): { valid: boolean; e
       if (model.contextWindow !== undefined && (!Number.isInteger(model.contextWindow) || model.contextWindow < 1)) {
         errors.push(`models.${name}.contextWindow must be a positive integer`)
       }
-      if (model.longContext1m !== undefined && typeof model.longContext1m !== 'boolean') {
-        errors.push(`models.${name}.longContext1m must be a boolean`)
-      }
       if (model.supportsImageInput !== undefined && typeof model.supportsImageInput !== 'boolean') {
         errors.push(`models.${name}.supportsImageInput must be a boolean`)
       }

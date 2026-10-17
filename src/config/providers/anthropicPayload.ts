@@ -19,8 +19,6 @@ import {
 const MAX_OUTPUT_TOKENS_DEFAULT = 64_000
 const MAX_OUTPUT_TOKENS_UPPER_LIMIT = 128_000
 const TOOL_SEARCH_BETA = 'advanced-tool-use-2025-11-20'
-/** The 1M context window. Opt-in per model — see `ModelConfig.longContext1m`. */
-export const CONTEXT_1M_BETA = 'context-1m-2025-08-07'
 
 /**
  * Output limits come from configuration only — `MYAGENT_MAX_OUTPUT_TOKENS`,
@@ -337,8 +335,6 @@ export function buildAnthropicPayload(request: ModelRequest, maxOutputTokens?: n
 }
 
 export interface AnthropicBetaOptions {
-  /** `ModelConfig.longContext1m` for the model this request runs on. */
-  longContext1m?: boolean
   dynamicToolSearch?: boolean
 }
 
@@ -347,9 +343,8 @@ export function getAnthropicBetaHeaders(
   options: AnthropicBetaOptions = {},
 ): string[] {
   const betas: string[] = []
-  // These capabilities are independent of ordinary prompt caching, which
-  // does not require beta headers (including the 1-hour TTL).
-  if (options.longContext1m) betas.push(CONTEXT_1M_BETA)
+  // Independent of ordinary prompt caching, which does not require beta
+  // headers (including the 1-hour TTL).
   if (options.dynamicToolSearch && request.hasDeferredTools) {
     betas.push(TOOL_SEARCH_BETA)
   }

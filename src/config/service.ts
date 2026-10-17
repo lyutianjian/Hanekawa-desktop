@@ -3,6 +3,7 @@ import { getGlobalConfigPath } from '../utils/paths.js'
 import type { ContextManagementConfig } from '../prompts/budget.js'
 import type { ModelPricing } from '../harness/types.js'
 import type { MyAgentSettings } from './settings.js'
+import type { ChatThinkingFormat } from './providers/openaiCompat.js'
 import {
   EFFORT_RANK,
   VALID_EFFORT_LEVELS,
@@ -41,6 +42,8 @@ export interface ModelConfig {
   /** Overrides the endpoint's Anthropic prompt caching mode; defaults to auto. */
   promptCaching?: PromptCachingMode
   promptCacheRetention?: 'in_memory' | '24h'
+  /** Carried from the endpoint by `resolveModel`; see `Endpoint.thinkingFormat`. */
+  thinkingFormat?: ChatThinkingFormat
   pricing?: ModelPricing
   maxOutputTokens?: number
   thinking?: ThinkingConfig
@@ -53,18 +56,6 @@ export interface ModelConfig {
    * expanded into the equivalent set on load.
    */
   supportedEfforts?: EffortLevel[]
-  /**
-   * Sends `anthropic-beta: context-1m-2025-08-07` on every request for this
-   * model.
-   *
-   * An explicit switch rather than something inferred from the model name: some
-   * compatible endpoints only hand out their 1M models when the header is
-   * present, while vendors that are already 1M by default may reject an
-   * unrecognized beta outright. Orthogonal to {@link ModelConfig.contextWindow},
-   * which is the local token budget and nothing else. Only the `anthropic`
-   * provider reads it.
-   */
-  longContext1m?: boolean
   /**
    * Whether this model accepts image input — the user's declaration about the
    * endpoint behind it, not something probed or inferred from the model name,
@@ -90,7 +81,7 @@ export interface ModelConfig {
  * rebuild silently drops everything they don't own, so a JSON-configured field
  * would survive exactly until the first unrelated edit.
  *
- * `supportsImageInput` is *not* here: both forms own a widget for it (S03), so
+ * `supportsImageInput` and `thinking` are *not* here: the form owns a widget for each, so
  * the forms seed and send it, and carrying it here would override a deliberate
  * switch-off with the stale on-disk value on every save.
  */
@@ -100,7 +91,6 @@ const JSON_ONLY_MODEL_FIELDS = [
   'promptCaching',
   'promptCacheRetention',
   'pricing',
-  'thinking',
 ] as const satisfies readonly (keyof ModelConfig)[]
 
 /**
@@ -364,6 +354,7 @@ export class ConfigService {
       ...(endpoint.baseUrl !== undefined ? { baseUrl: endpoint.baseUrl } : {}),
       ...(endpoint.apiKey !== undefined ? { apiKey: endpoint.apiKey } : {}),
       ...(endpoint.promptCaching !== undefined ? { promptCaching: endpoint.promptCaching } : {}),
+      ...(endpoint.thinkingFormat !== undefined ? { thinkingFormat: endpoint.thinkingFormat } : {}),
       ...model,
     }
     return resolved.provider ? resolved : undefined

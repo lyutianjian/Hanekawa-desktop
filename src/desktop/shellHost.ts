@@ -508,10 +508,10 @@ const SETTINGS_CHANGE_SCHEMAS = {
       provider: z.string().optional(),
       endpoint: z.string().optional(),
       contextWindow: z.number().optional(),
-      longContext1m: z.boolean().optional(),
       supportsImageInput: z.boolean().optional(),
       maxOutputTokens: z.number().optional(),
       supportedEfforts: z.array(z.enum(VALID_EFFORT_LEVELS)).optional(),
+      thinkingOff: z.boolean().optional(),
     })
     .strict(),
   'rename-model': z
@@ -1978,7 +1978,6 @@ export class ShellHost<
       if (model.provider !== undefined) info.provider = model.provider
       if (model.endpoint !== undefined) info.endpoint = model.endpoint
       if (model.contextWindow !== undefined) info.contextWindow = model.contextWindow
-      if (model.longContext1m !== undefined) info.longContext1m = model.longContext1m
       // The raw switch is what the edit form seeds from; the effective marker is
       // `resolveImageCapability` against the endpoint the model references, so
       // the renderer never needs the provider registry to draw the list.
@@ -1988,6 +1987,7 @@ export class ShellHost<
       }
       if (model.maxOutputTokens !== undefined) info.maxOutputTokens = model.maxOutputTokens
       if (model.supportedEfforts !== undefined) info.supportedEfforts = [...model.supportedEfforts]
+      if (model.thinking?.type === 'disabled') info.thinkingOff = true
       if (model.baseUrl !== undefined) info.baseUrl = model.baseUrl
       if (model.apiKey) info.apiKeyMasked = maskKey(model.apiKey)
       return info
@@ -2587,6 +2587,7 @@ function applyProviderChange(
       const existing = config.get().endpoints?.[change.name]
       const endpoint: Endpoint = { provider: change.provider }
       if (existing?.promptCaching !== undefined) endpoint.promptCaching = existing.promptCaching
+      if (existing?.thinkingFormat !== undefined) endpoint.thinkingFormat = existing.thinkingFormat
       if (change.baseUrl !== undefined && change.baseUrl !== '') endpoint.baseUrl = change.baseUrl
       // An absent `apiKey` means "leave it alone", so the stored key is carried
       // forward. Clearing is `clear-endpoint-key`, precisely so this branch
@@ -2605,6 +2606,7 @@ function applyProviderChange(
       const endpoint: Endpoint = { provider: existing.provider }
       if (existing.baseUrl !== undefined) endpoint.baseUrl = existing.baseUrl
       if (existing.promptCaching !== undefined) endpoint.promptCaching = existing.promptCaching
+      if (existing.thinkingFormat !== undefined) endpoint.thinkingFormat = existing.thinkingFormat
       config.setEndpoint(change.name, endpoint)
       return 'endpoints'
     }
@@ -2626,8 +2628,7 @@ function applyProviderChange(
       // snapshot. Everything the form has no widget for — the cache policy —
       // is carried over instead, or a context-window edit here would quietly
       // delete it from `config.json`.
-      if (change.longContext1m !== undefined) model.longContext1m = change.longContext1m
-      // Form-owned like `longContext1m`: the form seeds it from the snapshot, so
+      // Form-owned: the form seeds it from the snapshot, so
       // an untouched switch round-trips and an omitted one means off. The carry
       // below must not own this field, or a deliberate switch-off would be
       // overridden by the stale on-disk value.
@@ -2638,6 +2639,9 @@ function applyProviderChange(
       // the config file.
       const supportedEfforts = normalizeSupportedEfforts(change.supportedEfforts)
       if (supportedEfforts !== undefined) model.supportedEfforts = supportedEfforts
+      // Switching thinking back on keeps a hand-written budget.
+      if (change.thinkingOff) model.thinking = { type: 'disabled' }
+      else if (existing?.thinking !== undefined && existing.thinking.type !== 'disabled') model.thinking = existing.thinking
       config.setModelConfig(change.key, carryJsonOnlyModelFields(model, existing))
       return 'models'
     }

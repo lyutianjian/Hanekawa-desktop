@@ -76,6 +76,7 @@ import {
   formatImageByteStripNotice,
   formatMediaStripNotice,
   formatTooManyImagesBlockedMessage,
+  requestContextReserveBytes,
   resolveMaxMediaItems,
   stripExcessImageBytes,
   stripExcessMediaItems,
@@ -963,6 +964,8 @@ export class AgentLoop {
         ...(response.thinkingBlocks && response.thinkingBlocks.length > 0
           ? { thinkingBlocks: response.thinkingBlocks }
           : {}),
+        ...(response.reasoningDetails?.length ? { reasoningDetails: response.reasoningDetails } : {}),
+        ...(response.responseItems?.length ? { responseItems: response.responseItems } : {}),
       }
 
       // max_output_tokens escalation: retry with higher limit
@@ -1580,7 +1583,10 @@ export class AgentLoop {
     return stripExcessImageBytes(records, {
       ...(turnId ? { currentTurnId: turnId } : {}),
       ...(userMessageId ? { currentUserMessageId: userMessageId } : {}),
-      maxImageRequestBytes: Math.max(0, maxRequestBodyBytes - textBytes),
+      maxImageRequestBytes: Math.max(
+        0,
+        maxRequestBodyBytes - textBytes - requestContextReserveBytes(maxRequestBodyBytes),
+      ),
     })
   }
 
@@ -1843,6 +1849,8 @@ export class AgentLoop {
       effort: this.currentEffort,
       cacheSource,
       cacheRuntime: this.options.cacheRuntime,
+      promptCacheKey: this.options.toolContext.sessionId,
+      turnId,
       hasDeferredTools: hasDeferred,
       allDeferredToolNames,
       postCompactDiscoveredNames: this.options.toolContext._postCompactDiscoveredNames,
@@ -2446,6 +2454,7 @@ function durablePrefix(request: ModelRequest): ModelRequest {
     effort: request.effort,
     cacheSource: request.cacheSource,
     cacheRuntime: request.cacheRuntime,
+    promptCacheKey: request.promptCacheKey,
     hasDeferredTools: request.hasDeferredTools,
     allDeferredToolNames: request.allDeferredToolNames,
     postCompactDiscoveredNames: request.postCompactDiscoveredNames,
@@ -2468,6 +2477,7 @@ function withInheritedPrefix(inherited: ModelRequest, own: ModelRequest): ModelR
     systemBlocks: inherited.systemBlocks,
     thinking: inherited.thinking,
     effort: inherited.effort,
+    promptCacheKey: inherited.promptCacheKey ?? own.promptCacheKey,
     tools: [...inheritedTools, ...(own.tools ?? []).filter((tool) => !inheritedNames.has(tool.name))],
     hasDeferredTools: inherited.hasDeferredTools,
     allDeferredToolNames: inherited.allDeferredToolNames,

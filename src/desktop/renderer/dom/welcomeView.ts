@@ -227,7 +227,7 @@ export function createWelcomeView(
   }
 }
 
-/** The coordinator's fixed welcome; 「概览」 is a chip that opens the panel. */
+/** The coordinator's fixed welcome; 「线程」 is a chip that opens the thread page. */
 export function createCoordinatorWelcome(
   input: Parameters<typeof coordinatorWelcome>[0],
   onOpenOverview: () => void,
@@ -236,6 +236,6 @@ export function createCoordinatorWelcome(
     el('p', undefined, ...segments.map((segment) =>
       typeof segment === 'string'
         ? segment
-        : button('coordinator-welcome-link', segment.label, '打开概览', onOpenOverview, { icon: 'overview' }))))
+        : button('coordinator-welcome-link', segment.label, '打开线程页', onOpenOverview, { icon: 'overview' }))))
   return el('div', 'coordinator-welcome', ...paragraphs)
 }

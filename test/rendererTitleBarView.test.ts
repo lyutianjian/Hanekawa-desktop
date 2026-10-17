@@ -7,6 +7,7 @@ import { createTitleBarView } from '../src/desktop/renderer/dom/titleBarView.js'
 import { bindWindowChrome } from '../src/desktop/renderer/dom/windowChrome.js'
 import type { TitlebarArea } from '../src/desktop/renderer/model/windowChrome.js'
 import {
+  sideRailView,
   titleBarMenus,
   itemEnabled,
   toggleMenu,
@@ -43,7 +44,7 @@ function viewOf(overrides: Partial<TitleBarView> = {}): TitleBarView {
     menus: TITLE_BAR_MENUS,
     openMenu: undefined,
     sidebarCollapsed: false,
-    browserOpen: false,
+    side: sideRailView({ modes: ['tasks', 'changes', 'browser'], open: undefined, running: false, blockedThreads: 0 }),
     canCreate: true,
     ...overrides,
   }
@@ -321,23 +322,31 @@ test('a renderer without the optional overlay API still paints a safe title bar'
   assert.equal(properties.get('--titlebar-inset-right'), '138px')
 })
 
-test('the browser rail sits at the far end and reports its state', (t) => {
+test('the side panel\'s pages sit at the far end, one button each, and report their state', (t) => {
   const r = mount(t)
   r.render(viewOf())
 
-  // Last child, because the panel it opens is on that side: a control for it
-  // beside the sidebar's rail would point the wrong way.
-  const rail = r.bar().children.at(-1)!
-  assert.ok(rail.classes.includes('titlebar-rail-end'), 'the browser rail is the strip\'s last control')
-  assert.equal(rail.attributes.get('aria-label'), '显示浏览器')
-  assert.equal(rail.attributes.get('aria-pressed'), 'false')
+  // Last, because the panel they open is on that side.
+  const group = (): StubView => r.bar().children.at(-1)!
+  assert.ok(group().classes.includes('titlebar-side'))
+  assert.deepEqual(group().children.map((child) => child.attributes.get('aria-label')), ['显示任务', '显示改动', '显示浏览器'])
+  assert.ok(group().children.every((child) => child.attributes.get('aria-pressed') === 'false'))
 
-  r.stub.click(rail.node)
-  assert.deepEqual(r.actions, ['toggle-browser'])
+  r.stub.click(group().children[1]!.node)
+  r.stub.click(group().children[2]!.node)
+  assert.deepEqual(r.actions, ['toggle-changes', 'toggle-browser'])
 
-  r.render(viewOf({ browserOpen: true }))
-  const open = r.bar().children.at(-1)!
-  assert.equal(open.attributes.get('aria-label'), '隐藏浏览器')
-  assert.equal(open.attributes.get('aria-pressed'), 'true')
-  assert.ok(open.classes.includes('open'))
+  r.render(viewOf({ side: sideRailView({ modes: ['tasks', 'threads', 'changes', 'browser'], open: 'threads', running: true, blockedThreads: 12 }) }))
+  const [tasks, threads] = group().children
+  assert.equal(group().children.length, 4)
+  assert.equal(threads!.attributes.get('aria-label'), '隐藏线程')
+  assert.equal(threads!.attributes.get('aria-pressed'), 'true')
+  assert.ok(threads!.classes.includes('open'))
+  assert.equal(threads!.children.find((child) => child.classes.includes('titlebar-side-badge'))?.text, '9+')
+  assert.equal(tasks!.children.find((child) => child.classes.includes('titlebar-side-dot'))?.hidden, false)
+})
+
+test('the thread badge is empty with nothing blocked and caps at 9+', () => {
+  const badge = (blockedThreads: number) => sideRailView({ modes: [], open: undefined, running: false, blockedThreads }).threadsBadge
+  assert.deepEqual([badge(0), badge(3), badge(9), badge(10)], ['', '3', '9', '9+'])
 })

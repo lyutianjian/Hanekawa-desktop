@@ -13,7 +13,6 @@ import {
 import { loadMcpConfig } from '../src/services/mcp/config.js'
 import {
   AnthropicProvider,
-  CONTEXT_1M_BETA,
   OpenAIProvider,
   ProviderRegistry,
   buildAnthropicMessages,
@@ -104,6 +103,13 @@ test('ConfigService persists endpoint caching defaults and model overrides', asy
   await reloaded.load()
   assert.equal(reloaded.resolveModel('inherited')?.promptCaching, 'off')
   assert.equal(reloaded.resolveModel('override')?.promptCaching, 'auto')
+})
+
+test('a hand-written endpoint thinkingFormat reaches the resolved model', () => {
+  const service = new ConfigService(process.cwd())
+  service.setEndpoint('relay', { provider: 'openai', baseUrl: 'https://relay.example/v1', thinkingFormat: 'deepseek' })
+  service.addModel('r1', { model: 'deepseek-v4', endpoint: 'relay' })
+  assert.equal(service.resolveModel('r1')?.thinkingFormat, 'deepseek')
 })
 
 test('ConfigService loads fallbackModel config', async () => {
@@ -524,7 +530,6 @@ test('validateSettings accepts model, agent, and cache settings', () => {
         provider: 'openai',
         model: 'gpt-local',
         contextWindow: 1_000_000,
-        longContext1m: true,
       },
     },
     defaultModel: 'local',
@@ -540,17 +545,6 @@ test('validateSettings accepts model, agent, and cache settings', () => {
 
   assert.equal(result.valid, true)
   assert.deepEqual(result.errors, [])
-})
-
-test('validateSettings rejects a non-boolean longContext1m', () => {
-  const result = validateSettings({
-    models: {
-      local: { provider: 'anthropic', model: 'claude-sonnet-4-6', longContext1m: 'yes' as never },
-    },
-  })
-
-  assert.equal(result.valid, false)
-  assert.deepEqual(result.errors, ['models.local.longContext1m must be a boolean'])
 })
 
 test('validateSettings checks supportsImageInput like other model booleans', () => {
@@ -1265,34 +1259,6 @@ test('buildAnthropicPayload gates dynamic ToolSearch independently of caching', 
   assert.equal(countCacheControlMarkers(thirdPartyPayload), countCacheControlMarkers(nativePayload))
 })
 
-test('longContext1m sends the 1M beta on proxy endpoints too', () => {
-  const request: ModelRequest = {
-    cacheSource: 'agent:test',
-    model: 'claude-sonnet-4-6',
-    messages: [{ id: 'u1', role: 'user', content: 'hello', createdAt: new Date().toISOString() }],
-    tools: [
-      { name: 'ToolSearch', description: 'search', inputSchema: z.object({ query: z.string() }).strict(), riskLevel: 'safe', execute: async () => ({ ok: true, content: '' }) },
-      { name: 'DeferredTool', description: 'deferred', inputSchema: z.object({}).strict(), riskLevel: 'safe', execute: async () => ({ ok: true, content: '' }) },
-    ],
-    hasDeferredTools: true,
-    allDeferredToolNames: new Set(['DeferredTool']),
-    postCompactDiscoveredNames: new Set(['DeferredTool']),
-  }
-
-  // The 1M opt-in remains independent of dynamic tool search and caching.
-  assert.deepEqual(
-    getAnthropicBetaHeaders(request, { longContext1m: true }),
-    [CONTEXT_1M_BETA],
-  )
-  assert.deepEqual(
-    getAnthropicBetaHeaders(request, { dynamicToolSearch: true, longContext1m: true }),
-    [CONTEXT_1M_BETA, 'advanced-tool-use-2025-11-20'],
-  )
-  // Off, and absent, are the same as before the switch existed.
-  assert.deepEqual(getAnthropicBetaHeaders(request, { longContext1m: false }), [])
-  assert.deepEqual(getAnthropicBetaHeaders(request), [])
-})
-
 test('enforceAnthropicCacheControlLimit removes tool schema markers first', () => {
   const payload = {
     system: [{ type: 'text', text: 'system', cache_control: { type: 'ephemeral' } }],
@@ -1437,6 +1403,20 @@ test('normalizeOpenAIUsage reports no cache-write count at all', () => {
   assert.equal(promptTokens(usage), 1000)
 })
 
+test('normalizeOpenAIUsage reads each server\'s cache fields and keeps writes out of the input count', () => {
+  // OpenAI: reads and writes both sit inside `prompt_tokens`.
+  const official = normalizeOpenAIUsage({
+    prompt_tokens: 1000,
+    prompt_tokens_details: { cached_tokens: 400, cache_write_tokens: 100 },
+    completion_tokens: 5,
+  })
+  assert.deepEqual(official, { inputTokens: 500, cacheCreationInputTokens: 100, cacheReadInputTokens: 400, outputTokens: 5 })
+  assert.equal(promptTokens(official), 1000)
+  // DeepSeek and Kimi put the read count elsewhere.
+  assert.equal(normalizeOpenAIUsage({ prompt_tokens: 100, prompt_cache_hit_tokens: 60, completion_tokens: 1 }).cacheReadInputTokens, 60)
+  assert.equal(normalizeOpenAIUsage({ prompt_tokens: 100, cached_tokens: 70, completion_tokens: 1 }).cacheReadInputTokens, 70)
+})
+
 test('normalizeOpenAIUsage splits cached and uncached prompt tokens', () => {
   assert.deepEqual(normalizeOpenAIUsage({
     prompt_tokens: 500,
@@ -1530,7 +1510,7 @@ test('buildOpenAIPayload omits tools for plain-text requests', () => {
     }],
   }
 
-  const payload = buildOpenAIPayload(request) as Record<string, unknown>
+  const payload = buildOpenAIPayload(request, { cacheKey: true }) as Record<string, unknown>
   assert.equal(payload.model, 'fake-model')
   assert.ok(Array.isArray(payload.messages))
   assert.ok(!('tools' in payload))
@@ -1592,14 +1572,14 @@ test('buildOpenAIPayload includes Hanekawa system, skills reminder, Skill tool, 
     tools,
     promptCacheRetention: '24h',
   }
-  const payload = buildOpenAIPayload(request) as {
+  const payload = buildOpenAIPayload(request, { cacheKey: true }) as {
     messages: Array<{ role: string; content: string }>
     tools: Array<{ function: { name: string } }>
     prompt_cache_key: string
     prompt_cache_retention?: string
   }
 
-  assert.equal(payload.messages[0]?.role, 'system')
+  assert.equal(payload.messages[0]?.role, 'developer')
   assert.match(payload.messages[0]?.content ?? '', /You are Hanekawa/)
   assert.match(payload.messages[0]?.content ?? '', /lyutianjian/)
   assert.match(payload.messages[0]?.content ?? '', /# Doing tasks/)

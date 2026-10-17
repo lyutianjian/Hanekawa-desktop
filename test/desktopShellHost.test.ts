@@ -721,7 +721,7 @@ const SETTINGS_CHANGE_SAMPLES = {
   'clear-endpoint-key': { scope: 'provider', kind: 'clear-endpoint-key', name: 'e1' },
   'remove-endpoint': { scope: 'provider', kind: 'remove-endpoint', name: 'e1' },
   'rename-endpoint': { scope: 'provider', kind: 'rename-endpoint', from: 'e1', to: 'e2' },
-  'set-model': { scope: 'provider', kind: 'set-model', key: 'm1', model: 'claude-x', longContext1m: true, supportsImageInput: true },
+  'set-model': { scope: 'provider', kind: 'set-model', key: 'm1', model: 'claude-x', supportsImageInput: true },
   'rename-model': { scope: 'provider', kind: 'rename-model', from: 'm1', to: 'm2' },
   'remove-model': { scope: 'provider', kind: 'remove-model', key: 'm1' },
   'set-default-model': { scope: 'provider', kind: 'set-default-model', key: 'm1' },
@@ -1851,7 +1851,7 @@ test('get-settings projects models, routing and the save target', async () => {
     'the four built-ins always get a row',
   )
   assert.match(settings.saveTarget, /config\.json$/)
-  assert.deepEqual(settings.providers, ['anthropic', 'openai'])
+  assert.deepEqual(settings.providers, ['anthropic', 'openai', 'openai-responses'])
   assert.deepEqual(projects, [{ projectRoot: h.entry.root, projectName: 'alpha' }])
 })
 
@@ -1893,10 +1893,11 @@ test('settings-change saves before reloading, or the reload would discard the ed
   assert.equal(h.project.config.config.routing?.plan, 'small', 'and the edit survived')
 })
 
-test('the 1M header switch persists on the model and comes back in the snapshot', async () => {
+test('a model save drops the retired 1M header switch and carries JSON-only fields', async () => {
   const h = createHarness()
   seedConfig(h.project)
   h.project.config.config.models.big!.promptCaching = 'on'
+  Object.assign(h.project.config.config.models.big!, { longContext1m: true })
 
   await h.client.changeSettings(h.entry.root, {
     scope: 'provider',
@@ -1905,26 +1906,12 @@ test('the 1M header switch persists on the model and comes back in the snapshot'
     model: 'claude-big',
     endpoint: 'main',
     contextWindow: 1_000_000,
-    longContext1m: true,
   })
 
-  assert.equal(h.project.config.config.models.big?.longContext1m, true)
-  // Orthogonal by design: the header does not imply the window, or vice versa.
-  assert.equal(h.project.config.config.models.big?.contextWindow, 1_000_000)
-
-  const { settings } = await h.client.getSettings(h.entry.root)
-  assert.equal(settings.models.find((model) => model.key === 'big')?.longContext1m, true)
-
-  // Switching it off omits the field, and the rebuild is how it disappears.
-  await h.client.changeSettings(h.entry.root, {
-    scope: 'provider',
-    kind: 'set-model',
-    key: 'big',
-    model: 'claude-big',
-    endpoint: 'main',
-  })
-  assert.equal(h.project.config.config.models.big?.longContext1m, undefined)
-  assert.equal(h.project.config.config.models.big?.promptCaching, 'on')
+  const saved = h.project.config.config.models.big as unknown as Record<string, unknown>
+  assert.equal('longContext1m' in saved, false)
+  assert.equal(saved.contextWindow, 1_000_000)
+  assert.equal(saved.promptCaching, 'on')
 })
 
 test('the image-input switch persists, and the snapshot carries the effective marker', async () => {
@@ -1959,8 +1946,7 @@ test('the image-input switch persists, and the snapshot carries the effective ma
   assert.equal(pickya?.supportsImageInput, true)
   assert.equal(pickya?.imageCapable, undefined)
 
-  // Switching it off omits the field, and the rebuild removes it — the same
-  // off-is-absence rule the 1M header switch follows.
+  // Switching it off omits the field, and the rebuild removes it.
   await h.client.changeSettings(h.entry.root, {
     scope: 'provider',
     kind: 'set-model',

@@ -54,6 +54,7 @@ import { createTranscriptView, type TranscriptView } from './dom/transcriptView.
 import { createCoordinatorWelcome, createWelcomeView } from './dom/welcomeView.js'
 import { threadChip } from './dom/processStripView.js'
 import type { ThreadStripView } from './model/sidePanel.js'
+import { sessionEdits, type TurnEdits } from './model/turnEdits.js'
 import { isTranscriptEmpty, welcomeView } from './model/welcome.js'
 import {
   branchPickerKeyToIntent,
@@ -144,7 +145,6 @@ import {
 } from './model/planDialogs.js'
 import {
   activateSurfaceRow as chooseSurfaceRow,
-  backgroundTasksView,
   effortPickerView,
   initialSurfaceSelection,
   isSupportedSurface,
@@ -216,7 +216,7 @@ import {
 export interface PaneSessionDeps {
   /** Whether this lane is a project coordinator (its permission pill is hidden). */
   isCoordinator?: () => boolean
-  /** The coordinator welcome's 「概览」 link: raises the overview panel. */
+  /** The coordinator welcome's 「线程」 link: raises the thread page. */
   onOpenOverview?: () => void
   /** Whether this coordinator's project opened with a survey thread; the welcome says it went to look. */
   coordinationOpening?: () => boolean
@@ -309,6 +309,10 @@ export interface PaneSessionDeps {
   onUserMessage?: () => void
   /** An `Agent` row was clicked: show that run in the window's side panel. */
   onOpenSubagent?: (id: string) => void
+  /** An edited-files card was clicked: show the turn's changes in the side panel. */
+  onViewEdits?: (edits: TurnEdits, path: string | undefined) => void
+  /** `/tasks`, the process tag and the status line's task count: the side panel's task page. */
+  onOpenTasks?: () => void
   /** A thread note card's 查看: open that thread's session. */
   onOpenThread?: (threadId: string) => void
   /** The active pane repainted its transcript, so the side panel's list may have moved. */
@@ -351,6 +355,8 @@ export interface PaneSession {
   refreshCommands(): void
   /** Every `Agent` call in this pane's transcript, for the side panel. */
   subagents(): readonly SubagentEntry[]
+  /** Every file this session's tools edited, for the side panel's 改动 page. */
+  edits(): TurnEdits | undefined
   /** The run the side panel is showing, highlighted on its row; `undefined` for none. */
   setSelectedSubagent(id: string | undefined): void
   // --- keyboard entry points (routed here by the app's global handler) ---
@@ -418,8 +424,6 @@ export interface PaneSession {
    */
   openRuntimeMenu(): Promise<void>
   runSurfaceAction(action: SurfaceAction): Promise<void>
-  /** The process tag above the composer: opens `/tasks`, or closes it when open. */
-  toggleBackgroundTasks(): void
   refreshPanes(): Promise<void>
 }
 
@@ -448,7 +452,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   const transcriptView: TranscriptView = createTranscriptView(transcriptEl, paneEl, {
     onToggle: (id, expanded) => toggleDisclosureAt(id, expanded),
     onOpenSubagent: (id) => deps.onOpenSubagent?.(id),
-    onOpenBackgroundTasks: toggleBackgroundTasks,
+    ...(deps.onViewEdits ? { onViewEdits: deps.onViewEdits } : {}),
+    onOpenBackgroundTasks: () => deps.onOpenTasks?.(),
     onOpenThread: (id) => deps.onOpenThread?.(id),
     ...(deps.onOpenProviderSettings ? { onOpenProviderSettings: deps.onOpenProviderSettings } : {}),
     onRetryTurn: (id) => { void retryTurn(id) },
@@ -573,10 +578,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   let queued: readonly PersistedQueuedMessage[] = Object.freeze([])
   let surfaceView: SurfaceView | undefined
   let surfaceIndex = 0
-  /** The task whose stop button awaits its second press, while `/tasks` is open. */
-  let armedKillId: string | undefined
-  /** Ticks the elapsed times while `/tasks` is painted. */
-  let taskClock: ReturnType<typeof setInterval> | undefined
   /**
    * A slash command's information table, which shares the `#surface` node with
    * the pickers but is state of its own.
@@ -849,6 +850,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       ...(card ? { taskCard: card } : {}),
     }, selectedSubagent, coordinator ? coordinatorWelcomeEl : undefined, threadChipEl)
     subagentList = undefined
+    editList = undefined
     // Thumbnails arrive on demand, exactly as the composer's tiles do: the
     // paint draws the boxes, then each uncached id asks once. Streaming makes
     // this run per chunk; `beginPreviewLoad` is what keeps that one request.
@@ -913,6 +915,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   let selectedSubagent: string | undefined
   /** Derived per paint, lazily: only the active pane with the panel open ever asks. */
   let subagentList: readonly SubagentEntry[] | undefined
+  let editList: { readonly edits: TurnEdits | undefined } | undefined
 
   function setSelectedSubagent(id: string | undefined): void {
     if (id === selectedSubagent) return
@@ -930,7 +933,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    * table because opening either clears the other, so at most one is set.
    */
   function renderSurface(): void {
-    syncTaskClock()
     if (!active) return
     if (surfaceView) deps.surface.showSurface(surfaceView, surfaceIndex)
     else if (commandView) deps.surface.showCommandView(commandView.title, commandView.rows)
@@ -940,39 +942,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     surfaceView = undefined
     surfaceIndex = 0
     commandView = undefined
-    armedKillId = undefined
-    syncTaskClock()
     if (active) deps.surface.hide()
-  }
-
-  function syncTaskClock(): void {
-    const wanted = active && surfaceView?.surface === 'background-tasks'
-    if (wanted && !taskClock) taskClock = setInterval(refreshTasksSurface, 1000)
-    else if (!wanted && taskClock) {
-      clearInterval(taskClock)
-      taskClock = undefined
-    }
-  }
-
-  /**
-   * Rebuilds an open `/tasks` from the client's live list, keeping the selection
-   * on the same task. Skipped when nothing visible changed, so the per-chunk
-   * snapshot ticks and the clock do not rebuild rows under the pointer.
-   */
-  function refreshTasksSurface(): void {
-    if (surfaceView?.surface !== 'background-tasks') return
-    const next = backgroundTasksView(client.getBackgroundTasks(), Date.now(), armedKillId)
-    if (JSON.stringify(next.rows) === JSON.stringify(surfaceView.rows)) return
-    const selectedId = surfaceView.rows[surfaceIndex]?.id
-    const kept = next.rows.findIndex((row) => row.id === selectedId)
-    surfaceView = next
-    surfaceIndex = kept >= 0 ? kept : initialSurfaceSelection(next)
-    renderSurface()
-  }
-
-  function toggleBackgroundTasks(): void {
-    if (surfaceView?.surface === 'background-tasks') hideSurface()
-    else void openSurface('background-tasks')
   }
 
   function renderRewind(): void {
@@ -1618,6 +1588,10 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
           else note('此界面无法打开服务商设置。', 'error')
           return
         }
+        if (intent.surface === 'background-tasks') {
+          deps.onOpenTasks?.()
+          return
+        }
         if (isSupportedSurface(intent.surface)) void openSurface(intent.surface)
         return
     }
@@ -1637,7 +1611,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // Per streamed chunk, like the event above — the usage numbers, the context
     // ring and every sidebar badge ride on this one snapshot.
     statusRepaint.request()
-    if (active) refreshTasksSurface()
     // The turn's token count reads on the transcript's status line, and a
     // response's usage may land after its records have already painted.
     const tokens = client.getSnapshot().turnOutputTokens
@@ -1670,7 +1643,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   async function openSurface(name: SupportedSurface): Promise<void> {
     try {
       const view = await buildSurfaceView(name)
-      armedKillId = undefined
       surfaceView = view
       surfaceIndex = initialSurfaceSelection(view)
       renderSurface()
@@ -1690,8 +1662,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
           ...(runtime?.status === 'ready' && runtime.supportedEfforts ? { supportedEfforts: runtime.supportedEfforts } : {}),
         })
       }
-      case 'background-tasks':
-        return backgroundTasksView(await client.listBackgroundTasks(), Date.now())
       case 'resume-picker':
         return resumePickerView({
           sessions: await client.listSessions(),
@@ -1725,13 +1695,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    * of these changes what the panel was describing.
    */
   async function runSurfaceAction(action: SurfaceAction): Promise<void> {
-    // Stopping stays in the list: the row turning 已结束 is the confirmation.
-    if (action.kind === 'arm-kill' || action.kind === 'kill-task') {
-      armedKillId = action.kind === 'arm-kill' ? action.taskId : undefined
-      refreshTasksSurface()
-      if (action.kind === 'kill-task') await client.killTask(action.taskId).catch((error: unknown) => note(`停止任务失败：${describe(error)}`, 'error'))
-      return
-    }
     hideSurface()
     try {
       switch (action.kind) {
@@ -1742,11 +1705,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         case 'open-pane':
           await client.openPane({ sessionId: action.sessionId })
           return
-        case 'peek-task': {
-          const output = await client.peekTaskOutput(action.taskId)
-          note(output.trim().length > 0 ? output : '没有新的输出。')
-          return
-        }
         default:
           return assertNever(action)
       }
@@ -2072,7 +2030,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     deps.permissionRequest.hide(true)
     deps.rewindPanel.hide()
     deps.surface.hide()
-    syncTaskClock()
     deps.suggestions.render(NO_COMPLETIONS)
     // The composer is a singleton the active pane drives, so an open permission
     // menu would hang over the next pane and act on *its* runtime.
@@ -2102,7 +2059,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
   function dispose(): void {
     if (active) closeImageViewer()
-    if (taskClock) clearInterval(taskClock)
     welcome.dispose()
     transcriptView.dispose()
     streamRepaint.cancel()
@@ -2296,6 +2252,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     hasConversation,
     restoreDraftText,
     subagents: () => (subagentList ??= subagentEntries(presentationTranscript(withDetachedRuns(transcript, runningAgentCalls(client.getBackgroundTasks()))).items)),
+    edits: () => (editList ??= { edits: sessionEdits(presentationTranscript(transcript).items) }).edits,
     setSelectedSubagent,
     refreshWelcome: renderTranscript,
     refreshCommands: () => {
@@ -2338,7 +2295,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     openEffortPicker: () => openSurface('effort-picker'),
     openRuntimeMenu,
     runSurfaceAction,
-    toggleBackgroundTasks,
     refreshPanes,
   }
 }

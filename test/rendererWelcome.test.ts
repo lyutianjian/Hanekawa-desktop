@@ -231,10 +231,10 @@ test('a notice arriving while the screen is up does not move the signature', () 
   assert.equal(after, before)
 })
 
-test('the coordinator welcome names the project, links 概览, and says it went to look only for a survey', () => {
+test('the coordinator welcome names the project, links 线程, and says it went to look only for a survey', () => {
   const plain = coordinatorWelcome({ projectName: 'Hanekawa', opening: false })
   assert.ok(String(plain[0]![0]).includes('「Hanekawa」'))
-  assert.ok(plain.flat().some((segment) => typeof segment === 'object' && segment.link === 'overview' && segment.label === '概览'))
+  assert.ok(plain.flat().some((segment) => typeof segment === 'object' && segment.link === 'overview' && segment.label === '线程'))
   assert.equal(coordinatorWelcome({ projectName: 'Hanekawa', opening: true }).length, plain.length + 1)
 })
 

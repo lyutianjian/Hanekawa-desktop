@@ -10,14 +10,15 @@ import type { SessionMeta } from '../../../sessions/service.js'
  *
  * A `CommandEffect` of kind `open-surface` names one of six surfaces; a shell
  * that has no panel for one ignores it *by name*, which is why they collapse
- * into a single wire variant. This renderer draws all six, but only four are
+ * into a single wire variant. This renderer draws all six, but only three are
  * here — a `false` from `isSupportedSurface` means "not a row list", not "not
- * drawn", and `paneSession.ts` resolves the other two by name before consulting
- * it. `rewind-panel` is a two-screen modal with its own state
- * (`model/rewindPanel.ts`); `provider-panel` is not a panel in the conversation
- * at all but the settings screen's `provider` page, which is window-level
- * (`app.ts`'s `onOpenProviderSettings`) because its endpoints, models and
- * routing come off a `ConfigService` a pane does not own.
+ * drawn", and `paneSession.ts` resolves the other three by name before
+ * consulting it. `rewind-panel` is a two-screen modal with its own state
+ * (`model/rewindPanel.ts`); `background-tasks` is the side panel's task page;
+ * `provider-panel` is not a panel in the conversation at all but the settings
+ * screen's `provider` page, which is window-level (`app.ts`'s
+ * `onOpenProviderSettings`) because its endpoints, models and routing come off
+ * a `ConfigService` a pane does not own.
  *
  * DOM-free on purpose; see `diffRows.ts`.
  */
@@ -39,16 +40,10 @@ import type { SessionMeta } from '../../../sessions/service.js'
  * is already defined by the tab bar: one pane per session, so `open-pane`
  * focuses the window that has it or opens one.
  *
- * `background-tasks` rows peek on Enter or click; stopping is a separate
- * button that takes two presses (`arm-kill`, then `kill-task`), so no key and
- * no stray click ends a process.
  */
 export type SurfaceAction =
   | { readonly kind: 'run-command'; readonly line: string }
   | { readonly kind: 'open-pane'; readonly sessionId: string }
-  | { readonly kind: 'peek-task'; readonly taskId: string }
-  | { readonly kind: 'arm-kill'; readonly taskId: string }
-  | { readonly kind: 'kill-task'; readonly taskId: string }
 
 export interface SurfaceRow {
   readonly id: string
@@ -59,8 +54,6 @@ export interface SurfaceRow {
   readonly disabledReason?: string
   /** Absent on a disabled row, which is shown to explain itself, not to be picked. */
   readonly action?: SurfaceAction
-  /** A button at the row's end, reachable by pointer only. */
-  readonly secondary?: { readonly label: string; readonly action: SurfaceAction; readonly danger?: boolean }
 }
 
 export interface SurfaceView {
@@ -73,15 +66,14 @@ export interface SurfaceView {
 /**
  * The surfaces this shell draws *as a row list*.
  *
- * `provider-panel` and `rewind-panel` are absent because they are drawn
- * elsewhere — the settings screen and `model/rewindPanel.ts`. See the header.
+ * `provider-panel`, `rewind-panel` and `background-tasks` are absent because
+ * they are drawn elsewhere. See the header.
  */
-export type SupportedSurface = 'model-picker' | 'effort-picker' | 'background-tasks' | 'resume-picker'
+export type SupportedSurface = 'model-picker' | 'effort-picker' | 'resume-picker'
 
 export const SUPPORTED_SURFACES: readonly SupportedSurface[] = [
   'model-picker',
   'effort-picker',
-  'background-tasks',
   'resume-picker',
 ] as const
 
@@ -89,7 +81,6 @@ export const SUPPORTED_SURFACES: readonly SupportedSurface[] = [
 export const SURFACE_LABEL: Readonly<Record<SupportedSurface, string>> = {
   'model-picker': '模型列表',
   'effort-picker': '思考强度列表',
-  'background-tasks': '后台任务列表',
   'resume-picker': '会话列表',
 }
 
@@ -169,14 +160,6 @@ export function effortPickerView(input: {
   }
 }
 
-const TASK_STATUS_LABELS: Record<BackgroundTaskSnapshot['status'], string> = {
-  running: '运行中',
-  completed: '已完成',
-  failed: '失败',
-  killed: '已结束',
-  orphaned: '已脱管',
-}
-
 /** Running shell processes — what the composer's chip counts. Agents have their own panel. */
 export function runningProcessCount(tasks: readonly BackgroundTaskSnapshot[]): number {
   return tasks.filter((task) => task.kind === 'shell' && task.status === 'running').length
@@ -190,52 +173,6 @@ export function runningTaskCount(tasks: readonly BackgroundTaskSnapshot[]): numb
 /** The `Agent` calls whose run is still going — background ones outlive their call. */
 export function runningAgentCalls(tasks: readonly BackgroundTaskSnapshot[]): ReadonlySet<string> {
   return new Set(tasks.flatMap((task) => task.kind === 'agent' && task.status === 'running' && task.toolUseId ? [task.toolUseId] : []))
-}
-
-export function formatElapsed(ms: number): string {
-  const seconds = Math.max(0, Math.floor(ms / 1000))
-  if (seconds < 60) return `${seconds}s`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m${seconds % 60}s`
-  return `${Math.floor(minutes / 60)}h${minutes % 60}m`
-}
-
-/** Running first, then newest. `armedKillId` is the row whose stop button awaits its second press. */
-export function backgroundTasksView(
-  tasks: readonly BackgroundTaskSnapshot[],
-  now: number,
-  armedKillId?: string,
-): SurfaceView {
-  const sorted = [...tasks].sort((a, b) =>
-    Number(b.status === 'running') - Number(a.status === 'running') || b.startedAt - a.startedAt)
-  return {
-    surface: 'background-tasks',
-    title: '后台任务',
-    rows: sorted.map((task) => {
-      const running = task.status === 'running'
-      return {
-        id: task.id,
-        label: task.kind === 'agent'
-          ? `${task.agentType ?? 'agent'}: ${task.description ?? task.agentId ?? task.id}`
-          : task.command ?? task.id,
-        detail: [
-          TASK_STATUS_LABELS[task.status],
-          formatElapsed((task.finishedAt ?? now) - task.startedAt),
-          task.exitCode !== undefined && task.exitCode !== null ? `exit ${task.exitCode}` : undefined,
-          task.unreadBytes > 0 ? `${task.unreadBytes} 字节新输出` : undefined,
-        ].filter((part): part is string => typeof part === 'string').join(' · '),
-        action: { kind: 'peek-task', taskId: task.id } as const,
-        ...(running
-          ? {
-              secondary: armedKillId === task.id
-                ? { label: '确认结束', action: { kind: 'kill-task', taskId: task.id } as const, danger: true }
-                : { label: '结束', action: { kind: 'arm-kill', taskId: task.id } as const },
-            }
-          : {}),
-      }
-    }),
-    emptyMessage: '没有后台任务。',
-  }
 }
 
 export function resumePickerView(input: {

@@ -72,6 +72,7 @@ desktop/ -> runtime/ + harness/ -> config/providers/
 
 - `AgentLoop.run()` and `runTool()` use the shared enqueue path and one in-flight guard. Preserve abort/error and `tool_result` semantics.
 - `ToolRunner` settles approval, result, and post-use records for every failure, denial, abort, or hook block. Only the loop batches contiguous safe calls.
+- Provider replay data on assistant messages — `thinkingBlocks` (Anthropic), `reasoningDetails` (Chat Completions), `responseItems` (Responses) — is read only by its own payload builder, and the opaque ones only for the model that wrote them.
 - Repair unmatched `tool_use`/`tool_result` pairs before provider calls. A model switch invalidates model-dependent prompt/cache state; changed compaction context needs a fresh token count.
 - A turn that ends on a provider error appends a `turn_failure` record from `SessionController` (raw error, status, code, model, endpoint); its Chinese wording and kind live in the renderer's `model/turnFailure.ts`, so wording changes never rewrite history. `SessionMeta.lastTurnFailed` (cleared by the next user message) feeds the sidebar 「失败」 badge for sessions that are not open.
 - Compaction retains the latest user message. Automatic failures are fail-open behind the per-session circuit breaker. Cache sources and module state never cross sessions, streams, or projects.
@@ -89,7 +90,7 @@ desktop/ -> runtime/ + harness/ -> config/providers/
 - Project-layer `permissions.mode` and `mcp.trustedServers` are ignored. `Config` must not expose `permissions.mode`. Preserve `WebFetch` host scoping (same-host redirects only) and tool-family rule aliases (`Edit` → write tools, `Read` → `Grep`/`Glob`).
 - `config.json` is global only. Models, endpoints, routing, and `agent.*` belong in `ConfigService`; migrate any project leftovers before the first load.
 - Settings groups concatenate/union across layers, except `skills.disabled`, which is replaced per layer. Provider construction stays in `src/config/providers/registry.ts`.
-- Preserve provider capability checks, retry/fallback propagation, and reference repair when models/endpoints are deleted. `ModelConfig.longContext1m` and `contextWindow` are independent.
+- Preserve provider capability checks, retry/fallback propagation, and reference repair when models/endpoints are deleted.
 
 ## Protocol and desktop
 

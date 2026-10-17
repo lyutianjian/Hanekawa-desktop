@@ -2632,6 +2632,7 @@ test('an inheriting fork auto-compacts its own records behind the unchanged pare
     tools: [],
     model: 'fake-model',
     cacheSource: forkCacheSource('parent', process.cwd()),
+    promptCacheKey: 'parent-session',
   }
   const requests: ModelRequest[] = []
   const provider: ModelProvider = {
@@ -2664,6 +2665,8 @@ test('an inheriting fork auto-compacts its own records behind the unchanged pare
   const [compact, main] = requests
   for (const request of [compact!, main!]) {
     assert.equal(request.system, 'parent system')
+    assert.equal(request.promptCacheKey, 'parent-session', 'a fork routes its cache with its parent')
+    assert.ok(request.turnId)
     const first = request.contextItems?.[0]
     assert.equal(first?.kind === 'message' ? first.message.id : undefined, 'parent-history')
   }

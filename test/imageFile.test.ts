@@ -308,6 +308,7 @@ test('the ladder prefers lossless PNG when it fits the budget', async () => {
     name: 'noise.png',
     sendLongEdge: NOISE_LONG_EDGE,
     maxSendBytes: 600_000,
+    maxPngSendBytes: 600_000,
   })
   assert.ok(result.ok)
   assert.equal(result.image.mimeType, 'image/png')

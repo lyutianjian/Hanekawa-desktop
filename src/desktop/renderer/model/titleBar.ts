@@ -1,5 +1,6 @@
 import type { DesktopPlatform } from '../../types.js'
 import { desktopShortcut } from './desktopShortcuts.js'
+import { SIDE_MODE_LABELS, type SideMode } from './sidePanel.js'
 
 /**
  * The title bar's menus, as data.
@@ -24,8 +25,9 @@ export type TitleBarAction =
   | 'open-project'
   | 'open-settings'
   | 'toggle-sidebar'
-  | 'toggle-browser'
   | 'toggle-help'
+  /** One of the side panel's pages; `toggle-browser` is also the 视图 menu's item. */
+  | `toggle-${SideMode}`
 
 export interface TitleBarItem {
   readonly action: TitleBarAction
@@ -73,10 +75,41 @@ export interface TitleBarView {
   /** The open menu's id, or `undefined`. At most one is open. */
   readonly openMenu: string | undefined
   readonly sidebarCollapsed: boolean
-  /** Whether the browser panel is up, for the right rail's state and label. */
-  readonly browserOpen: boolean
+  /** The side panel's buttons at the strip's far end. */
+  readonly side: SideRailView
   /** False while a blocking dialog is up; greys the items that open something. */
   readonly canCreate: boolean
+}
+
+export interface SideRailView {
+  /** Left to right; 线程 only where the project has coordination. */
+  readonly modes: readonly SideMode[]
+  /** The page on screen, `undefined` while the panel is closed. */
+  readonly open: SideMode | undefined
+  /** A command or sub-agent is running: a dot on 任务. */
+  readonly running: boolean
+  /** Threads waiting on someone, on 线程: `9+` past nine, empty for none. */
+  readonly threadsBadge: string
+}
+
+export function sideRailView(input: {
+  modes: readonly SideMode[]
+  open: SideMode | undefined
+  running: boolean
+  blockedThreads: number
+}): SideRailView {
+  const blocked = input.blockedThreads
+  return {
+    modes: input.modes,
+    open: input.open,
+    running: input.running,
+    threadsBadge: blocked <= 0 ? '' : blocked > 9 ? '9+' : String(blocked),
+  }
+}
+
+/** A side button's tooltip: what pressing it does now. */
+export function sideButtonTitle(mode: SideMode, open: SideMode | undefined): string {
+  return `${open === mode ? '隐藏' : '显示'}${SIDE_MODE_LABELS[mode]}`
 }
 
 /**
@@ -106,7 +139,10 @@ export function titleBarRenderSignature(view: TitleBarView): string {
   return [
     view.openMenu ?? '-',
     view.sidebarCollapsed ? 'c' : '-',
-    view.browserOpen ? 'b' : '-',
+    view.side.modes.join(','),
+    view.side.open ?? '-',
+    view.side.running ? 'r' : '-',
+    view.side.threadsBadge,
     view.canCreate ? 'n' : '-',
-  ].join('')
+  ].join('|')
 }

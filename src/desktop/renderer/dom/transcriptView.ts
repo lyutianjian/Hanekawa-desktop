@@ -28,6 +28,7 @@ import {
   type TranscriptState,
 } from '../model/transcript.js'
 import { absoluteTime, footerFacts, relativeTime, splitTurnFooters, type TurnFooter } from '../model/turnFooter.js'
+import { collectTurnEdits, type TurnEdits } from '../model/turnEdits.js'
 import { anchorPadding, anchorTopGap, TRANSCRIPT_PAD_VARIABLE, viewportPolicy } from '../model/transcriptAnchor.js'
 import { PRESENCE_FALLBACK_MS } from '../model/presence.js'
 import { splitFileMentions } from '../model/userMessage.js'
@@ -50,7 +51,7 @@ import type { TurnFailureCard } from '../model/turnFailure.js'
 import type { WireThreadStatus } from '../../shellProtocol.js'
 import { pausedTaskCard, TASK_LOCATE_FALLBACK_MS, type TaskCard, type TaskRowStatus } from '../model/tasks.js'
 import { button } from './controls.js'
-import { diffNode } from './diffView.js'
+import { diffNode, diffStatNode, fileBadgeNode } from './diffView.js'
 import { append, el, reconcile, show, type Child } from './dom.js'
 import { icon, type IconName } from './icons.js'
 import { markdownChildren } from './markdownView.js'
@@ -163,6 +164,8 @@ export interface TranscriptHandlers {
   onOpenProviderSettings?(): void
   /** A failed turn's 「重试」: send `userMessageId`'s message again. Absent draws no button. */
   onRetryTurn?(userMessageId: string): void
+  /** An edited-files card's row or 查看全部: the turn's changes in the side panel, `path` scrolled to. Absent draws no card. */
+  onViewEdits?(edits: TurnEdits, path: string | undefined): void
 }
 
 export function createTranscriptView(
@@ -571,7 +574,11 @@ export function createTranscriptView(
         locateTaskCard,
         afterPaint: (run) => afterPaint.push(run),
       })
-      const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index), activity !== undefined))
+      const edits = handlers.onViewEdits ? collectTurnEdits(entries, new Set(footers.keys())) : new Map<number, TurnEdits>()
+      // 撤销 rewinds to the turn's opening message, so only the newest settled turn offers it.
+      const lastTurn = activity?.isStreaming === true ? undefined : Math.max(-1, ...footers.keys())
+      const cards = new Map([...edits].map(([index, turn]) => [index, editsCardNode(painter, turn, index === lastTurn)]))
+      const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index), activity !== undefined, cards.get(index)))
       // Built before `prune`, or its key would count as dead on the very paint
       // that asked for it. A kept line keeps the spans its fill handed over.
       status = live.row ? { row: live.row, tokens: activity?.outputTokens } : undefined
@@ -590,9 +597,9 @@ export function createTranscriptView(
       const placed = nodes.flatMap((node, index) => {
         const footer = footers.get(index)
         const entry = entries[index]
-        return footer && !(entry?.kind === 'item' && entry.item.kind === 'assistant')
-          ? [node, footerNode(painter, footer)]
-          : [node]
+        if (!footer || (entry?.kind === 'item' && entry.item.kind === 'assistant')) return [node]
+        const card = cards.get(index)
+        return card ? [node, card, footerNode(painter, footer)] : [node, footerNode(painter, footer)]
       })
       reconcile(column, [...(header ? [header] : []), ...placed, ...(trailer ? [trailer] : [])])
       for (const run of afterPaint) run()
@@ -842,6 +849,7 @@ function createPainter(
     onOpenThread: handlers.onOpenThread,
     onOpenProviderSettings: handlers.onOpenProviderSettings,
     onRetryTurn: handlers.onRetryTurn,
+    onViewEdits: handlers.onViewEdits,
     node(key, className, signature, fill, create) {
       filling.at(-1)?.push(key)
       const cached = cache.get(key)
@@ -934,8 +942,8 @@ function sameSignature(a: readonly unknown[], b: readonly unknown[]): boolean {
 
 // --- entries -----------------------------------------------------------------
 
-function entryNode(painter: Painter, entry: TranscriptEntry, footer: TurnFooter | undefined, inTurn: boolean): HTMLElement {
-  return entry.kind === 'run' ? runNode(painter, entry.run) : itemNode(painter, entry.item, footer, inTurn)
+function entryNode(painter: Painter, entry: TranscriptEntry, footer: TurnFooter | undefined, inTurn: boolean, card: HTMLElement | undefined): HTMLElement {
+  return entry.kind === 'run' ? runNode(painter, entry.run) : itemNode(painter, entry.item, footer, inTurn, card)
 }
 
 /**
@@ -1391,14 +1399,15 @@ function liveLine(live: SubagentLive): HTMLElement {
 function rowLabel(step: ToolLike): { readonly text: string; readonly parts: Child[] } {
   if (step.kind === 'subagent') return { text: step.text, parts: [step.text] }
   const failed = step.status === 'failed' ? ' 失败' : step.status === 'interrupted' ? ' 已中断' : ''
+  const mark = step.status === 'failed' ? el('span', 'step-fail', failed) : failed
   if (step.toolName === AGENT_TOOL) {
     const target = [step.tool.agentType, step.tool.useSummary].filter(Boolean).join(' · ')
-    return { text: `${step.tool.displayName} ${target}${failed}`, parts: [step.tool.displayName, ' ', el('strong', '', target), failed] }
+    return { text: `${step.tool.displayName} ${target}${failed}`, parts: [step.tool.displayName, ' ', el('strong', '', target), mark] }
   }
   const { verb, target, bare } = callParts(step, step.toolName === undefined || !EDIT_TOOLS.has(step.toolName))
-  if (target.length === 0) return { text: `${verb}${failed}`, parts: [`${verb}${failed}`] }
-  if (bare) return { text: `${target}${failed}`, parts: [target, failed] }
-  return { text: `${verb} ${target}${failed}`, parts: [`${verb} `, el('strong', '', target), failed] }
+  if (target.length === 0) return { text: `${verb}${failed}`, parts: step.status === 'failed' ? [verb, mark] : [`${verb}${failed}`] }
+  if (bare) return { text: `${target}${failed}`, parts: [target, mark] }
+  return { text: `${verb} ${target}${failed}`, parts: [`${verb} `, el('strong', '', target), mark] }
 }
 
 /** What the Agent call is called to the reader: the task it was given, else its type. */
@@ -1631,7 +1640,7 @@ function receiptNode(painter: Painter, receipt: Receipt, classes: string[], key:
  * `inTurn`: the main transcript, where an assistant message only carries its
  * meta row as the settled turn's answer — prose between tool calls is not one.
  */
-function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | undefined, inTurn: boolean): HTMLElement {
+function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | undefined, inTurn: boolean, card?: HTMLElement): HTMLElement {
   const classes = ['item', item.kind]
   if (item.pending) classes.push('pending')
   if (item.failed) classes.push('failed')
@@ -1644,8 +1653,9 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
   // just a code block whose end has not arrived, and the parse cache means the
   // cost is one parse of the draft rather than one of every settled message.
   if (item.kind === 'assistant') {
-    return painter.node(key, `${classes.join(' ')} md`, [item.text, item.model, item.createdAt, footer?.durationMs, footer?.tokens, footer && relativeTime(item.createdAt, Date.now())], (node) => [
+    return painter.node(key, `${classes.join(' ')} md`, [item.text, item.model, item.createdAt, footer?.durationMs, footer?.tokens, footer && relativeTime(item.createdAt, Date.now()), card], (node) => [
       ...markdownChildren(item.text, node),
+      card,
       inTurn && footer === undefined ? undefined : metaRow(painter, item, footer),
     ])
   }
@@ -1808,6 +1818,46 @@ function timeNode(text: string, createdAt: string | undefined): HTMLElement {
   const node = quiet('item-time', text)
   if (createdAt !== undefined) node.setAttribute('title', absoluteTime(createdAt))
   return node
+}
+
+/** Rows the card lists before 查看全部 takes over the rest. */
+const EDITS_CARD_ROWS = 5
+
+/**
+ * 已编辑 N 个文件: one row per file with its counts, 查看全部 with the turn's
+ * totals, and 撤销 on the newest turn. Every row opens the side panel's 改动 page.
+ */
+function editsCardNode(painter: Painter, turn: TurnEdits, undoable: boolean): HTMLElement {
+  return painter.node(
+    `edits:${turn.key}`,
+    'edits-card',
+    [undoable, turn.userMessageId, turn.files.length, ...turn.files.flatMap((file) => [file.path, file.added, file.deleted])],
+    () => {
+      const view = (path: string | undefined): void => painter.onViewEdits?.(turn, path)
+      const shown = turn.files.slice(0, EDITS_CARD_ROWS)
+      const hidden = turn.files.length - shown.length
+      const rewind = painter.onRewind
+      const messageId = turn.userMessageId
+      const undo = undoable && messageId !== undefined && rewind
+        ? button('edits-undo', '撤销', '撤销本轮的文件改动', () => rewind(messageId))
+        : undefined
+      const rows = shown.map((file) => {
+        const row = button('edits-row', '', `查看 ${file.name} 的改动`, () => view(file.path))
+        append(row, [fileBadgeNode(file.name), el('span', 'edits-name', file.name), diffStatNode(file.added, file.deleted)])
+        return row
+      })
+      const all = button('edits-row edits-all', '', '在侧栏查看全部改动', () => view(undefined))
+      append(all, [
+        el('span', 'edits-name', '查看全部'),
+        hidden > 0 ? el('span', 'edits-more', `另有 ${hidden} 个文件`) : undefined,
+        diffStatNode(turn.added, turn.deleted),
+      ])
+      return [
+        el('div', 'edits-head', el('span', 'edits-title', `已编辑 ${turn.files.length} 个文件`), undo),
+        el('div', 'edits-rows', ...rows, all),
+      ]
+    },
+  )
 }
 
 /** The tail of a turn that ends in something other than an answer: its time and facts, under the last entry. */

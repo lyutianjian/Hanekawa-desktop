@@ -151,10 +151,9 @@ test('a thread session gets a breadcrumb in place of the title', () => {
     canStop: true,
   })
   assert.equal(view.title, '重构缓存层', 'the session title is still what rename edits')
-  assert.equal(view.threadsButton, true)
 })
 
-test('the coordinator has no breadcrumb, but still offers the threads tab', () => {
+test('the coordinator has no breadcrumb', () => {
   const view = canvasHeaderView({
     lane: lane(),
     menuOpen: false,
@@ -165,10 +164,9 @@ test('the coordinator has no breadcrumb, but still offers the threads tab', () =
     thread: { title: 'ignored', statusLabel: '运行中', tone: 'running', canStop: true },
   })
   assert.equal(view.breadcrumb, undefined)
-  assert.equal(view.threadsButton, true)
 })
 
-test('an ordinary session shows neither the breadcrumb nor the threads button', () => {
+test('an ordinary session shows no breadcrumb', () => {
   const view = canvasHeaderView({
     lane: lane(),
     menuOpen: false,
@@ -177,20 +175,6 @@ test('an ordinary session shows neither the breadcrumb nor the threads button', 
     hasConversation: true,
   })
   assert.equal(view.breadcrumb, undefined)
-  assert.equal(view.threadsButton, false)
-})
-
-test('the 概览 badge counts blocked threads, caps at 9+, and is empty outside coordination', () => {
-  const badge = (role: 'coordinator' | 'thread' | undefined, blockedThreads: number) => canvasHeaderView({
-    lane: lane(),
-    menuOpen: false,
-    renaming: false,
-    pendingDelete: undefined,
-    hasConversation: true,
-    ...(role === undefined ? {} : { role }),
-    blockedThreads,
-  }).threadsBadge
-  assert.deepEqual([badge('coordinator', 0), badge('coordinator', 3), badge('thread', 12), badge(undefined, 3)], ['', '3', '9+', ''])
 })
 
 test('a thread role without its thread falls back to the plain title', () => {
@@ -203,5 +187,4 @@ test('a thread role without its thread falls back to the plain title', () => {
     role: 'thread',
   })
   assert.equal(view.breadcrumb, undefined)
-  assert.equal(view.threadsButton, true)
 })

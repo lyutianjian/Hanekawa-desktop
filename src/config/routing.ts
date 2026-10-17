@@ -19,6 +19,8 @@
  * anything that is not a resolvable key degrades to `'inherit'` at the service.
  */
 
+import type { ChatThinkingFormat } from './providers/openaiCompat.js'
+
 export type PromptCachingMode = 'auto' | 'on' | 'off'
 
 export interface Endpoint {
@@ -27,6 +29,12 @@ export interface Endpoint {
   apiKey?: string
   /** Anthropic prompt caching. Defaults to auto with compatibility fallback. */
   promptCaching?: PromptCachingMode
+  /**
+   * Chat Completions only, hand-written: how this server takes the thinking
+   * switch. Absent detects it from `baseUrl`; a relay the detection cannot
+   * see through is what this is for.
+   */
+  thinkingFormat?: ChatThinkingFormat
 }
 
 /** A model key, or the `'inherit'` sentinel. */

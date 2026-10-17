@@ -2060,7 +2060,8 @@ async function step28(ctx) {
     return { panel: box(panel), hole: box(hole), border: parseFloat(style.borderTopWidth), radius: parseFloat(style.borderTopLeftRadius),
       shadow: style.boxShadow, win: { width: innerWidth, height: innerHeight } }
   })()`)
-  const rail = await waitFor('the browser rail button', async () => read(ctx, probes.centreOf('.titlebar-rail-end')))
+  const button = (mode) => waitFor(`the ${mode} button`, async () => read(ctx, probes.centreOf(`.titlebar-side-button[data-mode="${mode}"]`)))
+  const rail = await button('browser')
   await mouseClick(ctx.cdp, rail.x, rail.y)
   const first = await waitFor('the browser panel with a measured hole', async () => {
     const view = await geometry()
@@ -2090,7 +2091,20 @@ async function step28(ctx) {
   ctx.ok('dragging the sash widened the card', wider.panel.width > first.panel.width + 40, `${first.panel.width} -> ${wider.panel.width}`)
   await check('after a drag', wider)
   await ctx.shot('28-browser-wider', 'the card after being dragged wider')
-  await mouseClick(ctx.cdp, rail.x, rail.y)
+  // Each title bar button swaps the page; pressing the one on screen closes the panel.
+  const pageShown = (id) => waitFor(`#${id} on screen`, async () => read(ctx, `(() => { const node = document.getElementById(${JSON.stringify(id)}); return node && !node.hidden && !document.getElementById('browser-panel').hidden ? true : undefined })()`))
+  const tasks = await button('tasks')
+  await mouseClick(ctx.cdp, tasks.x, tasks.y)
+  await pageShown('side-sections')
+  await ctx.shot('28-tasks-page', 'the 任务 page and its pressed title bar button: the empty state, or plan / 命令 / 子代理 sections')
+  const changes = await button('changes')
+  await mouseClick(ctx.cdp, changes.x, changes.y)
+  await pageShown('changes-view')
+  await ctx.shot('28-changes-page', 'the 改动 page: the session\'s edited files, or 本会话还没有改动')
+  // The title bar stops at the card's edge, so the buttons moved with the page's width.
+  const again = await button('changes')
+  await mouseClick(ctx.cdp, again.x, again.y)
+  ctx.ok('pressing the page on screen closes the panel', await waitFor('the panel to close', async () => read(ctx, `document.getElementById('browser-panel').hidden || undefined`)) === true)
 }
 
 export const STEPS = [

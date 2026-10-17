@@ -19,16 +19,7 @@ import { normalizeAnthropicUsage } from './usage.js'
 import { isExperimentalToolSearchBetaDisabled } from '../../utils/toolSearch.js'
 import { getPromptCachingEnabled } from '../../harness/cacheControl.js'
 import { USER_AGENT } from '../../utils/userAgent.js'
-
-const STREAM_IDLE_TIMEOUT_MS =
-  parseInt(process.env.MYAGENT_STREAM_IDLE_HARD_TIMEOUT_MS || '', 10) || 10 * 60_000
-const STREAM_IDLE_WARNING_MS =
-  parseInt(
-    process.env.MYAGENT_STREAM_IDLE_WARNING_MS
-      || process.env.MYAGENT_STREAM_IDLE_TIMEOUT_MS
-      || '',
-    10,
-  ) || 90_000
+import { STREAM_IDLE_TIMEOUT_MS, STREAM_IDLE_WARNING_MS } from './streamIdle.js'
 
 function isUnsupportedPromptCachingError(error: unknown): boolean {
   if (!(error instanceof Error)) return false
@@ -80,8 +71,6 @@ export class AnthropicProvider implements ModelProvider {
   private maxOutputTokens: number | undefined
   private readonly nativeToolSearch: boolean
   private readonly promptCaching: PromptCachingMode
-  /** Static per model, like `maxOutputTokens` — not a per-request decision. */
-  private longContext1m: boolean
   /**
    * The model-config half of image capability, snapshotted at construction
    * (providers are rebuilt per model switch). Combined with the adapter's own
@@ -90,6 +79,8 @@ export class AnthropicProvider implements ModelProvider {
    * facts it reads are this class's own static and this switch.
    */
   private readonly imageInputEnabled: boolean
+  /** The model's own thinking switch, ANDed with the session's. */
+  private readonly thinkingOff: boolean
 
   constructor(config: ModelConfig) {
     this.client = new Anthropic({
@@ -101,8 +92,8 @@ export class AnthropicProvider implements ModelProvider {
     this.maxOutputTokens = config.maxOutputTokens
     this.nativeToolSearch = isOfficialAnthropicEndpoint(this.endpoint)
     this.promptCaching = config.promptCaching ?? 'auto'
-    this.longContext1m = config.longContext1m === true
     this.imageInputEnabled = config.supportsImageInput === true
+    this.thinkingOff = config.thinking?.type === 'disabled'
   }
 
   supportsDynamicToolSearch(): boolean {
@@ -117,6 +108,7 @@ export class AnthropicProvider implements ModelProvider {
     // Final capability re-check (design §11.1): runs before any attempt is
     // made, so a bypassed call path fails once, loudly, without retries.
     assertRequestImageCapability(request, this.imageInputEnabled && this.supportsImageInput())
+    if (this.thinkingOff) request = { ...request, thinking: { type: 'disabled' } }
     return withRetry(
       async (attempt) => {
         const key = rejectionKey(this.endpoint, request.model)
@@ -169,10 +161,7 @@ export class AnthropicProvider implements ModelProvider {
     const cacheSource = requireCacheSource(request.cacheSource)
     // Hash the exact beta headers and cache policy sent on every attempt,
     // including the request rebuilt after a compatibility fallback.
-    const betas = getAnthropicBetaHeaders(request, {
-      dynamicToolSearch,
-      longContext1m: this.longContext1m,
-    })
+    const betas = getAnthropicBetaHeaders(request, { dynamicToolSearch })
     recordPromptState({
       system: JSON.stringify(payload.system ?? ''),
       toolsJson: JSON.stringify(payload.tools ?? []),

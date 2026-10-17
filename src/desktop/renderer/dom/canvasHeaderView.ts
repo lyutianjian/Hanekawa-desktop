@@ -42,8 +42,6 @@ export interface CanvasHeaderActions {
   onBackToCoordinator?: () => void
   /** 停止 on a thread session that a stop applies to. */
   onStopThread?: () => void
-  /** 概览 — toggles the side panel's overview, for either role. */
-  onOpenThreads?: () => void
 }
 
 export function createCanvasHeaderView(
@@ -73,11 +71,6 @@ export function createCanvasHeaderView(
   const locationLabel = el('span', 'btn-label')
   const openLocation = button('canvas-open-location', '', '', actions.onOpenLocation, { icon: 'external' })
   openLocation.appendChild(locationLabel)
-  const threadsLabel = el('span', 'btn-label', '概览')
-  const threadsButton = button('canvas-threads-open', '', '显示 / 隐藏概览', () => actions.onOpenThreads?.(), { icon: 'overview' })
-  const threadsBadge = el('span', 'canvas-threads-badge')
-  threadsButton.appendChild(threadsLabel)
-  threadsButton.appendChild(threadsBadge)
   // The thread crumb is persistent for the same reason the title input is: it
   // repaints with every snapshot. Its parts are built once and only updated.
   const crumb = el('div', 'canvas-breadcrumb')
@@ -222,9 +215,7 @@ export function createCanvasHeaderView(
       locationLabel.textContent = view.openLocationLabel
       openLocation.title = view.openLocationTitle
       openLocation.setAttribute('aria-label', view.openLocationTitle)
-      reconcile(rightControls, [view.threadsButton ? threadsButton : undefined, openLocation])
-      threadsBadge.textContent = view.threadsBadge
-      threadsBadge.hidden = view.threadsBadge === ''
+      reconcile(rightControls, [openLocation])
 
       // The crumb replaces the title, never the rename field: a rename is about
       // the session title, and the input has to be where the caret was put.

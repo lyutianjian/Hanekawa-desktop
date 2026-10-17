@@ -354,11 +354,6 @@ export interface WireModelInfo {
   endpoint?: string
   contextWindow?: number
   /**
-   * `anthropic-beta: context-1m-2025-08-07`. Orthogonal to `contextWindow`:
-   * that is the local token budget, this is only the request header.
-   */
-  longContext1m?: boolean
-  /**
    * The raw `supportsImageInput` switch off the config entry — the user's
    * declaration, not the effective capability. Present only when on; this is
    * what the edit form seeds from, so editing another field cannot reset it.
@@ -375,6 +370,8 @@ export interface WireModelInfo {
   maxOutputTokens?: number
   /** The effort levels this model accepts; absent means every level. */
   supportedEfforts?: EffortLevel[]
+  /** `thinking: { type: 'disabled' }` on the config entry; present only when true. */
+  thinkingOff?: boolean
   /** Only when set inline on the model rather than inherited from an endpoint. */
   baseUrl?: string
   apiKeyMasked?: string
@@ -599,9 +596,8 @@ export type SettingsChange =
       provider?: string
       endpoint?: string
       contextWindow?: number
-      longContext1m?: boolean
       /**
-       * The image-input switch, form-owned like `longContext1m`: absent means
+       * The image-input switch, form-owned: absent means
        * off, and the host's rebuild is how a switch-off gets removed from
        * `config.json`. `true` is the only on value — the same strict rule
        * `ModelConfig` applies.
@@ -610,6 +606,8 @@ export type SettingsChange =
       maxOutputTokens?: number
       /** Absent means "no restriction" — the form never sends an empty list. */
       supportedEfforts?: EffortLevel[]
+      /** Form-owned like `supportsImageInput`: absent turns the model's thinking back on. */
+      thinkingOff?: boolean
     }
   | { scope: 'provider'; kind: 'rename-model'; from: string; to: string }
   | { scope: 'provider'; kind: 'remove-model'; key: string }

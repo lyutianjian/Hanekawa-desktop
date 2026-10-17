@@ -76,14 +76,12 @@ interface Rendered {
     pendingDelete?: string
     role?: 'coordinator' | 'thread'
     thread?: CanvasHeaderThread
-    blockedThreads?: number
   }): void
   identity(): StubView
   titleNode(): StubView | undefined
   menuItems(): StubView[]
   openLocation(): StubView | undefined
   crumb(): StubView | undefined
-  threadsButton(): StubView | undefined
 }
 
 const find = (view: StubView | undefined, className: string): StubView | undefined =>
@@ -105,7 +103,6 @@ function render(t: { after(fn: () => void): void }): Rendered {
     onOpenLocation: () => events.push('open-location'),
     onBackToCoordinator: () => events.push('back-to-coordinator'),
     onStopThread: () => events.push('stop-thread'),
-    onOpenThreads: () => events.push('open-threads'),
   })
 
   const identity = () =>
@@ -127,7 +124,6 @@ function render(t: { after(fn: () => void): void }): Rendered {
         hasConversation: true,
         role: state.role,
         thread: state.thread,
-        blockedThreads: state.blockedThreads,
       }))
     },
     identity,
@@ -145,7 +141,6 @@ function render(t: { after(fn: () => void): void }): Rendered {
     openLocation: () =>
       find(rightControls(), 'canvas-open-location'),
     crumb: () => find(identity(), 'canvas-breadcrumb'),
-    threadsButton: () => find(rightControls(), 'canvas-threads-open'),
   }
   function rightControls(): StubView | undefined {
     return stub.inspect(container).children.find((child) => child.classes.includes('canvas-header-controls'))
@@ -466,27 +461,4 @@ test('renaming a thread session keeps the crumb under the field, and back', (t) 
   assert.equal(r.crumb()?.node, crumb)
   r.paint({ role: 'thread', thread })
   assert.equal(r.titleNode()?.node, crumb)
-})
-
-test('the 概览 button is shown for either coordination role and toggles the overview', (t) => {
-  const r = render(t)
-  r.paint({})
-  assert.equal(r.threadsButton(), undefined, 'an ordinary session has no threads tab to open')
-
-  r.paint({ role: 'coordinator' })
-  r.stub.click(r.threadsButton()!.node)
-  r.paint({ role: 'thread', thread })
-  assert.equal(r.threadsButton()?.text, '概览')
-  r.stub.click(r.threadsButton()!.node)
-  assert.deepEqual(r.events, ['open-threads', 'open-threads'])
-})
-
-test('the 概览 button shows its badge only when there is a count', (t) => {
-  const r = render(t)
-  const badge = () => r.threadsButton()!.children.find((child) => child.classes.includes('canvas-threads-badge'))!
-  r.paint({ role: 'coordinator' })
-  assert.equal(badge().hidden, true)
-  r.paint({ role: 'coordinator', blockedThreads: 2 })
-  assert.equal(badge().hidden, false)
-  assert.equal(badge().text, '2')
 })

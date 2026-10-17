@@ -53,8 +53,10 @@ export type IconName =
   // --- the sidebar footer and the title bar (5g) ---
   | 'help'
   | 'sidebar'
-  // --- the title bar's right rail (the browser panel) ---
-  | 'panel-right'
+  // --- the title bar's side panel buttons (threads reuse `branch`) ---
+  | 'tasks'
+  | 'diff'
+  | 'globe'
   // --- the inline permission request ---
   | 'terminal'
   | 'shield'
@@ -80,6 +82,9 @@ export type IconName =
   | 'x-circle'
   | 'alert-circle'
   | 'more'
+  // --- the provider dialog's API key reveal ---
+  | 'eye'
+  | 'eye-off'
 
 type ShapeTag = 'path' | 'circle' | 'rect' | 'ellipse' | 'line'
 
@@ -143,10 +148,14 @@ const ICONS = {
   branch: ['M15 6a9 9 0 0 0-9 9V3', ['circle', { cx: 18, cy: 6, r: 3 }], ['circle', { cx: 6, cy: 18, r: 3 }]],
   // external-link: the hand-off to another app.
   external: ['M15 3h6v6', 'M10 14 21 3', 'M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6'],
-  // panel-left / panel-right: the browser panel is the sidebar's mirror image,
-  // and so is the control that opens it.
+  // panel-left
   sidebar: [FRAME, 'M9 3v18'],
-  'panel-right': [FRAME, 'M15 3v18'],
+  // list-todo
+  tasks: ['M13 5h8', 'M13 12h8', 'M13 19h8', 'm3 17 2 2 4-4', ['rect', { x: 3, y: 4, width: 6, height: 6, rx: 1 }]],
+  // file-diff
+  diff: ['M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z', 'M9 10h6', 'M12 13V7', 'M9 17h6'],
+  // globe
+  globe: [RING, 'M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20', 'M2 12h20'],
   // circle-question-mark
   help: [RING, 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3', 'M12 17h.01'],
   // The inline request's leading glyph, chosen by what is being asked for: a
@@ -182,6 +191,16 @@ const ICONS = {
   'alert-circle': [RING, ['line', { x1: 12, x2: 12, y1: 8, y2: 12 }], ['line', { x1: 12, x2: 12.01, y1: 16, y2: 16 }]],
   // ellipsis
   more: [['circle', { cx: 12, cy: 12, r: 1 }], ['circle', { cx: 19, cy: 12, r: 1 }], ['circle', { cx: 5, cy: 12, r: 1 }]],
+  eye: [
+    'M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0',
+    ['circle', { cx: 12, cy: 12, r: 3 }],
+  ],
+  'eye-off': [
+    'M10.733 5.076a10.744 10.744 0 0 1 11.205 6.575 1 1 0 0 1 0 .696 10.747 10.747 0 0 1-1.444 2.49',
+    'M14.084 14.158a3 3 0 0 1-4.242-4.242',
+    'M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143',
+    'm2 2 20 20',
+  ],
 } as const satisfies Record<IconName, IconSpec>
 
 export function icon(name: IconName, className = 'icon'): SVGSVGElement {

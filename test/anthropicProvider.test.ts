@@ -540,7 +540,7 @@ test('ordinary caching has the same defaults on official and compatible endpoint
 })
 
 test('auto retries unsupported caching once and remembers it only for this endpoint and model', async () => {
-  const config = { model: 'claude-sonnet', apiKey: 'test-key', baseUrl: 'https://rejecting-proxy.example/v1', longContext1m: true }
+  const config = { model: 'claude-sonnet', apiKey: 'test-key', baseUrl: 'https://rejecting-proxy.example/v1' }
   const provider = new AnthropicProvider(config)
   const rejected = Object.assign(new Error('cache_control is not supported for this model'), { status: 400 })
   const requests = captureRequests(provider, (index) => index === 0 ? rejected : { input_tokens: 10, output_tokens: 1 })
@@ -552,7 +552,6 @@ test('auto retries unsupported caching once and remembers it only for this endpo
 
   assert.deepEqual(requests.map(({ payload }) => collectCacheControlTelemetry(payload).total), [3, 0, 0, 3])
   for (const { payload, options } of requests) {
-    assert.equal(options?.headers['anthropic-beta'], 'context-1m-2025-08-07')
     assert.deepEqual((payload.tools as Array<{ name: string }>).map((tool) => tool.name), ['Read'])
     assert.equal('context_management' in payload, false)
   }
@@ -608,7 +607,7 @@ test('auto preserves unrelated API errors and existing retry policy', async () =
   for (const [status, message] of [
     [400, 'max_tokens is invalid'],
     [400, 'At most 4 cache_control blocks are allowed'],
-    [400, 'Unsupported beta header: context-1m-2025-08-07'],
+    [400, 'Unsupported beta header: advanced-tool-use-2025-11-20'],
     [401, 'cache_control is not supported'],
     [429, 'cache_control is not supported'],
     [500, 'cache_control is not supported'],

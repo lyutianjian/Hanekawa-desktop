@@ -1,5 +1,7 @@
+import { SIDE_MODE_LABELS, type SideMode } from '../model/sidePanel.js'
 import {
   itemEnabled,
+  sideButtonTitle,
   titleBarRenderSignature,
   toggleMenu,
   type TitleBarAction,
@@ -10,6 +12,7 @@ import {
 import { button } from './controls.js'
 import { dismissable } from './dismiss.js'
 import { el, reconcile } from './dom.js'
+import type { IconName } from './icons.js'
 import { followPointer, rovingFocus } from './focus.js'
 import { createPresence } from './presence.js'
 
@@ -18,7 +21,7 @@ import { createPresence } from './presence.js'
  *
  * Left to right: the sidebar rail toggle and 文件 / 视图 (the lead group,
  * as wide as the sidebar so what follows starts on the canvas's edge), then the
- * canvas header, then the browser panel's rail toggle at the far end. `dom/windowChrome.ts` reserves the native
+ * canvas header, then the side panel's page buttons at the far end. `dom/windowChrome.ts` reserves the native
  * controls' measured space: left on macOS, normally right on Windows/Linux.
  *
  * The strip is `-webkit-app-region: drag`; every control in it is `no-drag`, or
@@ -110,13 +113,19 @@ export function createTitleBarView(
   let menus: ReturnType<typeof menuNode>[] = []
   const lead = el('div', 'titlebar-lead')
   const rail = button('titlebar-rail', '', '', () => onAction('toggle-sidebar'), { icon: 'sidebar' })
-  // The browser's own rail, mirrored to the far end of the strip — the panel it
-  // opens is on that side, and a control for it next to the sidebar's would
-  // point the wrong way. It is the second way to reach 视图 →「显示 / 隐藏浏览器」;
+  // The side panel's pages, one button each, at the far end of the strip — the
+  // panel they open is on that side. 浏览器 is also 视图 →「显示 / 隐藏浏览器」;
   // the menu item stays, because that is where a user looks for a name.
-  const browserRail = button('titlebar-rail titlebar-rail-end', '', '', () => onAction('toggle-browser'), {
-    icon: 'panel-right',
-  })
+  const sideGroup = el('div', 'titlebar-side')
+  const sideButtons = Object.fromEntries((Object.keys(SIDE_ICONS) as SideMode[]).map((mode) => {
+    const node = button('titlebar-rail titlebar-side-button', '', SIDE_MODE_LABELS[mode], () => onAction(`toggle-${mode}`), { icon: SIDE_ICONS[mode] })
+    node.dataset.mode = mode
+    return [mode, node]
+  })) as Record<SideMode, HTMLButtonElement>
+  const runningDot = el('span', 'titlebar-side-dot')
+  sideButtons.tasks.appendChild(runningDot)
+  const threadsBadge = el('span', 'titlebar-side-badge')
+  sideButtons.threads.appendChild(threadsBadge)
 
   return {
     render(view) {
@@ -131,15 +140,22 @@ export function createTitleBarView(
         menuSource = view.menus
         menus = view.menus.map(menuNode)
         reconcile(lead, [rail, ...menus.map((entry) => entry.shell)])
-        reconcile(container, [lead, center, browserRail])
+        reconcile(container, [lead, center, sideGroup])
       }
       const chord = view.menus.flatMap((menu) => menu.items).find((item) => item.action === 'toggle-sidebar')?.chord
       rail.title = `${view.sidebarCollapsed ? '展开侧栏' : '收起侧栏'}${chord ? `（${chord}）` : ''}`
       rail.setAttribute('aria-label', rail.title)
-      browserRail.title = view.browserOpen ? '隐藏浏览器' : '显示浏览器'
-      browserRail.setAttribute('aria-label', browserRail.title)
-      browserRail.setAttribute('aria-pressed', String(view.browserOpen))
-      browserRail.classList.toggle('open', view.browserOpen)
+      reconcile(sideGroup, view.side.modes.map((mode) => sideButtons[mode]))
+      for (const mode of view.side.modes) {
+        const node = sideButtons[mode]
+        node.title = sideButtonTitle(mode, view.side.open)
+        node.setAttribute('aria-label', node.title)
+        node.setAttribute('aria-pressed', String(view.side.open === mode))
+        node.classList.toggle('open', view.side.open === mode)
+      }
+      runningDot.hidden = !view.side.running
+      threadsBadge.textContent = view.side.threadsBadge
+      threadsBadge.hidden = view.side.threadsBadge === ''
       let focus: HTMLElement | undefined
       for (const entry of menus) {
         const open = openMenu === entry.menu.id
@@ -157,4 +173,11 @@ export function createTitleBarView(
       focus?.focus()
     },
   }
+}
+
+const SIDE_ICONS: Readonly<Record<SideMode, IconName>> = {
+  tasks: 'tasks',
+  threads: 'branch',
+  changes: 'diff',
+  browser: 'globe',
 }

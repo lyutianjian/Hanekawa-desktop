@@ -1,5 +1,7 @@
 import type { DiffRow, PreviewView } from '../model/diffRows.js'
+import { fileBadge } from '../model/turnEdits.js'
 import { el, replace } from './dom.js'
+import { icon } from './icons.js'
 
 /** Renders a `PreviewView` — a line diff with a gutter, or the message form. */
 /**
@@ -42,4 +44,20 @@ function gutter(row: DiffRow): string {
   const right = row.newLine === undefined ? '' : String(row.newLine)
   const sign = row.kind === 'add' ? '+' : row.kind === 'del' ? '-' : ' '
   return `${left.padStart(3)} ${right.padStart(3)} ${sign}`
+}
+
+/** The little extension tile in front of a file name: `TS`, `CSS`, or a page outline when there is none. */
+export function fileBadgeNode(name: string): HTMLElement {
+  const text = fileBadge(name)
+  const badge = el('span', `file-badge${text.length > 2 ? ' wide' : ''}`, text.length > 0 ? text : undefined)
+  badge.dataset.ext = text.toLowerCase()
+  if (text.length === 0) badge.appendChild(icon('file'))
+  badge.setAttribute('aria-hidden', 'true')
+  return badge
+}
+
+/** `+12 −3`, green and red; nothing when a capped patch left the counts short. */
+export function diffStatNode(added: number | undefined, deleted: number | undefined): HTMLElement | undefined {
+  if (added === undefined || deleted === undefined) return undefined
+  return el('span', 'diff-stat', el('span', 'diff-stat-add', `+${added}`), el('span', 'diff-stat-del', `−${deleted}`))
 }

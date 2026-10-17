@@ -49,7 +49,7 @@ test('no stored width, or one that is not a number, leaves the stylesheet defaul
 })
 
 test('each mode remembers its own width', () => {
-  assert.notEqual(SIDE_WIDTH_STORAGE_KEYS.browser, SIDE_WIDTH_STORAGE_KEYS.overview)
+  assert.equal(new Set(Object.values(SIDE_WIDTH_STORAGE_KEYS)).size, Object.keys(SIDE_WIDTH_STORAGE_KEYS).length)
 })
 
 // --- which tabs ------------------------------------------------------------------

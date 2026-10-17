@@ -1294,13 +1294,14 @@ function recordStamp(record: SessionRecord): { turnId?: string; createdAt?: stri
  *
  * All of a request's blocks become a single segment: they are adjacent with no
  * tool between them, and §4.3 says that is one segment, not several.
- * `redacted_thinking` carries no readable text and drops out.
+ * `redacted_thinking` carries no readable text and drops out. OpenAI-format
+ * responses keep their reasoning as plain `reasoningContent` instead.
  */
 function replayedThinking(record: Extract<SessionRecord, { type: 'message' }>): TranscriptItem | undefined {
   const text = (record.thinkingBlocks ?? [])
     .map((block) => (typeof block.thinking === 'string' ? block.thinking : ''))
     .filter((value) => value.trim().length > 0)
-    .join('\n\n')
+    .join('\n\n') || (record.reasoningContent?.trim() ? record.reasoningContent : '')
   if (text.length === 0) return undefined
   return { id: `${record.id}-thinking`, kind: 'thinking', text }
 }

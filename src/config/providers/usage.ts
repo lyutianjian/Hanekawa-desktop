@@ -45,15 +45,32 @@ export function normalizeOpenAIUsage(usage: unknown): TokenUsage {
   const details = typed.prompt_tokens_details && typeof typed.prompt_tokens_details === 'object'
     ? typed.prompt_tokens_details as Record<string, unknown>
     : {}
+  // OpenAI and OpenRouter report reads under `prompt_tokens_details`, DeepSeek
+  // as `prompt_cache_hit_tokens`, Kimi as a top-level `cached_tokens`.
   const cacheReadInputTokens = tokenNumber(details.cached_tokens)
-  const promptTokens = tokenNumber(typed.prompt_tokens)
-  // No cache-write field exists in this protocol: `prompt_tokens` already covers
-  // the whole prompt, so the uncached remainder is input and nothing is written
-  // out separately. `cacheCreationInputTokens` stays absent rather than 0 — the
-  // distinction is "not reported", not "no writes happened".
+    || tokenNumber(typed.prompt_cache_hit_tokens)
+    || tokenNumber(typed.cached_tokens)
+  // `prompt_tokens` covers reads and writes alike. Most servers report no
+  // write count at all, which stays absent rather than becoming zero writes.
+  const cacheWrite = details.cache_write_tokens
+  const cacheCreationInputTokens = typeof cacheWrite === 'number' && Number.isFinite(cacheWrite) ? cacheWrite : undefined
   return {
-    inputTokens: Math.max(0, promptTokens - cacheReadInputTokens),
+    inputTokens: Math.max(0, tokenNumber(typed.prompt_tokens) - cacheReadInputTokens - (cacheCreationInputTokens ?? 0)),
+    ...(cacheCreationInputTokens === undefined ? {} : { cacheCreationInputTokens }),
     cacheReadInputTokens,
     outputTokens: tokenNumber(typed.completion_tokens),
   }
+}
+
+/** Responses usage: `input_tokens` covers cache reads and writes alike, as in Chat Completions. */
+export function normalizeResponsesUsage(usage: unknown): TokenUsage {
+  const typed = usage && typeof usage === 'object' ? usage as Record<string, unknown> : {}
+  const details = typed.input_tokens_details && typeof typed.input_tokens_details === 'object'
+    ? typed.input_tokens_details as Record<string, unknown>
+    : {}
+  return normalizeOpenAIUsage({
+    prompt_tokens: typed.input_tokens,
+    prompt_tokens_details: details,
+    completion_tokens: typed.output_tokens,
+  })
 }

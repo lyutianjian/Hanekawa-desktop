@@ -13,6 +13,8 @@ import type {
   SettingsFormField,
   SettingsFormStatus,
   SettingsIntent,
+  SettingsModelPicker,
+  SettingsModelRowView,
   SettingsNavItem,
   SettingsProbeView,
   SettingsRow,
@@ -183,6 +185,7 @@ export function createSettingsView(
   // while the dialog is up, so focus goes back to whatever answers to that name.
   let lastFormKey: string | undefined
   let lastStep: string | undefined
+  let lastRowIds = new Set<string>()
   let lastConfirmDiscard = false
   let opener: string | undefined
   // The node to focus once this paint is in the page. A list rather than a
@@ -311,32 +314,32 @@ export function createSettingsView(
     const key = formKeyOf(form)
     const submit = (): void => onIntent({ kind: 'submit-draft' })
     const head = node(`${key}:head`, 'div', 'settings-dialog-head')
+    const header = form.kind === 'provider' ? form.header : undefined
     reconcile(head, [
-      el('div', 'settings-dialog-title', form.title),
+      header
+        ? el(
+            'div',
+            'settings-provider-identity',
+            el('span', 'settings-provider-avatar', header.initial),
+            el('div', 'settings-dialog-title', header.name),
+            header.protocol ? el('span', 'settings-provider-badge', header.protocol) : null,
+          )
+        : el('div', 'settings-dialog-title', form.title),
       form.kind === 'mcp-server' ? docLinkNode(node(`${key}:doc`, 'a', 'mcp-form-doc-link')) : null,
       keptButton(`${key}:close`, 'settings-dialog-close', '', { kind: 'cancel-draft' }, { title: '关闭（Esc）', icon: 'close' }),
     ])
-    const fields = (): Node[] => fieldNodes(form, key, { node, keptInput, keptToggle, keptSelect, onIntent, submit, menus })
-    const probe = form.kind === 'mcp-server' ? undefined : form.probe
+    const fieldContext = { node, keptInput, keptToggle, keptSelect, onIntent, submit, menus }
     const content = node(`${key}:body`, 'div', 'settings-dialog-body')
     reconcile(
       content,
       form.kind === 'mcp-server'
         ? mcpFieldNodes(form, node, keptInput, onIntent, submit)
-        : form.kind === 'endpoint-wizard'
-          ? wizardNodes(form, key, fields)
-          : [...fields(), probe ? probeNode(probe, key, false) : null],
-    )
-    const running = probe?.status === 'running'
-    const wizardStep = form.kind === 'endpoint-wizard' ? form.step : undefined
-    const submitButton = keptButton(
-      `${key}:submit`,
-      'settings-btn primary',
-      running ? '连接中…' : form.submitting ? '保存中…' : form.submitLabel,
-      { kind: 'submit-draft' },
-      { title: `${form.submitLabel}（Enter）`, enabled: !form.submitting && !running },
+        : form.kind === 'provider'
+          ? providerNodes(form, key, () => fieldNodes(form, key, fieldContext))
+          : fieldNodes(form, key, fieldContext),
     )
     const foot = node(`${key}:foot`, 'div', 'settings-dialog-foot')
+    const cancel = keptButton(`${key}:cancel`, 'settings-btn', '取消', { kind: 'cancel-draft' }, { title: '取消（Esc）' })
     reconcile(
       foot,
       form.confirmDiscard
@@ -345,38 +348,39 @@ export function createSettingsView(
             keptButton(`${key}:keep`, 'settings-btn', '继续编辑', { kind: 'keep-editing' }, { title: '继续编辑（Esc）' }),
             keptButton(`${key}:discard`, 'settings-btn danger', '放弃修改', { kind: 'discard-draft' }),
           ]
-        : wizardStep === 'preset'
-          ? [keptButton(`${key}:cancel`, 'settings-btn', '取消', { kind: 'cancel-draft' }, { title: '取消（Esc）' })]
-          : wizardStep !== undefined
-            ? [keptButton(`${key}:back`, 'settings-btn', '上一步', { kind: 'wizard-back' }), submitButton]
-            : [
-                probe
-                  ? keptButton(`${key}:test`, 'settings-btn lead', running ? '测试中…' : '测试连接', { kind: 'test-endpoint' }, { enabled: !running })
-                  : null,
-                keptButton(`${key}:cancel`, 'settings-btn', '取消', { kind: 'cancel-draft' }, { title: '取消（Esc）' }),
-                submitButton,
-              ],
+        : form.kind === 'provider' && form.step === 'preset'
+          ? [cancel]
+          : [
+              form.kind === 'provider' && form.canGoBack
+                ? keptButton(`${key}:back`, 'settings-btn lead', '上一步', { kind: 'wizard-back' })
+                : null,
+              cancel,
+              keptButton(
+                `${key}:submit`,
+                'settings-btn primary',
+                form.submitting ? '保存中…' : form.submitLabel,
+                { kind: 'submit-draft' },
+                { title: `${form.submitLabel}（Enter）`, enabled: !form.submitting },
+              ),
+            ],
     )
     return [head, content, error ? el('div', 'settings-error', error) : null, foot]
   }
 
-  /** The connection test's outcome, kept so a screen reader hears each change once. */
-  function probeNode(probe: SettingsProbeView, key: string, wizard: boolean): HTMLElement | null {
+  /** 获取模型列表's outcome, kept so a screen reader hears each change once. */
+  function probeNode(probe: SettingsProbeView, key: string): HTMLElement | null {
     if (probe.status === 'idle') return null
     const line = node(`${key}:probe`, 'div', `settings-probe ${probe.status}`, (made) => made.setAttribute('role', 'status'))
     reconcile(line, [
       icon(probe.status === 'running' ? 'spinner' : probe.status === 'ok' ? 'check' : 'close'),
       el('span', 'settings-probe-text', probe.message ?? ''),
-      wizard && probe.skippable
-        ? keptButton(`${key}:skip`, 'settings-probe-skip', '跳过测试', { kind: 'skip-test' }, { title: '不测试，直接选择模型' })
-        : null,
     ])
     return line
   }
 
-  /** The new-endpoint wizard's page: service cards, the connection, or the models. */
-  function wizardNodes(
-    form: Extract<SettingsForm, { kind: 'endpoint-wizard' }>,
+  /** The provider dialog: the preset grid, or the connection fields and the model table. */
+  function providerNodes(
+    form: Extract<SettingsForm, { kind: 'provider' }>,
     key: string,
     fields: () => Node[],
   ): Array<Node | null> {
@@ -391,15 +395,55 @@ export function createSettingsView(
         })))
       return [grid]
     }
-    if (form.step === 'connect') return [...fields(), probeNode(form.probe, key, true)]
-    const picker = form.picker!
-    const list = node(`${key}:models`, 'div', 'settings-model-list')
+    const connection = form.fields.length > 0 ? node(`${key}:fields`, 'div', 'settings-provider-fields') : null
+    if (connection) reconcile(connection, fields())
+
+    const running = form.probe?.status === 'running'
+    const head = node(`${key}:models-head`, 'div', 'settings-models-head')
+    reconcile(head, [
+      el('div', 'settings-models-title', '模型'),
+      el('span', 'settings-models-count', form.modelCount),
+      form.probe
+        ? keptButton(`${key}:fetch`, 'settings-btn', running ? '获取中…' : '获取模型列表', { kind: 'test-endpoint' }, { enabled: !running })
+        : null,
+    ])
+    const table = node(`${key}:table`, 'div', 'settings-model-table')
+    reconcile(table, [
+      form.models.length > 0
+        ? el(
+            'div',
+            'settings-model-head',
+            el('span'),
+            el('span', undefined, '模型 ID'),
+            el('span', undefined, '上下文'),
+            el('span', undefined, '显示名'),
+            el('span'),
+          )
+        : el('div', 'settings-model-empty', '还没有模型。'),
+      ...form.models.map((row) => modelRowNode(row, key)),
+    ])
+    return [
+      connection,
+      head,
+      form.probe ? probeNode(form.probe, key) : null,
+      form.picker ? pickerNode(form.picker, key) : null,
+      table,
+      form.canAddModel
+        ? keptButton(`${key}:add-model`, 'mcp-form-add-btn', '添加模型', { kind: 'add-model-row' }, { icon: 'plus' })
+        : null,
+    ]
+  }
+
+  /** What 获取模型列表 found; a click adds the model to the table or takes it out. */
+  function pickerNode(picker: SettingsModelPicker, key: string): HTMLElement {
+    const box = node(`${key}:picker`, 'div', 'settings-model-picker')
+    const list = node(`${key}:picker-list`, 'div', 'settings-model-list')
     reconcile(
       list,
       picker.empty
         ? [el('div', 'settings-model-empty', picker.empty)]
         : picker.rows.map((row) => {
-            const item = node(`${key}:model:${row.id}`, 'button', row.picked ? 'settings-model-row picked' : 'settings-model-row', (made) => {
+            const item = node(`${key}:pick:${row.id}`, 'button', row.picked ? 'settings-model-row picked' : 'settings-model-row', (made) => {
               made.type = 'button'
               made.setAttribute('role', 'checkbox')
               made.addEventListener('click', () => onIntent({ kind: 'toggle-picked-model', id: row.id }))
@@ -413,26 +457,13 @@ export function createSettingsView(
             return item
           }),
     )
-    const manualKey = `${key}:manual-input`
-    const manual = node(`${key}:manual`, 'div', 'settings-model-manual')
-    reconcile(manual, [
-      keptInput(manualKey, {
-        value: picker.manual,
-        ariaLabel: '手动添加模型',
-        placeholder: picker.manualPlaceholder,
-        mono: true,
-        live: true,
-        onEnter: () => {
-          onIntent({ kind: 'add-manual-model' })
-          // A focused field is never written back to, so the one reset it gets is here.
-          const input = kept.get(manualKey) as HTMLInputElement | undefined
-          if (input) input.value = ''
-        },
-        intentOnCommit: (value) => ({ kind: 'draft-field', field: 'manualModel', value }),
-      }),
-      keptButton(`${key}:manual-add`, 'settings-btn', '添加', { kind: 'add-manual-model' }, { icon: 'plus', enabled: picker.manual.trim() !== '' }),
+    const bar = node(`${key}:picker-bar`, 'div', 'settings-model-summary')
+    reconcile(bar, [
+      el('span', undefined, picker.summary),
+      keptButton(`${key}:picker-close`, 'settings-probe-skip', '收起', { kind: 'close-model-picker' }, { title: '收起模型列表' }),
     ])
-    return [
+    reconcile(box, [
+      bar,
       picker.filter !== undefined
         ? keptInput(`${key}:filter`, {
             value: picker.filter,
@@ -442,10 +473,110 @@ export function createSettingsView(
             intentOnCommit: (value) => ({ kind: 'draft-field', field: 'modelFilter', value }),
           })
         : null,
-      picker.summary ? el('div', 'settings-model-summary', picker.summary) : null,
       list,
-      manual,
-    ]
+    ])
+    return box
+  }
+
+  /** One model: its table line and, opened, its switches, limits and levels. */
+  function modelRowNode(row: SettingsModelRowView, formKey: string): HTMLElement {
+    const key = `${formKey}:row:${row.rowId}`
+    const field = (
+      name: 'model' | 'displayName' | 'contextWindow' | 'maxOutputTokens',
+      value: string,
+      ariaLabel: string,
+      placeholder: string,
+      mono = false,
+    ): HTMLInputElement => {
+      const input = keptInput(`${key}:${name}`, {
+        value,
+        ariaLabel,
+        placeholder,
+        ...(mono ? { mono: true } : {}),
+        live: true,
+        intentOnCommit: (next) => ({ kind: 'model-row-field', rowId: row.rowId, field: name, value: next }),
+      })
+      input.placeholder = placeholder
+      return input
+    }
+    const toggle = (name: 'thinking' | 'imageInput', label: string, value: boolean): HTMLElement => {
+      const line = node(`${key}:${name}-line`, 'div', 'settings-model-switch')
+      reconcile(line, [
+        el('span', undefined, label),
+        keptToggle(`${key}:${name}`, {
+          value,
+          ariaLabel: label,
+          onChange: (next) => onIntent({ kind: 'model-row-switch', rowId: row.rowId, field: name, value: next }),
+        }),
+      ])
+      return line
+    }
+    const labelled = (slot: string, label: string, input: HTMLInputElement): HTMLElement => {
+      const box = node(`${key}:${slot}-box`, 'label', 'settings-model-number')
+      reconcile(box, [el('span', undefined, label), input])
+      return box
+    }
+
+    const item = node(key, 'div', row.expanded ? 'settings-model-item open' : 'settings-model-item')
+    const line = node(`${key}:line`, 'div', 'settings-model-line')
+    reconcile(line, [
+      keptButton(
+        `${key}:expand`,
+        row.expanded ? 'settings-model-expand open' : 'settings-model-expand',
+        '',
+        { kind: 'toggle-model-row', rowId: row.rowId },
+        { title: row.expanded ? `收起 ${row.model || '模型'}` : `展开 ${row.model || '模型'}`, icon: 'chevron-right' },
+      ),
+      field('model', row.model, '模型 ID', '模型 ID', true),
+      el('span', 'settings-model-context', row.context),
+      field('displayName', row.displayName, '显示名', row.displayPlaceholder),
+      keptButton(`${key}:remove`, 'mcp-btn-trash', '', { kind: 'remove-model-row', rowId: row.rowId }, { title: `删除 ${row.model || '模型'}`, icon: 'trash' }),
+    ])
+    let detail: HTMLElement | null = null
+    if (row.expanded) {
+      detail = node(`${key}:detail`, 'div', 'settings-model-detail')
+      const numbers = node(`${key}:numbers`, 'div', 'settings-model-numbers')
+      reconcile(numbers, [
+        labelled('context', '上下文长度', field('contextWindow', row.contextWindow, '上下文长度', '默认')),
+        labelled('output', '最大输出 Token', field('maxOutputTokens', row.maxOutputTokens, '最大输出 Token', '默认')),
+      ])
+      let levels: HTMLElement | null = null
+      if (row.thinking) {
+        levels = node(`${key}:levels`, 'div', 'settings-model-levels')
+        const trigger = node(`${key}:levels-trigger`, 'button', row.effortsOpen ? 'settings-levels-trigger open' : 'settings-levels-trigger', (made) => {
+          made.type = 'button'
+          made.addEventListener('click', () => onIntent({ kind: 'toggle-row-efforts', rowId: row.rowId }))
+        })
+        trigger.setAttribute('aria-expanded', String(row.effortsOpen))
+        reconcile(trigger, [icon('chevron-right'), el('span', undefined, '思考档位'), el('span', 'settings-levels-summary', row.effortSummary)])
+        reconcile(levels, [
+          trigger,
+          ...(row.effortsOpen
+            ? row.efforts.map((level) => {
+                const levelLine = node(`${key}:level:${level.level}`, 'div', 'settings-model-switch level')
+                reconcile(levelLine, [
+                  el('span', undefined, level.label),
+                  keptToggle(`${key}:level-toggle:${level.level}`, {
+                    value: level.on,
+                    ariaLabel: `思考档位 ${level.label}`,
+                    ...(level.locked ? { enabled: false } : {}),
+                    onChange: () => onIntent({ kind: 'model-row-effort', rowId: row.rowId, level: level.level }),
+                  }),
+                ])
+                return levelLine
+              })
+            : []),
+        ])
+      }
+      reconcile(detail, [
+        toggle('thinking', '支持扩展思考', row.thinking),
+        toggle('imageInput', '支持图片输入', row.imageInput),
+        numbers,
+        levels,
+      ])
+    }
+    reconcile(item, [line, row.warning ? el('div', 'settings-row-warning', row.warning) : null, detail])
+    return item
   }
 
   function keptToggle(key: string, options: ToggleOptions): HTMLButtonElement {
@@ -580,6 +711,7 @@ export function createSettingsView(
       // The dialog keeps its last content while it closes; only an open form repaints it.
       const formKey = form ? formKeyOf(form) : undefined
       if (form) reconcile(dialog, dialogNodes(form, view.error, menus))
+      dialog.classList.toggle('wide', form?.kind === 'provider' && form.step === 'form')
       for (const region of [nav, body]) {
         if (form) region.setAttribute('inert', '')
         else region.removeAttribute('inert')
@@ -591,9 +723,16 @@ export function createSettingsView(
         opener = activeLabel
         const first = firstField()
         if (first) pendingFocus.unshift(first)
-      } else if (form?.kind === 'endpoint-wizard' && formKey === lastFormKey && form.step !== lastStep) {
+      } else if (form?.kind === 'provider' && formKey === lastFormKey && form.step !== lastStep) {
         const first = firstField()
         if (first) pendingFocus.unshift(first)
+      } else if (form?.kind === 'provider' && formKey === lastFormKey) {
+        // A row 添加模型 just put in the table: straight to its model id.
+        const added = form.models.at(-1)
+        if (added && added.model === '' && !lastRowIds.has(added.rowId)) {
+          const input = kept.get(`${formKey}:row:${added.rowId}:model`)
+          if (input) pendingFocus.unshift(input)
+        }
       } else if (form && !form.confirmDiscard && lastConfirmDiscard) {
         // The prompt's buttons are gone; back to the form rather than to nowhere.
         const first = firstField()
@@ -608,7 +747,8 @@ export function createSettingsView(
         if (keep) pendingFocus.unshift(keep)
       }
       lastFormKey = formKey
-      lastStep = form?.kind === 'endpoint-wizard' ? form.step : undefined
+      lastStep = form?.kind === 'provider' ? form.step : undefined
+      lastRowIds = new Set(form?.kind === 'provider' ? form.models.map((row) => row.rowId) : [])
       lastConfirmDiscard = form?.confirmDiscard === true
 
       if (view.error && view.error !== lastError) {
@@ -1040,7 +1180,7 @@ function fieldNodes(
         field: field.id,
       })
     } else {
-      control = context.keptInput(`${key}:${field.id}`, {
+      const input = context.keptInput(`${key}:${field.id}`, {
         value: field.value,
         ariaLabel: field.label,
         ...(field.placeholder !== undefined ? { placeholder: field.placeholder } : {}),
@@ -1050,6 +1190,19 @@ function fieldNodes(
         onEnter: context.submit,
         intentOnCommit: (value) => ({ kind: 'draft-field', field: field.id, value }),
       })
+      control = input
+      if (field.reveal) {
+        const { visible, intent } = field.reveal
+        input.type = visible ? 'text' : 'password'
+        control = node(`${key}:reveal:${field.id}`, 'div', 'settings-secret')
+        reconcile(control, [
+          input,
+          // Rebuilt rather than kept: its glyph follows `visible`.
+          button('settings-secret-toggle', '', visible ? '隐藏 API Key' : '显示 API Key', () => onIntent(intent), {
+            icon: visible ? 'eye-off' : 'eye',
+          }),
+        ])
+      }
     }
     reconcile(wrapper, [label, control, note])
     return wrapper

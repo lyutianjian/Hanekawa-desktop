@@ -26,6 +26,7 @@ import type {
   WireShellSettingsChangeResult,
   WireShellSettingsResult,
 } from '../src/desktop/shellProtocol.js'
+import { providerLabel } from '../src/desktop/renderer/model/providerPresets.js'
 
 /**
  * The settings screen's decisions, all of which live in `model/settings.ts`.
@@ -173,6 +174,11 @@ function openState(overrides: Partial<SettingsState> = {}): SettingsState {
 
 // --- the api key rule --------------------------------------------------------
 
+function endpointWrite(changes: SettingsChange[] | { error: string }): Extract<SettingsChange, { kind: 'set-endpoint' }> | undefined {
+  assert.ok(Array.isArray(changes), JSON.stringify(changes))
+  return changes.find((change): change is Extract<SettingsChange, { kind: 'set-endpoint' }> => change.kind === 'set-endpoint')
+}
+
 test('an untouched key field is omitted from the change, never sent as its mask', () => {
   const state = applySettingsIntent(openState(), { kind: 'edit-endpoint', name: 'main' }).state
   const draft = state.draft
@@ -187,16 +193,14 @@ test('an untouched key field is omitted from the change, never sent as its mask'
   }).state
   assert.ok(edited.draft)
 
-  const change = draftToChange(edited.draft, snapshotOf())
-  assert.ok(!('error' in change))
-  assert.equal('apiKey' in change, false, 'an untouched key must not reach the wire at all')
-  assert.deepEqual(change, {
+  // Nothing about the models changed, so the endpoint is the whole batch.
+  assert.deepEqual(draftToChanges(edited.draft, snapshotOf()), [{
     scope: 'provider',
     kind: 'set-endpoint',
     name: 'main',
     provider: 'anthropic',
     baseUrl: 'https://api.changed',
-  })
+  }])
 })
 
 test('typing in the key field is the only thing that arms it', () => {
@@ -208,10 +212,7 @@ test('typing in the key field is the only thing that arms it', () => {
   }).state
   assert.ok(typed.draft && typed.draft.kind === 'endpoint')
   assert.equal(typed.draft.keyTouched, true)
-
-  const change = draftToChange(typed.draft, snapshotOf())
-  assert.ok(!('error' in change))
-  assert.equal((change as Extract<SettingsChange, { kind: 'set-endpoint' }>).apiKey, 'sk-brand-new-key')
+  assert.equal(endpointWrite(draftToChanges(typed.draft, snapshotOf()))?.apiKey, 'sk-brand-new-key')
 })
 
 test('a key typed and then deleted leaves the saved key alone, as the placeholder promises', () => {
@@ -219,15 +220,19 @@ test('a key typed and then deleted leaves the saved key alone, as the placeholde
   const typed = applySettingsIntent(opened, { kind: 'draft-field', field: 'apiKey', value: 'sk-x' }).state
   const emptied = applySettingsIntent(typed, { kind: 'draft-field', field: 'apiKey', value: '' }).state
   assert.ok(emptied.draft)
-  const change = draftToChange(emptied.draft, snapshotOf())
-  assert.ok(!('error' in change))
-  assert.equal('apiKey' in change, false, 'an empty string would make the host drop the key')
+  // An empty string would make the host drop the key; nothing at all is sent instead.
+  assert.deepEqual(draftToChanges(emptied.draft, snapshotOf()), [])
 })
 
 test('an edited endpoint seeds its key field empty, not with the mask', () => {
   const state = applySettingsIntent(openState(), { kind: 'edit-endpoint', name: 'main' }).state
   assert.ok(state.draft && state.draft.kind === 'endpoint')
   assert.equal(state.draft.apiKey, '', 'the mask must never become the field value')
+  const form = settingsView(state).form
+  assert.ok(form?.kind === 'provider')
+  const key = form.fields.find((field) => field.id === 'apiKey')
+  assert.equal(key?.secret, true)
+  assert.equal(key?.placeholder, '留空表示不修改')
 })
 
 // --- routing options ---------------------------------------------------------
@@ -258,12 +263,12 @@ test('the scoped handler ignores modified keys so the global chords still land',
 })
 
 test('escape unwinds form, then confirmation, then the filter, then the screen — in that order', () => {
-  const withDraft = applySettingsIntent(openState(), { kind: 'new-model' }).state
+  const withDraft = applySettingsIntent(openState(), { kind: 'new-endpoint' }).state
   assert.deepEqual(settingsKeyToIntent({ key: 'Escape' }, withDraft), { kind: 'cancel-draft' })
 
   const confirming = applySettingsIntent(openState(), {
     kind: 'request-remove',
-    target: { kind: 'model', name: 'big' },
+    target: { kind: 'endpoint', name: 'main' },
   }).state
   assert.deepEqual(settingsKeyToIntent({ key: 'Escape' }, confirming), { kind: 'cancel-remove' })
   assert.deepEqual(settingsKeyToIntent({ key: 'Enter' }, confirming), { kind: 'confirm-remove' })
@@ -290,8 +295,8 @@ test('enter only confirms when something is actually pending', () => {
 test('at most one form is open at a time', () => {
   const first = applySettingsIntent(openState(), { kind: 'new-endpoint' }).state
   assert.equal(first.draft?.kind, 'endpoint')
-  const second = applySettingsIntent(first, { kind: 'new-model' }).state
-  assert.equal(second.draft?.kind, 'model', 'the second form replaces the first rather than stacking')
+  const second = applySettingsIntent(first, { kind: 'new-mcp-server' }).state
+  assert.equal(second.draft?.kind, 'mcp-server', 'the second form replaces the first rather than stacking')
 })
 
 test('opening asks for a load; closing does not', () => {
@@ -367,11 +372,26 @@ test('confirming with nothing pending deletes nothing', () => {
   assert.equal(outcome.changes, undefined)
 })
 
-// --- form validation ---------------------------------------------------------
+// --- the provider dialog -----------------------------------------------------
 
-function endpointDraft(
-  overrides: Partial<Extract<SettingsDraft, { kind: 'endpoint' }>> = {},
-): SettingsDraft {
+type EndpointDraft = Extract<SettingsDraft, { kind: 'endpoint' }>
+type ModelRow = EndpointDraft['models'][number]
+
+function modelRow(overrides: Partial<ModelRow> = {}): ModelRow {
+  return {
+    rowId: 'new-0',
+    model: 'claude-new',
+    displayName: '',
+    contextWindow: '',
+    maxOutputTokens: '',
+    supportsImageInput: false,
+    thinkingOff: false,
+    supportedEfforts: [],
+    ...overrides,
+  }
+}
+
+function endpointDraft(overrides: Partial<EndpointDraft> = {}): EndpointDraft {
   return {
     kind: 'endpoint',
     name: 'main',
@@ -380,6 +400,9 @@ function endpointDraft(
     baseUrl: '',
     apiKey: '',
     keyTouched: false,
+    models: [],
+    removedKeys: [],
+    rowSeq: 0,
     ...overrides,
   }
 }
@@ -389,309 +412,219 @@ function pendingOf(...changes: SettingsChange[]): PendingMutation[] {
   return changes.map((change, id) => ({ id, change }))
 }
 
-function modelDraft(overrides: Partial<Extract<SettingsDraft, { kind: 'model' }>> = {}): SettingsDraft {
-  return {
-    kind: 'model',
-    key: 'new',
-    isNew: true,
-    model: 'claude-new',
-    endpoint: 'main',
-    provider: '',
-    contextWindow: '',
-    supportedEfforts: [],
-    longContext1m: '',
-    supportsImageInput: '',
-    maxOutputTokens: '',
-    ...overrides,
-  }
+function apply(state: SettingsState, ...intents: SettingsIntent[]): SettingsState {
+  return intents.reduce((current, intent) => applySettingsIntent(current, intent).state, state)
 }
 
-test('a model form rejects an empty key, an empty id and a duplicate key', () => {
-  assert.deepEqual(draftToChange(modelDraft({ key: '  ' }), snapshotOf()), { error: '键名不能为空。' })
-  assert.deepEqual(draftToChange(modelDraft({ model: '' }), snapshotOf()), { error: '模型 id 不能为空。' })
-  const duplicate = draftToChange(modelDraft({ key: 'big' }), snapshotOf())
-  assert.ok('error' in duplicate && /已经有一个叫 big/.test(duplicate.error))
+function providerForm(state: SettingsState): Extract<NonNullable<ReturnType<typeof settingsView>['form']>, { kind: 'provider' }> {
+  const form = settingsView(state).form
+  assert.ok(form?.kind === 'provider')
+  return form
+}
+
+/** The `main` endpoint's dialog, its one saved model `big` as row `saved-0`. */
+function editMain(snapshot = snapshotOf()): SettingsState {
+  return applySettingsIntent(openState({ category: 'provider', snapshot }), { kind: 'edit-endpoint', name: 'main' }).state
+}
+
+test('a model row rejects an empty id and a non-numeric limit', () => {
+  const fresh = (row: Partial<ModelRow>) => draftToChanges(endpointDraft({ name: 'fresh', models: [modelRow(row)] }), snapshotOf())
+  assert.deepEqual(fresh({ model: '  ', displayName: 'x' }), { error: '模型 ID 不能为空。' })
+  assert.deepEqual(fresh({ contextWindow: '200k' }), { error: 'claude-new 的上下文长度必须是正整数。' })
+  assert.ok('error' in fresh({ maxOutputTokens: '-5' }))
 })
 
-test('a model form rejects a non-numeric context window', () => {
-  const result = draftToChange(modelDraft({ contextWindow: '200k' }), snapshotOf())
-  assert.ok('error' in result && /必须是数字/.test(result.error))
-  const negative = draftToChange(modelDraft({ maxOutputTokens: '-5' }), snapshotOf())
-  assert.ok('error' in negative)
+test('a row added and never filled in is not a model', () => {
+  const state = apply(editMain(), { kind: 'add-model-row' })
+  assert.equal(providerForm(state).models.length, 2)
+  assert.deepEqual(draftToChanges(state.draft!, snapshotOf()), [])
 })
 
-test('a model with neither endpoint nor provider is rejected rather than saved unusable', () => {
-  const result = draftToChange(modelDraft({ endpoint: '', provider: '' }), snapshotOf())
-  assert.ok('error' in result)
-})
-
-test('blank numeric fields are omitted, not sent as zero', () => {
-  const change = draftToChange(modelDraft(), snapshotOf())
-  assert.ok(!('error' in change))
-  assert.equal('contextWindow' in change, false)
-  assert.equal('maxOutputTokens' in change, false)
+test('blank numeric fields and switches left at their default are omitted, not sent', () => {
+  const changes = draftToChanges(endpointDraft({ name: 'fresh', models: [modelRow()] }), snapshotOf())
+  assert.ok(Array.isArray(changes))
   // Off is absence, not `false`: `applyProviderChange` rebuilds the whole
   // `ModelConfig`, so an omitted field is how the switch gets removed.
-  assert.equal('longContext1m' in change, false)
-  assert.equal('supportsImageInput' in change, false)
+  assert.deepEqual(changes[1], { scope: 'provider', kind: 'set-model', key: 'claude-new', model: 'claude-new', endpoint: 'fresh' })
 })
 
-test('the 1M header switch round-trips through the model form', () => {
+test('the image-input and thinking switches round-trip through the dialog', () => {
   const snapshot = snapshotOf({
-    models: [
-      { key: 'big', model: 'claude-big', endpoint: 'main', contextWindow: 1_000_000, longContext1m: true, resolves: true },
-    ],
-    defaultModel: 'big',
+    models: [{ key: 'big', model: 'claude-big', endpoint: 'main', supportsImageInput: true, imageCapable: true, resolves: true }],
     routing: { main: 'big', plan: 'inherit', compact: 'inherit', subagent: [] },
   })
+  // Seeded from the snapshot, or editing another field would silently reset
+  // the user's declaration.
+  const opened = editMain(snapshot)
+  const seeded = providerForm(opened).models[0]
+  assert.equal(seeded?.imageInput, true)
+  assert.equal(seeded?.thinking, true)
 
-  // Seeded from the snapshot, or editing a model would silently switch it off.
-  const opened = applySettingsIntent(
-    openState({ category: 'provider', snapshot }),
-    { kind: 'edit-model', key: 'big' },
-  ).state
-  assert.ok(opened.draft?.kind === 'model')
-  assert.equal(opened.draft.longContext1m, 'on')
-
-  const change = draftToChange(opened.draft, snapshot)
-  assert.ok(!('error' in change) && change.kind === 'set-model')
-  assert.equal(change.longContext1m, true)
-
-  // Optimistic: the row must not blink back to off between save and refresh.
-  const projected = projectSnapshot(snapshot, pendingOf(change))
-  assert.equal(projected.models.find((model) => model.key === 'big')?.longContext1m, true)
-
-  // And the model list says which models carry it.
-  const card = settingsView(openState({ category: 'provider', snapshot })).cards
-    .find((card) => card.id === 'models')
-  const row = card?.rows.find((row) => row.id === 'model:big')
-  assert.match(row?.detail ?? '', /1M 请求头/)
-})
-
-test('the image-input switch round-trips through the model form', () => {
-  const snapshot = snapshotOf({
-    models: [
-      {
-        key: 'big',
-        model: 'claude-big',
-        endpoint: 'main',
-        supportsImageInput: true,
-        imageCapable: true,
-        resolves: true,
-      },
-    ],
-    defaultModel: 'big',
-    routing: { main: 'big', plan: 'inherit', compact: 'inherit', subagent: [] },
-  })
-
-  // Seeded from the snapshot, or editing another field would silently reset the
-  // user's declaration — the carry used to do this job; the form owns it now.
-  const opened = applySettingsIntent(
-    openState({ category: 'provider', snapshot }),
-    { kind: 'edit-model', key: 'big' },
-  ).state
-  assert.ok(opened.draft?.kind === 'model')
-  assert.equal(opened.draft.supportsImageInput, 'on')
-
-  const change = draftToChange(opened.draft, snapshot)
-  assert.ok(!('error' in change) && change.kind === 'set-model')
-  assert.equal(change.supportsImageInput, true)
+  const off = apply(opened, { kind: 'model-row-switch', rowId: 'saved-0', field: 'thinking', value: false })
+  assert.equal(providerForm(off).models[0]?.thinking, false)
+  const changes = draftToChanges(off.draft!, snapshot)
+  assert.deepEqual(changes, [{
+    scope: 'provider',
+    kind: 'set-model',
+    key: 'big',
+    model: 'claude-big',
+    endpoint: 'main',
+    supportsImageInput: true,
+    thinkingOff: true,
+  }])
 
   // Optimistic: the raw switch and a kept-alive marker must not blink off
-  // between save and refresh. The marker cannot be recomputed renderer-side
-  // (that is the host's registry call), so it survives only while the switch
-  // the change sends stays on.
-  const projected = projectSnapshot(snapshot, pendingOf(change))
-  const row = projected.models.find((model) => model.key === 'big')
-  assert.equal(row?.supportsImageInput, true)
-  assert.equal(row?.imageCapable, true)
+  // between save and refresh.
+  const projected = projectSnapshot(snapshot, pendingOf(...(changes as SettingsChange[]))).models.find((model) => model.key === 'big')
+  assert.equal(projected?.supportsImageInput, true)
+  assert.equal(projected?.imageCapable, true)
+  assert.equal(projected?.thinkingOff, true)
 
-  // Switching it off omits the field, and the dropped marker is immediate —
-  // the one direction that must never lag behind the host.
-  const off = draftToChange({ ...opened.draft, supportsImageInput: '' }, snapshot)
-  assert.ok(!('error' in off) && off.kind === 'set-model')
-  assert.equal('supportsImageInput' in off, false)
-  const projectedOff = projectSnapshot(snapshot, pendingOf(off))
-  const offRow = projectedOff.models.find((model) => model.key === 'big')
+  // Switching image input off omits the field, and the dropped marker is
+  // immediate — the one direction that must never lag behind the host.
+  const imageOff = apply(opened, { kind: 'model-row-switch', rowId: 'saved-0', field: 'imageInput', value: false })
+  const offChanges = draftToChanges(imageOff.draft!, snapshot) as SettingsChange[]
+  assert.equal('supportsImageInput' in offChanges[0]!, false)
+  const offRow = projectSnapshot(snapshot, pendingOf(...offChanges)).models.find((model) => model.key === 'big')
   assert.equal(offRow?.supportsImageInput, undefined)
   assert.equal(offRow?.imageCapable, undefined)
-
-  // The form offers the switch with its caveat, and the list marks capability
-  // from the host-resolved field, never the raw switch.
-  const form = settingsView(opened).form
-  assert.ok(form && form.kind !== 'mcp-server')
-  const field = form.fields.find((field) => field.id === 'supportsImageInput')
-  assert.equal(field?.toggle, true)
-  assert.equal(field?.note, '开启后，此模型可接收图片。请确认该模型及接入点支持当前协议的图像输入。')
-
-  const card = settingsView(openState({ category: 'provider', snapshot })).cards
-    .find((card) => card.id === 'models')
-  assert.match(card?.rows.find((row) => row.id === 'model:big')?.detail ?? '', /支持图像/)
 })
 
-test("a new endpoint's models carry what the service reported about them", () => {
-  const changes = draftToChanges(
-    endpointDraft({
-      name: 'fresh',
-      step: 'models',
-      listed: [{ id: 'claude-x', contextWindow: 200000, maxOutputTokens: 64000, imageInput: true }, { id: 'plain' }],
-      picked: ['claude-x', 'typed-in'],
-    }),
-    snapshotOf({ defaultModel: undefined }),
-  )
-  assert.deepEqual(changes, [
-    { scope: 'provider', kind: 'set-endpoint', name: 'fresh', provider: 'anthropic' },
-    {
-      scope: 'provider',
-      kind: 'set-model',
-      key: 'claude-x',
-      model: 'claude-x',
-      endpoint: 'fresh',
-      contextWindow: 200000,
-      maxOutputTokens: 64000,
-      supportsImageInput: true,
-    },
-    // Typed in by hand, so nothing is known about it: every field stays at its default.
-    { scope: 'provider', kind: 'set-model', key: 'typed-in', model: 'typed-in', endpoint: 'fresh' },
-    { scope: 'provider', kind: 'set-default-model', key: 'claude-x' },
-  ])
+test('a row opens to its switches and limits, and shows the effort levels only while thinking is on', () => {
+  let state = editMain()
+  assert.equal(providerForm(state).models[0]?.expanded, false)
+  state = apply(state, { kind: 'toggle-model-row', rowId: 'saved-0' }, { kind: 'toggle-row-efforts', rowId: 'saved-0' })
+  assert.equal(state.draftEdited, undefined, 'opening a row is not an edit')
+  const row = providerForm(state).models[0]!
+  assert.equal(row.expanded, true)
+  assert.equal(row.effortsOpen, true)
+  assert.equal(row.context, '200K')
+  assert.equal(row.contextWindow, '200000')
 })
 
-test('the supported effort levels round-trip through the model form', () => {
+test('the effort levels are one switch each, stored in ladder order, and the last one stays on', () => {
   const snapshot = snapshotOf({
-    models: [
-      { key: 'big', model: 'claude-big', endpoint: 'main', supportedEfforts: ['low', 'high'], resolves: true },
-    ],
-    defaultModel: 'big',
+    models: [{ key: 'big', model: 'claude-big', endpoint: 'main', supportedEfforts: ['low', 'high'], resolves: true }],
     routing: { main: 'big', plan: 'inherit', compact: 'inherit', subagent: [] },
   })
+  let state = editMain(snapshot)
+  let row = providerForm(state).models[0]!
+  assert.deepEqual(row.efforts.filter((level) => level.on).map((level) => level.level), ['low', 'high'])
+  assert.equal(row.effortSummary, '低、高')
 
-  const opened = applySettingsIntent(
-    openState({ category: 'provider', snapshot }),
-    { kind: 'edit-model', key: 'big' },
-  ).state
-  assert.ok(opened.draft?.kind === 'model')
-  assert.deepEqual(opened.draft.supportedEfforts, ['low', 'high'])
+  // Switching `medium` on fills the gap; the set stays in ladder order, not click order.
+  state = apply(state, { kind: 'model-row-effort', rowId: 'saved-0', level: 'medium' })
+  const changes = draftToChanges(state.draft!, snapshot) as SettingsChange[]
+  assert.deepEqual((changes[0] as Extract<SettingsChange, { kind: 'set-model' }>).supportedEfforts, ['low', 'medium', 'high'])
 
-  // Checking `medium` fills the gap; the set stays in ladder order, not click order.
-  const toggled = applySettingsIntent(opened, { kind: 'model-toggle-effort', level: 'medium' }).state
-  assert.ok(toggled.draft?.kind === 'model')
-  assert.deepEqual(toggled.draft.supportedEfforts, ['low', 'medium', 'high'])
+  // Every level on is stored as no restriction rather than freezing today's five into the config.
+  state = apply(state, { kind: 'model-row-effort', rowId: 'saved-0', level: 'xhigh' }, { kind: 'model-row-effort', rowId: 'saved-0', level: 'max' })
+  assert.ok(state.draft?.kind === 'endpoint')
+  assert.deepEqual(state.draft.models[0]?.supportedEfforts, [])
+  assert.equal(providerForm(state).models[0]?.effortSummary, '全部')
 
-  const change = draftToChange(toggled.draft, snapshot)
-  assert.ok(!('error' in change) && change.kind === 'set-model')
-  assert.deepEqual(change.supportedEfforts, ['low', 'medium', 'high'])
-
-  const projected = projectSnapshot(snapshot, pendingOf(change))
-  assert.deepEqual(
-    projected.models.find((model) => model.key === 'big')?.supportedEfforts,
-    ['low', 'medium', 'high'],
-  )
-
-  const card = settingsView(openState({ category: 'provider', snapshot })).cards
-    .find((card) => card.id === 'models')
-  assert.match(card?.rows.find((row) => row.id === 'model:big')?.detail ?? '', /思考等级 低、高/)
+  // Down to one level: that one is locked, and switching it changes nothing.
+  for (const level of ['low', 'medium', 'high', 'xhigh'] as const) state = apply(state, { kind: 'model-row-effort', rowId: 'saved-0', level })
+  row = providerForm(state).models[0]!
+  assert.deepEqual(row.efforts.filter((level) => level.locked).map((level) => level.level), ['max'])
+  assert.deepEqual(apply(state, { kind: 'model-row-effort', rowId: 'saved-0', level: 'max' }).draft, state.draft)
 })
 
-test('picking nothing and picking everything both mean "no restriction"', () => {
-  assert.equal('supportedEfforts' in draftToChange(modelDraft(), snapshotOf()), false)
-  const all = draftToChange(
-    modelDraft({ supportedEfforts: ['low', 'medium', 'high', 'xhigh', 'max'] }),
-    snapshotOf(),
-  )
-  assert.ok(!('error' in all))
-  // Writing the full ladder out would freeze today's five levels into the config
-  // file, so it is omitted exactly like an empty selection.
-  assert.equal('supportedEfforts' in all, false)
-})
+test('a display name is the key: a rename travels as rename-model, before any write', () => {
+  const renamed = apply(editMain(), { kind: 'model-row-field', rowId: 'saved-0', field: 'displayName', value: 'huge' })
+  assert.deepEqual(draftToChanges(renamed.draft!, snapshotOf()), [{ scope: 'provider', kind: 'rename-model', from: 'big', to: 'huge' }])
 
-test('the effort field offers every level with the picked ones marked', () => {
-  const state = applySettingsIntent(
-    openState({ category: 'provider', snapshot: snapshotOf() }),
-    { kind: 'new-model' },
-  ).state
-  const withPick = applySettingsIntent(state, { kind: 'model-toggle-effort', level: 'high' }).state
-  const form = settingsView(withPick).form
-  assert.ok(form && form.kind !== 'mcp-server')
-  const field = form.fields.find((field) => field.id === 'supportedEfforts')
-  assert.ok(field?.multi)
-  assert.deepEqual(field.multi.options.map((option) => option.value), [
-    'low', 'medium', 'high', 'xhigh', 'max',
-  ])
-  assert.deepEqual(field.multi.selected, ['high'])
-  assert.equal(field.multi.summary, '高')
-  assert.equal(field.multi.open, false, 'the menu is closed until its trigger is pressed')
-
-  // Nothing picked reads as 全部 rather than an empty pill.
-  const empty = settingsView(state).form
-  assert.ok(empty && empty.kind !== 'mcp-server')
-  assert.equal(empty.fields.find((field) => field.id === 'supportedEfforts')?.multi?.summary, '全部')
-})
-
-test('renaming a model emits the rename before the write', () => {
-  const changes = draftToChanges(
-    modelDraft({ key: 'huge', isNew: false, originalKey: 'big', model: 'claude-big' }),
-    snapshotOf(),
-  )
+  const edited = apply(renamed, { kind: 'model-row-field', rowId: 'saved-0', field: 'maxOutputTokens', value: '8000' })
+  const changes = draftToChanges(edited.draft!, snapshotOf())
   assert.ok(Array.isArray(changes))
-  assert.equal(changes.length, 2)
-  assert.deepEqual(changes[0], { scope: 'provider', kind: 'rename-model', from: 'big', to: 'huge' })
-  assert.equal(changes[1]?.kind, 'set-model')
+  assert.deepEqual(changes.map((change) => change.kind), ['rename-model', 'set-model'])
+  assert.equal(changes[1]?.kind === 'set-model' && changes[1].key, 'huge')
 })
 
-test('renaming an endpoint emits the rename before the write, and moves its models', () => {
-  const changes = draftToChanges(
-    endpointDraft({ name: 'backup', isNew: false, originalName: 'main' }),
-    snapshotOf(),
+test('a key already taken elsewhere asks for a display name, and a swap asks for two saves', () => {
+  const taken = draftToChanges(endpointDraft({ name: 'fresh', models: [modelRow({ model: 'big' })] }), snapshotOf())
+  assert.deepEqual(taken, { error: '模型名「big」已被占用，请填写不同的显示名。' })
+  const named = draftToChanges(endpointDraft({ name: 'fresh', models: [modelRow({ model: 'big', displayName: 'fresh-big' })] }), snapshotOf())
+  assert.ok(Array.isArray(named))
+
+  const snapshot = snapshotOf({
+    models: [
+      { key: 'a', model: 'm-a', endpoint: 'main', resolves: true },
+      { key: 'b', model: 'm-b', endpoint: 'main', resolves: true },
+    ],
+  })
+  const swapped = apply(
+    editMain(snapshot),
+    { kind: 'model-row-field', rowId: 'saved-0', field: 'displayName', value: 'b' },
+    { kind: 'model-row-field', rowId: 'saved-1', field: 'displayName', value: 'a' },
   )
+  assert.deepEqual(draftToChanges(swapped.draft!, snapshot), { error: '有模型互换了名字，请分两次保存。' })
+})
+
+test('deleting a saved row sends remove-model first, so its name is free again', () => {
+  const state = apply(
+    editMain(),
+    { kind: 'remove-model-row', rowId: 'saved-0' },
+    { kind: 'add-model-row' },
+    { kind: 'model-row-field', rowId: 'new-0', field: 'model', value: 'big' },
+  )
+  const changes = draftToChanges(state.draft!, snapshotOf())
   assert.ok(Array.isArray(changes))
+  assert.deepEqual(changes.map((change) => change.kind), ['remove-model', 'set-model'])
+})
+
+test('renaming an endpoint is one rename, which moves its models with it', () => {
+  const state = apply(editMain(), { kind: 'draft-field', field: 'name', value: 'backup' })
+  const changes = draftToChanges(state.draft!, snapshotOf())
   // Never `set-endpoint` alone: that leaves the old endpoint behind with every
   // model still pointing at it, and deleting the leftover takes them with it.
-  assert.deepEqual(changes[0], { scope: 'provider', kind: 'rename-endpoint', from: 'main', to: 'backup' })
-  assert.equal(changes[1]?.kind, 'set-endpoint')
+  assert.deepEqual(changes, [{ scope: 'provider', kind: 'rename-endpoint', from: 'main', to: 'backup' }])
 
-  const projected = projectSnapshot(snapshotOf(), pendingOf(changes[0]!))
+  const projected = projectSnapshot(snapshotOf(), pendingOf(...(changes as SettingsChange[])))
   assert.deepEqual(projected.endpoints.map((endpoint) => endpoint.name), ['backup'])
   assert.equal(projected.models.find((model) => model.key === 'big')?.endpoint, 'backup')
 })
 
-test('the form for an existing endpoint is anchored by the name it was opened on', () => {
+test('the dialog for an existing endpoint is anchored by the name it was opened on', () => {
   // The anchor keys the form's kept nodes, so anchoring on the live `name`
   // rebuilt the form — and blurred the field — on every character typed.
-  const opened = applySettingsIntent(openState(), { kind: 'edit-endpoint', name: 'main' }).state
-  const typed = applySettingsIntent(opened, { kind: 'draft-field', field: 'name', value: 'mai' }).state
-  const form = settingsView(typed).form
-  assert.ok(form)
-  assert.deepEqual(form.anchor, { cardId: 'endpoints', rowId: 'endpoint:main' })
-  assert.equal(form.title, '编辑接入点 main')
+  const typed = apply(editMain(), { kind: 'draft-field', field: 'name', value: 'mai' })
+  const form = providerForm(typed)
+  assert.deepEqual(form.anchor, { cardId: 'providers', rowId: 'endpoint:main' })
+  assert.deepEqual(form.header, { initial: 'M', name: 'mai', protocol: providerLabel('anthropic') })
+  assert.equal(form.modelCount, '1 个模型')
 })
 
-test('editing a model without renaming it emits one change', () => {
-  const changes = draftToChanges(
-    modelDraft({ key: 'big', isNew: false, originalKey: 'big', model: 'claude-big-2' }),
-    snapshotOf(),
-  )
-  assert.ok(Array.isArray(changes))
-  assert.equal(changes.length, 1)
+test('saving a dialog nobody changed sends nothing and closes it', () => {
+  const outcome = applySettingsIntent(editMain(), { kind: 'submit-draft' })
+  assert.equal(outcome.changes, undefined)
+  assert.equal(outcome.state.draft, undefined)
 })
 
-test('a duplicate endpoint name is rejected only when creating', () => {
-  const dup = draftToChange(
-    endpointDraft({ name: 'main', isNew: true }),
-    snapshotOf(),
-  )
-  assert.ok('error' in dup)
-  const edit = draftToChange(
-    endpointDraft({ name: 'main', isNew: false, originalName: 'main' }),
-    snapshotOf(),
-  )
-  assert.ok(!('error' in edit))
-  // A rename onto another endpoint's name is the same collision as a creation.
-  const collide = draftToChange(
-    endpointDraft({ name: 'main', isNew: false, originalName: 'backup' }),
-    snapshotOf(),
-  )
-  assert.ok('error' in collide)
+test('a duplicate endpoint name is rejected on creation and on a rename onto it', () => {
+  const models = [modelRow({ model: 'other' })]
+  assert.ok('error' in draftToChanges(endpointDraft({ name: 'main', models }), snapshotOf()))
+  assert.ok(!('error' in draftToChanges(endpointDraft({ name: 'main', isNew: false, originalName: 'main', models }), snapshotOf())))
+  assert.ok('error' in draftToChanges(endpointDraft({ name: 'main', isNew: false, originalName: 'backup', models }), snapshotOf()))
+})
+
+test('models that name no configured endpoint get their own row and keep their reference', () => {
+  const card = settingsView(openState()).cards.find((card) => card.id === 'providers')
+  const row = card?.rows.find((row) => row.id === 'endpoint:')
+  assert.equal(row?.label, '未归属服务商的模型')
+  assert.match(row?.warning ?? '', /无法解析：broken/)
+
+  let state = apply(openState(), { kind: 'edit-unassigned' })
+  const form = providerForm(state)
+  assert.deepEqual(form.fields, [])
+  assert.equal(form.probe, undefined)
+  assert.equal(form.canAddModel, false)
+  assert.deepEqual(form.models.map((model) => model.model), ['gone'])
+
+  state = apply(state, { kind: 'model-row-field', rowId: 'saved-0', field: 'contextWindow', value: '64000' })
+  assert.deepEqual(draftToChanges(state.draft!, snapshotOf()), [
+    { scope: 'provider', kind: 'set-model', key: 'broken', model: 'gone', endpoint: 'missing', contextWindow: 64000 },
+  ])
 })
 
 // --- the view model ----------------------------------------------------------
@@ -816,14 +749,14 @@ test('a page that has not loaded says so by staying silent, not by claiming no m
 test('typing does not disarm a pending delete or clear an error', () => {
   const confirming = applySettingsIntent(openState({ error: '写入失败' }), {
     kind: 'request-remove',
-    target: { kind: 'model', name: 'big' },
+    target: { kind: 'endpoint', name: 'main' },
   }).state
   const typed = applySettingsIntent({ ...confirming, error: '写入失败' }, {
     kind: 'search',
     query: 'MCP',
   }).state
   assert.equal(typed.query, 'MCP')
-  assert.deepEqual(typed.confirmingRemove, { kind: 'model', name: 'big' })
+  assert.deepEqual(typed.confirmingRemove, { kind: 'endpoint', name: 'main' })
   assert.equal(typed.error, '写入失败')
 })
 
@@ -881,7 +814,7 @@ test('picking a value closes the dropdown, and so does anything else on screen',
     { kind: 'select-category', category: 'general' },
     { kind: 'search', query: 'MCP' },
     { kind: 'clear-search' },
-    { kind: 'request-remove', target: { kind: 'model', name: 'big' } },
+    { kind: 'request-remove', target: { kind: 'endpoint', name: 'main' } },
     { kind: 'close' },
   ] as const satisfies readonly SettingsIntent[]) {
     assert.equal(
@@ -892,7 +825,7 @@ test('picking a value closes the dropdown, and so does anything else on screen',
   }
   const armed = applySettingsIntent(open, {
     kind: 'request-remove',
-    target: { kind: 'model', name: 'big' },
+    target: { kind: 'endpoint', name: 'main' },
   }).state
   assert.equal(applySettingsIntent(armed, { kind: 'cancel-remove' }).state.openMenu, undefined)
 })
@@ -905,7 +838,7 @@ test('expanding a picker does not throw away an unread error', () => {
 })
 
 test('escape closes an open dropdown before it touches the form', () => {
-  const drafting = applySettingsIntent(openState(), { kind: 'new-model' }).state
+  const drafting = applySettingsIntent(openState(), { kind: 'new-endpoint' }).state
   const withMenu = applySettingsIntent(drafting, { kind: 'toggle-menu', menu: 'row:x' }).state
   assert.deepEqual(settingsKeyToIntent({ key: 'Escape' }, withMenu), { kind: 'close-menu' })
   // A form field's menu is drawn on top of the form, so dismissing it must not
@@ -967,32 +900,31 @@ test('no card note spells out a file path or an internal value', () => {
   }
 })
 
-test('an unresolvable model row carries a warning instead of being dropped', () => {
-  const view = settingsView(openState())
-  const models = view.cards.find((card) => card.id === 'models')
-  const broken = models?.rows.find((row) => row.id === 'model:broken')
-  assert.ok(broken, 'the row exists')
-  assert.match(broken.warning ?? '', /无法解析/)
+test('the provider list is one row per endpoint, its protocol and model count, and no key', () => {
+  const card = settingsView(openState()).cards.find((card) => card.id === 'providers')
+  const main = card?.rows.find((row) => row.id === 'endpoint:main')
+  assert.equal(main?.detail, `${providerLabel('anthropic')} · 1 个模型`)
+  assert.ok(main?.control.kind === 'buttons')
+  assert.deepEqual(main.control.buttons.map((button) => button.intent.kind), ['edit-endpoint', 'request-remove'])
+  assert.equal(card?.footerButtons?.[0]?.intent.kind, 'new-endpoint')
+  assert.doesNotMatch(JSON.stringify(card), /sk-/)
 })
 
-test('the default model row offers no redundant "set default" button', () => {
-  const view = settingsView(openState())
-  const models = view.cards.find((card) => card.id === 'models')
-  const big = models?.rows.find((row) => row.id === 'model:big')
-  assert.ok(big && big.control.kind === 'buttons')
-  assert.ok(
-    !big.control.buttons.some((button) => button.intent.kind === 'set-default-model'),
-    'big is already the default',
-  )
-  const broken = models?.rows.find((row) => row.id === 'model:broken')
-  assert.ok(broken && broken.control.kind === 'buttons')
-  assert.ok(broken.control.buttons.some((button) => button.intent.kind === 'set-default-model'))
-})
+test('the default model is a select at the top of the routing card', () => {
+  const routing = settingsView(openState()).cards.find((card) => card.id === 'routing')
+  const row = routing?.rows[0]
+  assert.equal(row?.id, 'routing:default')
+  assert.ok(row?.control.kind === 'select')
+  assert.equal(row.control.value, 'big')
+  assert.deepEqual(row.control.choices.map((choice) => choice.value), ['big', 'broken'])
+  assert.deepEqual(row.control.intentOnChange('broken'), { kind: 'set-default-model', key: 'broken' })
 
-test('no endpoint row ever renders a raw key, only what the wire masked', () => {
-  const view = settingsView(openState())
-  const endpoints = view.cards.find((card) => card.id === 'endpoints')
-  assert.match(endpoints?.rows[0]?.detail ?? '', /sk-a\.\.\.ijkl/)
+  // Nothing chosen yet: the select says so instead of claiming the first model.
+  const unset = settingsView(openState({ snapshot: snapshotOf({ defaultModel: undefined }) }))
+    .cards.find((card) => card.id === 'routing')?.rows[0]
+  assert.ok(unset?.control.kind === 'select')
+  assert.equal(unset.control.value, '')
+  assert.deepEqual(unset.control.choices[0], { value: '', label: '未设置' })
 })
 
 test('a routing row has a select seeded with the current value', () => {
@@ -1008,10 +940,9 @@ test('a routing row has a select seeded with the current value', () => {
   })
 })
 
-test('a routing.main that outranks the default model says so in both cards', () => {
+test('a routing.main that outranks the default model says so on both rows', () => {
   // `resolveModelKeyFor({ kind: 'main' })` reads routing first, so this config
-  // starts new sessions on `broken`… except `broken` does not resolve, so the
-  // one that actually wins here is the default. Both halves are the point.
+  // starts new sessions on `small`.
   const overriding = snapshotOf({
     defaultModel: 'big',
     models: [
@@ -1020,17 +951,16 @@ test('a routing.main that outranks the default model says so in both cards', () 
     ],
     routing: { main: 'small', plan: 'inherit', compact: 'inherit', subagent: [] },
   })
-  const view = settingsView(openState({ snapshot: overriding }))
-  assert.match(view.cards.find((card) => card.id === 'models')?.note ?? '', /实际从 small 开始/)
-  const main = view.cards.find((card) => card.id === 'routing')?.rows.find((row) => row.id === 'routing:main')
-  assert.match(main?.detail ?? '', /覆盖默认模型 big/)
+  const rows = settingsView(openState({ snapshot: overriding })).cards.find((card) => card.id === 'routing')?.rows
+  assert.match(rows?.find((row) => row.id === 'routing:default')?.detail ?? '', /实际从 small 开始/)
+  assert.match(rows?.find((row) => row.id === 'routing:main')?.detail ?? '', /覆盖默认模型 big/)
 
   // An unresolvable routing target degrades to the default, so nothing is
   // claimed to be overridden.
   const degraded = settingsView(openState({
     snapshot: snapshotOf({ routing: { main: 'broken', plan: 'inherit', compact: 'inherit', subagent: [] } }),
   }))
-  assert.equal(degraded.cards.find((card) => card.id === 'models')?.note, '默认模型：big')
+  assert.equal(degraded.cards.find((card) => card.id === 'routing')?.rows[0]?.detail, '新会话使用的模型')
 })
 
 test('"设为默认" releases a routing.main that would outrank it', () => {
@@ -1596,13 +1526,15 @@ test('a failed removal names the row it was about, so the error can sit under it
 })
 
 test('a submitted form stays open until the host answers, and a refusal keeps what was typed', async () => {
-  const opened = applySettingsIntent(openState(), { kind: 'new-model' }).state
-  const typed = [
-    { kind: 'draft-field', field: 'key', value: 'huge' },
-    { kind: 'draft-field', field: 'model', value: 'claude-huge' },
-  ].reduce((state, intent) => applySettingsIntent(state, intent as SettingsIntent).state, opened)
+  const typed = apply(
+    openState(),
+    { kind: 'new-endpoint' },
+    { kind: 'pick-preset', preset: 'openai' },
+    { kind: 'add-model-row' },
+    { kind: 'model-row-field', rowId: 'new-0', field: 'model', value: 'gpt-huge' },
+  )
   const submitted = applySettingsIntent(typed, { kind: 'submit-draft' })
-  assert.equal(submitted.state.draft?.kind, 'model', 'the form closed before the reply')
+  assert.equal(submitted.state.draft?.kind, 'endpoint', 'the form closed before the reply')
   assert.equal(submitted.state.draftSubmit, submitted.pending?.[0]?.id)
   assert.deepEqual(applySettingsIntent(submitted.state, { kind: 'submit-draft' }).changes, undefined, 'a second Enter sent it twice')
 
@@ -1616,7 +1548,7 @@ test('a submitted form stays open until the host answers, and a refusal keeps wh
     submitted.pending!,
   )
   assert.equal(refused.error, 'disk full')
-  assert.equal(refused.draft?.kind === 'model' && refused.draft.key, 'huge')
+  assert.equal(refused.draft?.kind === 'endpoint' && refused.draft.models[0]?.model, 'gpt-huge')
   assert.equal(refused.draftSubmit, undefined, 'the form must be submittable again')
 
   const accepted = await runSettingsChanges(fakeClient(), submitted.state, submitted.pending!)
@@ -1625,19 +1557,22 @@ test('a submitted form stays open until the host answers, and a refusal keeps wh
 })
 
 test('dismissing an edited form asks first; an untouched one just closes', () => {
-  const opened = applySettingsIntent(openState(), { kind: 'new-model' }).state
+  const opened = editMain()
   assert.equal(applySettingsIntent(opened, { kind: 'cancel-draft' }).state.draft, undefined)
+  // A row field committing its unchanged value on blur is not an edit either.
+  const blurred = apply(opened, { kind: 'model-row-field', rowId: 'saved-0', field: 'model', value: 'claude-big' })
+  assert.equal(applySettingsIntent(blurred, { kind: 'cancel-draft' }).state.draft, undefined)
 
-  const edited = applySettingsIntent(opened, { kind: 'draft-field', field: 'key', value: 'h' }).state
+  const edited = apply(opened, { kind: 'model-row-field', rowId: 'saved-0', field: 'displayName', value: 'h' })
   const asked = applySettingsIntent(edited, { kind: 'cancel-draft' }).state
-  assert.equal(asked.draft?.kind, 'model')
+  assert.equal(asked.draft?.kind, 'endpoint')
   assert.equal(asked.discardArmed, true)
   assert.equal(settingsView(asked).form?.confirmDiscard, true)
   assert.deepEqual(settingsKeyToIntent({ key: 'Escape' }, asked), { kind: 'keep-editing' })
 
   const kept = applySettingsIntent(asked, { kind: 'keep-editing' }).state
   assert.equal(kept.discardArmed, undefined)
-  assert.equal(kept.draft?.kind, 'model')
+  assert.equal(kept.draft?.kind, 'endpoint')
   assert.equal(applySettingsIntent(asked, { kind: 'discard-draft' }).state.draft, undefined)
 })
 
@@ -1646,18 +1581,18 @@ test('dismissing an edited form asks first; an untouched one just closes', () =>
 test('a pending removal takes the row off screen before the host answers', () => {
   const armed = applySettingsIntent(openState(), {
     kind: 'request-remove',
-    target: { kind: 'model', name: 'big' },
+    target: { kind: 'endpoint', name: 'main' },
   }).state
   const outcome = applySettingsIntent(armed, { kind: 'confirm-remove' })
 
-  assert.deepEqual(outcome.changes, [{ scope: 'provider', kind: 'remove-model', key: 'big' }])
+  assert.deepEqual(outcome.changes, [{ scope: 'provider', kind: 'remove-endpoint', name: 'main' }])
   assert.equal(outcome.pending?.length, 1, 'the change is parked so the view can draw it')
 
   const view = settingsView(outcome.state)
-  const models = view.cards.find((card) => card.id === 'models')
-  assert.deepEqual(models?.rows.map((row) => row.id), ['model:broken'], 'no second click needed')
+  const providers = view.cards.find((card) => card.id === 'providers')
+  assert.deepEqual(providers?.rows.map((row) => row.id), ['endpoint:'], 'no second click needed')
   // The snapshot itself is untouched, which is what makes the rollback free.
-  assert.equal(outcome.state.snapshot?.models.length, 2)
+  assert.equal(outcome.state.snapshot?.endpoints.length, 1)
 })
 
 test('removing an endpoint projects its models away too', () => {
@@ -1700,7 +1635,7 @@ test('an import in flight is drawn on the button that started it', () => {
 test('a failed change retires its pending row so the real snapshot comes back', async () => {
   const armed = applySettingsIntent(openState(), {
     kind: 'request-remove',
-    target: { kind: 'model', name: 'big' },
+    target: { kind: 'endpoint', name: 'main' },
   }).state
   const outcome = applySettingsIntent(armed, { kind: 'confirm-remove' })
 
@@ -1714,21 +1649,17 @@ test('a failed change retires its pending row so the real snapshot comes back', 
     outcome.pending!,
   )
   assert.deepEqual(after.pending, [], 'the optimistic row is withdrawn')
-  const models = settingsView(after).cards.find((card) => card.id === 'models')
-  assert.ok(models?.rows.some((row) => row.id === 'model:big'), 'and the row is back')
+  const providers = settingsView(after).cards.find((card) => card.id === 'providers')
+  assert.ok(providers?.rows.some((row) => row.id === 'endpoint:main'), 'and the row is back')
   assert.match(after.error ?? '', /在跑/)
 })
 
 // --- forms in their own card --------------------------------------------------
 
-test('a new-model form is anchored to the models card, an edit to its row', () => {
-  const created = settingsView(applySettingsIntent(openState(), { kind: 'new-model' }).state)
-  assert.deepEqual(created.form?.anchor, { cardId: 'models' })
-
-  const edited = settingsView(
-    applySettingsIntent(openState(), { kind: 'edit-model', key: 'big' }).state,
-  )
-  assert.deepEqual(edited.form?.anchor, { cardId: 'models', rowId: 'model:big' })
+test('a new provider dialog is anchored to the providers card, an edit to its row', () => {
+  const created = settingsView(applySettingsIntent(openState(), { kind: 'new-endpoint' }).state)
+  assert.deepEqual(created.form?.anchor, { cardId: 'providers' })
+  assert.deepEqual(providerForm(editMain()).anchor, { cardId: 'providers', rowId: 'endpoint:main' })
 })
 
 test('a delete confirmation is anchored to the row it is about, and names the cascade', () => {
@@ -1738,102 +1669,103 @@ test('a delete confirmation is anchored to the row it is about, and names the ca
       target: { kind: 'endpoint', name: 'main' },
     }).state,
   )
-  assert.deepEqual(view.confirming?.anchor, { cardId: 'endpoints', rowId: 'endpoint:main' })
+  assert.deepEqual(view.confirming?.anchor, { cardId: 'providers', rowId: 'endpoint:main' })
   assert.match(view.confirming?.message ?? '', /将同时删除模型 big/)
 })
 
-// --- an endpoint and its first model ------------------------------------------
+// --- a new provider ------------------------------------------------------------
 
-test('a new endpoint needs a model, and a key already taken is scoped by its endpoint', () => {
-  const snapshot = snapshotOf({ defaultModel: undefined })
-  const none = draftToChanges(endpointDraft({ name: 'fresh', step: 'models' }), snapshot)
-  assert.ok('error' in none)
-  assert.match(none.error, /至少选择一个模型/)
+test('a new provider needs a model, and becomes the default only when there is none', () => {
+  const none = draftToChanges(endpointDraft({ name: 'fresh' }), snapshotOf({ defaultModel: undefined }))
+  assert.deepEqual(none, { error: '至少添加一个模型。' })
 
-  const changes = draftToChanges(endpointDraft({ name: 'fresh', step: 'models', picked: ['big'] }), snapshot)
-  assert.ok(Array.isArray(changes))
-  assert.deepEqual(changes.map((change) => change.kind), ['set-endpoint', 'set-model', 'set-default-model'])
-  assert.equal((changes[1] as Extract<SettingsChange, { kind: 'set-model' }>).key, 'fresh/big')
+  const first = draftToChanges(endpointDraft({ name: 'fresh', models: [modelRow()] }), snapshotOf({ defaultModel: undefined }))
+  assert.ok(Array.isArray(first))
+  assert.deepEqual(first.map((change) => change.kind), ['set-endpoint', 'set-model', 'set-default-model'])
+
+  const more = draftToChanges(endpointDraft({ name: 'fresh', models: [modelRow()] }), snapshotOf())
+  assert.ok(Array.isArray(more))
+  assert.deepEqual(more.map((change) => change.kind), ['set-endpoint', 'set-model'])
 })
 
-test('adding an endpoint does not move an existing default model', () => {
-  const changes = draftToChanges(endpointDraft({ name: 'fresh', step: 'models', picked: ['claude-other'] }), snapshotOf())
-  assert.ok(Array.isArray(changes))
-  assert.deepEqual(changes.map((change) => change.kind), ['set-endpoint', 'set-model'])
-})
-
-// --- the new-endpoint wizard ---------------------------------------------------
-
-test('the wizard walks service, connection, models — testing the connection on the way', () => {
+test('a new provider goes from the preset grid to one form, and 获取模型列表 fills its table', () => {
   let state = applySettingsIntent(openState({ category: 'provider' }), { kind: 'new-endpoint' }).state
-  let form = settingsView(state).form
-  assert.ok(form?.kind === 'endpoint-wizard' && form.step === 'preset')
+  let form = providerForm(state)
+  assert.equal(form.step, 'preset')
   assert.ok(form.presets.length >= 8)
+  assert.equal(applySettingsIntent(state, { kind: 'submit-draft' }).changes, undefined, 'the grid has nothing to save')
 
   state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'deepseek' }).state
   assert.ok(state.draft?.kind === 'endpoint')
-  assert.equal(state.draft.step, 'connect')
+  assert.equal(state.draft.step, 'form')
   assert.equal(state.draft.provider, 'openai')
   assert.equal(state.draft.baseUrl, 'https://api.deepseek.com')
   assert.equal(state.draft.name, 'deepseek')
+  form = providerForm(state)
+  assert.equal(form.canGoBack, true)
+  assert.deepEqual(form.fields.map((field) => field.id), ['name', 'provider', 'apiKey', 'baseUrl'])
+  assert.equal(form.probe?.status, 'idle')
 
   state = applySettingsIntent(state, { kind: 'draft-field', field: 'apiKey', value: 'sk-1' }).state
-  // 下一步 (or Enter) tests before it moves on.
-  const next = applySettingsIntent(state, { kind: 'submit-draft' })
-  assert.deepEqual(next.probe, { seq: 1, provider: 'openai', baseUrl: 'https://api.deepseek.com', apiKey: 'sk-1' })
-  assert.equal(next.changes, undefined)
-  form = settingsView(next.state).form
-  assert.ok(form?.kind === 'endpoint-wizard')
-  assert.equal(form.probe.status, 'running')
+  const fetch = applySettingsIntent(state, { kind: 'test-endpoint' })
+  assert.deepEqual(fetch.probe, { seq: 1, provider: 'openai', baseUrl: 'https://api.deepseek.com', apiKey: 'sk-1' })
+  assert.equal(providerForm(fetch.state).probe?.status, 'running')
 
-  state = applySettingsIntent(next.state, {
+  state = applySettingsIntent(fetch.state, {
     kind: 'probe-result',
     seq: 1,
-    result: { ok: true, latencyMs: 120, models: [{ id: 'deepseek-chat' }, { id: 'deepseek-reasoner' }] },
+    result: {
+      ok: true,
+      latencyMs: 120,
+      models: [{ id: 'deepseek-chat', contextWindow: 128000, maxOutputTokens: 8000, imageInput: true }, { id: 'deepseek-reasoner' }],
+    },
   }).state
-  assert.ok(state.draft?.kind === 'endpoint')
-  assert.equal(state.draft.step, 'models', 'a success started by 下一步 moves on by itself')
-  form = settingsView(state).form
-  assert.ok(form?.kind === 'endpoint-wizard')
+  form = providerForm(state)
   assert.deepEqual(form.picker?.rows.map((row) => row.id), ['deepseek-chat', 'deepseek-reasoner'])
 
-  state = applySettingsIntent(state, { kind: 'toggle-picked-model', id: 'deepseek-chat' }).state
+  // Checking a listed model adds it with what the service reported; a second
+  // click takes it back out. A typed-in one knows nothing and stays at defaults.
+  state = apply(
+    state,
+    { kind: 'toggle-picked-model', id: 'deepseek-chat' },
+    { kind: 'toggle-picked-model', id: 'deepseek-reasoner' },
+    { kind: 'toggle-picked-model', id: 'deepseek-reasoner' },
+    { kind: 'add-model-row' },
+  )
+  assert.ok(state.draft?.kind === 'endpoint')
+  state = apply(state, { kind: 'model-row-field', rowId: state.draft.models[1]!.rowId, field: 'model', value: 'typed-in' })
+  assert.equal(providerForm(state).picker?.summary, '找到 2 个，已添加 1 个')
+
   const done = applySettingsIntent(state, { kind: 'submit-draft' })
   assert.deepEqual(done.changes, [
     { scope: 'provider', kind: 'set-endpoint', name: 'deepseek', provider: 'openai', baseUrl: 'https://api.deepseek.com', apiKey: 'sk-1' },
-    { scope: 'provider', kind: 'set-model', key: 'deepseek-chat', model: 'deepseek-chat', endpoint: 'deepseek' },
+    {
+      scope: 'provider',
+      kind: 'set-model',
+      key: 'deepseek-chat',
+      model: 'deepseek-chat',
+      endpoint: 'deepseek',
+      contextWindow: 128000,
+      supportsImageInput: true,
+      maxOutputTokens: 8000,
+    },
+    { scope: 'provider', kind: 'set-model', key: 'typed-in', model: 'typed-in', endpoint: 'deepseek' },
   ])
 })
 
-test('a failed test stays on the page, says why in plain words, and can be skipped', () => {
-  let state = applySettingsIntent(openState(), { kind: 'new-endpoint' }).state
-  state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'openai' }).state
-  state = applySettingsIntent(state, { kind: 'submit-draft' }).state
+test('a failed listing says why in plain words, and the table can still be filled by hand', () => {
+  let state = apply(openState(), { kind: 'new-endpoint' }, { kind: 'pick-preset', preset: 'openai' }, { kind: 'test-endpoint' })
   state = applySettingsIntent(state, {
     kind: 'probe-result',
     seq: 1,
     result: { ok: false, reason: 'auth', status: 401, detail: 'bad key' },
   }).state
-  assert.ok(state.draft?.kind === 'endpoint')
-  assert.equal(state.draft.step, 'connect')
-  const form = settingsView(state).form
-  assert.ok(form?.kind === 'endpoint-wizard')
-  assert.equal(form.probe.status, 'failed')
-  assert.equal(form.probe.message, 'API key 无效。（401）')
-  assert.equal(form.probe.skippable, true)
-
-  state = applySettingsIntent(state, { kind: 'skip-test' }).state
-  const picker = settingsView(state).form
-  assert.ok(picker?.kind === 'endpoint-wizard' && picker.step === 'models')
-  assert.match(picker.picker?.empty ?? '', /没有拿到模型列表/)
-
-  state = applySettingsIntent(state, { kind: 'draft-field', field: 'manualModel', value: ' gpt-5 ' }).state
-  state = applySettingsIntent(state, { kind: 'add-manual-model' }).state
-  assert.ok(state.draft?.kind === 'endpoint')
-  assert.deepEqual(state.draft.picked, ['gpt-5'])
-  assert.equal(state.draft.manualModel, '')
+  const form = providerForm(state)
+  assert.equal(form.probe?.status, 'failed')
+  assert.equal(form.probe?.message, 'API key 无效。（401）')
+  assert.equal(form.picker, undefined)
+  assert.equal(form.canAddModel, true)
 })
-
 test('a reply to a superseded test is ignored, and changing the address drops the result', () => {
   let state = applySettingsIntent(openState(), { kind: 'new-endpoint' }).state
   state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'openai-compatible' }).state
@@ -1862,10 +1794,8 @@ test('a reply to a superseded test is ignored, and changing the address drops th
 })
 
 test('an endpoint being edited is tested with its saved key until a new one is typed', () => {
-  let state = applySettingsIntent(openState(), { kind: 'edit-endpoint', name: 'main' }).state
-  const form = settingsView(state).form
-  assert.ok(form && form.kind === undefined)
-  assert.equal(form.probe?.status, 'idle')
+  let state = editMain()
+  assert.equal(providerForm(state).probe?.status, 'idle')
   assert.deepEqual(applySettingsIntent(state, { kind: 'test-endpoint' }).probe, {
     seq: 1,
     provider: 'anthropic',
@@ -1881,13 +1811,10 @@ test('an endpoint being edited is tested with its saved key until a new one is t
   })
 })
 
-test('a wizard batch that failed part-way retries as an edit of what it already made', async () => {
-  let state = applySettingsIntent(openState({ snapshot: snapshotOf({ defaultModel: 'big' }) }), { kind: 'new-endpoint' }).state
-  state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'openai' }).state
-  state = applySettingsIntent(state, { kind: 'skip-test' }).state
-  for (const id of ['a', 'b']) {
-    state = applySettingsIntent(state, { kind: 'draft-field', field: 'manualModel', value: id }).state
-    state = applySettingsIntent(state, { kind: 'add-manual-model' }).state
+test('a provider batch that failed part-way retries as an edit of what it already made', async () => {
+  let state = apply(openState({ snapshot: snapshotOf({ defaultModel: 'big' }) }), { kind: 'new-endpoint' }, { kind: 'pick-preset', preset: 'openai' })
+  for (const [index, id] of ['b', 'a'].entries()) {
+    state = apply(state, { kind: 'add-model-row' }, { kind: 'model-row-field', rowId: `new-${index}`, field: 'model', value: id })
   }
   const submitted = applySettingsIntent(state, { kind: 'submit-draft' })
   let current = submitted.state
@@ -1907,25 +1834,27 @@ test('a wizard batch that failed part-way retries as an edit of what it already 
 
   const retry = draftToChanges(current.draft, current.snapshot!)
   assert.ok(Array.isArray(retry), JSON.stringify(retry))
-  // `b` went in before `a` failed, so only `a` is left to send.
-  assert.deepEqual(retry.map((change) => change.kind === 'set-model' ? change.model : change.kind), ['set-endpoint', 'a'])
+  // The endpoint and `b` went in before `a` failed, so only `a` is left to send.
+  assert.deepEqual(retry.map((change) => change.kind === 'set-model' ? change.model : change.kind), ['a'])
 })
 
 test('a field committing its unchanged value is not an edit', () => {
-  const opened = applySettingsIntent(openState(), { kind: 'edit-endpoint', name: 'main' }).state
+  const opened = editMain()
   const same = applySettingsIntent(opened, { kind: 'draft-field', field: 'name', value: 'main' }).state
   assert.equal(same, opened)
   assert.equal(applySettingsIntent(same, { kind: 'cancel-draft' }).state.draft, undefined, 'nothing to confirm')
 })
 
 test('a local server that needs no key is stored with a stand-in one', () => {
-  let state = applySettingsIntent(openState(), { kind: 'new-endpoint' }).state
-  state = applySettingsIntent(state, { kind: 'pick-preset', preset: 'ollama' }).state
-  assert.equal(applySettingsIntent(state, { kind: 'submit-draft' }).probe?.apiKey, 'ollama')
-  assert.ok(state.draft)
-  const change = draftToChange(state.draft, snapshotOf())
-  assert.ok(!('error' in change) && change.kind === 'set-endpoint')
-  assert.equal(change.apiKey, 'ollama')
+  const state = apply(
+    openState(),
+    { kind: 'new-endpoint' },
+    { kind: 'pick-preset', preset: 'ollama' },
+    { kind: 'add-model-row' },
+    { kind: 'model-row-field', rowId: 'new-0', field: 'model', value: 'llama3.1' },
+  )
+  assert.equal(applySettingsIntent(state, { kind: 'test-endpoint' }).probe?.apiKey, 'ollama')
+  assert.equal(endpointWrite(draftToChanges(state.draft!, snapshotOf()))?.apiKey, 'ollama')
 })
 
 test('a picked service names the endpoint until the user names it', () => {
