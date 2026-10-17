@@ -38,6 +38,8 @@ export class ResponsesProvider implements ModelProvider {
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseUrl,
+      // withRetry owns retries; SDK retries would multiply its budget.
+      maxRetries: 0,
       defaultHeaders: { 'User-Agent': CODEX_USER_AGENT, originator: CODEX_ORIGINATOR },
     })
     this.imageInputEnabled = config.supportsImageInput === true

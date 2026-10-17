@@ -205,6 +205,17 @@ test('withRetry retries 5xx (non-529) up to maxRetries', async () => {
   assert.equal(calls.length, 3)
 })
 
+test('withRetry retries 5xx 5 times by default, other categories stay at 3', async () => {
+  const opts = { baseDelayMs: 0, jitterFactor: 0, maxDelayMs: 0 }
+  const server = makeOperation(Array.from({ length: 6 }, () => httpError(500)), 'ok')
+  await assert.rejects(() => withRetry(server.op, opts))
+  assert.equal(server.calls.length, 6)
+
+  const rate = makeOperation(Array.from({ length: 4 }, () => httpError(429)), 'ok')
+  await assert.rejects(() => withRetry(rate.op, opts))
+  assert.equal(rate.calls.length, 4)
+})
+
 test('withRetry retries network errors (ECONNRESET)', async () => {
   const { op, calls } = makeOperation([new Error('ECONNRESET')], 'ok')
   const result = await withRetry(op, {

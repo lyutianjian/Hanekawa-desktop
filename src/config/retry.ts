@@ -35,7 +35,7 @@ export const DEFAULT_PERSISTENT_MAX_RETRIES = 12
 export const DEFAULT_RETRY_LIMITS: RetryPolicyLimits = {
   rateLimit: 3,
   overload: 2,
-  serverError: 3,
+  serverError: 5,
   transient: 3,
 }
 
@@ -50,7 +50,7 @@ export interface RetryOptions {
   /**
    * Cap on the maximum number of retries across all categories. The
    * per-category limit is `Math.min(limits[category], maxRetries)`. Defaults
-   * to 3 normally, or the persistent retry cap when persistent mode is enabled.
+   * to 5 normally, or the persistent retry cap when persistent mode is enabled.
    */
   maxRetries?: number
   baseDelayMs?: number
@@ -105,7 +105,7 @@ export async function withRetry<T>(
   const maxDelayMs = options.maxDelayMs ?? (persistent ? PERSISTENT_MAX_DELAY_MS : 32_000)
   const jitterFactor = options.jitterFactor ?? 0.25
   const callerKind: RetryCallerKind = options.callerKind ?? 'interactive'
-  const globalCap = options.maxRetries ?? (persistent ? DEFAULT_PERSISTENT_MAX_RETRIES : 3)
+  const globalCap = options.maxRetries ?? (persistent ? DEFAULT_PERSISTENT_MAX_RETRIES : 5)
   const limits: RetryPolicyLimits = {
     ...(persistent ? DEFAULT_PERSISTENT_RETRY_LIMITS : DEFAULT_RETRY_LIMITS),
     ...(options.limits ?? {}),

@@ -86,6 +86,8 @@ export class AnthropicProvider implements ModelProvider {
     this.client = new Anthropic({
       apiKey: config.apiKey,
       baseURL: config.baseUrl,
+      // withRetry owns retries; SDK retries would multiply its budget.
+      maxRetries: 0,
       defaultHeaders: { 'User-Agent': USER_AGENT },
     })
     this.endpoint = this.client.baseURL

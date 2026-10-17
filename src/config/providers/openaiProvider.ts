@@ -45,6 +45,8 @@ export class OpenAIProvider implements ModelProvider {
     this.client = new OpenAI({
       apiKey: config.apiKey,
       baseURL: config.baseUrl,
+      // withRetry owns retries; SDK retries would multiply its budget.
+      maxRetries: 0,
     })
     this.imageInputEnabled = config.supportsImageInput === true
     this.thinkingOff = config.thinking?.type === 'disabled'
