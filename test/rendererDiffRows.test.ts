@@ -5,6 +5,7 @@ import {
   diffRowsFor,
   droppedLines,
   parseUnifiedPatch,
+  patchPath,
   previewView,
 } from '../src/desktop/renderer/model/diffRows.js'
 import { buildFileToolPreview, capFileToolPreview } from '../src/services/fileToolPreview.js'
@@ -210,7 +211,7 @@ test('the gap between two hunks is one elided row, counted from the headers', ()
   assert.equal(parsed.deleted, 2)
 })
 
-test("a capped patch keeps its rows and says it was capped, because the counts are partial", () => {
+test('a capped patch keeps its rows and the whole patch\'s counts from its cap line', () => {
   const oldText = Array.from({ length: 120 }, (_, i) => `old ${i}`).join('\n')
   const patch = buildUnifiedPatch(
     'big.txt',
@@ -225,9 +226,24 @@ test("a capped patch keeps its rows and says it was capped, because the counts a
   assert.equal(parsed.capped, true)
   // The cap line is terminal: what it kept is rows, what it dropped is named.
   assert.deepEqual(parsed.rows.at(-1), { kind: 'elided', text: '省略 225 行' })
-  // The whole-file rewrite emits its removals first, so a head that trusted
-  // these counts would read `+0 −17` for a 120-line rewrite.
-  assert.equal(parsed.added, 0)
+  // The kept rows alone are all removals; the cap line's counts are the whole rewrite's.
+  assert.equal(parsed.partial, false)
+  assert.equal(parsed.added, 120)
+  assert.equal(parsed.deleted, 120)
+})
+
+test('an older cap line without counts marks the counts partial', () => {
+  const parsed = parseUnifiedPatch(['--- a/x', '+++ b/x', '@@ -1,1 +1,1 @@', '-a', '… 40 more lines not shown'].join('\n'))
+  assert.ok(parsed)
+  assert.equal(parsed.capped, true)
+  assert.equal(parsed.partial, true)
+})
+
+test('a C-quoted header path decodes back to the file name', () => {
+  const patch = buildUnifiedPatch('/p/樱谷 "夜想".html', 'a\n', 'b\n')
+  assert.ok(patch)
+  assert.ok(patch.startsWith('--- "'), 'diff quotes a non-ASCII name')
+  assert.equal(patchPath(patch), '/p/樱谷 "夜想".html')
 })
 
 test('a new file numbers its additions from one, with no head elision', () => {

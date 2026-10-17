@@ -58,8 +58,8 @@ describe('decideWake', () => {
     assert.equal(decideWake(input({ autoWakeCount: 2, limit: 2 })).reason, 'limit-reached')
   })
   it('limit beats question and parent state', () => {
-    assert.equal(decideWake(input({ notes: [question], autoWakeCount: 10 })).reason, 'limit-reached')
-    assert.equal(decideWake(input({ autoWakeCount: 10, parent: { status: 'running' } })).reason, 'limit-reached')
+    assert.equal(decideWake(input({ notes: [question], autoWakeCount: AUTO_WAKE_LIMIT })).reason, 'limit-reached')
+    assert.equal(decideWake(input({ autoWakeCount: AUTO_WAKE_LIMIT, parent: { status: 'running' } })).reason, 'limit-reached')
   })
   it('parent running', () => {
     assert.deepEqual(decideWake(input({ notes: [question], parent: { status: 'running' } })), {
@@ -120,11 +120,10 @@ describe('decideWake', () => {
       'threads-starting',
     )
   })
-  it('running children retry', () => {
+  it('a report wakes at once while other threads still run', () => {
     assert.deepEqual(decideWake(input({ children: [{ threadId: 't1', running: false }, { threadId: 't3', running: true }] })), {
-      wake: false,
-      reason: 'threads-running',
-      retryLater: true,
+      wake: true,
+      reason: 'progress',
     })
   })
 })

@@ -74,7 +74,7 @@ export interface CompactCheckInput {
 }
 
 export interface CompactHookEvent {
-  trigger: 'auto'
+  trigger: 'auto' | 'manual'
   preTokens: number
   recordCount: number
 }
@@ -150,52 +150,73 @@ async function autoCompactIfNeededOnce(input: CompactCheckInput, circuitKey: str
   // Everything goes into the summary, the latest user message and this turn's
   // work included: the boundary lands after all of it, so whatever the summary
   // leaves out is gone from every later request.
-  const recordsToCompact = compactableRecords
-
-  const compactStartedAt = Date.now()
-  await runBeforeCompactHook(input, tokenCount, recordsToCompact.length)
-
   try {
-    const summary = await summarizeForAutoCompact(input, recordsToCompact, tokenCount)
-    const postTokens = countTextTokens(summary.content)
-    const compactDurationMs = Date.now() - compactStartedAt
-    await input.appendRecord({
-      id: randomUUID(),
-      type: 'compact_boundary',
-      summary: summary.content,
-      preTokens: tokenCount,
-      postCompactRestore: 'pending',
-      ...(input.turnId ? { turnId: input.turnId } : {}),
-      ...(input.discoveredToolNames && input.discoveredToolNames.size > 0
-        ? { preCompactDiscoveredTools: [...input.discoveredToolNames] }
-        : {}),
-      createdAt: new Date().toISOString(),
-    })
-    compactFailuresByKey.delete(circuitKey)
-    await setCompactFailureCount(input, circuitKey, 0)
-    await runAfterCompactHook(input, {
-      trigger: 'auto',
-      preTokens: tokenCount,
-      recordCount: recordsToCompact.length,
-      summary: summary.content,
-      postTokens,
-      compactDurationMs,
-    })
-
-    return {
-      compacted: true,
-      usage: addTokenUsage({ ...EMPTY_TOKEN_USAGE }, summary.usage),
-      metrics: {
-        preTokens: tokenCount,
-        postTokens,
-        compactDurationMs,
-      },
-    }
+    return await compactRecords(input, compactableRecords, tokenCount, 'auto', circuitKey)
   } catch (error) {
     const failureCount = currentFailures + 1
     await setCompactFailureCount(input, circuitKey, failureCount)
     await appendCompactFailureRecord(input, error, failureCount, tokenCount)
     return { compacted: false, usage: { ...EMPTY_TOKEN_USAGE } }
+  }
+}
+
+/**
+ * `/compact`: summarizes everything since the last boundary now. The circuit
+ * breaker does not apply and a success closes it; a failure throws without
+ * counting toward it. `compacted: false` means there was nothing to summarize.
+ */
+export async function compactNow(input: CompactCheckInput): Promise<CompactCheckResult> {
+  const records = getRecordsAfterLastCompact(input.records)
+  if (!records.some((record) => record.type === 'message' && record.role === 'user')) {
+    return { compacted: false, usage: { ...EMPTY_TOKEN_USAGE } }
+  }
+  return compactRecords(input, records, countCurrentTokens(input, records), 'manual', input.circuitKey ?? 'default')
+}
+
+async function compactRecords(
+  input: CompactCheckInput,
+  recordsToCompact: SessionRecord[],
+  tokenCount: number,
+  trigger: CompactHookEvent['trigger'],
+  circuitKey: string,
+): Promise<CompactCheckResult> {
+  const compactStartedAt = Date.now()
+  await runBeforeCompactHook(input, { trigger, preTokens: tokenCount, recordCount: recordsToCompact.length })
+
+  const summary = await summarizeForAutoCompact(input, recordsToCompact, tokenCount)
+  const postTokens = countTextTokens(summary.content)
+  const compactDurationMs = Date.now() - compactStartedAt
+  await input.appendRecord({
+    id: randomUUID(),
+    type: 'compact_boundary',
+    summary: summary.content,
+    preTokens: tokenCount,
+    postCompactRestore: 'pending',
+    ...(input.turnId ? { turnId: input.turnId } : {}),
+    ...(input.discoveredToolNames && input.discoveredToolNames.size > 0
+      ? { preCompactDiscoveredTools: [...input.discoveredToolNames] }
+      : {}),
+    createdAt: new Date().toISOString(),
+  })
+  compactFailuresByKey.delete(circuitKey)
+  await setCompactFailureCount(input, circuitKey, 0)
+  await runAfterCompactHook(input, {
+    trigger,
+    preTokens: tokenCount,
+    recordCount: recordsToCompact.length,
+    summary: summary.content,
+    postTokens,
+    compactDurationMs,
+  })
+
+  return {
+    compacted: true,
+    usage: addTokenUsage({ ...EMPTY_TOKEN_USAGE }, summary.usage),
+    metrics: {
+      preTokens: tokenCount,
+      postTokens,
+      compactDurationMs,
+    },
   }
 }
 
@@ -234,13 +255,9 @@ async function summarizeForAutoCompact(
   return sharedUsage ? { ...summary, usage: addTokenUsage(sharedUsage, summary.usage) } : summary
 }
 
-async function runBeforeCompactHook(input: CompactCheckInput, tokenCount: number, recordCount: number): Promise<void> {
+async function runBeforeCompactHook(input: CompactCheckInput, event: CompactHookEvent): Promise<void> {
   try {
-    await input.onBeforeCompact?.({
-      trigger: 'auto',
-      preTokens: tokenCount,
-      recordCount,
-    })
+    await input.onBeforeCompact?.(event)
   } catch (hookError) {
     if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
       console.error('[compact] preCompact hook failed:', hookError)

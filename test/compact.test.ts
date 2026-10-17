@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { autoCompactIfNeeded, COMPACT_FAILURE_LIMIT, resetAutoCompactFailureState, summarizeRecordsForContinuation } from '../src/harness/compact.js'
+import { autoCompactIfNeeded, COMPACT_FAILURE_LIMIT, compactNow, resetAutoCompactFailureState, summarizeRecordsForContinuation } from '../src/harness/compact.js'
 import type { ModelProvider, SessionRecord } from '../src/harness/types.js'
 import { makeImageAttachmentRef } from './helpers/imageFixtures.js'
 
@@ -1077,6 +1077,47 @@ test('force bypasses the threshold but not an open circuit breaker', async () =>
   })
   assert.equal(blocked.compacted, false)
   assert.equal(calls, before)
+})
+
+test('compactNow ignores the threshold and an open circuit, closes it on success and throws on failure', async () => {
+  resetAutoCompactFailureState()
+  let failNext = true
+  const prompts: string[] = []
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage(request) {
+      prompts.push(JSON.stringify(request.messages))
+      if (failNext) throw new Error('summary failed')
+      return { content: '<summary>manual</summary>', toolCalls: [] }
+    },
+  }
+  const appended: SessionRecord[] = []
+  const counts: number[] = []
+  const base = {
+    records: compactableRecords(),
+    provider,
+    model: 'fake-model',
+    tools: [],
+    circuitKey: 'manual',
+    contextManagement: { ...compactTestBudget(), contextWindow: 10_000_000 },
+    getCompactFailureCount: async () => COMPACT_FAILURE_LIMIT,
+    setCompactFailureCount: async (count: number) => { counts.push(count) },
+    appendRecord: async (record: SessionRecord) => { appended.push(record) },
+  }
+
+  await assert.rejects(compactNow(base), /summary failed/)
+  assert.deepEqual(counts, [])
+  assert.equal(appended.length, 0)
+
+  failNext = false
+  const result = await compactNow({ ...base, compactInstructions: 'keep the schema' })
+  assert.equal(result.compacted, true)
+  assert.ok(prompts.at(-1)?.includes('keep the schema'))
+  assert.deepEqual(counts, [0])
+  assert.equal(appended[0]?.type, 'compact_boundary')
+
+  const nothingNew = await compactNow({ ...base, records: [...base.records, ...appended] })
+  assert.equal(nothingNew.compacted, false)
 })
 
 test('compactPromptVariant reaches the request and coordination_update is summarized', async () => {

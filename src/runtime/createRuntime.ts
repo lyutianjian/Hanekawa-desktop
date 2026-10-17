@@ -10,11 +10,12 @@ import { CoordinationStore } from '../services/coordination/threadStore.js'
 import { formatCoordinationUpdate, formatCoordinatorRestore } from './coordination/messages.js'
 import { AgentLoop, type ActiveModelRuntime } from '../harness/loop.js'
 import { ContextBuilder } from '../harness/contextBuilder.js'
+import { priceUsage } from '../harness/usage.js'
 import { PlanModeManager } from '../harness/planModeManager.js'
 import { ToolRunner } from '../harness/toolRunner.js'
 import type { SystemPromptSectionCache } from '../harness/sections.js'
 import type { PermissionGate } from '../harness/permissions.js'
-import type { AttachmentBytesLoader, CoordinationRole, ImageAttachmentImporter, SessionRecord } from '../harness/types.js'
+import type { AttachmentBytesLoader, CoordinationRole, ImageAttachmentImporter, ModelPricing, ModelProvider, SessionRecord } from '../harness/types.js'
 import type { AttachmentFactsResolver } from '../harness/turnImages.js'
 import { MODEL_CONTEXT_WINDOW_DEFAULT } from '../prompts/budget.js'
 import type { ContextManagementConfig } from '../prompts/budget.js'
@@ -46,6 +47,18 @@ function createModelProvider(modelKey: string, modelConfig: ModelConfig) {
   }
   if (!provider) {
     throw new RuntimeStartupError('provider_creation_failed', `Unsupported or missing provider: ${modelConfig.provider ?? '(none)'}`)
+  }
+  // Every runtime's provider comes through here, so each response is priced by
+  // the model that actually served it.
+  return withPricing(provider, modelConfig.pricing)
+}
+
+/** Attaches `pricing`'s cost to every response's usage, on the provider itself. */
+export function withPricing(provider: ModelProvider, pricing: ModelPricing | undefined): ModelProvider {
+  const createMessage = provider.createMessage.bind(provider)
+  provider.createMessage = async (request) => {
+    const response = await createMessage(request)
+    return response.usage ? { ...response, usage: priceUsage(response.usage, pricing) } : response
   }
   return provider
 }

@@ -45,7 +45,7 @@ ${global}
 
 ## Auto memory
 
-You keep a small file-based memory for this project in \`${memoryDir}\`. It persists across sessions. The directory already exists. Its index, \`MEMORY.md\`, is loaded at the start of the conversation when it has entries. Use file tools on it, which need no approval: Glob with \`path\` set to the directory to list it, Grep with the same \`path\` to search it, and Read, Write, Edit, MultiEdit and Delete on its files. Prefer these over Bash; Bash that writes or deletes there asks the user for approval. Keep it flat with no subdirectories.
+You keep a small file-based memory for this project in \`${memoryDir}\`. It persists across sessions. The directory already exists. Its index, \`MEMORY.md\`, is already included in the system reminder that opens the conversation whenever it has entries; do not read it again. If it is absent there, there are no memories yet. Open a memory file only when its index line looks relevant, using the exact directory path above. Use file tools on it, which need no approval: Glob with \`path\` set to the directory to list it, Grep with the same \`path\` to search it, and Read, Write, Edit, MultiEdit and Delete on its files. Prefer these over Bash; Bash that writes or deletes there asks the user for approval. Keep it flat with no subdirectories.
 
 ### What to save
 

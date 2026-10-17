@@ -15,6 +15,7 @@ import type {
   SettingsIntent,
   SettingsModelPicker,
   SettingsModelRowView,
+  ModelRowTextField,
   SettingsNavItem,
   SettingsProbeView,
   SettingsRow,
@@ -264,7 +265,14 @@ export function createSettingsView(
    */
   function keptSelect(
     key: string,
-    options: { value: string; ariaLabel: string; choices: ReadonlyArray<{ value: string; label: string }>; field: string },
+    options: {
+      value: string
+      ariaLabel: string
+      choices: ReadonlyArray<{ value: string; label: string }>
+      field: string
+      /** Overrides the default `draft-field` intent. */
+      intentFor?: (value: string) => SettingsIntent
+    },
   ): HTMLSelectElement {
     const id = `${key}:${options.choices.map((choice) => choice.value).join('|')}`
     claimed.add(id)
@@ -277,7 +285,7 @@ export function createSettingsView(
       value: options.value,
       ariaLabel: options.ariaLabel,
       choices: options.choices,
-      onChange: (value) => onIntent({ kind: 'draft-field', field: options.field, value }),
+      onChange: (value) => onIntent(options.intentFor?.(value) ?? { kind: 'draft-field', field: options.field, value }),
     })
     kept.set(id, made)
     return made
@@ -467,7 +475,7 @@ export function createSettingsView(
   function modelRowNode(row: SettingsModelRowView, formKey: string): HTMLElement {
     const key = `${formKey}:row:${row.rowId}`
     const field = (
-      name: 'model' | 'displayName' | 'contextWindow' | 'maxOutputTokens',
+      name: ModelRowTextField,
       value: string,
       ariaLabel: string,
       placeholder: string,
@@ -553,11 +561,44 @@ export function createSettingsView(
             : []),
         ])
       }
+      const prices = node(`${key}:prices`, 'div', 'settings-model-prices')
+      const pricesTrigger = node(`${key}:prices-trigger`, 'button', row.pricesOpen ? 'settings-levels-trigger open' : 'settings-levels-trigger', (made) => {
+        made.type = 'button'
+        made.addEventListener('click', () => onIntent({ kind: 'toggle-row-prices', rowId: row.rowId }))
+      })
+      pricesTrigger.setAttribute('aria-expanded', String(row.pricesOpen))
+      reconcile(pricesTrigger, [icon('chevron-right'), el('span', undefined, '价格'), el('span', 'settings-levels-summary', row.priceSummary)])
+      if (row.pricesOpen) {
+        const priceGrid = node(`${key}:price-grid`, 'div', 'settings-model-numbers prices')
+        const price = (name: 'inputPrice' | 'outputPrice' | 'cacheWritePrice' | 'cacheReadPrice', label: string, value: string, placeholder: string) =>
+          labelled(name, label, field(name, value, `${label}（每百万 Token）`, placeholder))
+        reconcile(priceGrid, [
+          price('inputPrice', '输入', row.inputPrice, '未设置'),
+          price('outputPrice', '输出', row.outputPrice, '未设置'),
+          price('cacheWritePrice', '缓存写入', row.cacheWritePrice, '同输入'),
+          price('cacheReadPrice', '缓存命中', row.cacheReadPrice, '同输入'),
+        ])
+        const currency = node(`${key}:currency-line`, 'div', 'settings-model-switch level')
+        reconcile(currency, [
+          el('span', undefined, '币种 · 单价按每百万 Token'),
+          keptSelect(`${key}:currency`, {
+            value: row.currency,
+            ariaLabel: '币种',
+            choices: row.currencyChoices,
+            field: 'currency',
+            intentFor: (value) => ({ kind: 'model-row-field', rowId: row.rowId, field: 'currency', value }),
+          }),
+        ])
+        reconcile(prices, [pricesTrigger, priceGrid, currency])
+      } else {
+        reconcile(prices, [pricesTrigger])
+      }
       reconcile(detail, [
         toggle('thinking', '支持扩展思考', row.thinking),
         toggle('imageInput', '支持图片输入', row.imageInput),
         numbers,
         levels,
+        prices,
       ])
     }
     reconcile(item, [line, row.warning ? el('div', 'settings-row-warning', row.warning) : null, detail])

@@ -107,6 +107,7 @@ const COUNTS_AS_CONVERSATION = {
   'thread-notes': true,
   receipt: true,
   'turn-failure': true,
+  compaction: true,
   notice: false,
   error: false,
 } as const satisfies Record<TranscriptItemKind, boolean>
@@ -123,21 +124,44 @@ export function isTranscriptEmpty(state: TranscriptState): boolean {
   return !state.items.some((item) => COUNTS_AS_CONVERSATION[item.kind])
 }
 
-/** One paragraph of the coordinator welcome: plain text, or the clickable 「概览」 that opens the panel. */
-export type CoordinatorWelcomeSegment = string | { readonly link: 'overview'; readonly label: string }
+/** One paragraph of the coordinator welcome: plain text, the clickable 「线程」 that opens the panel, or 「读取项目」. */
+export type CoordinatorWelcomeSegment = string | { readonly link: 'overview' | 'survey'; readonly label: string }
+
+/**
+ * The survey line of the coordinator welcome: `offer` while the project has no
+ * thread and the conversation is empty, `started` once the survey thread exists.
+ */
+export type CoordinatorSurvey = 'offer' | 'started' | undefined
 
 /**
  * The text fixed at the top of a coordinator session's transcript, whatever the
  * conversation holds. Pure interface: never a record, never sent to the model.
- * `opening` adds the line for a project that opened with a survey thread.
+ * `survey` adds the 「读取项目」 offer, or the line saying the survey went to look.
  */
-export function coordinatorWelcome(input: { projectName: string | undefined; opening: boolean }): readonly (readonly CoordinatorWelcomeSegment[])[] {
+export function coordinatorWelcome(input: { projectName: string | undefined; survey: CoordinatorSurvey }): readonly (readonly CoordinatorWelcomeSegment[])[] {
   const place = input.projectName === undefined ? '这个项目' : `「${input.projectName}」`
   return [
     [`你好，欢迎来到${place}。我负责协调这里的工作：有任何需要尽管提，我会直接回答，或者开几个线程并行处理。`],
     ['线程会自己完成工作，你可以在', { link: 'overview', label: '线程' }, '页里查看它们的状态。我会留意正在运行的内容，有任务完成或需要你处理时告诉你。'],
-    ...(input.opening ? [['我先去了解一下这个项目，然后给你一些建议，马上回来。']] : []),
+    ...(input.survey === 'offer'
+      ? [['想让我先熟悉这个项目，可以点', { link: 'survey', label: '读取项目' } as const, '，我会派一个线程去读文档、目录和最近的提交，然后给你几条建议。']]
+      : input.survey === 'started' ? [['我先去了解一下这个项目，然后给你一些建议，马上回来。']] : []),
   ]
+}
+
+/**
+ * Which survey line the coordinator welcome carries. `table` is the project's
+ * thread table, `undefined` until the first pull lands; `pending` covers the
+ * click until the table shows the survey thread.
+ */
+export function coordinatorSurvey(input: {
+  table: { readonly openingThreadId?: string; readonly threads: readonly unknown[] } | undefined
+  transcript: TranscriptState
+  pending: boolean
+}): CoordinatorSurvey {
+  if (input.table?.openingThreadId !== undefined) return 'started'
+  if (!input.table || input.table.threads.length > 0 || input.pending || !isTranscriptEmpty(input.transcript)) return undefined
+  return 'offer'
 }
 
 export function createWelcomeState(overrides: Partial<WelcomeState> = {}): WelcomeState {

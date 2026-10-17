@@ -56,7 +56,7 @@ export function fileBadgeNode(name: string): HTMLElement {
   return badge
 }
 
-/** `+12 −3`, green and red; nothing when a capped patch left the counts short. */
+/** `+12 −3`, green and red; nothing when an old capped patch left the counts short. */
 export function diffStatNode(added: number | undefined, deleted: number | undefined): HTMLElement | undefined {
   if (added === undefined || deleted === undefined) return undefined
   return el('span', 'diff-stat', el('span', 'diff-stat-add', `+${added}`), el('span', 'diff-stat-del', `−${deleted}`))

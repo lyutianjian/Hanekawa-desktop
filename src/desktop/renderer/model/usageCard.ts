@@ -26,7 +26,9 @@ export interface UsageCell {
 
 export interface UsageHeatCellView {
   level: 0 | 1 | 2 | 3 | 4
-  title: string
+  day: string
+  tokens: string
+  messages: string
 }
 
 export interface UsageShareView {
@@ -82,7 +84,9 @@ export function usageCardView(
         ]
       : [],
     heatmap: stats.heatmap.map((column) =>
-      column.map((cell) => (cell ? { level: cell.level, title: `${cell.day} · ${cell.turns} 条消息` } : null)),
+      column.map((cell) => (cell
+        ? { level: cell.level, day: cell.day, tokens: formatTokens(cell.tokens), messages: String(cell.turns) }
+        : null)),
     ),
     shares: tab === 'models'
       ? stats.modelShares.map((share) => ({

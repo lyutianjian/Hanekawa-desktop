@@ -57,6 +57,8 @@ export type IconName =
   | 'tasks'
   | 'diff'
   | 'globe'
+  // --- the sidebar's 项目调度 row ---
+  | 'network'
   // --- the inline permission request ---
   | 'terminal'
   | 'shield'
@@ -85,6 +87,8 @@ export type IconName =
   // --- the provider dialog's API key reveal ---
   | 'eye'
   | 'eye-off'
+  // --- the transcript's compaction line ---
+  | 'fold-vertical'
 
 type ShapeTag = 'path' | 'circle' | 'rect' | 'ellipse' | 'line'
 
@@ -156,6 +160,14 @@ const ICONS = {
   diff: ['M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z', 'M9 10h6', 'M12 13V7', 'M9 17h6'],
   // globe
   globe: [RING, 'M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20', 'M2 12h20'],
+  // One node fanning out to two: a coordinator over its threads, unlike the folder of 打开项目….
+  network: [
+    ['rect', { x: 16, y: 16, width: 6, height: 6, rx: 1 }],
+    ['rect', { x: 2, y: 16, width: 6, height: 6, rx: 1 }],
+    ['rect', { x: 9, y: 2, width: 6, height: 6, rx: 1 }],
+    'M5 16v-3a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v3',
+    'M12 12V8',
+  ],
   // circle-question-mark
   help: [RING, 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3', 'M12 17h.01'],
   // The inline request's leading glyph, chosen by what is being asked for: a
@@ -201,6 +213,7 @@ const ICONS = {
     'M17.479 17.499a10.75 10.75 0 0 1-15.417-5.151 1 1 0 0 1 0-.696 10.75 10.75 0 0 1 4.446-5.143',
     'm2 2 20 20',
   ],
+  'fold-vertical': ['M12 22v-6', 'M12 8V2', 'M4 12H2', 'M10 12H8', 'M16 12h-2', 'M22 12h-2', 'm15 19-3-3-3 3', 'm15 5-3 3-3-3'],
 } as const satisfies Record<IconName, IconSpec>
 
 export function icon(name: IconName, className = 'icon'): SVGSVGElement {

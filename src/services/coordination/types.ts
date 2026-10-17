@@ -48,7 +48,7 @@ export interface CoordinatorState {
   pendingSnapshot?: string
   autoWakeCount: number
   wakeLocked: boolean
-  /** The survey thread a coordinator created by 新建调度 opened with. */
+  /** The survey thread the welcome's 「读取项目」 started. */
   openingThreadId?: string
 }
 

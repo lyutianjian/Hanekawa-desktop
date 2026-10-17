@@ -79,6 +79,7 @@ function createPair(): { main: RuntimeChannel; renderer: RuntimeChannel } {
   // sent it, which is what the host-side pane filter checks.
   const bridge: DesktopBridge = {
     platform: 'win32',
+    pathForFile: () => '',
     send(message) {
       for (const listener of [...mainListeners]) listener({ sender: target }, message)
     },

@@ -12,7 +12,7 @@
  * that build — and from the base `tsconfig.json`, since it needs the DOM lib.
  * `tsconfig.preload.json` is what typechecks it.
  */
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type { DesktopBridge } from './types.js'
 import {
   ELECTRON_RUNTIME_CHANNEL,
@@ -27,6 +27,7 @@ const ipc: RendererSideIpc = ipcRenderer
 
 const bridge: DesktopBridge = {
   platform: process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux',
+  pathForFile: (file) => webUtils.getPathForFile(file),
   send: (message) => {
     ipc.send(ELECTRON_RUNTIME_CHANNEL, message)
   },

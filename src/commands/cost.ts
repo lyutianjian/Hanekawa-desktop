@@ -1,4 +1,4 @@
-import type { CommandDefinition } from './types.js'
+import type { CommandDefinition, CommandUsage } from './types.js'
 
 export const costCommand: CommandDefinition = {
   name: 'cost',
@@ -10,6 +10,7 @@ export const costCommand: CommandDefinition = {
       return
     }
     const summary = await context.getSessionMetricsSummary?.()
+    const cost = describeCost(usage)
 
     if (context.openCommandView) {
       const sections = [{
@@ -21,10 +22,8 @@ export const costCommand: CommandDefinition = {
           { label: 'Output tokens', value: usage.outputTokens.toLocaleString() },
           {
             label: 'Total cost',
-            value: typeof usage.cost === 'number'
-              ? `${usage.currency ?? 'USD'} ${formatCost(usage.cost)}`
-              : 'Unavailable (missing pricing)',
-            tone: typeof usage.cost === 'number' ? 'normal' as const : 'warning' as const,
+            value: cost ?? 'Unavailable (missing pricing)',
+            tone: cost ? 'normal' as const : 'warning' as const,
           },
         ],
       }]
@@ -55,9 +54,7 @@ export const costCommand: CommandDefinition = {
       `  Cache write:   ${(usage.cacheCreationInputTokens ?? 0).toLocaleString()}`,
       `  Input tokens:  ${usage.inputTokens.toLocaleString()}`,
       `  Output tokens: ${usage.outputTokens.toLocaleString()}`,
-      typeof usage.cost === 'number'
-        ? `  Total cost:    ${usage.currency ?? 'USD'} ${formatCost(usage.cost)}`
-        : '  Total cost:    unavailable (missing pricing)',
+      `  Total cost:    ${cost ?? 'unavailable (missing pricing)'}`,
     ]
     if (summary) {
       lines.push(
@@ -72,6 +69,18 @@ export const costCommand: CommandDefinition = {
     }
     context.writeLine(lines.join('\n'))
   },
+}
+
+/** `USD 0.31 + CNY 2.1 (excludes earlier requests)`, or undefined when nothing was priced. */
+function describeCost(usage: CommandUsage): string | undefined {
+  const amounts = Object.entries(usage.cost?.amounts ?? {})
+  if (amounts.length === 0) return undefined
+  const notes = [
+    ...(usage.cost?.unpriced ? ['some requests unpriced'] : []),
+    ...(usage.cost?.legacy ? ['excludes earlier requests'] : []),
+  ]
+  const total = amounts.map(([currency, amount]) => `${currency} ${formatCost(amount)}`).join(' + ')
+  return notes.length > 0 ? `${total} (${notes.join('; ')})` : total
 }
 
 function formatCost(cost: number): string {

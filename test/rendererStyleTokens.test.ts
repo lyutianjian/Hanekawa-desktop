@@ -417,6 +417,8 @@ test('the palette is the one that was agreed, value for value', () => {
       // The context indicator's ring, fourth of the same kind: a fraction of
       // the usable window written per paint by `dom/composerView.ts`.
       '--context-ratio': '0',
+      '--ctx-share': '0',
+      '--canvas-shift': '0px',
       // The transcript's bottom pad, fifth of the same kind: the room the newest
       // question needs to be liftable to the top of the viewport, measured per
       // paint by `dom/transcriptView.ts` from `model/transcriptAnchor.ts`.
@@ -427,6 +429,10 @@ test('the palette is the one that was agreed, value for value', () => {
       '--viewer-zoom': '1',
       '--viewer-pan-x': '0px',
       '--viewer-pan-y': '0px',
+      // The usage heatmap tip's anchor, seventh of the same kind: written per
+      // hover by `dom/usageCardView.ts`.
+      '--usage-tip-x': '0px',
+      '--usage-tip-y': '0px',
       '--font-ui':
         '"Inter Variable", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, "PingFang SC", "Microsoft YaHei UI", sans-serif',
       '--font-mono':
@@ -541,6 +547,8 @@ test('the palette is the one that was agreed, value for value', () => {
       // The context indicator's ring, fourth of the same kind: a fraction of
       // the usable window written per paint by `dom/composerView.ts`.
       '--context-ratio': '0',
+      '--ctx-share': '0',
+      '--canvas-shift': '0px',
       // The transcript's bottom pad, fifth of the same kind: the room the newest
       // question needs to be liftable to the top of the viewport, measured per
       // paint by `dom/transcriptView.ts` from `model/transcriptAnchor.ts`.
@@ -551,6 +559,10 @@ test('the palette is the one that was agreed, value for value', () => {
       '--viewer-zoom': '1',
       '--viewer-pan-x': '0px',
       '--viewer-pan-y': '0px',
+      // The usage heatmap tip's anchor, seventh of the same kind: written per
+      // hover by `dom/usageCardView.ts`.
+      '--usage-tip-x': '0px',
+      '--usage-tip-y': '0px',
       '--font-ui':
         '"Inter Variable", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, "PingFang SC", "Microsoft YaHei UI", sans-serif',
       '--font-mono':
@@ -790,6 +802,12 @@ test('accents are for icons and state rules, never for fills', () => {
     { selector: '.usage-heat.level-3', prop: 'background' },
     { selector: '.usage-heat.level-4', prop: 'background' },
     { selector: '.usage-share-bar::-webkit-progress-value', prop: 'background' },
+    // The context card's category swatches and bar segments: the same chart marks.
+    { selector: '.ctx-swatch-mcpTools', prop: 'background' },
+    { selector: '.ctx-swatch-messages', prop: 'background' },
+    { selector: '.ctx-swatch-skills', prop: 'background' },
+    { selector: '.ctx-swatch-tools', prop: 'background' },
+    { selector: '.ctx-swatch-memory', prop: 'background' },
   ]
 
   let seen = 0

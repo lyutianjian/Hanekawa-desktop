@@ -12,7 +12,9 @@ import { createTwoFilesPatch } from 'diff'
  * The text is standard unified diff (`--- a/…` / `+++ b/…` / `@@` hunks) with
  * one deliberate deviation: when the patch is capped it ends with a bare
  * elision line (see `ELISION_PREFIX`) that carries no diff prefix, so a reader
- * that only knows `+`/`-`/` `/`@@` can tell it apart from real content.
+ * that only knows `+`/`-`/` `/`@@` can tell it apart from real content. The
+ * line also carries the whole patch's added/deleted counts, which a reader
+ * could not recover from the kept rows alone.
  */
 
 export interface UnifiedPatchLimits {
@@ -115,7 +117,10 @@ function capPatchLines(lines: string[], limits: UnifiedPatchLimits): string {
   }
 
   const dropped = lines.length - kept.length
-  kept.push(`${ELISION_PREFIX}${dropped} more line${dropped === 1 ? '' : 's'} not shown`)
+  const body = lines.slice(2)
+  const added = body.filter((line) => line.startsWith('+')).length
+  const deleted = body.filter((line) => line.startsWith('-')).length
+  kept.push(`${ELISION_PREFIX}${dropped} more line${dropped === 1 ? '' : 's'} not shown (+${added} -${deleted})`)
   return kept.join('\n')
 }
 

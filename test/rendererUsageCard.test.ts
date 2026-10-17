@@ -44,6 +44,8 @@ test('the overview is three figures; peak hour and top model live on the model t
     { label: '高峰时段', value: '21 时' },
     { label: '常用模型', value: 'a' },
   ])
+  const today = usageCardView(days, 'overview', 'all', now).heatmap.flat().find((cell) => cell?.day === '2026-10-11')
+  assert.deepEqual(today, { level: 4, day: '2026-10-11', tokens: '2.5 万', messages: '2' })
 })
 
 test('the heatmap is 42 weeks whatever the range', () => {

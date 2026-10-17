@@ -841,6 +841,21 @@ export interface TokenUsage {
   cacheCreationInputTokens?: number
   cacheReadInputTokens: number
   outputTokens: number
+  /**
+   * What these tokens cost, priced per request by the model that served it
+   * (`priceUsage`). Absent when nothing priced them — usage straight from a
+   * provider adapter, or a total restored from older metrics.
+   */
+  cost?: UsageCost
+}
+
+export interface UsageCost {
+  /** Currency → amount. Kept apart per currency: a USD and a CNY model never sum. */
+  amounts: Record<string, number>
+  /** Some of the tokens came from a model without complete pricing. */
+  unpriced?: true
+  /** A restored total whose earlier requests were recorded before costs were. */
+  legacy?: true
 }
 
 export interface ModelPricing {

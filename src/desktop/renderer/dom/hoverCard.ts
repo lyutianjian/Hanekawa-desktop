@@ -35,6 +35,21 @@ export interface HoverCard {
 }
 
 /**
+ * Right-aligned to its anchor by default, a card is slid sideways just enough
+ * to stay inside `#canvas`, which clips — a narrow canvas (the side panel open)
+ * leaves too little room on either side. The left edge wins when neither fits.
+ */
+export function fitInCanvas(node: HTMLElement): void {
+  node.style.setProperty('--canvas-shift', '0px')
+  const canvas = node.closest('#canvas')?.getBoundingClientRect()
+  if (!canvas) return
+  const card = node.getBoundingClientRect()
+  const margin = 8
+  const shift = Math.max(canvas.left + margin - card.left, Math.min(0, canvas.right - margin - card.right))
+  if (shift !== 0) node.style.setProperty('--canvas-shift', `${shift}px`)
+}
+
+/**
  * @param anchor the element hovering over which opens the card. It must be
  * positioned — the card is absolute inside it — and it becomes focusable, so
  * the keyboard reaches the same breakdown the pointer does.
@@ -53,7 +68,13 @@ export function createHoverCard(anchor: HTMLElement, className = ''): HoverCard 
   let hovered = false
   let focused = false
   const presence = createPresence(node, { decorative: true })
-  const sync = (): void => presence.set(content !== undefined && (hovered || focused))
+  const sync = (): void => {
+    const open = content !== undefined && (hovered || focused)
+    const opening = open && presence.phase === 'closed'
+    presence.set(open)
+    if (opening) place()
+  }
+  const place = (): void => fitInCanvas(node)
   const close = (): void => {
     hovered = false
     focused = false

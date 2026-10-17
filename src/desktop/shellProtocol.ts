@@ -1,5 +1,5 @@
 import type { SessionMeta } from '../sessions/service.js'
-import type { SessionRecord } from '../harness/types.js'
+import type { ModelPricing, SessionRecord } from '../harness/types.js'
 import type { ToolDisplays, WirePaneInfo } from '../runtime/protocol/wire.js'
 import type { McpServerConfig } from '../services/mcp/types.js'
 import type { EffortLevel } from '../config/effort.js'
@@ -235,6 +235,8 @@ export type ShellCommand =
    * is refused: it is the global workspace and gets no coordinator.
    */
   | { type: 'new-coordinator-project'; id: string; path?: string }
+  /** Starts the survey thread (了解项目) of a project whose coordinator has no threads yet. */
+  | { type: 'coordination-survey'; id: string; projectRoot: string }
   /** Stops the coordinator and every thread of the project that has a live lane. */
   | { type: 'coordination-stop-all'; id: string; projectRoot: string }
   /** Worktree threads whose branch has commits the project's branch lacks. */
@@ -366,6 +368,7 @@ export interface WireModelInfo {
   supportedEfforts?: EffortLevel[]
   /** `thinking: { type: 'disabled' }` on the config entry; present only when true. */
   thinkingOff?: boolean
+  pricing?: ModelPricing
   /** Only when set inline on the model rather than inherited from an endpoint. */
   baseUrl?: string
   apiKeyMasked?: string
@@ -601,6 +604,8 @@ export type SettingsChange =
       supportedEfforts?: EffortLevel[]
       /** Form-owned like `supportsImageInput`: absent turns the model's thinking back on. */
       thinkingOff?: boolean
+      /** Form-owned: absent removes the model's pricing. */
+      pricing?: ModelPricing
     }
   | { scope: 'provider'; kind: 'rename-model'; from: string; to: string }
   | { scope: 'provider'; kind: 'remove-model'; key: string }
@@ -893,7 +898,7 @@ export interface WireThreadInfo {
 export interface WireCoordinationThreads {
   projectRoot: string
   coordinatorSessionId?: string
-  /** The survey thread a project created by 新建调度 opened with. */
+  /** The survey thread the welcome's 「读取项目」 started. */
   openingThreadId?: string
   /** The project has had a coordinator, even if its session was since deleted. */
   started?: true

@@ -5,6 +5,7 @@ import {
   submitButtonView,
 } from '../model/composer.js'
 import type { AttachmentStripView } from '../model/composerAttachments.js'
+import type { AttachedPath } from '../../../media/attachedPaths.js'
 import {
   CONTEXT_RATIO_VARIABLE,
   hiddenContextGauge,
@@ -14,14 +15,17 @@ import type { RuntimeMenuKey, RuntimeMenuView } from '../model/runtimeMenu.js'
 import { submenuIntentDelay, type PointerPoint } from '../model/menuIntent.js'
 import type { SurfaceAction, SurfaceRow } from '../model/surfaces.js'
 import type { PermissionMode } from '../../../harness/permissions.js'
-import type { WireRuntimeSnapshot } from '../../../runtime/protocol/wire.js'
+import type { WireContextBreakdownResult, WireRuntimeSnapshot } from '../../../runtime/protocol/wire.js'
+import { contextPopoverView } from '../model/contextBreakdown.js'
 import { el, reconcile, replace, show } from './dom.js'
 import { createPresence, finishPresenceWithin, type Presence } from './presence.js'
 import { button } from './controls.js'
 import { dismissable } from './dismiss.js'
 import { followPointer, rovingFocus } from './focus.js'
-import { createHoverCard } from './hoverCard.js'
+import { createHoverCard, fitInCanvas } from './hoverCard.js'
+import { createContextPopover, type ContextPopoverState } from './contextPopover.js'
 import { icon } from './icons.js'
+import { pathTileNode } from './pathTile.js'
 
 /**
  * The composer: a capsule containing the textarea and an inline action bar.
@@ -113,7 +117,7 @@ export interface ComposerView {
    * not a popover. Only the active pane may call this; a background pane
    * passes an empty view to clear the paint.
    */
-  renderAttachments(view: AttachmentStripView): void
+  renderAttachments(view: AttachmentStripView, paths?: readonly AttachedPath[]): void
   /**
    * Why the send button cannot send right now, when it has a say: pending or
    * failed attachments, or drafts against a model with no image capability.
@@ -166,6 +170,8 @@ export function createComposerView(els: {
   onPickImages: () => void
   /** A draft's ✕. The pane releases the host-side hold for ready drafts. */
   onRemoveAttachment: (draftId: string) => void
+  /** A dropped file or folder's ✕. */
+  onRemovePath: (path: string) => void
   /** A failed draft's 重试. A draft with no source cannot retry. */
   onRetryAttachment: (draftId: string) => void
   /** A ready draft's 打开原图, from the tile's context affordance: host-resolved. */
@@ -178,6 +184,8 @@ export function createComposerView(els: {
    * the event, and `model/composerAttachments.ts` stays DOM-free.
    */
   onPasteImages: (files: readonly File[]) => void
+  /** The context indicator's breakdown, from the active pane's host. */
+  onLoadContextBreakdown: () => Promise<WireContextBreakdownResult>
 }): ComposerView {
   const autosize = () => {
     // Kept in step with `#composer` / `#input`'s `max-height` in `styles.css`;
@@ -317,10 +325,11 @@ export function createComposerView(els: {
    * and rebuilding a tile the pointer is on at that rate is what the signature
    * guards exist to stop.
    */
-  function renderAttachments(view: AttachmentStripView): void {
-    const signature = view.rows
-      .map((row) => `${row.draftId}:${row.state}:${row.label}:${row.detail ?? ''}:${row.thumbUrl ?? ''}`)
-      .join('|')
+  function renderAttachments(view: AttachmentStripView, paths: readonly AttachedPath[] = []): void {
+    const signature = [
+      ...paths.map((entry) => `${entry.kind}:${entry.path}`),
+      ...view.rows.map((row) => `${row.draftId}:${row.state}:${row.label}:${row.detail ?? ''}:${row.thumbUrl ?? ''}`),
+    ].join('|')
     if (signature === attachSignature) {
       setSendBlockNote(view.sendBlockNote)
       return
@@ -328,13 +337,18 @@ export function createComposerView(els: {
     attachSignature = signature
 
     replace(els.attachStrip)
-    if (view.rows.length === 0) {
+    if (view.rows.length === 0 && paths.length === 0) {
       els.attachStrip.removeAttribute('aria-label')
       setSendBlockNote(view.sendBlockNote)
       return
     }
     els.attachStrip.setAttribute('role', 'list')
-    els.attachStrip.setAttribute('aria-label', '待发送图片')
+    els.attachStrip.setAttribute('aria-label', '待发送附件')
+    for (const entry of paths) {
+      const tile = pathTileNode(entry)
+      tile.appendChild(button('attachment-remove', '✕', `移除 ${entry.path}`, () => actions.onRemovePath(entry.path)))
+      els.attachStrip.appendChild(tile)
+    }
     for (const row of view.rows) {
       els.attachStrip.appendChild(attachmentTileNode(row))
     }
@@ -763,27 +777,92 @@ export function createComposerView(els: {
   }
 
   /**
-   * The independent occupancy indicator. The parent carries the figures as an
-   * accessible name; the ring and tooltip are presentation, so colour is never
-   * the only carrier. The whole subtree is signed for the same reason the chip
-   * is: streaming repaints must not rebuild a tooltip the pointer is over.
+   * The independent occupancy indicator. A hover shows its one-line figure; a
+   * click opens the breakdown, fetched from the host on open and again whenever
+   * the figure moves while it is open. The whole subtree is signed for the same
+   * reason the chip is: streaming repaints must not rebuild what the pointer is over.
    */
   const contextRing = el('span', 'context-gauge')
   contextRing.setAttribute('aria-hidden', 'true')
-  // The card itself — hover, focus, Escape and the row-keeping — is
-  // `dom/hoverCard.ts`; the status line's token readout draws the same one.
   const contextCard = createHoverCard(els.contextIndicator, 'context-tooltip')
+  const contextPopover = createContextPopover()
+  els.contextIndicator.setAttribute('role', 'button')
+  els.contextIndicator.setAttribute('aria-haspopup', 'dialog')
+  els.contextIndicator.setAttribute('aria-expanded', 'false')
+  let contextOpen = false
+  let contextLoad = 0
+
+  async function loadContextBreakdown(): Promise<void> {
+    const token = ++contextLoad
+    let state: ContextPopoverState
+    try {
+      const { breakdown } = await actions.onLoadContextBreakdown()
+      const runtime = runtimeSnapshot
+      state = breakdown && runtime?.status === 'ready' && runtime.usableContextWindow
+        ? {
+            kind: 'ready',
+            view: contextPopoverView(breakdown, runtime.contextWindow ?? runtime.usableContextWindow, runtime.usableContextWindow),
+          }
+        : { kind: 'empty' }
+    } catch (error) {
+      state = { kind: 'error', message: error instanceof Error ? error.message : String(error) }
+    }
+    if (token !== contextLoad || !contextOpen) return
+    contextPopover.paint(state)
+    if (contextPopover.presence.phase !== 'closed') return
+    contextPopover.presence.set(true)
+    fitInCanvas(contextPopover.node)
+  }
+
+  function setContextOpen(open: boolean): void {
+    if (open === contextOpen) return
+    contextOpen = open
+    els.contextIndicator.setAttribute('aria-expanded', String(open))
+    els.contextIndicator.classList.toggle('open', open)
+    contextSignature = undefined
+    renderContextGauge()
+    if (open) void loadContextBreakdown()
+    else contextPopover.presence.set(false)
+  }
+
+  els.contextIndicator.addEventListener('click', (event) => {
+    if (event.target instanceof Node && contextPopover.node.contains(event.target)) return
+    setContextOpen(!contextOpen)
+  })
+  els.contextIndicator.addEventListener('keydown', (event) => {
+    if ((event.key === 'Enter' || event.key === ' ') && event.target === els.contextIndicator) {
+      event.preventDefault()
+      setContextOpen(!contextOpen)
+    } else if (event.key === 'Escape' && contextOpen) {
+      event.preventDefault()
+      event.stopPropagation()
+      setContextOpen(false)
+      els.contextIndicator.focus()
+    }
+  })
+  els.contextIndicator.addEventListener('focusout', (event) => {
+    const next = (event as FocusEvent).relatedTarget
+    if (next === null || (next instanceof Node && els.contextIndicator.contains(next))) return
+    setContextOpen(false)
+  })
+  dismissable([els.contextIndicator], { isOpen: () => contextOpen, close: () => setContextOpen(false) })
 
   function renderContextGauge(): void {
     const signature = [
       contextGauge.visible ? `${contextGauge.level}:${contextGauge.ratio}:${contextGauge.title}` : '',
+      contextOpen ? '1' : '0',
     ].join(' ')
     if (signature === contextSignature) return
+    const moved = contextSignature !== undefined
     contextSignature = signature
 
     show(els.contextIndicator, contextGauge.visible)
     if (!contextGauge.visible) {
       contextCard.finish()
+      contextOpen = false
+      els.contextIndicator.setAttribute('aria-expanded', 'false')
+      els.contextIndicator.classList.remove('open')
+      contextPopover.presence.finish()
       replace(els.contextIndicator)
       els.contextIndicator.removeAttribute('aria-label')
       return
@@ -791,19 +870,12 @@ export function createComposerView(els: {
 
     contextRing.className = `context-gauge ${contextGauge.level}`
     contextRing.style.setProperty(CONTEXT_RATIO_VARIABLE, String(contextGauge.ratio))
-    contextCard.set({
-      title: '上下文',
-      lead: `${contextGauge.percent} 已用`,
-      rows: [
-        ['已用', contextGauge.used],
-        ['可用上限', contextGauge.usable],
-        ...(contextGauge.modelWindow ? [['模型窗口', contextGauge.modelWindow] as const] : []),
-      ],
-      note: '可用上限已预留自动压缩空间',
-    })
-    reconcile(els.contextIndicator, [contextRing, contextCard.node])
-    els.contextIndicator.setAttribute('role', 'img')
+    contextCard.set(contextOpen
+      ? undefined
+      : { title: '已使用', lead: `${contextGauge.percent} · ${contextGauge.used} / ${contextGauge.usable}`, rows: [] })
+    reconcile(els.contextIndicator, [contextRing, contextCard.node, contextPopover.node])
     els.contextIndicator.setAttribute('aria-label', contextGauge.title.replace(/\n/g, '；'))
+    if (contextOpen && moved) void loadContextBreakdown()
   }
 
   els.input.addEventListener('input', () => applySubmitState())
@@ -953,6 +1025,8 @@ export function createComposerView(els: {
       closeRuntimeMenu()
       closeAttachMenu()
       contextCard.finish()
+      setContextOpen(false)
+      contextPopover.presence.finish()
       if (permissionMenuOpen) {
         permissionMenuOpen = false
         renderPermission()

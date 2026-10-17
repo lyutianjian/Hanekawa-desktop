@@ -132,7 +132,7 @@ export class CoordinationWakeEngine {
     }
   }
 
-  /** A thread is being created; converged wakes wait for it. */
+  /** A thread is being created; report wakes wait for it. */
   beginThreadStart(cwd: string): void {
     this.project(cwd).startingThreads++
   }

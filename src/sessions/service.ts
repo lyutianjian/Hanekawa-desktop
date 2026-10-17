@@ -6,10 +6,12 @@ import { getSessionsDir } from '../utils/paths.js'
 import { migrateLegacyProjectData, type LegacyDataFinding } from './legacyProjectData.js'
 import { readJsonFile, writeJsonFile, parseJsonLines, parseJsonLinesWithDiagnostics } from '../utils/json.js'
 import type { CoordinationRole, SessionRecord, TokenUsage } from '../harness/types.js'
-import type { SessionMetricInput, SessionMetric } from '../harness/metrics.js'
+import type { MetricUsage, SessionMetricInput, SessionMetric } from '../harness/metrics.js'
+import { EMPTY_TOKEN_USAGE, addTokenUsage, promptTokens } from '../harness/usage.js'
 import { OtlpMetricExporter } from '../harness/otlp.js'
 import { checkSessionInvariants, ensureToolResultPairing } from './invariants.js'
 import { withFileLock } from './fileLock.js'
+import { attachedPathName, splitAttachedPaths } from '../media/attachedPaths.js'
 
 /**
  * Atomic write: write to a temp file in the same directory, then rename.
@@ -564,17 +566,20 @@ export class SessionStore {
   }
 
   /**
-   * Everything this session ever spent, summed from the same sidecar.
+   * Everything this session ever spent, summed from the same sidecar: every
+   * foreground request, plus the compactions and subagent runs that are not one.
    *
    * The running total is otherwise an in-process figure: reopening a session
    * restarted it at zero, so the cache hit rate beside it was computed over
    * whatever had been sent since the window was opened — and the first request
    * after a resume is mostly cache *writes*, which made a warm session read as
-   * a cold one. Summed from the `turn` metrics instead, so the number means the
-   * session rather than the process.
+   * a cold one.
    *
-   * Null when the session never completed a request, which is the caller's cue
-   * to keep counting from zero rather than to show a zeroed total.
+   * Entries recorded before costs were carry no cost; their tokens still count
+   * and the total's cost is marked `legacy` rather than repriced at today's rate.
+   *
+   * Null when the session never spent anything, which is the caller's cue to
+   * keep counting from zero rather than to show a zeroed total.
    */
   async loadSessionTotals(sessionIdOrPrefix: string): Promise<TokenUsage | null> {
     try {
@@ -583,18 +588,12 @@ export class SessionStore {
       const sessionId = session?.id ?? sessionIdOrPrefix
       const metricsPath = this.sessionMetricsPath(sessionId)
       if (!existsSync(metricsPath)) return null
-      const summary = this.runningCacheSummary(sessionId, metricsPath)
-      if (summary.totalTurns === 0) return null
-      return {
-        inputTokens: summary.totalInputTokens,
-        // Same contract as one request's usage: a session whose turns never
-        // carried a write count reports no write count either.
-        ...(summary.totalCacheCreationTokens > 0
-          ? { cacheCreationInputTokens: summary.totalCacheCreationTokens }
-          : {}),
-        cacheReadInputTokens: summary.totalCacheReadTokens,
-        outputTokens: summary.totalOutputTokens,
+      let total: TokenUsage | null = null
+      for (const metric of parseJsonLines<SessionMetric>(readFileSync(metricsPath, 'utf-8'))) {
+        const usage = metricTokenUsage(metric)
+        if (usage) total = addTokenUsage(total ?? EMPTY_TOKEN_USAGE, usage)
       }
+      return total
     } catch {
       return null
     }
@@ -1248,12 +1247,15 @@ function getMessageDisplayContent(record: (SessionRecord & { type: 'message' }) 
  */
 export function deriveSessionTitle(record: SessionRecord): string | undefined {
   if (record.type !== 'message' || record.role !== 'user') return undefined
-  const text = getMessageDisplayContent(record)
-  if (text !== undefined && (text.trim().length > 0 || (record.images?.length ?? 0) === 0)) {
+  const display = getMessageDisplayContent(record)
+  const { text, paths } = display === undefined ? { text: undefined, paths: [] } : splitAttachedPaths(display)
+  if (text !== undefined && (text.trim().length > 0 || ((record.images?.length ?? 0) === 0 && paths.length === 0))) {
     return text.slice(0, SESSION_TITLE_LENGTH)
   }
   const image = record.images?.find((candidate) => candidate.name.length > 0)
-  return image ? `图片：${image.name}`.slice(0, SESSION_TITLE_LENGTH) : undefined
+  if (image) return `图片：${image.name}`.slice(0, SESSION_TITLE_LENGTH)
+  const first = paths[0]
+  return first ? `${first.kind === 'folder' ? '文件夹' : '文件'}：${attachedPathName(first)}`.slice(0, SESSION_TITLE_LENGTH) : undefined
 }
 
 /** Whether the newest turn — everything after the last user message — ended on a failure. */
@@ -1268,6 +1270,24 @@ function failedAfterLastUserMessage(records: readonly SessionRecord[]): boolean 
 
 /** How much of the first message names the session. */
 const SESSION_TITLE_LENGTH = 60
+
+/** What one metric spent, or undefined for an event that carries no usage. */
+function metricTokenUsage(metric: SessionMetric): TokenUsage | undefined {
+  const fields: MetricUsage | undefined = metric.event === 'turn'
+    ? { ...metric, input_tokens: inferTurnInputTokens(metric) }
+    : metric.event === 'compact' || metric.event === 'subagent_usage' ? metric.usage : undefined
+  if (!fields) return undefined
+  const usage: TokenUsage = {
+    inputTokens: Math.max(0, fields.input_tokens),
+    ...(typeof fields.cache_creation_tokens === 'number'
+      ? { cacheCreationInputTokens: Math.max(0, fields.cache_creation_tokens) }
+      : {}),
+    cacheReadInputTokens: Math.max(0, fields.cache_read_tokens),
+    outputTokens: Math.max(0, fields.response_tokens),
+  }
+  if (fields.cost) return { ...usage, cost: fields.cost }
+  return promptTokens(usage) + usage.outputTokens > 0 ? { ...usage, cost: { amounts: {}, legacy: true } } : usage
+}
 
 export function inferTurnInputTokens(turn: Extract<SessionMetric, { event: 'turn' }>): number {
   if (typeof turn.input_tokens === 'number' && Number.isFinite(turn.input_tokens)) {

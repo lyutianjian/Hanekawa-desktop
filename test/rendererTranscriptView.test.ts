@@ -298,7 +298,7 @@ function mount(t: { after(fn: () => void): void }): Rendered {
     onOpenPath: (path, line) => opened.push([path, line]),
     onViewImage: (image) => viewedImages.push([image.id, image.name]),
     imageThumbUrl: (imageId) => thumbs.get(imageId),
-    onCopy: (text) => copied.push(text),
+    onCopy: async (text) => { copied.push(text); return true },
     onRewind: (id) => rewound.push(id),
     onOpenSubagent: (id) => openedSubagents.push(id),
     onOpenBackgroundTasks: () => { backgroundOpens += 1 },
@@ -500,7 +500,7 @@ test('loose items paint as items: messages, notices and 已中断; the duration 
     ['item-meta', 'turn-foot'],
     ['item', 'notice', 'interrupt'],
   ])
-  assert.deepEqual(items().map((item) => item.text), ['hi', '上下文已压缩', 'boom', '用时 1s', '已中断'])
+  assert.deepEqual(items().map((item) => item.text), ['hi显示更多', '上下文已压缩', 'boom', '用时 1s', '已中断'])
 })
 
 test('a duration made from a streaming turn’s records is not drawn until the turn ends', (t) => {
@@ -1076,7 +1076,8 @@ test('a failed Bash step with no output is one line, not an empty terminal', (t)
   )
 })
 
-test('a described Bash step puts the full command in its own bubble above the output, with a copy button', (t) => {
+test('a described Bash step puts the full command in its own bubble above the output, with a copy button', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   const view = mount(t)
   const command = 'npm test \\\n  -- --grep "a long pattern"'
   view.render(
@@ -1091,6 +1092,8 @@ test('a described Bash step puts the full command in its own bubble above the ou
   assert.equal(body!.children[2]?.text, 'ok 42 passed\n3 failed')
   view.stub.click(bubble.children[1]!.node)
   assert.deepEqual(view.copied, [command])
+  await Promise.resolve()
+  t.mock.timers.tick(5000)
 })
 
 test('an undescribed Bash step names only its first word; the bubble holds the command, even while it runs', (t) => {
@@ -1551,7 +1554,7 @@ test('a mention in the user bubble is a pill, interleaved with the text as typed
   render(transcript([{ id: 'm1', kind: 'user', text: '把 @a.ts 搬到 @"b c.ts"' }]))
   // The item is the column; the bubble is the node inside it that the meta row
   // hangs off of.
-  const bubble = items()[0]?.children.find((child) => child.classes.includes('user-bubble'))
+  const bubble = items()[0]?.children.find((child) => child.classes.includes('user-bubble'))?.children[0]
   assert.ok(bubble)
 
   const shapes = bubble.nodes.map((node) => (typeof node === 'string' ? node : node.className))
@@ -1568,8 +1571,25 @@ test('a bubble with no mention is still a single text node', (t) => {
   const { render, items } = mount(t)
   render(transcript([{ id: 'm1', kind: 'user', text: 'mail me at foo@bar.com' }]))
 
-  const bubble = items()[0]?.children.find((child) => child.classes.includes('user-bubble'))
+  const bubble = items()[0]?.children.find((child) => child.classes.includes('user-bubble'))?.children[0]
   assert.deepEqual(bubble?.nodes, ['mail me at foo@bar.com'])
+})
+
+test('dropped paths draw as tiles above the bubble, out of its text', (t) => {
+  const { render, items } = mount(t)
+  const block = '<attached-paths>\nfile: /a/tsconfig.base.json\nfolder: /a/pi-main\n</attached-paths>'
+  render(transcript([
+    { id: 'm1', kind: 'user', text: `看看\n\n${block}` },
+    { id: 'm2', kind: 'user', text: block },
+  ]))
+  const [withText, pathsOnly] = items()
+  const tiles = (item: StubView | undefined) =>
+    item?.children.find((child) => child.classes.includes('user-paths'))?.children.map((tile) => tile.text)
+  const bubble = (item: StubView | undefined) => item?.children.find((child) => child.classes.includes('user-bubble'))
+  assert.deepEqual(tiles(withText), ['/a/tsconfig.base.jsonJSON', '/a/pi-main文件夹'])
+  assert.equal(bubble(withText)?.children[0]?.text, '看看')
+  assert.ok(tiles(pathsOnly))
+  assert.equal(bubble(pathsOnly), undefined, 'no empty bubble under paths alone')
 })
 
 const TODO_STEP: TranscriptItem = {
@@ -1685,7 +1705,8 @@ test('only the user bubble grows pills', (t) => {
   }
 })
 
-test('a message carries a meta row: 复制, its model, its time — and a draft carries none', (t) => {
+test('a message carries a meta row: 复制, its model, its time — and a draft carries none', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
   const { render, items, copied, rewound, stub } = mount(t)
   const meta = (item: StubView): StubView | undefined =>
     item.children.find((child) => child.classes.includes('item-meta'))
@@ -1716,6 +1737,11 @@ test('a message carries a meta row: 复制, its model, its time — and a draft 
 
   stub.click(row.children[0]!.node)
   assert.deepEqual(copied, ['part done'], 'the pane is handed the message, not the rendered markdown')
+  // A successful copy turns the glyph into a tick for five seconds.
+  await Promise.resolve()
+  assert.equal((row.children[0]!.node as HTMLButtonElement).title, '已复制')
+  t.mock.timers.tick(5000)
+  assert.equal((row.children[0]!.node as HTMLButtonElement).title, '复制')
 
   // The user's bubble has a time and a copy button, and no model to name.
   render(transcript([{ id: 'u1', kind: 'user', text: 'go', createdAt: at }]))
@@ -1725,16 +1751,19 @@ test('a message carries a meta row: 复制, its model, its time — and a draft 
   // of the things inside it.
   assert.deepEqual(
     items()[0]!.children.map((child) => child.className),
-    ['user-bubble', 'item-meta'],
+    ['user-bubble clamped', 'item-meta'],
   )
+  // At the bubble's right edge, the time first and the controls ending the row.
   assert.deepEqual(
     userRow.children.map((child) => [child.classes.join(' '), child.text]),
-    [['item-copy', ''], ['item-rewind', ''], ['item-time', '14:32']],
+    [['item-time', '14:32'], ['item-copy', ''], ['item-rewind', '']],
   )
-  stub.click(userRow.children[0]!.node)
-  assert.deepEqual(copied, ['part done', 'go'])
-  // 回退 addresses the checkpoint by the user record's id.
   stub.click(userRow.children[1]!.node)
+  assert.deepEqual(copied, ['part done', 'go'])
+  await Promise.resolve()
+  t.mock.timers.tick(5000)
+  // 回退 addresses the checkpoint by the user record's id.
+  stub.click(userRow.children[2]!.node)
   assert.deepEqual(rewound, ['u1'])
 })
 
@@ -2205,7 +2234,7 @@ test('the pad follows the viewport, which moves without the transcript repaintin
   const resizes: Array<() => void> = []
   const previous = (globalThis as { ResizeObserver?: unknown }).ResizeObserver
   ;(globalThis as { ResizeObserver?: unknown }).ResizeObserver = class {
-    constructor(run: () => void) { resizes.push(run) }
+    constructor(run: (entries: unknown[]) => void) { resizes.push(() => run([])) }
     observe(): void {}
     disconnect(): void {}
   }
@@ -2238,7 +2267,8 @@ test('M19 transcript resize observation pauses on hiding, resumes on paint and e
   }
   t.after(() => { globalThis.ResizeObserver = previous })
   const view = mount(t)
-  const state = transcript([{ id: 'a', kind: 'user', text: 'hello' }])
+  // Not a user message: its bubble would add the clamp observer's own target.
+  const state = transcript([{ id: 'a', kind: 'notice', text: 'hello' }])
   view.render(state)
   view.render(state)
   // Two targets: the scroller, and the column whose content moves under it.
@@ -2252,7 +2282,8 @@ test('M19 transcript resize observation pauses on hiding, resumes on paint and e
   view.render(state)
   assert.equal(observed, 4)
   view.dispose()
-  assert.equal(disconnected, 2)
+  // The scroller's observer and the user-bubble clamp's.
+  assert.equal(disconnected, 3)
 })
 
 test('the turn ending hands the pad back, so the tail is not a screenful of blank', (t) => {
@@ -2378,7 +2409,7 @@ test('T6 thread note cards: head, status label, and 查看 only with a thread id
   const host = stub.createContainer('pane')
   const real = createTranscriptView(container, host, {
     onToggle: () => {}, onOpenPlan: () => {}, onOpenSubagent: () => {}, onOpenPath: () => {},
-    onViewImage: () => {}, imageThumbUrl: () => undefined, onCopy: () => {},
+    onViewImage: () => {}, imageThumbUrl: () => undefined, onCopy: async () => true,
     onOpenThread: (id) => opened.push(id),
   })
   const item: TranscriptItem = {
@@ -2412,7 +2443,7 @@ test('a failed turn draws a card: reason, target, hint, the provider\'s words, a
   const host = stub.createContainer('pane')
   const real = createTranscriptView(container, host, {
     onToggle: () => {}, onOpenPlan: () => {}, onOpenSubagent: () => {}, onOpenPath: () => {},
-    onViewImage: () => {}, imageThumbUrl: () => undefined, onCopy: () => {},
+    onViewImage: () => {}, imageThumbUrl: () => undefined, onCopy: async () => true,
     onOpenProviderSettings: () => { providerSettings += 1 },
     onRetryTurn: (id) => retried.push(id),
   })

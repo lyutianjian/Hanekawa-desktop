@@ -60,24 +60,57 @@ export interface PatchRows {
   readonly added: number
   /** Rows with a `-` prefix. */
   readonly deleted: number
-  /** The tool ran out of budget and dropped lines — the counts above are partial. */
+  /** The tool ran out of budget and dropped lines. */
   readonly capped: boolean
+  /** Capped without the whole patch's counts (an older record): the counts above are short. */
+  readonly partial: boolean
 }
 
 /**
  * The cap line `src/tools/editPatch.ts` appends when it runs out of budget,
- * verbatim. A format contract, duplicated for the same reason
+ * verbatim, with the whole patch's `(+added -deleted)` (absent in older
+ * records). A format contract, duplicated for the same reason
  * `isSystemReminderBlock` is: the renderer may not import `tools/`.
  */
-const PATCH_ELISION = /^… (\d+) more lines? not shown$/
+const PATCH_ELISION = /^… (\d+) more lines? not shown(?: \(\+(\d+) -(\d+)\))?$/
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/
 
 /** The file a unified patch names on its `+++ b/…` header, or `undefined` without one. */
 export function patchPath(patch: string): string | undefined {
   const header = patch.split('\n', 3).find((line) => line.startsWith('+++ '))
-  const path = header?.slice(4).replace(/^b\//, '').trim()
+  const path = header === undefined ? undefined : unquotePath(header.slice(4).trim()).replace(/^b\//, '')
   return path ? path : undefined
+}
+
+const C_ESCAPES: Record<string, number> = { a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92 }
+
+/**
+ * A header name as `diff` writes it: C-quoted, with UTF-8 bytes as octal
+ * escapes, whenever it holds anything but printable ASCII — a Chinese file
+ * name among them.
+ */
+function unquotePath(name: string): string {
+  if (name.length < 2 || !name.startsWith('"') || !name.endsWith('"')) return name
+  const bytes: number[] = []
+  const body = name.slice(1, -1)
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index]!
+    if (char !== '\\') {
+      bytes.push(...new TextEncoder().encode(char))
+      continue
+    }
+    const octal = /^[0-7]{1,3}/.exec(body.slice(index + 1))?.[0]
+    if (octal !== undefined) {
+      bytes.push(parseInt(octal, 8))
+      index += octal.length
+    } else {
+      const next = body[index + 1] ?? ''
+      bytes.push(C_ESCAPES[next] ?? next.charCodeAt(0))
+      index += 1
+    }
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes))
 }
 
 /**
@@ -137,7 +170,9 @@ export function parseUnifiedPatch(patch: string): PatchRows | undefined {
       // that says nothing.
       if (!opened) return undefined
       rows.push(elidedRow(Number(cap[1])))
-      return { rows, added, deleted, capped: true }
+      return cap[2] === undefined
+        ? { rows, added, deleted, capped: true, partial: true }
+        : { rows, added: Number(cap[2]), deleted: Number(cap[3]), capped: true, partial: false }
     }
 
     if (!opened) return undefined
@@ -165,7 +200,7 @@ export function parseUnifiedPatch(patch: string): PatchRows | undefined {
     }
   }
 
-  return opened ? { rows, added, deleted, capped: false } : undefined
+  return opened ? { rows, added, deleted, capped: false, partial: false } : undefined
 }
 
 /**

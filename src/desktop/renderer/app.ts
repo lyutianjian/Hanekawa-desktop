@@ -88,6 +88,7 @@ import {
 } from './model/theme.js'
 import { canvasHeaderView, type CanvasHeaderMenuItem } from './model/canvasHeader.js'
 import { el, replace, required, show } from './dom/dom.js'
+import type { AttachedPath } from '../../media/attachedPaths.js'
 import { icon } from './dom/icons.js'
 import { button } from './dom/controls.js'
 import { closeAllDismissables, closeTopDismissable, hasOpenDismissable, onPressOutside } from './dom/dismiss.js'
@@ -254,7 +255,6 @@ const suggestions = createSuggestionsView(required('suggestions'), (index) => {
 const processStrip = createProcessStripView(required('process-strip'), () => showSideTab('commands'))
 const status = createStatusView({
   usage: required('status-usage'),
-  cost: required('status-cost'),
 })
 const composer = createComposerView({
   input: required<HTMLTextAreaElement>('input'),
@@ -283,10 +283,12 @@ const composer = createComposerView({
   // whichever conversation the composer is currently speaking for.
   onPickImages: () => void activePane()?.pickImages(),
   onRemoveAttachment: (draftId) => void activePane()?.removeDraftImage(draftId),
+  onRemovePath: (path) => activePane()?.removeDraftPath(path),
   onRetryAttachment: (draftId) => activePane()?.retryDraftImage(draftId),
   onOpenAttachment: (draftId) => void activePane()?.openDraftImage(draftId),
   onPreviewAttachment: (draftId) => void activePane()?.previewDraftImage(draftId),
   onPasteImages: (files) => void activePane()?.importImagesFromFiles(files),
+  onLoadContextBreakdown: () => activePane()?.client.getContextBreakdown() ?? Promise.resolve({}),
 })
 const form = required<HTMLFormElement>('input-row')
 const sidebarContainer = required('sidebar')
@@ -401,9 +403,17 @@ function attachPaneSession(lane: string): void {
       if (target.kind === 'overview') showSideTab('threads')
       else openSessionById(activeLaneInfo()!.projectRoot, target.sessionId)
     },
-    coordinationOpening: () => {
+    coordinationTable: () => {
       const root = shellClient.getLanes().find((info) => info.lane === lane)?.projectRoot
-      return root !== undefined && coordinationByRoot.get(root)?.openingThreadId !== undefined
+      return root === undefined ? undefined : coordinationByRoot.get(root)
+    },
+    onStartSurvey: async () => {
+      const root = shellClient.getLanes().find((info) => info.lane === lane)?.projectRoot
+      if (root === undefined) return false
+      return shellClient.startSurvey(root).then(() => true, (error: unknown) => {
+        reportError({ action: '读取项目' }, error)
+        return false
+      })
     },
     onExit: () => {
       // `/exit` closes this pane, not the window: the single window holds every
@@ -2415,25 +2425,58 @@ required<HTMLButtonElement>('stop').addEventListener('click', () => {
   void activePane()?.interrupt()
 })
 
-// Drag-and-drop: a file dragged onto the composer's capsule becomes an image
-// attachment of the active pane (design §6.1). Navigation is suppressed for
-// every drop — Electron would otherwise turn a dropped file into a page
-// navigation and blank the shell — and only *image* files are imported; other
-// drops land nowhere rather than being pasted as paths, which is not a thing
-// this composer does.
-//
-// The listeners sit on the form rather than the window: the sidebar and the
-// settings screen are not drop targets, and a file dropped there should stay
-// the OS's business.
-for (const type of ['dragenter', 'dragover', 'dragleave', 'drop']) {
-  form.addEventListener(type, (event) => {
-    event.preventDefault()
-  })
+// Drag-and-drop onto the chat area: images import as picture attachments, any
+// other file or folder rides the next message as its path. Every drop over the
+// canvas is swallowed — Electron would otherwise navigate to the dropped file
+// and blank the shell. The projects page and settings are not drop targets.
+const dropOverlay = el('div', 'drop-overlay', el('span', 'drop-overlay-label', '拖放到此处以添加到对话'))
+canvas.appendChild(dropOverlay)
+let dragDepth = 0
+const dropTarget = (event: DragEvent): boolean =>
+  event.dataTransfer?.types.includes('Files') === true
+  && !canvas.classList.contains('projects-open')
+  && !canvas.classList.contains('settings-open')
+  && activePane() !== undefined
+function endDrag(): void {
+  dragDepth = 0
+  canvas.classList.remove('drop-active')
 }
-form.addEventListener('drop', (event) => {
-  const files = Array.from(event.dataTransfer?.files ?? [])
-  if (files.length === 0 || !files.some((file) => file.type.startsWith('image/'))) return
-  activePane()?.importImagesFromFiles(files)
+canvas.addEventListener('dragenter', (event) => {
+  event.preventDefault()
+  if (!dropTarget(event)) return
+  dragDepth += 1
+  canvas.classList.add('drop-active')
+})
+canvas.addEventListener('dragover', (event) => {
+  event.preventDefault()
+  if (event.dataTransfer) event.dataTransfer.dropEffect = dropTarget(event) ? 'copy' : 'none'
+})
+canvas.addEventListener('dragleave', () => {
+  if (dragDepth > 0 && --dragDepth === 0) endDrag()
+})
+canvas.addEventListener('drop', (event) => {
+  event.preventDefault()
+  const accepted = dropTarget(event)
+  endDrag()
+  const pane = activePane()
+  if (!accepted || !pane || !event.dataTransfer) return
+  const images: File[] = []
+  const paths: AttachedPath[] = []
+  // Read synchronously: the items are gone once the handler returns.
+  for (const item of Array.from(event.dataTransfer.items)) {
+    const file = item.kind === 'file' ? item.getAsFile() : null
+    if (!file) continue
+    const folder = item.webkitGetAsEntry()?.isDirectory === true
+    if (!folder && file.type.startsWith('image/')) {
+      images.push(file)
+      continue
+    }
+    const path = bridge.pathForFile(file)
+    if (path) paths.push({ path, kind: folder ? 'folder' : 'file' })
+  }
+  pane.addDraftPaths(paths)
+  if (images.length > 0) void pane.importImagesFromFiles(images)
+  composer.focus()
 })
 
 // --- startup --------------------------------------------------------------------

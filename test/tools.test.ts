@@ -1285,7 +1285,7 @@ test('buildUnifiedPatch caps oversized patches on a hunk boundary', () => {
   const lines = patch.split('\n')
   assert.equal(lines[0], '--- a/a.txt')
   assert.equal(lines[1], '+++ b/a.txt')
-  assert.match(lines[lines.length - 1]!, /^… \d+ more lines not shown$/)
+  assert.match(lines[lines.length - 1]!, /^… \d+ more lines not shown \(\+6 -6\)$/)
   // The kept body ends where a hunk ends, never mid-hunk.
   assert.ok(lines.length <= 21)
   const hunkStarts = lines.filter(line => line.startsWith('@@')).length
@@ -1304,5 +1304,5 @@ test('buildUnifiedPatch keeps a truncated first hunk rather than nothing', () =>
   const lines = patch.split('\n')
   assert.equal(lines[2], '@@ -1,40 +1,40 @@')
   assert.ok(lines.length > 3, 'a single oversized hunk still ships its first lines')
-  assert.match(lines[lines.length - 1]!, /more lines not shown$/)
+  assert.match(lines[lines.length - 1]!, /more lines not shown \(\+40 -40\)$/)
 })

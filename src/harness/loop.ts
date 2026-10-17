@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import os from 'node:os'
-import { ContextBuilder } from './contextBuilder.js'
-import { extractDiscoveredToolNames, filterToolsForRequest, resolveToolSearchState, TOOL_SEARCH_TOOL_NAME } from '../utils/toolSearch.js'
+import { ContextBuilder, INSTRUCTIONS_MESSAGE_ID } from './contextBuilder.js'
+import { extractDiscoveredToolNames, filterToolsForRequest, resolveToolSearchState, TOOL_SEARCH_TOOL_NAME, type ToolSearchState } from '../utils/toolSearch.js'
+import type { ContextSources } from './contextBreakdown.js'
 import type { EnvironmentInfo } from './contextBuilder.js'
 import { ToolRunner } from './toolRunner.js'
 import {
@@ -9,10 +10,11 @@ import {
   addTokenUsage,
   cacheCreationTokens,
   cacheHitRate,
+  costField,
   promptTokens,
   reportsCacheCreation,
 } from './usage.js'
-import { autoCompactIfNeeded, summarizeRecordsForContinuation } from './compact.js'
+import { autoCompactIfNeeded, compactNow, summarizeRecordsForContinuation, type CompactCheckInput, type CompactCheckResult } from './compact.js'
 import {
   prepareRecordsForRequestWithDiagnostics,
   requestTokenCountFromUsage,
@@ -21,7 +23,7 @@ import { applyProgressiveCompaction } from './progressiveCompact.js'
 import { summarizeToolUse } from './toolUseSummary.js'
 import { agentCacheSource, compactCacheSource, formatCacheHitRate, notifyCompaction, resetCacheBreakDetection, type CacheBreakSource } from './cacheBreakDetection.js'
 import { logDiagnostics, type RuntimeDiagnostic } from './diagnostics.js'
-import type { SessionMetricInput } from './metrics.js'
+import { toMetricUsage, type SessionMetricInput } from './metrics.js'
 import type { RecordStream } from './recordStream.js'
 import { MemoryRecordStream } from './recordStream.js'
 import type { ImageAttachmentRef, UserInput } from '../media/types.js'
@@ -39,7 +41,6 @@ import type { CacheRuntime } from './cacheControl.js'
 import type { PermissionMode } from './permissions.js'
 import type { PlanModeManager } from './planModeManager.js'
 import type { AgentRunResult, AttachmentBytesLoader, ChatMessage, ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, RequestImageBytes, SessionRecord, SteerSource, Tool, ToolCall, ToolContext, ToolResultRecord, ToolUseSummaryRecord, TokenUsage, TurnOrigin } from './types.js'
-import type { ThinkingConfig } from '../config/service.js'
 import type { CompactPromptVariant } from '../prompts/compactPrompt.js'
 import { formatTaskLine, remainingTasksFromState, sortedTasks } from '../tools/taskFormat.js'
 import { describeShell } from '../tools/BashTool/BashTool.js'
@@ -414,15 +415,6 @@ export class AgentLoop {
     this.recordsCacheHasCleanToolProtocol = false
   }
 
-  /** Update thinking config at runtime; takes effect on the next turn. */
-  setThinking(thinking: ThinkingConfig | undefined): void {
-    this.options.thinking = thinking
-  }
-
-  getThinking(): ThinkingConfig | undefined {
-    return this.options.thinking
-  }
-
   /** Update effort level at runtime; takes effect on the next turn. */
   setEffort(effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | undefined): void {
     this.options.effort = effort
@@ -436,6 +428,7 @@ export class AgentLoop {
     this.recordsCache?.push(record)
     if (record.type === 'subagent_transcript') {
       this.pendingSubagentTranscriptUsage = addTokenUsage(this.pendingSubagentTranscriptUsage, record.usage)
+      void this.emitMetric({ event: 'subagent_usage', model: record.model ?? '', usage: toMetricUsage(record.usage) })
     }
     if (record.type === 'tool_use' || record.type === 'tool_result') {
       this.recordsCacheHasCleanToolProtocol = false
@@ -502,6 +495,17 @@ export class AgentLoop {
         usage: result.usage,
         preTokens: result.preTokens,
       }
+    })
+  }
+
+  /** `/compact`: summarizes the conversation now, between turns; throws when the summary fails. */
+  async compact(instructions?: string): Promise<CompactCheckResult> {
+    return this.enqueue(async () => {
+      const turnId = randomUUID()
+      const records = await this.loadPreparedRecords(turnId)
+      const userMessageId = [...records].reverse().find((record) => record.type === 'message' && record.role === 'user')?.id ?? ''
+      const cacheSource = this.options.cacheSource ?? agentCacheSource(this.options.toolContext.sessionId, this.dataRoot())
+      return this.runCompaction(compactNow, records, turnId, userMessageId, cacheSource, instructions ? { compactInstructions: instructions } : {})
     })
   }
 
@@ -793,66 +797,14 @@ export class AgentLoop {
         })
         await this.appendPendingTrimRecords()
         let recordsBeforeCompact = progressive.records
-        const recordsToSummarize = recordsBeforeCompact
         const useCachedTokenEstimate = !progressive.microCompacted && !progressive.snipped
-        // An inheriting fork compacts only its own records: the parent prefix ahead
-        // of them is sent unchanged, so its cache still hits.
-        // The summary is a model call of its own, often the longest wait in the
-        // turn; bracketed so a shell can say so while it runs.
-        let compacting = false
-        const compactResult = await autoCompactIfNeeded({
-          records: recordsBeforeCompact,
-          provider: this.activeModel.provider,
-          model: this.activeModel.model,
-          compactRuntime: this.options.compactModel,
-          tools: this.currentTools,
-          system: this.options.system,
-          contextManagement: this.activeContextManagement,
+        const compactResult = await this.runCompaction(autoCompactIfNeeded, recordsBeforeCompact, turnId, userMessage.id, cacheSource, {
           lastResponseTokenCount: useCachedTokenEstimate ? lastResponseTokenCount : undefined,
           lastResponseRecordCount: useCachedTokenEstimate ? lastResponseRecordCount : undefined,
           lastResponseRecordId: useCachedTokenEstimate ? lastResponseRecordId : undefined,
-          imageTokenStrategy,
-          discoveredToolNames: this.options.toolContext.discoveredToolNames,
-          promptCacheRetention: this.activeModel.promptCacheRetention,
-          turnId,
-          circuitKey: this.options.toolContext.sessionId,
-          cwd: this.dataRoot(),
           ...(iteration === 0 && this.activeRunOverrides?.compactBeforeSend === true ? { force: true } : {}),
-          ...(this.options.compactPromptVariant ? { compactPromptVariant: this.options.compactPromptVariant } : {}),
-          ...(this.options.attachmentFacts ? { attachmentFacts: this.options.attachmentFacts } : {}),
-          getCompactFailureCount: this.options.getCompactFailureCount,
-          setCompactFailureCount: this.options.setCompactFailureCount,
-          ...(this.compactSharesPrefix()
-            ? {
-                summarizeWithSharedPrefix: (prompt: string) =>
-                  this.summarizeWithSharedPrefix(recordsToSummarize, prompt, turnId, userMessage.id, signal),
-              }
-            : {}),
-          ...(signal ? { signal } : {}),
-          appendRecord: (record) => this.appendRecord(record),
-          onBeforeCompact: (event) => {
-            compacting = true
-            this.options.onStreamEvent?.({ type: 'compact', phase: 'start' })
-            return this.runCompactHooks('preCompact', event, turnId, signal)
-          },
-          onAfterCompact: (event) => this.runCompactHooks('postCompact', event, turnId, signal),
-        }).finally(() => {
-          if (compacting) this.options.onStreamEvent?.({ type: 'compact', phase: 'end' })
-        })
+        }, signal)
         usage = addTokenUsage(usage, compactResult.usage)
-        if (compactResult.compacted) {
-          notifyCompaction(cacheSource)
-          this.options.contextBuilder.clearCachedSections()
-          if (compactResult.metrics) {
-            await this.emitMetric({
-              event: 'compact',
-              model: this.activeModel.model,
-              pre_tokens: compactResult.metrics.preTokens,
-              post_tokens: compactResult.metrics.postTokens,
-              compact_duration_ms: compactResult.metrics.compactDurationMs,
-            })
-          }
-        }
 
       if (this.retryPrimaryIfReady(cacheSource)) {
         resetModelRequestState()
@@ -1731,6 +1683,70 @@ export class AgentLoop {
     }
   }
 
+  /** The tools a request would declare now, and whether deferred ones are searched for. */
+  private toolsForRequest(): { toolSearchState: ToolSearchState; toolsForContext: Tool[] } {
+    const toolSearchState = resolveToolSearchState({
+      tools: this.currentTools,
+      contextWindowSize: getContextWindowForModel(this.activeContextManagement),
+      providerSupportsDynamicToolSearch: this.activeModel.provider.supportsDynamicToolSearch?.() ?? false,
+    })
+    const toolsForContext = toolSearchState.enabled
+      ? this.currentTools
+      : this.currentTools.filter((tool) => tool.name !== TOOL_SEARCH_TOOL_NAME)
+    return { toolSearchState, toolsForContext }
+  }
+
+  /** The context-builder input that does not depend on the history. */
+  private fixedContextInput(tools: Tool[], dynamicToolSearchEnabled: boolean) {
+    const env: EnvironmentInfo = {
+      cwd: this.options.toolContext.cwd,
+      platform: process.platform,
+      // Asked of the Bash tool rather than guessed: on Windows it resolves Git
+      // Bash before PowerShell, and this line is what the model writes syntax
+      // for.
+      shell: describeShell(),
+      osVersion: `${os.type()} ${os.release()}`,
+      isGitRepo: this.options.isGitRepo ?? false,
+      model: this.activeModel.model,
+    }
+    return {
+      tools,
+      system: this.options.system,
+      // An inherited prefix already opens with the parent's instructions message.
+      ...(this.options.inheritedRequest
+        ? {}
+        : { projectContext: this.options.projectContext, memoryIndex: this.options.memoryIndex }),
+      memoryPrompt: this.options.memoryPrompt,
+      rolePrompt: this.options.rolePrompt,
+      criticalSystemReminder: this.options.criticalSystemReminder,
+      skills: this.options.skills,
+      contextManagement: this.activeContextManagement,
+      toolContext: this.options.toolContext,
+      env,
+      dynamicToolSearchEnabled,
+    }
+  }
+
+  /** The fixed parts of the request this loop would send after `records`, for the context breakdown. */
+  async describeContextSources(records: readonly SessionRecord[]): Promise<ContextSources> {
+    const { toolSearchState, toolsForContext } = this.toolsForRequest()
+    const built = await this.options.contextBuilder.build({
+      records: [],
+      ...this.fixedContextInput(toolsForContext, toolSearchState.enabled),
+      includeUserContext: false,
+    })
+    const loadedTools = toolSearchState.enabled
+      ? filterToolsForRequest(this.currentTools, extractDiscoveredToolNames([...records]))
+      : toolsForContext
+    return {
+      system: built.system ?? '',
+      skillsSection: this.options.contextBuilder.skillsSystemSection(this.options.skills ?? []),
+      loadedTools,
+      deferredTools: toolSearchState.enabled ? this.currentTools.filter((tool) => !loadedTools.includes(tool)) : [],
+      instructions: built.messages.find((message) => message.id === INSTRUCTIONS_MESSAGE_ID)?.content,
+    }
+  }
+
   /**
    * The request this loop sends for `records` — system, tools and history built
    * exactly as the main path builds them, so a request that must share the
@@ -1753,49 +1769,15 @@ export class AgentLoop {
     // request will actually carry. Current-turn files that cannot be loaded
     // stop the request; unloadable history degrades to placeholders here.
     const imageSend = await this.prepareRequestImages(records, turnId, userMessageId, preloadRecords)
-    const env: EnvironmentInfo = {
-      cwd: this.options.toolContext.cwd,
-      platform: process.platform,
-      // Asked of the Bash tool rather than guessed: on Windows it resolves Git
-      // Bash before PowerShell, and this line is what the model writes syntax
-      // for.
-      shell: describeShell(),
-      osVersion: `${os.type()} ${os.release()}`,
-      isGitRepo: this.options.isGitRepo ?? false,
-      model: this.activeModel.model,
-    }
-
-    const providerSupportsDynamicToolSearch =
-      this.activeModel.provider.supportsDynamicToolSearch?.() ?? false
-    const toolSearchState = resolveToolSearchState({
-      tools: this.currentTools,
-      contextWindowSize: getContextWindowForModel(this.activeContextManagement),
-      providerSupportsDynamicToolSearch,
-    })
-    const toolsForContext = toolSearchState.enabled
-      ? this.currentTools
-      : this.currentTools.filter((tool) => tool.name !== TOOL_SEARCH_TOOL_NAME)
+    const { toolSearchState, toolsForContext } = this.toolsForRequest()
 
     const built = await this.options.contextBuilder.build({
       preloadRecords: imageSend.preloadRecords,
       records: imageSend.records,
-      tools: toolsForContext,
-      system: this.options.system,
-      // An inherited prefix already opens with the parent's instructions message.
-      ...(this.options.inheritedRequest
-        ? {}
-        : { projectContext: this.options.projectContext, memoryIndex: this.options.memoryIndex }),
-      memoryPrompt: this.options.memoryPrompt,
-      rolePrompt: this.options.rolePrompt,
-      criticalSystemReminder: this.options.criticalSystemReminder,
-      skills: this.options.skills,
-      contextManagement: this.activeContextManagement,
-      toolContext: this.options.toolContext,
-      env,
+      ...this.fixedContextInput(toolsForContext, toolSearchState.enabled),
       includeUserContext: tail.includeUserContext,
       permissionMode: tail.permissionMode,
       transientUserContext: tail.transientUserContext?.() ?? [],
-      dynamicToolSearchEnabled: toolSearchState.enabled,
     })
 
     // Set provider name on tool context for ToolSearchTool dual-provider support
@@ -1859,6 +1841,75 @@ export class AgentLoop {
       ...(imageSend.imageBytes ? { imageBytes: imageSend.imageBytes } : {}),
     }
     return this.options.inheritedRequest ? withInheritedPrefix(this.options.inheritedRequest, request) : request
+  }
+
+  /**
+   * One compaction attempt with everything both paths share. An inheriting fork
+   * compacts only its own records: the parent prefix ahead of them is sent
+   * unchanged, so its cache still hits. The summary is a model call of its own,
+   * often the longest wait in the turn; bracketed so a shell can say so while it runs.
+   */
+  private async runCompaction(
+    compact: (input: CompactCheckInput) => Promise<CompactCheckResult>,
+    records: SessionRecord[],
+    turnId: string,
+    userMessageId: string,
+    cacheSource: CacheBreakSource,
+    extra: Partial<CompactCheckInput>,
+    signal?: AbortSignal,
+  ): Promise<CompactCheckResult> {
+    let compacting = false
+    const result = await compact({
+      records,
+      provider: this.activeModel.provider,
+      model: this.activeModel.model,
+      compactRuntime: this.options.compactModel,
+      tools: this.currentTools,
+      system: this.options.system,
+      contextManagement: this.activeContextManagement,
+      imageTokenStrategy: resolveImageTokenStrategy(this.activeModel.providerName, this.activeModel.supportsImageInput),
+      discoveredToolNames: this.options.toolContext.discoveredToolNames,
+      promptCacheRetention: this.activeModel.promptCacheRetention,
+      turnId,
+      circuitKey: this.options.toolContext.sessionId,
+      cwd: this.dataRoot(),
+      ...(this.options.compactPromptVariant ? { compactPromptVariant: this.options.compactPromptVariant } : {}),
+      ...(this.options.attachmentFacts ? { attachmentFacts: this.options.attachmentFacts } : {}),
+      getCompactFailureCount: this.options.getCompactFailureCount,
+      setCompactFailureCount: this.options.setCompactFailureCount,
+      ...(this.compactSharesPrefix()
+        ? {
+            summarizeWithSharedPrefix: (prompt: string) =>
+              this.summarizeWithSharedPrefix(records, prompt, turnId, userMessageId, signal),
+          }
+        : {}),
+      ...(signal ? { signal } : {}),
+      appendRecord: (record) => this.appendRecord(record),
+      onBeforeCompact: (event) => {
+        compacting = true
+        this.options.onStreamEvent?.({ type: 'compact', phase: 'start' })
+        return this.runCompactHooks('preCompact', event, turnId, signal)
+      },
+      onAfterCompact: (event) => this.runCompactHooks('postCompact', event, turnId, signal),
+      ...extra,
+    }).finally(() => {
+      if (compacting) this.options.onStreamEvent?.({ type: 'compact', phase: 'end' })
+    })
+    if (result.compacted) {
+      notifyCompaction(cacheSource)
+      this.options.contextBuilder.clearCachedSections()
+      if (result.metrics) {
+        await this.emitMetric({
+          event: 'compact',
+          model: this.activeModel.model,
+          pre_tokens: result.metrics.preTokens,
+          post_tokens: result.metrics.postTokens,
+          compact_duration_ms: result.metrics.compactDurationMs,
+          usage: toMetricUsage(result.usage),
+        })
+      }
+    }
+    return result
   }
 
   /** A compact model other than the active one cannot read the active model's cache. */
@@ -2068,6 +2119,7 @@ export class AgentLoop {
       cache_hit_rate: cacheHitRate(usage),
       tool_calls: toolCalls,
       duration_ms: Date.now() - startedAt,
+      ...costField(usage.cost),
     })
   }
 

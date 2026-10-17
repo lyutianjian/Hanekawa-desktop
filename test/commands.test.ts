@@ -45,15 +45,14 @@ test('/cost reports injected usage and real cost', async () => {
       cacheReadInputTokens: 100_000,
       inputTokens: 200_000,
       outputTokens: 50_000,
-      cost: 0.31,
-      currency: 'CNY',
+      cost: { amounts: { CNY: 0.31, USD: 0.02 }, legacy: true },
     }),
   }))
 
   assert.match(output, /Cache read:\s+100,000/)
   assert.match(output, /Input tokens:\s+200,000/)
   assert.match(output, /Output tokens:\s+50,000/)
-  assert.match(output, /Total cost:\s+CNY 0\.31/)
+  assert.match(output, /Total cost:\s+CNY 0\.31 \+ USD 0\.02 \(excludes earlier requests\)/)
 })
 
 test('/cost reports cache summary when available', async () => {
@@ -260,25 +259,33 @@ test('/clear clears messages before writing confirmation', async () => {
   ])
 })
 
-test('/compact reset clears persistent failure circuit', async () => {
-  const events: string[] = []
-  await compactCommand.run('reset', createContext({
-    resetCompactFailureCount: async () => {
-      events.push('reset')
+test('/compact passes what to keep and reports why nothing happened', async () => {
+  const calls: Array<string | undefined> = []
+  const lines: string[] = []
+  const results = ['compacted', 'busy', 'empty'] as const
+  const context = createContext({
+    compactConversation: async (instructions) => {
+      calls.push(instructions)
+      return results[calls.length - 1]!
     },
-    clearCachedSections: () => {
-      events.push('clear-cache')
-    },
-    writeLine: (message) => {
-      events.push(message)
-    },
-  }))
+    writeLine: (message) => { lines.push(message) },
+  })
 
-  assert.deepEqual(events, [
-    'reset',
-    'clear-cache',
-    'Auto-compact failure circuit reset.',
-  ])
+  await compactCommand.run('  keep the migration plan ', context)
+  await compactCommand.run('', context)
+  await compactCommand.run('', context)
+
+  assert.deepEqual(calls, ['keep the migration plan', undefined, undefined])
+  assert.deepEqual(lines, ['当前回合进行中，等它结束再压缩。', '没有可压缩的内容。'])
+})
+
+test('/compact reports a failed summary', async () => {
+  const lines: string[] = []
+  await compactCommand.run('', createContext({
+    compactConversation: async () => { throw new Error('provider down') },
+    writeLine: (message) => { lines.push(message) },
+  }))
+  assert.deepEqual(lines, ['压缩上下文失败：provider down'])
 })
 
 test('/model delegates its raw argument to the runtime resolver', async () => {

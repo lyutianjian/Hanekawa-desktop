@@ -386,6 +386,11 @@ function modelRow(overrides: Partial<ModelRow> = {}): ModelRow {
     supportsImageInput: false,
     thinkingOff: false,
     supportedEfforts: [],
+    inputPrice: '',
+    outputPrice: '',
+    cacheWritePrice: '',
+    cacheReadPrice: '',
+    currency: 'USD',
     ...overrides,
   }
 }
@@ -487,6 +492,38 @@ test('the image-input and thinking switches round-trip through the dialog', () =
   const offRow = projectSnapshot(snapshot, pendingOf(...offChanges)).models.find((model) => model.key === 'big')
   assert.equal(offRow?.supportsImageInput, undefined)
   assert.equal(offRow?.imageCapable, undefined)
+})
+
+test('prices round-trip through the dialog and are checked before saving', () => {
+  const pricing = { inputPerMillionTokens: 3, outputPerMillionTokens: 15, cacheReadInputPerMillionTokens: 0.3, currency: 'CNY' }
+  const snapshot = snapshotOf({
+    models: [{ key: 'big', model: 'claude-big', endpoint: 'main', pricing, resolves: true }],
+    routing: { main: 'big', plan: 'inherit', compact: 'inherit', subagent: [] },
+  })
+  let state = editMain(snapshot)
+  state = apply(state, { kind: 'toggle-row-prices', rowId: 'saved-0' })
+  assert.equal(state.draftEdited, undefined, 'opening the prices is not an edit')
+  const row = providerForm(state).models[0]!
+  assert.equal(row.pricesOpen, true)
+  assert.equal(row.priceSummary, '¥3 / ¥15')
+  assert.equal(row.cacheReadPrice, '0.3')
+  assert.deepEqual(row.currencyChoices.map((choice) => choice.value), ['USD', 'CNY'])
+
+  // Seeded, so an unrelated edit keeps the prices.
+  state = apply(state, { kind: 'model-row-field', rowId: 'saved-0', field: 'cacheWritePrice', value: '3.75' })
+  const changes = draftToChanges(state.draft!, snapshot) as SettingsChange[]
+  assert.deepEqual((changes[0] as Extract<SettingsChange, { kind: 'set-model' }>).pricing, { ...pricing, cacheWriteInputPerMillionTokens: 3.75 })
+  assert.deepEqual(projectSnapshot(snapshot, pendingOf(...changes)).models[0]?.pricing, { ...pricing, cacheWriteInputPerMillionTokens: 3.75 })
+
+  // Clearing all four removes the pricing.
+  const cleared = apply(state, ...(['inputPrice', 'outputPrice', 'cacheWritePrice', 'cacheReadPrice'] as const)
+    .map((field) => ({ kind: 'model-row-field' as const, rowId: 'saved-0', field, value: '' })))
+  assert.equal(providerForm(cleared).models[0]?.priceSummary, '未设置')
+  assert.equal('pricing' in (draftToChanges(cleared.draft!, snapshot) as SettingsChange[])[0]!, false)
+
+  const fresh = (row: Partial<ModelRow>) => draftToChanges(endpointDraft({ name: 'fresh', models: [modelRow(row)] }), snapshotOf())
+  assert.deepEqual(fresh({ cacheReadPrice: '0.1' }), { error: 'claude-new 设置价格时需要填写输入和输出单价。' })
+  assert.deepEqual(fresh({ inputPrice: '-1', outputPrice: '2' }), { error: 'claude-new 的价格必须是不小于 0 的数字。' })
 })
 
 test('a row opens to its switches and limits, and shows the effort levels only while thinking is on', () => {

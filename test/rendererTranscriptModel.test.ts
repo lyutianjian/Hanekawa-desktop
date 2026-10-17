@@ -565,6 +565,24 @@ test('bookkeeping records render nothing, and the visible ones read plainly', ()
   assert.deepEqual(state.items.map((item) => item.text), ['Interrupted.', '上下文已压缩'])
 })
 
+test('a running compaction is a live line its boundary record replaces', () => {
+  const running = fold([{ type: 'stream', event: { type: 'compact', phase: 'start' } }]).state
+  assert.deepEqual(running.items.map((item) => [item.kind, item.text, item.pending]), [['compaction', '正在压缩上下文', true]])
+  assert.deepEqual(running.phase, { kind: 'compacting' })
+
+  const done = fold([
+    { type: 'record', record: { type: 'compact_boundary', id: 'cb1', summary: 's', preTokens: 10, createdAt: 'now' } },
+    { type: 'stream', event: { type: 'compact', phase: 'end' } },
+  ], running).state
+  assert.deepEqual(done.items.map((item) => [item.kind, item.text, item.pending]), [['compaction', '上下文已压缩', undefined]])
+  assert.equal(done.phase, undefined)
+
+  const failed = fold([
+    { type: 'record', record: { type: 'compact_attempt_failed', id: 'cf1', error: 'boom', failureCount: 1, circuitOpen: false, preTokens: 10, createdAt: 'now' } },
+  ], running).state
+  assert.deepEqual(failed.items.map((item) => item.kind), ['error'])
+})
+
 test('a system-reminder user record is hidden from the transcript', () => {
   // The harness appends these as model-facing nudges (e.g. "all tool calls in
   // the previous turn failed"); the wrapper tag must not render as a user bubble.
@@ -708,7 +726,7 @@ test('a notice ends a run, and an interruption marks what it cut off as aborted'
     ),
   ])
 
-  assert.deepEqual(entries.map((entry) => entry.kind === 'item' ? entry.item.kind : entry.kind), ['user', 'run', 'notice', 'run', 'notice'])
+  assert.deepEqual(entries.map((entry) => entry.kind === 'item' ? entry.item.kind : entry.kind), ['user', 'run', 'compaction', 'run', 'notice'])
   assert.equal(runAt(entries, 1).status, 'done')
   assert.equal(runAt(entries, 3).status, 'aborted', 'the call the abort cut off must not read as running')
 })
@@ -1251,6 +1269,15 @@ test('T6 a wake message becomes a thread-notes item with cards', () => {
   ])
   const live = applySessionEvent(createTranscriptState(), { type: 'turn-start', messageId: 'w2', displayInput: text } as SessionEvent)
   assert.equal(live.state.items[0]!.kind, 'thread-notes')
+})
+
+test('T6 a wake while other threads still run is drawn as cards too', () => {
+  const note = formatThreadNote({ title: 'Docs', name: 'docs' }, { status: 'idle', report: 'done' })
+  const text = formatWakeMessage({ reason: 'progress', count: 1, limit: 20, notes: [{ threadId: NOTE_THREAD, text: note }] })
+  const record: SessionRecord = { type: 'message', id: 'w1', role: 'user', content: text, createdAt: '2026-01-01T00:00:00Z' }
+  const [item] = createTranscriptState([record]).items
+  assert.equal(item!.kind, 'thread-notes')
+  assert.deepEqual(item!.threadNotes!.wake, { count: 1, limit: 20, reason: 'progress' })
 })
 
 test('T6 the opening instruction an older coordinator session starts with is not drawn', () => {

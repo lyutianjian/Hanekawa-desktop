@@ -701,6 +701,7 @@ const COMMAND_SAMPLES = {
   'open-coordinator': { type: 'open-coordinator', id: 'v', projectRoot: 'r' },
   'new-coordinator-project': { type: 'new-coordinator-project', id: 'v2', path: 'p' },
   'coordination-stop-all': { type: 'coordination-stop-all', id: 'w', projectRoot: 'r' },
+  'coordination-survey': { type: 'coordination-survey', id: 'w2', projectRoot: 'r' },
   'thread-merges': { type: 'thread-merges', id: 'x', projectRoot: 'r' },
   'thread-merge': { type: 'thread-merge', id: 'y', projectRoot: 'r', threadId: 't1' },
   'thread-merge-dismiss': { type: 'thread-merge-dismiss', id: 'z', projectRoot: 'r', threadId: 't1' },
@@ -816,6 +817,7 @@ test('every shell command variant round-trips through its schema', () => {
       'browser-set-bounds',
       'browser-take-over',
       'coordination-stop-all',
+      'coordination-survey',
       'coordination-threads',
       'delete-session',
       'get-settings',
@@ -2870,14 +2872,17 @@ test('settings commands fail cleanly for a project that is not open', async () =
 function fakeCoordination(store: () => FakeStore, calls: string[]): ShellCoordination {
   let coordinatorId: string | undefined
   return {
-    ensureCoordinator: async (cwd, options) => {
-      calls.push(`ensure:${cwd}${options?.opening ? ':opening' : ''}`)
+    ensureCoordinator: async (cwd) => {
+      calls.push(`ensure:${cwd}`)
       if (coordinatorId !== undefined && (await store().resolve(coordinatorId))) return coordinatorId
       const meta = { ...sessionOf('coord-1', '项目调度'), coordination: { role: 'coordinator' as const, projectKey: 'k' } }
       store().sessions.set(meta.id, meta)
       calls.push('create')
       coordinatorId = meta.id
       return meta.id
+    },
+    startSurvey: async (cwd) => {
+      calls.push(`survey:${cwd}`)
     },
     stopAll: async (cwd) => {
       calls.push(`stop-all:${cwd}`)
@@ -2979,7 +2984,7 @@ test('new-coordinator-project picks a folder, adds it and opens its coordinator;
   assert.ok('pane' in opened)
   assert.equal(opened.pane.coordinationRole, 'coordinator')
   assert.deepEqual(ensured, [fixturePath('repo', 'beta')])
-  assert.deepEqual(calls, [`ensure:${fixturePath('repo', 'beta')}:opening`, 'create'], 'only this command asks for the opening turn')
+  assert.deepEqual(calls, [`ensure:${fixturePath('repo', 'beta')}`, 'create'], 'a new coordinator starts no survey by itself')
   assert.deepEqual(
     fresh!.entry.workspace.panes.map((pane) => pane.getSession().id),
     ['coord-1'],

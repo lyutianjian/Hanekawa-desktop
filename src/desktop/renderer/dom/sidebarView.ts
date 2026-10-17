@@ -840,7 +840,7 @@ export function createSidebarView(
             PROJECTS_PAGE_TITLE,
             view.projectsOpen ? '回到会话' : '查看所有项目调度',
             () => onIntent({ kind: 'toggle-projects' }),
-            { icon: 'folder' },
+            { icon: 'network' },
           ),
           // A filter, not a destination: it opens nothing, so unlike the two rows
           // above it stays enabled while a blocking dialog is up.

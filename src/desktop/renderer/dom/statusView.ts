@@ -1,5 +1,4 @@
 import type { SessionControllerSnapshot } from '../../../runtime/sessionController.js'
-import type { WireUsageCost } from '../../../runtime/protocol/wire.js'
 import {
   statusUsageView,
   type StatusUsageView,
@@ -11,7 +10,7 @@ import { createHoverCard } from './hoverCard.js'
 import { icon, type IconName } from './icons.js'
 
 /**
- * The status bar: what the session has spent, and what it cost.
+ * The status bar: what the session has spent; the hover adds what it cost.
  *
  * Split out of `composerView.ts` in 4e, when the composer grew its action bar
  * and the one file stopped being one thing. Three fields have since left it,
@@ -30,18 +29,18 @@ import { icon, type IconName } from './icons.js'
  */
 
 export interface StatusView {
-  render(snapshot: SessionControllerSnapshot, cost?: WireUsageCost): void
+  render(snapshot: SessionControllerSnapshot): void
   renderSession(session: { id: string; title?: string; messageCount?: number }): void
 }
 
 export function createStatusView(els: {
   usage: HTMLElement
-  cost: HTMLElement
 }): StatusView {
   /** The last title written. `renderSession` runs on every snapshot tick. */
   let lastTitle: string | undefined
   /**
-   * The last usage line painted. This one is chips rather than a string now, and
+   * The last readout painted, keyed by the hover's full text: the chips
+   * abbreviate, so a cost or an exact count can move while they read the same.
    * `render` is reached from the snapshot tick — an unguarded repaint would
    * rebuild four elements and three SVGs per streamed chunk.
    */
@@ -51,7 +50,7 @@ export function createStatusView(els: {
   // a second late and is painted by the OS in a style nothing here controls.
   const card = createHoverCard(els.usage, 'usage-card')
   return {
-    render(snapshot, cost) {
+    render(snapshot) {
       // No 生成中 field: it said what the transcript above it was already
       // saying, in the one place on screen reserved for what the turn cost —
       // and the readout beside it moves per completed request now
@@ -64,18 +63,17 @@ export function createStatusView(els: {
       // not a sentence a screen reader can make sense of. Both halves of the
       // usage go in: the count is the session's, the rate the last request's.
       const usage = statusUsageView(snapshot.usage.total, snapshot.usage.lastRequest)
-      if (usage.text !== lastUsage) {
-        lastUsage = usage.text
+      if (usage.title !== lastUsage) {
+        lastUsage = usage.title
         if (usage.text) {
           card.set({
             title: '本会话累计',
             lead: usage.metrics[0]?.value ?? '',
             rows: usage.breakdown.map((row) => [row.label, row.value] as const),
-            note: '本轮命中是最近一次请求；会话累计的分母是输入 + 写入 + 命中',
+            note: [usage.costNote, '本轮命中是最近一次请求；会话累计的分母是输入 + 写入 + 命中'].filter(Boolean).join('。'),
           })
           // The card rides inside the readout, so it is part of what `replace`
-          // writes — and it is left out while the line is empty, because
-          // `#status-usage:not(:empty)` is what draws the rule before the cost.
+          // writes — and it is left out while the line is empty.
           replace(els.usage, ...usageChips(usage), card.node)
           els.usage.setAttribute('aria-label', `${usage.text}。${usage.title.replace(/\n/g, '；')}`)
         } else {
@@ -84,10 +82,6 @@ export function createStatusView(els: {
           els.usage.removeAttribute('aria-label')
         }
       }
-      // Absent rather than zero when the model has no complete pricing: "not
-      // priced" and "free" are different answers, and the host already decided
-      // which one this is (`resolveUsageWithCost`).
-      els.cost.textContent = cost ? `${cost.currency} ${formatCost(cost.amount)}` : ''
     },
 
     renderSession(session) {
@@ -154,17 +148,4 @@ function rateChip(rate: UsageRateView): HTMLElement {
     el('span', 'usage-label', rate.label),
     el('span', 'usage-value', rate.percent),
   )
-}
-
-/**
- * Enough digits to see a cheap turn move the number, without a wall of zeros.
- *
- * Deliberately its own formatter rather than a shared one with `/cost`
- * (`commands/cost.ts`): that view has a whole row to fill and prints six
- * decimals, while this one sits in a status bar between four other fields.
- */
-function formatCost(amount: number): string {
-  if (amount === 0) return '0'
-  if (amount < 0.01) return amount.toFixed(4)
-  return amount.toFixed(2)
 }

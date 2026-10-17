@@ -331,29 +331,25 @@ export class CoordinationService implements CoordinationHost {
   // Host-side commands (never exposed to the model)
 
   /** The project's coordinator session, created when the pointer is missing or names a session that is gone. */
-  async ensureCoordinator(cwd: string, options: { opening?: boolean } = {}): Promise<string> {
-    const store = this.coordinationStore(cwd)
-    const sessions = this.port.storeFor(cwd)
-    const pointer = await store.getCoordinatorSessionId()
-    if (pointer && (await sessions.resolve(pointer))) return pointer
-    const id = await this.createCoordinatorSession(cwd)
-    if (options.opening) await this.startOpening(cwd, id)
-    return id
+  async ensureCoordinator(cwd: string): Promise<string> {
+    const pointer = await this.coordinationStore(cwd).getCoordinatorSessionId()
+    if (pointer && (await this.port.storeFor(cwd).resolve(pointer))) return pointer
+    return this.createCoordinatorSession(cwd)
   }
 
   /**
-   * A new project opens with a survey thread rather than a coordinator turn, so
-   * the coordinator's transcript holds only what the survey found. Its report
-   * wakes the coordinator like any thread's. A failure leaves the project
-   * without one and says so.
+   * The welcome's 「读取项目」: a survey thread rather than a coordinator turn,
+   * so the coordinator's transcript holds only what the survey found. Its
+   * report wakes the coordinator like any thread's. A project that already has
+   * threads gets none.
    */
-  private async startOpening(cwd: string, coordinatorId: string): Promise<void> {
-    try {
-      const { threadId } = await this.startThreadIn(cwd, OPENING_THREAD)
-      await this.coordinationStore(cwd).setOpeningThread(threadId)
-    } catch (error) {
-      this.port.notify({ title: COORDINATOR_SESSION_TITLE, body: `未能开始了解项目：${errorMessage(error)}`, sessionId: coordinatorId })
-    }
+  async startSurvey(cwd: string): Promise<void> {
+    const store = this.coordinationStore(cwd)
+    const file = await store.read()
+    if (!file.coordinator?.sessionId) throw new CoordinationError('NO_COORDINATOR', '这个项目还没有调度会话。')
+    if (file.threads.length > 0) return
+    const { threadId } = await this.startThreadIn(cwd, OPENING_THREAD)
+    await store.setOpeningThread(threadId)
   }
 
   /**

@@ -80,6 +80,7 @@ export type TranscriptItemKind =
   | 'thread-notes'
   | 'receipt'
   | 'turn-failure'
+  | 'compaction'
 
 /**
  * How the host captions a `tool_use` record, by record id.
@@ -380,6 +381,8 @@ export interface TranscriptOutcome {
 }
 
 const DRAFT_ID = '__draft__'
+/** The live 「正在压缩上下文」 line; the boundary record's own line takes its place. */
+const COMPACTING_ID = '__compacting__'
 
 export function createTranscriptState(
   records: readonly SessionRecord[] = [],
@@ -520,7 +523,10 @@ export function applySessionEvent(
     case 'record': {
       // The assistant message carries the call the arguments were streaming for.
       const committed = event.record.type === 'message' && event.record.role !== 'user' && state.draftCall !== undefined
-      return { state: applyRecord(committed ? { ...state, draftCall: undefined } : state, event.record, toolDisplays) }
+      // The compaction's outcome replaces its live line; the post-compact hooks still to run are not compaction.
+      const compacted = event.record.type === 'compact_boundary' || event.record.type === 'compact_attempt_failed'
+      const base = committed ? { ...state, draftCall: undefined } : compacted ? endCompaction(state) : state
+      return { state: applyRecord(base, event.record, toolDisplays) }
     }
 
     case 'stream':
@@ -711,11 +717,13 @@ function applyStream(state: TranscriptState, event: Extract<SessionEvent, { type
       // A stream that failed partway leaves its draft pending; settled, so the
       // row can say the request is being sent again.
       return { ...settleDraft(state), draftCall: undefined, phase: { kind: 'retrying', attempt: event.attempt, reason: event.reason } }
-    case 'compact': {
-      if (event.phase === 'start') return { ...state, phase: { kind: 'compacting' } }
-      const { phase: _phase, ...rest } = state
-      return rest
-    }
+    case 'compact':
+      if (event.phase === 'end') return endCompaction(state)
+      return {
+        ...state,
+        phase: { kind: 'compacting' },
+        items: [...state.items, { id: COMPACTING_ID, kind: 'compaction', text: '正在压缩上下文', pending: true }],
+      }
     case 'thinking_delta':
       return appendThinking(state, event.thinking, now)
     case 'thinking_stop':
@@ -738,6 +746,14 @@ function applyStream(state: TranscriptState, event: Extract<SessionEvent, { type
     }
     default:
       return state
+  }
+}
+
+function endCompaction(state: TranscriptState): TranscriptState {
+  const { phase, ...rest } = state
+  return {
+    ...(phase?.kind === 'compacting' ? rest : state),
+    items: state.items.filter((item) => item.id !== COMPACTING_ID),
   }
 }
 
@@ -1137,7 +1153,7 @@ function recordItems(record: SessionRecord, context: ItemContext = {}): Transcri
     }
 
     case 'compact_boundary':
-      return [{ id: record.id, kind: 'notice', text: '上下文已压缩', ...stamp }]
+      return [{ id: record.id, kind: 'compaction', text: '上下文已压缩', ...stamp }]
 
     case 'compact_attempt_failed':
       return [{ id: record.id, kind: 'error', text: `压缩上下文失败：${record.error}`, ...stamp }]

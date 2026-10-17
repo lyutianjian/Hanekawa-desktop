@@ -110,14 +110,14 @@ test('everything is folded until the user opens it, and the answer is absolute',
   assert.equal(closed.get('a'), false, 'recorded, not forgotten')
 })
 
-test('pruning keeps only the runs and steps that exist', () => {
+test('pruning keeps only the runs, steps and user messages that exist', () => {
   const entries: TranscriptEntry[] = [
     { kind: 'item', item: { id: 'm1', kind: 'user', text: 'hi' } },
     { kind: 'run', run: run([thinking('t1'), tool('a', 'Read')]) },
   ]
   const state: DisclosureState = new Map([['t1', true], ['a', true], ['m1', true], ['gone', true]])
 
-  assert.deepEqual([...pruneDisclosure(entries, state)], [['t1', true], ['a', true]])
+  assert.deepEqual([...pruneDisclosure(entries, state)], [['t1', true], ['a', true], ['m1', true]])
   // A `transcript-reset` restarts the id counter, so nothing may survive it.
   assert.deepEqual([...pruneDisclosure([], state)], [])
 })

@@ -24,6 +24,20 @@ import type { PermissionViewModel } from '../src/desktop/renderer/model/permissi
 import { EFFORT_LABELS, PERMISSION_MODE_LABELS } from '../src/desktop/renderer/model/composer.js'
 import { runtimeMenuView, type RuntimeMenuView } from '../src/desktop/renderer/model/runtimeMenu.js'
 import { CONTEXT_RATIO_VARIABLE, contextGaugeView } from '../src/desktop/renderer/model/usage.js'
+import type { ContextBreakdown } from '../src/harness/contextBreakdown.js'
+
+const SAMPLE_BREAKDOWN: ContextBreakdown = {
+  usedTokens: 30_000,
+  estimated: false,
+  categories: [
+    { key: 'system', tokens: 4_000 },
+    { key: 'tools', tokens: 6_000 },
+    { key: 'messages', tokens: 20_000 },
+  ],
+  deferred: [],
+  mcpTools: [],
+  memoryFiles: [{ path: '/repo/AGENTS.md', tokens: 1_000 }],
+}
 import type { SurfaceAction } from '../src/desktop/renderer/model/surfaces.js'
 import type { PermissionMode } from '../src/harness/permissions.js'
 import type { WireModelsResult, WireReadyRuntimeSnapshot } from '../src/runtime/protocol/wire.js'
@@ -100,6 +114,8 @@ interface Rendered {
   attachMenuItems(): StubView[]
   /** The strip's rows, as views. */
   attachmentRows(): StubView[]
+  /** One entry per breakdown fetch. */
+  breakdownRequests: number[]
   /** The chip popover's two rows, or an empty list when it is shut. */
   chipRows(): StubView[]
   /** The open flyout's option items, or an empty list when none is open. */
@@ -145,6 +161,7 @@ function render(t: { after(fn: () => void): void }): Rendered {
   const openedDrafts: string[] = []
   const previewedDrafts: string[] = []
   const pastedFiles: File[][] = []
+  const breakdownRequests: number[] = []
   const composer = createComposerView(
     {
       input: els.input as HTMLTextAreaElement,
@@ -165,10 +182,15 @@ function render(t: { after(fn: () => void): void }): Rendered {
       onAttach: () => attaches.push(1),
       onPickImages: () => pickedImages.push(1),
       onRemoveAttachment: (draftId) => removedDrafts.push(draftId),
+      onRemovePath: () => {},
       onRetryAttachment: (draftId) => retriedDrafts.push(draftId),
       onOpenAttachment: (draftId) => openedDrafts.push(draftId),
       onPreviewAttachment: (draftId) => previewedDrafts.push(draftId),
       onPasteImages: (files) => pastedFiles.push([...files]),
+      onLoadContextBreakdown: async () => {
+        breakdownRequests.push(1)
+        return { breakdown: SAMPLE_BREAKDOWN }
+      },
     },
   )
 
@@ -186,6 +208,7 @@ function render(t: { after(fn: () => void): void }): Rendered {
   return {
     stub,
     composer,
+    breakdownRequests,
     runtimeShell,
     attachShell,
     els,
@@ -420,26 +443,43 @@ test('the context indicator is independent of the chip, and is absent when there
   // own accessible name, which is why the level may be a colour at all.
   assert.equal(gauge?.attributes.get('aria-hidden'), 'true')
   assert.equal(gauge?.styleProperties.get(CONTEXT_RATIO_VARIABLE), '0.9')
-  assert.equal(r.view('contextIndicator').attributes.get('role'), 'img')
+  assert.equal(r.view('contextIndicator').attributes.get('role'), 'button')
+  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'false')
   assert.match(r.view('contextIndicator').attributes.get('aria-label') ?? '', /90% 已用/)
   assert.equal((r.els.contextIndicator as { title: string }).title, '', 'the hover card is drawn by the renderer, not by the OS')
 
   assert.equal(tooltip?.classes.includes('hover-card'), true)
   assert.equal(tooltip?.attributes.get('role'), 'tooltip')
   assert.equal(tooltip?.attributes.get('aria-hidden'), 'true')
-  assert.match(tooltip?.text ?? '', /上下文/)
-  assert.match(tooltip?.text ?? '', /90% 已用/)
-  assert.match(tooltip?.text ?? '', /90k/)
-  assert.match(tooltip?.text ?? '', /100k/)
-  assert.doesNotMatch(tooltip?.text ?? '', /模型窗口/, 'this gauge has no separate raw window')
-  assert.match(tooltip?.text ?? '', /自动压缩/)
+  assert.match(tooltip?.text ?? '', /已使用/)
+  assert.match(tooltip?.text ?? '', /90% · 90k \/ 100k/)
+})
 
-  r.composer.renderRuntime(
-    runtime({ contextWindow: 200_000, usableContextWindow: 100_000 }),
-    contextGaugeView(90_000, runtime({ contextWindow: 200_000, usableContextWindow: 100_000 })),
-  )
-  assert.match(r.view('contextIndicator').children[1]?.text ?? '', /模型窗口/)
-  assert.match(r.view('contextIndicator').children[1]?.text ?? '', /200k/)
+test('clicking the context indicator opens the breakdown, and clicking again or Escape closes it', async (t) => {
+  const r = render(t)
+  const snapshot = runtime({ contextWindow: 200_000, usableContextWindow: 100_000 })
+  r.composer.renderRuntime(snapshot, contextGaugeView(30_000, snapshot))
+  const popover = () => r.view('contextIndicator').children.find((child) => child.classes.includes('context-popover'))
+  assert.equal(popover()?.hidden, true)
+
+  r.stub.click(r.els.contextIndicator)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(r.breakdownRequests, [1])
+  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'true')
+  assert.equal(popover()?.hidden, false)
+  assert.match(popover()?.text ?? '', /已使用 30%/)
+  assert.match(popover()?.text ?? '', /对话消息/)
+  assert.match(popover()?.text ?? '', /压缩预留/)
+  assert.equal(r.view('contextIndicator').children[1]?.hidden, true, 'the hover card stands down while the card is open')
+
+  r.stub.click(r.els.contextIndicator)
+  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'false')
+
+  r.stub.click(r.els.contextIndicator)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'true')
+  r.stub.dispatch(r.els.contextIndicator, 'keydown', { key: 'Escape' })
+  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'false')
 })
 
 test('clicking the chip asks the pane for the rows rather than opening anything', (t) => {

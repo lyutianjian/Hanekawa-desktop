@@ -167,7 +167,7 @@ test('PromptComposer builds request context items', () => {
 test('coordinator role prompt covers routing, evidence and reporting', async () => {
   const { COORDINATOR_ROLE_PROMPT } = await import('../src/prompts/coordinatorPrompt.js')
   assert.match(COORDINATOR_ROLE_PROMPT, /^# Coordinator role/)
-  for (const name of ['StartThread', 'MessageThread', 'ListThreads', 'FetchThread', 'StopThread', 'ResolveThread']) {
+  for (const name of ['StartThread', 'MessageThread', 'FetchThread', 'ResolveThread']) {
     assert.ok(COORDINATOR_ROLE_PROMPT.includes(name), name)
   }
   assert.match(COORDINATOR_ROLE_PROMPT, /git diff HEAD\.\.\.<branch>/)

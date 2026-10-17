@@ -16,6 +16,7 @@ const HEATMAP_WEEKS = 42
 export interface UsageHeatCell {
   day: string
   turns: number
+  tokens: number
   /** 0 (no activity) to 4, relative to the busiest day shown. */
   level: 0 | 1 | 2 | 3 | 4
 }
@@ -65,9 +66,10 @@ function heatmapOf(days: Map<string, WireUsageDay>, today: Date): UsageStats['he
         continue
       }
       const key = dayKey(date)
-      const turns = days.get(key)?.turns ?? 0
+      const entry = days.get(key)
+      const turns = entry?.turns ?? 0
       busiest = Math.max(busiest, turns)
-      column.push({ day: key, turns, level: 0 })
+      column.push({ day: key, turns, tokens: entry?.tokens ?? 0, level: 0 })
     }
     columns.push(column)
   }

@@ -265,7 +265,9 @@ export interface LaneOccupant {
  */
 export interface ShellCoordination {
   /** The coordinator session id, created when the project has none. */
-  ensureCoordinator(cwd: string, options?: { opening?: boolean }): Promise<string>
+  ensureCoordinator(cwd: string): Promise<string>
+  /** The welcome's 「读取项目」: starts the survey thread. */
+  startSurvey(cwd: string): Promise<void>
   stopAll(cwd: string): Promise<void>
   pendingMerges(cwd: string): Promise<WireThreadMerge[]>
   mergeThread(cwd: string, threadId: string): Promise<WireShellThreadMergeResult>
@@ -512,6 +514,16 @@ const SETTINGS_CHANGE_SCHEMAS = {
       maxOutputTokens: z.number().optional(),
       supportedEfforts: z.array(z.enum(VALID_EFFORT_LEVELS)).optional(),
       thinkingOff: z.boolean().optional(),
+      pricing: z
+        .object({
+          inputPerMillionTokens: z.number().nonnegative().optional(),
+          outputPerMillionTokens: z.number().nonnegative().optional(),
+          cacheWriteInputPerMillionTokens: z.number().nonnegative().optional(),
+          cacheReadInputPerMillionTokens: z.number().nonnegative().optional(),
+          currency: z.string().optional(),
+        })
+        .strict()
+        .optional(),
     })
     .strict(),
   'rename-model': z
@@ -809,6 +821,9 @@ const SHELL_COMMAND_SCHEMAS = {
     .strict(),
   'new-coordinator-project': z
     .object({ type: z.literal('new-coordinator-project'), id: commandId, path: z.string().min(1).optional() })
+    .strict(),
+  'coordination-survey': z
+    .object({ type: z.literal('coordination-survey'), id: commandId, projectRoot: z.string().min(1) })
     .strict(),
   'coordination-stop-all': z
     .object({ type: z.literal('coordination-stop-all'), id: commandId, projectRoot: z.string().min(1) })
@@ -1123,12 +1138,12 @@ export class ShellHost<
    * for it has a lane-less draft pane nobody will open, so that pane is dropped
    * (as `openProject` avoids it) and a failure shuts the project again.
    */
-  private async openCoordinator(cwd: string, options: { opening?: boolean } = {}): Promise<WireShellOpenCoordinatorResult> {
+  private async openCoordinator(cwd: string): Promise<WireShellOpenCoordinatorResult> {
     const coordination = this.requireCoordination()
     this.refuseGlobalCoordinator(cwd)
     const { entry, session } = await this.ensureFresh(cwd)
     try {
-      const sessionId = await coordination.ensureCoordinator(entry.cwd, options)
+      const sessionId = await coordination.ensureCoordinator(entry.cwd)
       const opened = await this.openLane(entry, { sessionId, activate: true })
       const draft = session === undefined ? undefined : entry.workspace.paneForSession(session.id)
       if (draft) entry.workspace.close(draft)
@@ -1351,7 +1366,12 @@ export class ShellHost<
         if (command.path === undefined && !onPickDirectory) throw new Error('The shell cannot open projects.')
         const target = command.path ?? (await onPickDirectory!({ title: '新建调度', buttonLabel: '新建' }))
         if (target === undefined) return { cancelled: true } satisfies WireShellNewCoordinatorProjectResult
-        return this.openCoordinator(target, { opening: true })
+        return this.openCoordinator(target)
+      }
+      case 'coordination-survey': {
+        const coordination = this.requireCoordination()
+        await coordination.startSurvey(await this.requireCwdForRoot(command.projectRoot))
+        return { ok: true } satisfies WireShellCoordinationOkResult
       }
       case 'coordination-stop-all': {
         const coordination = this.requireCoordination()
@@ -1988,6 +2008,7 @@ export class ShellHost<
       if (model.maxOutputTokens !== undefined) info.maxOutputTokens = model.maxOutputTokens
       if (model.supportedEfforts !== undefined) info.supportedEfforts = [...model.supportedEfforts]
       if (model.thinking?.type === 'disabled') info.thinkingOff = true
+      if (model.pricing !== undefined) info.pricing = { ...model.pricing }
       if (model.baseUrl !== undefined) info.baseUrl = model.baseUrl
       if (model.apiKey) info.apiKeyMasked = maskKey(model.apiKey)
       return info
@@ -2642,6 +2663,7 @@ function applyProviderChange(
       // Switching thinking back on keeps a hand-written budget.
       if (change.thinkingOff) model.thinking = { type: 'disabled' }
       else if (existing?.thinking !== undefined && existing.thinking.type !== 'disabled') model.thinking = existing.thinking
+      if (change.pricing !== undefined) model.pricing = change.pricing
       config.setModelConfig(change.key, carryJsonOnlyModelFields(model, existing))
       return 'models'
     }

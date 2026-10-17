@@ -401,6 +401,48 @@ test('SessionStore appends metrics next to session records', async () => {
   }
 })
 
+test('SessionStore totals add compactions and subagent runs, with their recorded costs', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  try {
+    const store = new SessionStore(dir)
+    await store.init()
+    const session = await store.create('cost session')
+    await store.appendMetric(session.id, {
+      event: 'turn',
+      model: 'main',
+      input_tokens: 100,
+      response_tokens: 10,
+      cache_read_tokens: 0,
+      cache_hit_rate: 0,
+      tool_calls: 0,
+      duration_ms: 1,
+      cost: { amounts: { USD: 1 } },
+    })
+    await store.appendMetric(session.id, {
+      event: 'compact',
+      model: 'main',
+      pre_tokens: 1,
+      post_tokens: 1,
+      compact_duration_ms: 1,
+      usage: { input_tokens: 50, cache_read_tokens: 0, response_tokens: 5, cost: { amounts: { CNY: 2 } } },
+    })
+    await store.appendMetric(session.id, {
+      event: 'subagent_usage',
+      model: 'helper',
+      usage: { input_tokens: 20, cache_read_tokens: 30, response_tokens: 2, cost: { amounts: {}, unpriced: true } },
+    })
+
+    assert.deepEqual(await store.loadSessionTotals(session.id), {
+      inputTokens: 170,
+      cacheReadInputTokens: 30,
+      outputTokens: 17,
+      cost: { amounts: { USD: 1, CNY: 2 }, unpriced: true },
+    })
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('SessionStore reads back both the last request and the session totals', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
   try {
@@ -439,6 +481,8 @@ test('SessionStore reads back both the last request and the session totals', asy
       cacheCreationInputTokens: 550,
       cacheReadInputTokens: 1_500,
       outputTokens: 160,
+      // Recorded before costs were: counted, never repriced.
+      cost: { amounts: {}, legacy: true },
     })
     assert.deepEqual(await store.loadLastRequestUsage(session.id), {
       inputTokens: 200,

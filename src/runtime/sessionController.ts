@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { AgentRunOverrides, ActiveModelRuntime } from '../harness/loop.js'
+import type { CompactCheckResult } from '../harness/compact.js'
 import { logDiagnostics, summarizeDiagnosticsForTui } from '../harness/diagnostics.js'
 import type {
   AgentRunResult,
@@ -13,6 +14,7 @@ import type {
 } from '../harness/types.js'
 import { getRecordsAfterLastCompact } from '../harness/requestPrep.js'
 import { promptTokens } from '../harness/usage.js'
+import { breakDownContext, type ContextBreakdown } from '../harness/contextBreakdown.js'
 import { promptCacheTtlMs } from '../harness/cacheControl.js'
 import { shouldIdleCompact } from './coordination/contextPolicy.js'
 import { isSystemReminderBlock } from '../harness/systemReminder.js'
@@ -470,6 +472,20 @@ export class SessionController {
     }
   }
 
+  /**
+   * `/compact`, between turns. The readout drops to the estimate at once rather
+   * than waiting for the next request to report it.
+   */
+  async compact(instructions?: string): Promise<CompactCheckResult> {
+    const result = await this.getSession().loop.compact(instructions)
+    if (result.compacted) {
+      this.usage = { ...this.usage, total: addTokenUsage(this.usage.total, result.usage) }
+      this.usageAnchorRecordId = undefined
+      this.publish()
+    }
+    return result
+  }
+
   /** Hands a prompt that left the conversation back to the composer. */
   restoreInput(text: string, images?: ImageAttachmentRef[]): void {
     this.emit({ type: 'restore-input', text, ...(images && images.length > 0 ? { images } : {}) })
@@ -532,6 +548,17 @@ export class SessionController {
     }
     this.session = session
     this.publish()
+  }
+
+  /**
+   * What the context ring's figure is made of. Undefined when the ring has no
+   * figure either, so the two never disagree.
+   */
+  async getContextBreakdown(): Promise<ContextBreakdown | undefined> {
+    const used = this.contextUsed()
+    if (used === undefined) return undefined
+    const sources = await this.getSession().loop.describeContextSources(this.ledger.list())
+    return breakDownContext(sources, used, !this.usage.lastRequest)
   }
 
   /** The one file history for the active session; also drives `/rewind`. */

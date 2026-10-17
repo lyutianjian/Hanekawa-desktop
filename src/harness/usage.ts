@@ -1,4 +1,4 @@
-import type { ModelPricing, TokenUsage } from './types.js'
+import type { ModelPricing, TokenUsage, UsageCost } from './types.js'
 
 export const EMPTY_TOKEN_USAGE: TokenUsage = {
   inputTokens: 0,
@@ -70,7 +70,34 @@ export function addTokenUsage(left: TokenUsage, right?: TokenUsage): TokenUsage 
     ...sumCacheCreation(left, right),
     cacheReadInputTokens: left.cacheReadInputTokens + right.cacheReadInputTokens,
     outputTokens: left.outputTokens + right.outputTokens,
+    ...costField(addUsageCost(left.cost, right.cost)),
   }
+}
+
+export function costField(cost: UsageCost | undefined): Pick<TokenUsage, 'cost'> {
+  return cost ? { cost } : {}
+}
+
+/** Per-currency sum; a flag on either side survives. */
+export function addUsageCost(left?: UsageCost, right?: UsageCost): UsageCost | undefined {
+  if (!left || !right) return left ?? right
+  const amounts = { ...left.amounts }
+  for (const [currency, amount] of Object.entries(right.amounts)) amounts[currency] = (amounts[currency] ?? 0) + amount
+  return {
+    amounts,
+    ...(left.unpriced || right.unpriced ? { unpriced: true as const } : {}),
+    ...(left.legacy || right.legacy ? { legacy: true as const } : {}),
+  }
+}
+
+/** `left - right` per currency, clamped at zero. The flags are `left`'s: it is the superset. */
+export function subtractUsageCost(left?: UsageCost, right?: UsageCost): UsageCost | undefined {
+  if (!left || !right) return left
+  const amounts: Record<string, number> = {}
+  for (const [currency, amount] of Object.entries(left.amounts)) {
+    amounts[currency] = Math.max(0, amount - (right.amounts[currency] ?? 0))
+  }
+  return { ...left, amounts }
 }
 
 type CompletePricing = ModelPricing & {
@@ -97,32 +124,18 @@ export function calculateTokenCost(usage: TokenUsage, pricing: CompletePricing):
     + (usage.outputTokens / 1_000_000) * pricing.outputPerMillionTokens
 }
 
-/** Token counts with the cost folded in, when the model has complete pricing. */
-export type UsageWithCost = TokenUsage & { cost?: number; currency?: string }
-
 /**
- * The one projection from "counts plus a price list" to "counts plus a cost".
+ * One response's usage with its cost attached, priced by the model that served
+ * it. Applied once, where the provider is built (`runtime/createRuntime.ts`), so
+ * every request — foreground, fallback, compaction, subagent — carries the price
+ * of its own model, and a later price edit never reprices what was already spent.
  *
- * Two callers, and they must never disagree: `/cost` reads it through
- * `CommandContext.getUsage`, and the desktop's status bar reads the same value
- * off the `snapshot` event. The host computes it because a renderer may not
- * import this layer (`test/rendererImports.test.ts`) — the same bargain
- * `PermissionRequestDto` makes by shipping a preview instead of a filesystem.
- *
- * Incomplete pricing yields the counts unchanged rather than a zero cost: "not
- * priced" and "free" are different answers, and only the first one should read
- * as "unavailable" downstream.
- *
- * The return type is structurally a `CommandUsage`; it is spelled locally so
- * `harness/` does not have to import `commands/`.
+ * Incomplete pricing marks the tokens unpriced instead of costing them zero:
+ * "not priced" and "free" are different answers.
  */
-export function resolveUsageWithCost(usage: TokenUsage, pricing?: ModelPricing): UsageWithCost {
-  if (!hasCompletePricing(pricing)) return usage
-  return {
-    ...usage,
-    cost: calculateTokenCost(usage, pricing),
-    currency: pricing.currency ?? 'USD',
-  }
+export function priceUsage(usage: TokenUsage, pricing?: ModelPricing): TokenUsage {
+  if (!hasCompletePricing(pricing)) return { ...usage, cost: { amounts: {}, unpriced: true } }
+  return { ...usage, cost: { amounts: { [pricing.currency ?? 'USD']: calculateTokenCost(usage, pricing) } } }
 }
 
 export function formatUsageLine(usage: TokenUsage, pricing?: ModelPricing, label = 'Tokens'): string {

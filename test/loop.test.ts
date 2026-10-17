@@ -2048,6 +2048,52 @@ test('agent loop consumes pending post-compact restore after a successful build'
   assert.match(boundary?.type === 'compact_boundary' ? boundary.restoredContext ?? '' : '', /Debug skill body/)
 })
 
+test('compact() summarizes between turns and the next turn starts from the boundary', async () => {
+  resetAutoCompactFailureState()
+  const records: SessionRecord[] = [
+    { type: 'message', id: 'old-user', role: 'user', content: 'old context', createdAt: '2026-05-10T00:00:00.000Z' },
+    { type: 'message', id: 'old-assistant', role: 'assistant', content: 'old answer', createdAt: '2026-05-10T00:01:00.000Z' },
+  ]
+  const requests: ModelRequest[] = []
+  const streamed: ModelStreamEvent[] = []
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage(request) {
+      requests.push(request)
+      const isCompact = displayCacheSource(request.cacheSource!) === 'compact'
+      return { content: isCompact ? '<summary>manual summary</summary>' : 'done', toolCalls: [] }
+    },
+  }
+  const loop = new AgentLoop({
+    provider,
+    model: 'fake-model',
+    tools: [],
+    contextBuilder: new ContextBuilder(),
+    toolRunner: new ToolRunner([], new PermissionGate(async () => true), {
+      onRecord: async (record) => { records.push(record) },
+    }),
+    toolContext: { cwd: process.cwd(), sessionId: 'manual-compact', readFiles: new Set() },
+    contextWindow: 200_000,
+    recordStream: recordStreamFor(records),
+    onStreamEvent: (event) => { streamed.push(event) },
+  })
+
+  const result = await loop.compact('keep the schema')
+
+  assert.equal(result.compacted, true)
+  assert.match(JSON.stringify(requests[0]!.messages.at(-1)), /keep the schema/)
+  assert.deepEqual(streamed.filter((event) => event.type === 'compact'), [
+    { type: 'compact', phase: 'start' },
+    { type: 'compact', phase: 'end' },
+  ])
+  assert.equal(records.at(-1)?.type, 'compact_boundary')
+
+  await loop.run({ text: 'next' })
+  const sent = JSON.stringify(requests.at(-1)!.messages)
+  assert.match(sent, /manual summary/)
+  assert.doesNotMatch(sent, /old answer/)
+})
+
 test('compactBeforeSend forces compaction on iteration 0 with the variant, rolePrompt and board restore', async () => {
   const run = async (compactBeforeSend: boolean) => {
     resetAutoCompactFailureState()
@@ -4662,4 +4708,46 @@ test('userPromptSubmit hooks receive attachment metadata beside the verbatim pro
   assert.ok(hookOutput && hookOutput.type === 'message')
   assert.match(hookOutput.content, /hook-prompt:analyze this/, 'the prompt arrived verbatim, no placeholder written back')
   assert.match(hookOutput.content, /hook-images:img-meta-1:64x48/, 'attachment metadata rode along')
+})
+
+test('costs ride on the turn metric, and a subagent run gets a usage metric of its own', async () => {
+  const records: SessionRecord[] = []
+  const metrics: Array<Record<string, unknown>> = []
+  const provider: ModelProvider = {
+    name: 'fake',
+    createMessage: async () => ({
+      content: 'done',
+      toolCalls: [],
+      usage: { inputTokens: 10, cacheReadInputTokens: 0, outputTokens: 1, cost: { amounts: { USD: 0.5 } } },
+    }),
+  }
+  const loop = new AgentLoop({
+    provider,
+    model: 'fake-model',
+    tools: [],
+    contextBuilder: new ContextBuilder(),
+    toolRunner: new ToolRunner([], new PermissionGate(async () => true), { onRecord: async (record) => { records.push(record) } }),
+    toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
+    recordStream: recordStreamFor(records, metrics),
+  })
+
+  const result = await loop.run({ text: 'hello' })
+  assert.deepEqual(result.usage.cost, { amounts: { USD: 0.5 } })
+  assert.deepEqual(metrics.find((metric) => metric.event === 'turn')?.cost, { amounts: { USD: 0.5 } })
+
+  loop.noteRecordAppended({
+    id: 'sub-1',
+    type: 'subagent_transcript',
+    agentId: 'a1',
+    subagentType: 'Explore',
+    model: 'helper',
+    usage: { inputTokens: 4, cacheReadInputTokens: 6, outputTokens: 2, cost: { amounts: { CNY: 1 } } },
+    createdAt: new Date().toISOString(),
+  } as SessionRecord)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(metrics.find((metric) => metric.event === 'subagent_usage'), {
+    event: 'subagent_usage',
+    model: 'helper',
+    usage: { input_tokens: 4, cache_read_tokens: 6, response_tokens: 2, cost: { amounts: { CNY: 1 } } },
+  })
 })

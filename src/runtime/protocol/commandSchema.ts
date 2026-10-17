@@ -149,6 +149,7 @@ const COMMAND_SCHEMAS = {
     .object({ type: z.literal('switch-branch'), id: commandId, branch: z.string() })
     .strict(),
   checkpoints: z.object({ type: z.literal('checkpoints'), id: commandId }).strict(),
+  'context-breakdown': z.object({ type: z.literal('context-breakdown'), id: commandId }).strict(),
   'restore-code': z
     .object({ type: z.literal('restore-code'), id: commandId, messageId: z.string() })
     .strict(),

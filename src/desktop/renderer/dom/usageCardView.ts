@@ -7,6 +7,7 @@ import {
   usageCardView,
   type UsageCardView,
   type UsageCell,
+  type UsageHeatCellView,
   type UsageTab,
 } from '../model/usageCard.js'
 import type { UsageRange } from '../model/usageStats.js'
@@ -69,16 +70,35 @@ export function createUsageCard(now: () => Date = () => new Date()): UsageCardDo
     el('div', className, ...list.map((cell) =>
       el('div', 'usage-cell', el('div', 'usage-value', cell.value), el('div', 'usage-label', cell.label))))
 
-  const overview = (view: UsageCardView): HTMLElement[] => [
-    cells('usage-cells', view.cells),
-    el('div', 'usage-heatmap', ...view.heatmap.map((column) =>
+  // One tip for the whole grid, moved onto the hovered day: the OS `title`
+  // tooltip waits about a second and ignores the theme (see `hoverCard.ts`).
+  const tipDay = el('span', 'usage-tip-day')
+  const tipTokens = el('strong', 'usage-tip-tokens')
+  const tipMessages = el('span', 'usage-tip-messages')
+  const tip = el('div', 'usage-tip', tipDay, tipTokens, tipMessages)
+  tip.setAttribute('role', 'tooltip')
+  const showTip = (node: HTMLElement, cell: UsageHeatCellView): void => {
+    tipDay.textContent = cell.day
+    tipTokens.textContent = `${cell.tokens} token`
+    tipMessages.textContent = `${cell.messages} 条消息`
+    const from = body.getBoundingClientRect()
+    const at = node.getBoundingClientRect()
+    tip.style.setProperty('--usage-tip-x', `${at.left - from.left + at.width / 2}px`)
+    tip.style.setProperty('--usage-tip-y', `${at.top - from.top}px`)
+    tip.classList.add('open')
+  }
+  const hideTip = (): void => { tip.classList.remove('open') }
+
+  const overview = (view: UsageCardView): HTMLElement[] => {
+    const heatmap = el('div', 'usage-heatmap', ...view.heatmap.map((column) =>
       el('div', 'usage-heat-col', ...column.map((cell) => {
         const node = el('span', `usage-heat level-${cell?.level ?? 0}${cell ? '' : ' future'}`)
-        if (cell) node.title = cell.title
+        if (cell && !view.loading) node.addEventListener('mouseenter', () => showTip(node, cell))
         return node
-      })))),
-    el('div', 'usage-footnote', view.footnote),
-  ]
+      }))))
+    heatmap.addEventListener('mouseleave', hideTip)
+    return [cells('usage-cells', view.cells), heatmap, el('div', 'usage-footnote', view.footnote), tip]
+  }
 
   const models = (view: UsageCardView): HTMLElement[] =>
     view.shares.length === 0
@@ -105,6 +125,7 @@ export function createUsageCard(now: () => Date = () => new Date()): UsageCardDo
       segment.node.classList.toggle('active', active)
       segment.node.setAttribute('aria-pressed', String(active))
     }
+    hideTip()
     if (retry !== undefined) {
       replace(body, el('div', 'usage-empty', USAGE_UNAVAILABLE, button('usage-retry', '重试', '重新读取使用统计', retry)))
       return

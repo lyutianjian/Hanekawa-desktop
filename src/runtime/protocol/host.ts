@@ -9,7 +9,6 @@ import type { PermissionRequest } from '../../harness/permissions.js'
 import type { RuntimeDiagnostic } from '../../harness/diagnostics.js'
 import type { SessionRecord } from '../../harness/types.js'
 import { getSubagentTranscriptPath, SidechainRecordStream } from '../../harness/sidechainRecordStream.js'
-import { resolveUsageWithCost } from '../../harness/usage.js'
 import type { SessionMeta } from '../../sessions/service.js'
 import type { ImageAttachmentRef } from '../../media/types.js'
 import { describeImageBlockError } from '../../media/imageErrors.js'
@@ -61,6 +60,7 @@ import {
   type UiResponse,
   type WireBackgroundTasksResult,
   type WireBranchesResult,
+  type WireContextBreakdownResult,
   type WireCommandInfo,
   type WireCommandsResult,
   type WireClosePaneResult,
@@ -93,7 +93,6 @@ import {
   type WireSwitchBranchResult,
   type WireTaskOutputResult,
   type WireTaskResult,
-  type WireUsageCost,
   type ToolDisplays,
 } from './wire.js'
 
@@ -419,30 +418,13 @@ export class SessionHost implements CoordinationLaneControl {
     }
     // Also the pump's main trigger: this fires when `streaming` flips back to
     // false, which is the moment a queued message becomes sendable.
-    const cost = this.currentCost()
     this.post({
       type: 'snapshot',
       snapshot: this.controller.getSnapshot(),
       subagentProgress: [...this.controller.getSubagentProgress()],
-      ...(cost ? { cost } : {}),
     })
     this.notifyStateChange()
     this.pumpQueue()
-  }
-
-  /**
-   * Session cost, through the same projection `/cost` reads.
-   *
-   * Derived here because a renderer may not import `harness/` — the bargain
-   * `PermissionRequestDto` already makes with its preview.
-   */
-  private currentCost(): WireUsageCost | undefined {
-    const usage = resolveUsageWithCost(
-      this.controller.getSnapshot().usage.total,
-      this.runtimeSlot.current?.modelConfig.pricing,
-    )
-    if (usage.cost === undefined) return undefined
-    return { amount: usage.cost, currency: usage.currency ?? 'USD' }
   }
 
   /**
@@ -940,6 +922,11 @@ export class SessionHost implements CoordinationLaneControl {
           ...(result.current ? { current: result.current } : {}),
           ...(result.message ? { message: result.message } : {}),
         } satisfies WireSwitchBranchResult
+      }
+
+      case 'context-breakdown': {
+        const breakdown = await this.controller.getContextBreakdown()
+        return (breakdown ? { breakdown } : {}) satisfies WireContextBreakdownResult
       }
 
       case 'checkpoints':

@@ -28,6 +28,7 @@ const SAMPLES = {
   'list-branches': { type: 'list-branches', id: '1' },
   'switch-branch': { type: 'switch-branch', id: '1', branch: 'topic' },
   checkpoints: { type: 'checkpoints', id: '1' },
+  'context-breakdown': { type: 'context-breakdown', id: '1' },
   'restore-code': { type: 'restore-code', id: '1', messageId: 'm1' },
   'truncate-session': { type: 'truncate-session', id: '1', messageId: 'm1' },
   'summarize-rewind': { type: 'summarize-rewind', id: '1', messageId: 'm1', decision: 'summarize-from-here' },

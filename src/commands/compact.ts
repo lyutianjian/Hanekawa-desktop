@@ -2,34 +2,24 @@ import type { CommandDefinition } from './types.js'
 
 export const compactCommand: CommandDefinition = {
   name: 'compact',
-  description: 'Manage auto-compact state',
-  argumentHint: 'reset',
+  description: 'Summarize the conversation now to free up context',
+  argumentHint: '[what to keep]',
   async run(args, context) {
-    const subcommand = args.trim().toLowerCase()
-    if (subcommand !== 'reset') {
-      context.writeLine('Usage: /compact reset')
+    if (!context.compactConversation) {
+      context.writeLine('Compaction is unavailable in this runtime.')
       return
     }
 
-    if (!context.resetCompactFailureCount) {
-      context.writeLine('Compact failure reset is unavailable in this runtime.')
-      return
-    }
-
+    let result
     try {
-      await context.resetCompactFailureCount()
+      result = await context.compactConversation(args.trim() || undefined)
     } catch (error) {
-      context.writeLine(`重置压缩失败计数失败：${error instanceof Error ? error.message : String(error)}`, 'error')
+      context.writeLine(`压缩上下文失败：${error instanceof Error ? error.message : String(error)}`, 'error')
       return
     }
 
-    try {
-      context.clearCachedSections?.()
-    } catch (error) {
-      context.writeLine(`清除缓存段落失败：${error instanceof Error ? error.message : String(error)}`, 'error')
-      return
-    }
-
-    context.writeLine('Auto-compact failure circuit reset.')
+    // A success needs no line: the transcript's own compaction row reports it.
+    if (result === 'busy') context.writeLine('当前回合进行中，等它结束再压缩。', 'error')
+    else if (result === 'empty') context.writeLine('没有可压缩的内容。')
   },
 }

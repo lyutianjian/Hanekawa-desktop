@@ -55,7 +55,7 @@ import { createCoordinatorWelcome, createWelcomeView } from './dom/welcomeView.j
 import { threadChip } from './dom/processStripView.js'
 import type { ThreadStripView } from './model/sidePanel.js'
 import { sessionEdits, type TurnEdits } from './model/turnEdits.js'
-import { isTranscriptEmpty, welcomeView } from './model/welcome.js'
+import { coordinatorSurvey, isTranscriptEmpty, welcomeView } from './model/welcome.js'
 import {
   branchPickerKeyToIntent,
   branchPickerView,
@@ -204,6 +204,7 @@ import {
 } from './model/imageViewer.js'
 import type { ImageViewerView } from './dom/imageViewerView.js'
 import type { ImageAttachmentRef } from '../../media/types.js'
+import { appendAttachedPaths, splitAttachedPaths, type AttachedPath } from '../../media/attachedPaths.js'
 import { localizeCommands } from './model/builtinLabels.js'
 import {
   advanceTaskList,
@@ -218,8 +219,10 @@ export interface PaneSessionDeps {
   isCoordinator?: () => boolean
   /** The coordinator welcome's 「线程」 link: raises the thread page. */
   onOpenOverview?: () => void
-  /** Whether this coordinator's project opened with a survey thread; the welcome says it went to look. */
-  coordinationOpening?: () => boolean
+  /** This coordinator's project thread table; `undefined` until it is pulled. */
+  coordinationTable?: () => { readonly openingThreadId?: string; readonly threads: readonly unknown[] } | undefined
+  /** The welcome's 「读取项目」; resolves `false` when the survey could not start (already reported). */
+  onStartSurvey?: () => Promise<boolean>
   /** The thread chip drawn under the messages of a coordination session; `undefined` draws none. */
   threadStrip?: () => ThreadStripView | undefined
   onOpenThreads?: (target: ThreadStripView['target']) => void
@@ -393,6 +396,9 @@ export interface PaneSession {
   /** Paste and drop funnel into the same import state machine. */
   importImagesFromFiles(files: readonly File[]): Promise<void>
   importImagesFromPaths(paths: readonly string[]): Promise<void>
+  /** Dropped files and folders, sent as paths beside the text. */
+  addDraftPaths(paths: readonly AttachedPath[]): void
+  removeDraftPath(path: string): void
   /** Removes one draft; a ready draft also releases its host-side hold. */
   removeDraftImage(draftId: string): Promise<void>
   /** Re-runs a failed import. A draft without a source (restored) cannot retry. */
@@ -440,6 +446,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   const welcomeEl = el('div', 'welcome')
   let coordinatorWelcomeEl: HTMLElement | undefined
   let coordinatorWelcomeKey = ''
+  let surveyPending = false
   let threadChipEl: HTMLElement | undefined
   let threadChipKey = ''
   const transcriptEl = el('div', 'transcript')
@@ -479,11 +486,10 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // The clipboard lives here rather than in the view: `navigator` is a host
     // object, and `dom/transcriptView.ts` is the half of this that runs against a
     // hand-written DOM stub in tests.
-    onCopy: (text) => {
-      void copyText(text).then((ok) => {
-        if (!ok) note('复制失败：无法写入剪贴板。', 'error')
-      })
-    },
+    onCopy: (text) => copyText(text).then((ok) => {
+      if (!ok) note('复制失败：无法写入剪贴板。', 'error')
+      return ok
+    }),
     onRewind: (messageId) => { void openRewindPanel(messageId) },
   })
   const welcome = createWelcomeView(welcomeEl, {
@@ -608,6 +614,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    * viewing and deleting are never gated on the model's capability.
    */
   let draftImages: AttachmentDrafts = Object.freeze([])
+  /** Dropped files and folders waiting beside the text draft, per pane like the images. */
+  let draftPaths: readonly AttachedPath[] = []
   /** Monotonic draft ids, so an import settling late can never collide with a newer draft. */
   let draftSeq = 0
   /**
@@ -785,6 +793,17 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     }
   }
 
+  function startSurvey(): void {
+    if (surveyPending || !deps.onStartSurvey) return
+    surveyPending = true
+    renderTranscript()
+    void deps.onStartSurvey().then((started) => {
+      if (started) return
+      surveyPending = false
+      renderTranscript()
+    })
+  }
+
   function renderTranscript(): void {
     if (!active) return
     // Pruned every paint, not on reset: `transcript-reset` restarts the block
@@ -804,11 +823,12 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     if (isStreaming && turnStartedAt === undefined) turnStartedAt = Date.now()
     const coordinator = deps.isCoordinator?.() ?? false
     if (coordinator) {
-      const input = { projectName, opening: deps.coordinationOpening?.() ?? false }
+      const survey = coordinatorSurvey({ table: deps.coordinationTable?.(), transcript, pending: surveyPending })
+      const input = { projectName, survey }
       const key = JSON.stringify(input)
       if (key !== coordinatorWelcomeKey || !coordinatorWelcomeEl) {
         coordinatorWelcomeKey = key
-        coordinatorWelcomeEl = createCoordinatorWelcome(input, () => deps.onOpenOverview?.())
+        coordinatorWelcomeEl = createCoordinatorWelcome(input, () => deps.onOpenOverview?.(), startSurvey)
       }
     }
     const strip = deps.threadStrip?.()
@@ -960,7 +980,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
   function renderStatus(): void {
     if (!active) return
-    deps.status.render(client.getSnapshot(), client.getCost())
+    deps.status.render(client.getSnapshot())
     deps.composer.setStreaming(client.getSnapshot().isStreaming)
     const runtime = client.getRuntimeSnapshot()
     // The runtime controls are repainted even when the snapshot is missing, so a
@@ -994,7 +1014,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
   function renderAttachments(): void {
     if (!active) return
-    deps.composer.renderAttachments(attachmentsView())
+    deps.composer.renderAttachments(attachmentsView(), draftPaths)
     // Thumbnails arrive on demand: after the paint shows the row, each ready
     // row without a cached URL asks once. A turn streaming in the meantime
     // repaints the strip per snapshot tick, and `beginPreviewLoad` keeps the
@@ -1098,6 +1118,19 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     } catch (error) {
       note(`选择图片失败：${describe(error)}`, 'error')
     }
+  }
+
+  function addDraftPaths(paths: readonly AttachedPath[]): void {
+    const known = new Set(draftPaths.map((entry) => entry.path))
+    const added = paths.filter((entry) => !known.has(entry.path) && known.add(entry.path))
+    if (added.length === 0) return
+    draftPaths = [...draftPaths, ...added]
+    renderAttachments()
+  }
+
+  function removeDraftPath(path: string): void {
+    draftPaths = draftPaths.filter((entry) => entry.path !== path)
+    renderAttachments()
   }
 
   async function removeDraftImage(draftId: string): Promise<void> {
@@ -1628,6 +1661,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       // session's drafts stay with the old session's files (S23 owns the
       // ownership rules; S11 only makes sure no ref dangles here).
       draftImages = Object.freeze([])
+      draftPaths = []
       if (rewind) closeRewindPanel()
       // A rebind is not a streaming tick: the header and the status line are
       // about a different session from this point, so they are drawn now.
@@ -1826,7 +1860,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // An image-only input is a real message: the draft list is part of the
     // composer's content the way the textarea is, and `classifyInput`'s
     // emptiness is only about text.
-    if (classified.kind === 'empty' && draftImages.length === 0) return
+    if (classified.kind === 'empty' && draftImages.length === 0 && draftPaths.length === 0) return
     if (classified.kind !== 'command' && attachmentsView().sendBlockNote !== undefined) {
       // Pending or failed attachments, or images against a text-only model:
       // the rest of the input is not sent as though it were complete, and
@@ -1840,6 +1874,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // was in it — text and attachments both.
     const sentText = text
     const sentDrafts = draftImages
+    const sentPaths = draftPaths
     deps.composer.clear()
     // Commands keep their drafts (see below); a prompt takes them with it, so
     // the strip empties with the textarea and the failure path below is what
@@ -1863,7 +1898,10 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       // panel's「已接管」badge should clear as the composer does rather than a
       // network hop later.
       deps.onUserMessage?.()
-      await client.submit(classified.kind === 'prompt' ? classified.text : '', imageIds.length > 0 ? { imageIds } : {})
+      await client.submit(
+        appendAttachedPaths(classified.kind === 'prompt' ? classified.text : '', sentPaths),
+        imageIds.length > 0 ? { imageIds } : {},
+      )
     } catch (error) {
       // The failure restores the whole input — text and attachments. Only
       // when the composer is still exactly what was sent: a user who kept
@@ -1872,6 +1910,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       if (deps.composer.value() === '') deps.composer.setValue(sentText, sentText.length)
       note(`发送失败：${describe(error)}`, 'error')
       draftImages = restoreDraftImages(sentDrafts)
+      addDraftPaths(sentPaths)
       renderAttachments()
     } finally {
       deps.composer.focus()
@@ -1917,7 +1956,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    */
   async function queueMessage(): Promise<void> {
     const classified = classifyInput(deps.composer.value())
-    if (classified.kind === 'empty' && draftImages.length === 0) return
+    if (classified.kind === 'empty' && draftImages.length === 0 && draftPaths.length === 0) return
     if (classified.kind === 'command') {
       await send()
       return
@@ -1930,6 +1969,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     const text = classified.kind === 'prompt' ? classified.text : ''
     const imageIds = readyAttachmentRefs(draftImages).map((ref) => ref.id)
     const queuedDrafts = draftImages
+    const queuedPaths = draftPaths
     deps.composer.clear()
     clearDraftImages()
     closeCompletions()
@@ -1937,11 +1977,12 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       // A queued message releases the taken-over tabs just as a sent one does:
       // mid-turn — the usual moment for a takeover — Enter queues, not sends.
       deps.onUserMessage?.()
-      await client.enqueueMessage(text, imageIds.length > 0 ? { imageIds } : {})
+      await client.enqueueMessage(appendAttachedPaths(text, queuedPaths), imageIds.length > 0 ? { imageIds } : {})
     } catch (error) {
       if (deps.composer.value() === '') deps.composer.setValue(text, text.length)
       note(`排队失败：${describe(error)}`, 'error')
       draftImages = restoreDraftImages(queuedDrafts)
+      addDraftPaths(queuedPaths)
       renderAttachments()
     } finally {
       deps.composer.focus()
@@ -1950,8 +1991,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
   /** Empties the strip in the one step a send or a queue hand-off shares. */
   function clearDraftImages(): void {
-    if (draftImages.length === 0) return
+    if (draftImages.length === 0 && draftPaths.length === 0) return
     draftImages = Object.freeze([])
+    draftPaths = []
     renderAttachments()
   }
 
@@ -1974,7 +2016,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
   // --- activation -----------------------------------------------------------------
 
-  function restoreDraftText(text: string): void {
+  function restoreDraftText(input: string): void {
+    const { text, paths } = splitAttachedPaths(input)
+    addDraftPaths(paths)
     if (active) {
       deps.composer.setValue(text, text.length)
       deps.composer.focus()
@@ -2138,7 +2182,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       // The drafts count as composer content: an image-only draft must make
       // Enter mean "submit" rather than fall through to `newline`'s guard —
       // `keymap.ts`'s `inputEmpty` already carries exactly this meaning.
-      inputEmpty: deps.composer.value().trim().length === 0 && readyAttachmentRefs(draftImages).length === 0,
+      inputEmpty: deps.composer.value().trim().length === 0 && readyAttachmentRefs(draftImages).length === 0 && draftPaths.length === 0,
     }
   }
 
@@ -2283,6 +2327,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     },
     pickImages,
     importImagesFromFiles,
+    addDraftPaths,
+    removeDraftPath,
     importImagesFromPaths,
     removeDraftImage,
     retryDraftImage,

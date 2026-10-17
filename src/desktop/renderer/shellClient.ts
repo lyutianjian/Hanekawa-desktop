@@ -263,6 +263,15 @@ export class ShellClient {
     }) as Promise<WireShellNewCoordinatorProjectResult>
   }
 
+  /** The coordinator welcome's 「读取项目」. */
+  async startSurvey(projectRoot: string): Promise<WireShellCoordinationOkResult> {
+    return this.send({
+      type: 'coordination-survey',
+      id: crypto.randomUUID(),
+      projectRoot,
+    }) as Promise<WireShellCoordinationOkResult>
+  }
+
   /** Stops the coordinator and every running thread of the project. */
   async stopAllCoordination(projectRoot: string): Promise<WireShellCoordinationOkResult> {
     return this.send({

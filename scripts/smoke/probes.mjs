@@ -351,7 +351,6 @@ export const status = () => `(() => {
   return {
     mode: text('chip-permission'),
     usage: text('status-usage'),
-    cost: text('status-cost'),
     session: (el('#canvas-header .canvas-title') || {}).textContent || '',
     title: document.title,
   }

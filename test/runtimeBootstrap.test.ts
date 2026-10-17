@@ -13,7 +13,7 @@ import type { McpServerConfig } from '../src/services/mcp/index.js'
 import { createSessionPane } from '../src/runtime/sessionWorkspace.js'
 import { refreshRuntimeSlot } from '../src/runtime/providerRuntime.js'
 import { localSettingsPath } from '../src/config/settings.js'
-import { resolveContextWindow } from '../src/runtime/createRuntime.js'
+import { resolveContextWindow, withPricing } from '../src/runtime/createRuntime.js'
 import { writeUserInstructions } from '../src/services/context/projectContext.js'
 
 // `config.json` lives in `~/.myagent` alone and `loadMergedSettings` layers a
@@ -605,4 +605,18 @@ test('a model without its own context window falls back to agent.contextManageme
   assert.equal(resolveContextWindow({ ...model, contextWindow: 1_000_000 }, { contextWindow: 64_000 }), 1_000_000)
   assert.equal(resolveContextWindow(model, { contextWindow: 64_000 }), 64_000)
   assert.equal(resolveContextWindow(model, undefined), 200_000)
+})
+
+test('a priced provider attaches each response\'s cost to its usage', async () => {
+  const provider = withPricing({
+    name: 'fake',
+    createMessage: async () => ({
+      content: 'ok',
+      toolCalls: [],
+      usage: { inputTokens: 1_000_000, cacheReadInputTokens: 0, outputTokens: 1_000_000 },
+    }),
+  }, { inputPerMillionTokens: 3, outputPerMillionTokens: 15, currency: 'CNY' })
+
+  const response = await provider.createMessage({ model: 'm', messages: [] } as never)
+  assert.deepEqual(response.usage?.cost, { amounts: { CNY: 18 } })
 })

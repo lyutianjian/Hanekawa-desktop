@@ -1,6 +1,6 @@
 // Pure decision logic for auto-waking the coordinator session. No I/O.
 
-export const AUTO_WAKE_LIMIT = 10
+export const AUTO_WAKE_LIMIT = 20
 
 export type ParentStatus = 'idle' | 'running' | 'stopping'
 
@@ -45,10 +45,10 @@ export type NoWakeReason =
   | 'awaiting-approval'
   | 'dialog-open'
   | 'threads-starting'
-  | 'threads-running'
 
 export type WakeVerdict =
-  | { wake: true; reason: 'question' | 'converged' }
+  /** `progress`: some threads reported while others still run. */
+  | { wake: true; reason: 'question' | 'progress' | 'converged' }
   | { wake: false; reason: NoWakeReason; retryLater: boolean }
 
 const no = (reason: NoWakeReason, retryLater: boolean): WakeVerdict => ({ wake: false, reason, retryLater })
@@ -75,10 +75,8 @@ export function decideWake(input: WakeInput): WakeVerdict {
   if (wakeable.some((n) => n.kind === 'question')) return { wake: true, reason: 'question' }
   // 8. Threads still being created: the batch is not complete yet.
   if (parent.startingThreads > 0) return no('threads-starting', true)
-  // 9. Converged wake only once every dispatched thread has stopped running.
-  if (children.some((c) => c.running)) return no('threads-running', true)
-  // 10. All quiet: wake with the collected reports.
-  return { wake: true, reason: 'converged' }
+  // 9. Reports wake at once; the reason says whether other threads still run.
+  return { wake: true, reason: children.some((c) => c.running) ? 'progress' : 'converged' }
 }
 
 export interface WakeLockState {

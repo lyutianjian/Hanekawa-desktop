@@ -678,6 +678,7 @@ test('the running total is restored from the sidecar too, not just the last requ
     cacheCreationInputTokens: 550,
     cacheReadInputTokens: 1_500,
     outputTokens: 160,
+    cost: { amounts: {}, legacy: true },
   })
   // The last request is still the last turn, not the sum of them.
   assert.deepEqual(harness.controller.getSnapshot().usage.lastRequest, {

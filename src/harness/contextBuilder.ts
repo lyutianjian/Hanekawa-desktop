@@ -17,6 +17,8 @@ const picomatch = require('picomatch') as {
   isMatch(input: string, patterns: string | readonly string[], options?: { dot?: boolean; nocase?: boolean }): boolean
 }
 
+export const INSTRUCTIONS_MESSAGE_ID = 'meta:instructions'
+
 export interface BuildContextInput {
   preloadRecords?: SessionRecord[]
   records: SessionRecord[]
@@ -257,7 +259,7 @@ export class ContextBuilder {
     return {
       kind: 'message',
       message: {
-        id: 'meta:instructions',
+        id: INSTRUCTIONS_MESSAGE_ID,
         role: 'user',
         content: wrapInSystemReminder(parts.join('\n\n')),
         createdAt: now.toISOString(),
@@ -409,7 +411,7 @@ export class ContextBuilder {
       memoryPrompt?.trim(),
       rolePrompt?.trim(),
       this.buildEnvironmentSystemSection(env),
-      this.buildSkillsSystemSection(skills),
+      this.skillsSystemSection(skills),
       // Deferred tools are announced via injected user message in the payload builder,
       // not in the system prompt, to avoid busting the prompt cache.
     ].filter((section): section is string => Boolean(section))
@@ -459,7 +461,7 @@ export class ContextBuilder {
     )
   }
 
-  private buildSkillsSystemSection(skills: readonly SkillDefinition[]): string | undefined {
+  skillsSystemSection(skills: readonly SkillDefinition[]): string | undefined {
     // Skill inclusion is split across system and user context:
     // - always skills are listed here with their full content, inside the cache.
     // - manual skills are listed here as available for explicit Skill calls.

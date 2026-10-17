@@ -17,7 +17,7 @@ export const THINKING_LIVE_LABEL = '思考'
 /** A sealed thought that said nothing; its elapsed time, when measured, sits beside it. */
 export const THINKING_DONE_FALLBACK = '思考过程'
 
-/** What the user decided by hand, by run id or step id. Absent = folded. */
+/** What the user decided by hand, by run, step or user-message id. Absent = folded. */
 export type DisclosureState = ReadonlyMap<string, boolean>
 
 export const NO_DISCLOSURE: DisclosureState = new Map()
@@ -46,6 +46,7 @@ export function toggleDisclosure(state: DisclosureState, id: string, expanded: b
 export function pruneDisclosure(entries: readonly TranscriptEntry[], state: DisclosureState): DisclosureState {
   const live = new Set<string>()
   for (const entry of entries) {
+    if (entry.kind === 'item' && entry.item.kind === 'user') live.add(entry.item.id)
     if (entry.kind !== 'run') continue
     live.add(entry.run.id)
     for (const step of entry.run.steps) live.add(step.id)
@@ -150,7 +151,7 @@ export function summarizeRun(run: ActivityRun): RunSummary {
     keys.add(category === 'edit' && step.kind === 'tool' && step.tool.useSummary ? step.tool.useSummary : step.id)
     if (category === 'edit' && step.kind === 'tool' && step.status === 'done') {
       const patch = step.tool.detail === undefined ? undefined : parseUnifiedPatch(step.tool.detail)
-      if (patch === undefined || patch.capped) readable = false
+      if (patch === undefined || patch.partial) readable = false
       else {
         added += patch.added
         deleted += patch.deleted

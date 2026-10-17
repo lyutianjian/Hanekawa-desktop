@@ -23,11 +23,11 @@ function turn(at: Date, over: Record<string, unknown> = {}): string {
   })
 }
 
-async function scratchRoot(): Promise<{ root: string; dir: string; cleanup: () => Promise<void> }> {
+async function scratchRoot(): Promise<{ root: string; dir: string; history: string; cleanup: () => Promise<void> }> {
   const root = await mkdtemp(path.join(os.tmpdir(), 'myagent-usage-'))
   const dir = getSessionsDir(root)
   await mkdir(dir, { recursive: true })
-  return { root, dir, cleanup: () => rm(root, { recursive: true, force: true }) }
+  return { root, dir, history: path.join(root, 'usage-history.json'), cleanup: () => rm(root, { recursive: true, force: true }) }
 }
 
 test('scan buckets turns by local day, hour and model across projects', async () => {
@@ -41,7 +41,7 @@ test('scan buckets turns by local day, hour and model across projects', async ()
     )
     await writeFile(path.join(b.dir, 's2.metrics.jsonl'), turn(new Date(2026, 9, 6, 9)) + '\n')
 
-    const { days } = await new UsageScanner().scan([a.root, b.root])
+    const { days } = await new UsageScanner(a.history).scan([a.root, b.root])
 
     assert.deepEqual(days.map((day) => day.day), ['2026-10-05', '2026-10-06'])
     assert.deepEqual(
@@ -60,19 +60,19 @@ test('scan buckets turns by local day, hour and model across projects', async ()
 test('scan with no projects or no metrics returns no days', async () => {
   const a = await scratchRoot()
   try {
-    assert.deepEqual(await new UsageScanner().scan([]), { days: [] })
-    assert.deepEqual(await new UsageScanner().scan([a.root]), { days: [] })
+    assert.deepEqual(await new UsageScanner(a.history).scan([]), { days: [] })
+    assert.deepEqual(await new UsageScanner(a.history).scan([a.root]), { days: [] })
   } finally {
     await a.cleanup()
   }
 })
 
-test('scan reuses unchanged files and re-reads changed or removed ones', async () => {
+test('scan reuses unchanged files, re-reads changed ones and keeps removed ones', async () => {
   const a = await scratchRoot()
   try {
     const file = path.join(a.dir, 's1.metrics.jsonl')
     await writeFile(file, turn(new Date(2026, 9, 5, 14)) + '\n')
-    const scanner = new UsageScanner()
+    const scanner = new UsageScanner(a.history)
     assert.equal((await scanner.scan([a.root])).days[0]!.turns, 1)
 
     // Same size and mtime, different content: only the cache can still say 1 turn at 14h.
@@ -88,7 +88,8 @@ test('scan reuses unchanged files and re-reads changed or removed ones', async (
     assert.equal((await scanner.scan([a.root])).days[0]!.turns, 2)
 
     await rm(file)
-    assert.deepEqual(await scanner.scan([a.root]), { days: [] })
+    assert.equal((await scanner.scan([a.root])).days[0]!.turns, 2)
+    assert.equal((await new UsageScanner(a.history).scan([])).days[0]!.turns, 2)
   } finally {
     await a.cleanup()
   }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import type { SessionRecord, TaskDisplaySnapshot } from '../../harness/types.js'
+import type { SessionRecord, TaskDisplaySnapshot, UsageCost } from '../../harness/types.js'
 import type { MessageQueuePriority, PersistedQueuedMessage } from '../../harness/types.js'
 import type { PermissionMode } from '../../harness/permissions.js'
 import type {
@@ -26,6 +26,7 @@ import {
   type UiResponse,
   type WireBackgroundTasksResult,
   type WireBranchesResult,
+  type WireContextBreakdownResult,
   type WireClosePaneResult,
   type WireCommandInfo,
   type WireCommandsResult,
@@ -57,7 +58,6 @@ import {
   type WireSwitchBranchResult,
   type WireTaskOutputResult,
   type WireTaskResult,
-  type WireUsageCost,
   type ToolDisplayDto,
   type ToolDisplays,
 } from './wire.js'
@@ -107,15 +107,6 @@ export class SessionClient {
     turnOutputTokens: undefined,
   })
   private subagentProgress: ReadonlyMap<string, string> = new Map()
-  /**
-   * Session cost, as computed by the host.
-   *
-   * Folded into the same diff as the snapshot rather than kept as its own
-   * signal: it is a function of the token totals, so it moves exactly when
-   * `usage` does and would otherwise wake every subscriber on a turn where
-   * nothing else changed.
-   */
-  private cost: WireUsageCost | undefined
   private runtimeSnapshot: WireRuntimeSnapshot | undefined
   private session: SessionMeta | undefined
   private backgroundTasks: readonly BackgroundTaskSnapshot[] = EMPTY_TASKS
@@ -249,14 +240,6 @@ export class SessionClient {
     return () => {
       this.queueListeners.delete(listener)
     }
-  }
-
-  /**
-   * Session cost so far, or `undefined` when the active model has no complete
-   * pricing. Derived host-side; see the `snapshot` event in `wire.ts`.
-   */
-  getCost(): WireUsageCost | undefined {
-    return this.cost
   }
 
   /**
@@ -455,6 +438,10 @@ export class SessionClient {
       id: randomUUID(),
       branch,
     }) as Promise<WireSwitchBranchResult>
+  }
+
+  async getContextBreakdown(): Promise<WireContextBreakdownResult> {
+    return this.send({ type: 'context-breakdown', id: randomUUID() }) as Promise<WireContextBreakdownResult>
   }
 
   async getCheckpoints(): Promise<CheckpointWithDiff[]> {
@@ -739,7 +726,7 @@ export class SessionClient {
         return
       case 'snapshot':
         this.subagentProgress = new Map(event.subagentProgress)
-        this.applySnapshot(event.snapshot, event.cost)
+        this.applySnapshot(event.snapshot)
         return
       case 'runtime-snapshot':
         this.runtimeSnapshot = event.snapshot
@@ -788,23 +775,17 @@ export class SessionClient {
   /**
    * Swaps the snapshot only when a field actually differs, so `getSnapshot()`
    * keeps returning the same object while nothing has changed.
-   *
-   * `cost` participates in the same decision even though it lives outside the
-   * snapshot object: it rides on this event, so treating it separately would
-   * mean a second `notify()` per tick or a stale readout.
    */
-  private applySnapshot(next: SessionControllerSnapshot, cost?: WireUsageCost): void {
+  private applySnapshot(next: SessionControllerSnapshot): void {
     const previous = this.snapshot
     const usage = sameUsage(previous.usage, next.usage) ? previous.usage : next.usage
     const taskSnapshot = sameTaskSnapshot(previous.taskSnapshot, next.taskSnapshot)
       ? previous.taskSnapshot
       : next.taskSnapshot
-    const costChanged = !sameCost(this.cost, cost)
     const contextChanged = previous.contextUsedTokens !== next.contextUsedTokens
 
     if (
-      !costChanged
-      && !contextChanged
+      !contextChanged
       && previous.isStreaming === next.isStreaming
       && previous.spinnerSubText === next.spinnerSubText
       && previous.turnOutputTokens === next.turnOutputTokens
@@ -812,7 +793,6 @@ export class SessionClient {
       && taskSnapshot === previous.taskSnapshot
     ) return
 
-    this.cost = cost
     this.snapshot = Object.freeze({
       isStreaming: next.isStreaming,
       usage,
@@ -982,6 +962,7 @@ type TokenCounts = {
   cacheCreationInputTokens?: number
   cacheReadInputTokens: number
   outputTokens: number
+  cost?: UsageCost
 }
 
 function sameTokens(a: TokenCounts | null, b: TokenCounts | null): boolean {
@@ -991,6 +972,7 @@ function sameTokens(a: TokenCounts | null, b: TokenCounts | null): boolean {
     && (a.cacheCreationInputTokens ?? 0) === (b.cacheCreationInputTokens ?? 0)
     && a.cacheReadInputTokens === b.cacheReadInputTokens
     && a.outputTokens === b.outputTokens
+    && sameCost(a.cost, b.cost)
 }
 
 /**
@@ -1053,8 +1035,12 @@ function sameQueuedMessages(
   return true
 }
 
-function sameCost(a: WireUsageCost | undefined, b: WireUsageCost | undefined): boolean {
+function sameCost(a: UsageCost | undefined, b: UsageCost | undefined): boolean {
   if (a === b) return true
   if (!a || !b) return false
-  return a.amount === b.amount && a.currency === b.currency
+  const currencies = Object.keys(a.amounts)
+  return currencies.length === Object.keys(b.amounts).length
+    && currencies.every((currency) => a.amounts[currency] === b.amounts[currency])
+    && a.unpriced === b.unpriced
+    && a.legacy === b.legacy
 }

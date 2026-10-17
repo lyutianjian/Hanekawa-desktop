@@ -18,6 +18,7 @@ import type { ImageStoreErrorReason } from '../../services/imageAttachments/imag
 import type { BackgroundTaskSnapshot } from '../../services/backgroundTasks/registry.js'
 import type { ModelPickerOption } from '../modelPicker.js'
 import type { RewindSummaryDecision } from '../rewindSummary.js'
+import type { ContextBreakdown } from '../../harness/contextBreakdown.js'
 import type { CheckpointWithDiff } from '../../services/fileHistory/types.js'
 import type { FileToolPreview } from '../../services/fileToolPreview.js'
 import type { SessionMeta } from '../../sessions/service.js'
@@ -59,21 +60,13 @@ export type HostEvent =
    * Pull state. `subagentProgress` rides along because the controller exposes
    * it as a live `Map` that a `Map` cannot cross the boundary as.
    *
-   * `cost` is derived here rather than by the viewer, for the same reason
-   * `PermissionRequestDto` ships a rendered preview: it needs `ModelPricing`
-   * plus `harness/usage.ts`, and a renderer may import neither. Absent when the
-   * active model has no complete pricing — "not priced" and "free" are different
-   * answers.
-   *
-   * Context occupancy needs no such treatment: it is a field of the snapshot
-   * itself, computed by the `SessionController` so that this viewer and the TUI
-   * read one number.
+   * The session cost rides inside `snapshot.usage.total`: each request is priced
+   * as it lands (`priceUsage`), so there is nothing left for the host to derive.
    */
   | {
       type: 'snapshot'
       snapshot: SessionControllerSnapshot
       subagentProgress: Array<[string, string]>
-      cost?: WireUsageCost
     }
   | { type: 'runtime-snapshot'; snapshot: WireRuntimeSnapshot }
   /**
@@ -183,6 +176,8 @@ export type HostCommand =
    */
   | { type: 'switch-branch'; id: string; branch: string }
   | { type: 'checkpoints'; id: string }
+  /** The context indicator's popover: computed on open, never pushed. */
+  | { type: 'context-breakdown'; id: string }
   | { type: 'restore-code'; id: string; messageId: string }
   /**
    * The write half of `/rewind`. `restore-code-and-conversation` deliberately
@@ -499,6 +494,11 @@ export const UI_REQUEST_FALLBACKS = {
 
 // --- command result payloads ------------------------------------------------
 
+/** Absent while the session has no context figure yet. */
+export interface WireContextBreakdownResult {
+  breakdown?: ContextBreakdown
+}
+
 export interface WireCheckpointsResult {
   checkpoints: CheckpointWithDiff[]
 }
@@ -614,12 +614,6 @@ export interface WireHelloResult {
   queuedMessages: PersistedQueuedMessage[]
   /** Before clamping, for a picker that wants to show the configured value. */
   configuredEffortLevel: EffortLevel
-}
-
-/** Token cost for the session so far, computed host-side. */
-export interface WireUsageCost {
-  amount: number
-  currency: string
 }
 
 /** Echoes the stored message so a client can paint the row it just created. */

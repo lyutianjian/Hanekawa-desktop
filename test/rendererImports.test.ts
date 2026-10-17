@@ -68,6 +68,9 @@ const ALLOWED_SHARED_IMPORTS = [
   // their own words for "this model cannot see images".
   '../../../media/imageErrors.js',
   '../../media/imageErrors.js',
+  // The `<attached-paths>` block a dropped file or folder rides in. No imports.
+  '../../../media/attachedPaths.js',
+  '../../media/attachedPaths.js',
 ]
 
 /**

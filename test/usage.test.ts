@@ -5,8 +5,9 @@ import {
   cacheHitRate,
   calculateTokenCost,
   formatUsageLine,
+  priceUsage,
   promptTokens,
-  resolveUsageWithCost,
+  subtractUsageCost,
 } from '../src/harness/usage.js'
 
 const usage = {
@@ -62,45 +63,41 @@ test('calculateTokenCost uses per-million token prices', () => {
   assert.ok(Math.abs(cost - 0.31) < Number.EPSILON)
 })
 
-/**
- * `resolveUsageWithCost` is the single projection behind three readouts: `/cost`
- * in both shells (through `CommandContext.getUsage`) and the desktop status bar
- * (through the `snapshot` event's derived `cost`). It exists because those used to
- * be three copies of the same eight lines.
- */
-test('resolveUsageWithCost folds the cost in when pricing is complete', () => {
-  const resolved = resolveUsageWithCost(usage, {
+test('priceUsage attaches the cost in the model currency', () => {
+  const priced = priceUsage(usage, {
     cacheReadInputPerMillionTokens: 0.1,
     inputPerMillionTokens: 1,
     outputPerMillionTokens: 2,
     currency: 'CNY',
   })
 
-  assert.equal(resolved.currency, 'CNY')
-  assert.ok(resolved.cost !== undefined && Math.abs(resolved.cost - 0.31) < Number.EPSILON)
-  // The counts must survive untouched; a status bar reads both halves.
-  assert.equal(resolved.inputTokens, usage.inputTokens)
-  assert.equal(resolved.cacheReadInputTokens, usage.cacheReadInputTokens)
-  assert.equal(resolved.outputTokens, usage.outputTokens)
+  assert.ok(Math.abs((priced.cost?.amounts.CNY ?? 0) - 0.31) < 1e-12)
+  assert.equal(priced.inputTokens, usage.inputTokens)
+  assert.deepEqual(Object.keys(priced.cost!.amounts), ['CNY'])
+  assert.deepEqual(Object.keys(priceUsage(usage, { inputPerMillionTokens: 1, outputPerMillionTokens: 2 }).cost!.amounts), ['USD'])
 })
 
-test('resolveUsageWithCost defaults the currency to USD', () => {
-  const resolved = resolveUsageWithCost(usage, {
-    inputPerMillionTokens: 1,
-    outputPerMillionTokens: 2,
-  })
-
-  assert.equal(resolved.currency, 'USD')
-})
-
-test('resolveUsageWithCost leaves the cost absent rather than zero without pricing', () => {
-  // "Not priced" and "free" are different answers. A zero here would make the
-  // status bar claim a session cost nothing and `/cost` stop saying "unavailable".
-  assert.equal(resolveUsageWithCost(usage).cost, undefined)
-  assert.equal(resolveUsageWithCost(usage, {}).cost, undefined)
-  assert.equal(resolveUsageWithCost(usage, { inputPerMillionTokens: 1 }).cost, undefined,
+test('priceUsage marks tokens unpriced rather than free without complete pricing', () => {
+  // "Not priced" and "free" are different answers.
+  assert.deepEqual(priceUsage(usage).cost, { amounts: {}, unpriced: true })
+  assert.deepEqual(priceUsage(usage, { inputPerMillionTokens: 1 }).cost, { amounts: {}, unpriced: true },
     'half a price list is not a price list')
-  assert.equal(resolveUsageWithCost(usage, { outputPerMillionTokens: 2 }).cost, undefined)
+})
+
+test('addTokenUsage sums the cost per currency and keeps either side\'s flags', () => {
+  const usd = { ...usage, cost: { amounts: { USD: 1 } } }
+  const cny = { ...usage, cost: { amounts: { CNY: 2, USD: 0.5 }, unpriced: true as const } }
+  assert.deepEqual(addTokenUsage(usd, cny).cost, { amounts: { USD: 1.5, CNY: 2 }, unpriced: true })
+  // A side that carries no cost leaves the other's untouched.
+  assert.deepEqual(addTokenUsage(usage, usd).cost, { amounts: { USD: 1 } })
+  assert.equal(addTokenUsage(usage, usage).cost, undefined)
+})
+
+test('subtractUsageCost clamps at zero per currency', () => {
+  assert.deepEqual(
+    subtractUsageCost({ amounts: { USD: 3, CNY: 1 }, legacy: true }, { amounts: { USD: 1, CNY: 4 } }),
+    { amounts: { USD: 2, CNY: 0 }, legacy: true },
+  )
 })
 
 /**
@@ -187,15 +184,4 @@ test('calculateTokenCost falls back to the input rate for unpriced writes', () =
     { inputPerMillionTokens: 3, outputPerMillionTokens: 2 },
   )
   assert.ok(Math.abs(cost - 3) < 1e-9)
-})
-
-test('resolveUsageWithCost reports a real zero when nothing has been spent', () => {
-  const resolved = resolveUsageWithCost(
-    { inputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0 },
-    { inputPerMillionTokens: 1, outputPerMillionTokens: 2 },
-  )
-
-  // Distinct from the case above: priced, but nothing used yet.
-  assert.equal(resolved.cost, 0)
-  assert.equal(resolved.currency, 'USD')
 })

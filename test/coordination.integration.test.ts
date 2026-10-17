@@ -252,7 +252,7 @@ async function setup(t: TestContext, script: Script, options: { git?: boolean; s
   return { cwd, project, service, engine, coordStore, coordinatorId, coordinator, lanes, opened, caller, wakes, settle, thread, start, openLane, errors, notices }
 }
 
-test('two StartThread calls (one in a worktree) converge into exactly one coordinator wake', async (t) => {
+test('two StartThread calls (one in a worktree) wake the coordinator once per report', async (t) => {
   const finishB = gate()
   const h = await setup(t, async (call) => {
     if (call.role === 'coordinator') {
@@ -285,18 +285,23 @@ test('two StartThread calls (one in a worktree) converge into exactly one coordi
   assert.equal((await h.project.store.resolve(a.sessionId))?.coordination?.workingDir, a.worktree.cwd)
   assert.ok(h.opened.filter((o) => o.sessionId !== h.coordinatorId).every((o) => !o.activate), 'thread lanes never activate')
 
-  // A done, B still running: no wake yet.
-  await until(async () => (await h.thread(a.threadId)).status === 'idle')
-  await h.engine.idle(h.cwd)
-  assert.equal(h.wakes(), 0)
+  // A done, B still running: A's report wakes the coordinator on its own.
+  await until(async () => h.wakes() === 1)
+  const wakeText = async () => {
+    const records = await h.project.store.loadRecords(h.coordinatorId)
+    const wake = records.filter((r) => r.type === 'message' && r.role === 'user').at(-1)
+    assert.ok(wake && wake.type === 'message')
+    return wake.content
+  }
+  const first = await wakeText()
+  assert.ok(first.includes('A finished the change.') && first.includes('others are still running'))
+  assert.ok(!first.includes('B finished the research.'))
 
   finishB.open()
   await h.settle()
-  assert.equal(h.wakes(), 1)
-  const coordRecords = await h.project.store.loadRecords(h.coordinatorId)
-  const wakeUser = coordRecords.filter((r) => r.type === 'message' && r.role === 'user').at(-1)
-  assert.ok(wakeUser && wakeUser.type === 'message')
-  assert.ok(wakeUser.content.includes('A finished the change.') && wakeUser.content.includes('B finished the research.'))
+  assert.equal(h.wakes(), 2)
+  const second = await wakeText()
+  assert.ok(second.includes('B finished the research.') && second.includes('Your threads have finished.'))
   assert.equal((await h.coordStore.read()).coordinator?.notes.length, 0)
 })
 

@@ -18,6 +18,8 @@ export type DesktopPlatform = 'darwin' | 'win32' | 'linux'
 export interface DesktopBridge {
   /** Read-only host metadata, available before the renderer's first paint. */
   readonly platform: DesktopPlatform
+  /** A dropped `File`'s path on disk; `''` for one that is not backed by a file. */
+  pathForFile(file: File): string
   /** Send a host command. The host validates and replies asynchronously. */
   send(message: unknown): void
   /**

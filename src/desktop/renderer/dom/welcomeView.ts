@@ -227,15 +227,18 @@ export function createWelcomeView(
   }
 }
 
-/** The coordinator's fixed welcome; 「线程」 is a chip that opens the thread page. */
+/** The coordinator's fixed welcome; 「线程」 is a chip that opens the thread page, 「读取项目」 one that starts the survey. */
 export function createCoordinatorWelcome(
   input: Parameters<typeof coordinatorWelcome>[0],
   onOpenOverview: () => void,
+  onStartSurvey: () => void,
 ): HTMLElement {
   const paragraphs = coordinatorWelcome(input).map((segments) =>
     el('p', undefined, ...segments.map((segment) =>
       typeof segment === 'string'
         ? segment
-        : button('coordinator-welcome-link', segment.label, '打开线程页', onOpenOverview, { icon: 'overview' }))))
+        : segment.link === 'overview'
+          ? button('coordinator-welcome-link', segment.label, '打开线程页', onOpenOverview, { icon: 'overview' })
+          : button('coordinator-welcome-link', segment.label, '派一个线程了解这个项目', onStartSurvey, { icon: 'folder' }))))
   return el('div', 'coordinator-welcome', ...paragraphs)
 }

@@ -459,43 +459,28 @@ test('an emptied queue is reported as empty', async () => {
   harness.client.dispose()
 })
 
-// --- derived cost -----------------------------------------------------------
+// --- session cost -----------------------------------------------------------
 
-test('the cost rides on the snapshot diff rather than notifying on its own', async () => {
+test('a cost that moved notifies even when every token count is equal', async () => {
   const harness = createHarness()
   let notifications = 0
   harness.client.subscribe(() => { notifications += 1 })
+  const priced = (amount: number) => snapshot({
+    usage: { lastRequest: null, total: { inputTokens: 1, cacheReadInputTokens: 2, outputTokens: 3, cost: { amounts: { USD: amount } } } },
+  })
 
-  harness.post({ type: 'snapshot', snapshot: snapshot(), subagentProgress: [], cost: { amount: 1, currency: 'USD' } })
+  harness.post({ type: 'snapshot', snapshot: priced(1), subagentProgress: [] })
   await settle()
-  assert.deepEqual(harness.client.getCost(), { amount: 1, currency: 'USD' })
   assert.equal(notifications, 1)
 
-  // Identical snapshot *and* identical cost: nothing to tell anyone.
-  harness.post({ type: 'snapshot', snapshot: snapshot(), subagentProgress: [], cost: { amount: 1, currency: 'USD' } })
+  harness.post({ type: 'snapshot', snapshot: priced(1), subagentProgress: [] })
   await settle()
   assert.equal(notifications, 1, 'a re-sent cost must not wake subscribers')
 
-  // A cost that moved has to wake them even though every snapshot field is equal
-  // — it is a function of the token totals, which the host may have rounded to the
-  // same values here.
-  harness.post({ type: 'snapshot', snapshot: snapshot(), subagentProgress: [], cost: { amount: 2, currency: 'USD' } })
+  harness.post({ type: 'snapshot', snapshot: priced(2), subagentProgress: [] })
   await settle()
-  assert.deepEqual(harness.client.getCost(), { amount: 2, currency: 'USD' })
+  assert.deepEqual(harness.client.getSnapshot().usage.total.cost, { amounts: { USD: 2 } })
   assert.equal(notifications, 2)
-  harness.client.dispose()
-})
-
-test('a snapshot with no cost clears one that was there', async () => {
-  const harness = createHarness()
-  harness.post({ type: 'snapshot', snapshot: snapshot(), subagentProgress: [], cost: { amount: 1, currency: 'USD' } })
-  await settle()
-
-  // Reachable through a model switch: the new model may have no pricing, and a
-  // stale figure from the old one would be worse than none.
-  harness.post({ type: 'snapshot', snapshot: snapshot(), subagentProgress: [] })
-  await settle()
-  assert.equal(harness.client.getCost(), undefined)
   harness.client.dispose()
 })
 

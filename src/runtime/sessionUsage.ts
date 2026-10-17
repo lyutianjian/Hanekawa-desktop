@@ -1,5 +1,5 @@
 import type { SessionRecord, TaskDisplaySnapshot, TokenUsage } from '../harness/types.js'
-import { cacheCreationTokens, reportsCacheCreation } from '../harness/usage.js'
+import { addUsageCost, cacheCreationTokens, costField, reportsCacheCreation, subtractUsageCost } from '../harness/usage.js'
 import type { SessionStore } from '../sessions/service.js'
 
 /** Token accounting for a session: the last request plus the running total. */
@@ -28,6 +28,7 @@ export function addTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
     ...combineCacheCreation(a, b, (left, right) => left + right),
     cacheReadInputTokens: a.cacheReadInputTokens + b.cacheReadInputTokens,
     outputTokens: a.outputTokens + b.outputTokens,
+    ...costField(addUsageCost(a.cost, b.cost)),
   }
 }
 
@@ -47,6 +48,7 @@ export function subtractTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
     ...combineCacheCreation(a, b, (left, right) => Math.max(0, left - right)),
     cacheReadInputTokens: Math.max(0, a.cacheReadInputTokens - b.cacheReadInputTokens),
     outputTokens: Math.max(0, a.outputTokens - b.outputTokens),
+    ...costField(subtractUsageCost(a.cost, b.cost)),
   }
 }
 

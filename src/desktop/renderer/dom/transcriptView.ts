@@ -32,6 +32,8 @@ import { collectTurnEdits, type TurnEdits } from '../model/turnEdits.js'
 import { anchorPadding, anchorTopGap, TRANSCRIPT_PAD_VARIABLE, viewportPolicy } from '../model/transcriptAnchor.js'
 import { PRESENCE_FALLBACK_MS } from '../model/presence.js'
 import { splitFileMentions } from '../model/userMessage.js'
+import { splitAttachedPaths } from '../../../media/attachedPaths.js'
+import { pathTileNode } from './pathTile.js'
 import { AGENT_TOOL } from '../model/subagentPanel.js'
 import type { ImageAttachmentRef } from '../../../media/types.js'
 import type { ToolErrorCode } from '../../../harness/types.js'
@@ -150,9 +152,9 @@ export interface TranscriptHandlers {
   /**
    * A message's 复制 button. The pane owns the clipboard call: `navigator` is a
    * host object, and this file is the one under test against a hand-written DOM
-   * stub.
+   * stub. Resolves `true` once the text is on the clipboard.
    */
-  onCopy(text: string): void
+  onCopy(text: string): Promise<boolean>
   /**
    * A user message's 回退 button: `/rewind`, opened on that message's
    * checkpoint. Absent (the sub-agent panel) draws no button.
@@ -461,6 +463,12 @@ export function createTranscriptView(
       } else if (policy === 'preserve-anchor') keepReadingPosition(guardedPosition ?? readingPosition)
       syncJump()
     }) : undefined
+  // A clamped user bubble only knows it overflows after layout, and the answer changes with the column's width.
+  const overflowObserver = typeof ResizeObserver === 'function' ? new ResizeObserver((entries) => {
+    for (const { target } of entries) {
+      target.parentElement?.classList.toggle('overflow', target.scrollHeight > target.clientHeight + 1)
+    }
+  }) : undefined
   let observing = false
   let taskFlash: ReturnType<typeof setTimeout> | undefined
 
@@ -500,6 +508,7 @@ export function createTranscriptView(
     },
     dispose() {
       stopMotion()
+      overflowObserver?.disconnect()
       clearTimeout(taskFlash)
       mark?.dispose()
       window.removeEventListener('pointerup', endDrag)
@@ -562,7 +571,7 @@ export function createTranscriptView(
         ...handlers,
         onToggle(id, expanded) {
           const head = cache.get(`run-head:${id}`)?.node ?? cache.get(`thinking-head:${id}`)?.node
-            ?? cache.get(`tool-head:${id}`)?.node
+            ?? cache.get(`tool-head:${id}`)?.node ?? cache.get(`item:${id}`)?.node
           beginLayoutChange(head)
           handlers.onToggle(id, expanded)
         },
@@ -573,6 +582,7 @@ export function createTranscriptView(
         keepMark: (host) => { markHost = host },
         locateTaskCard,
         afterPaint: (run) => afterPaint.push(run),
+        observeOverflow: (node) => overflowObserver?.observe(node),
       })
       const edits = handlers.onViewEdits ? collectTurnEdits(entries, new Set(footers.keys())) : new Map<number, TurnEdits>()
       // 撤销 rewinds to the turn's opening message, so only the newest settled turn offers it.
@@ -782,6 +792,7 @@ interface LivePaint {
   /** A task row was clicked: point at the task card, if one is drawn. */
   locateTaskCard(): void
   afterPaint(run: () => void): void
+  observeOverflow(node: HTMLElement): void
 }
 
 interface Painter extends TranscriptHandlers, LivePaint {
@@ -837,6 +848,7 @@ function createPainter(
     keepMark: paint.keepMark,
     locateTaskCard: paint.locateTaskCard,
     afterPaint: paint.afterPaint,
+    observeOverflow: paint.observeOverflow,
     onToggle: handlers.onToggle,
     onOpenPlan: handlers.onOpenPlan,
     onOpenSubagent: handlers.onOpenSubagent,
@@ -1302,11 +1314,11 @@ function familyData(step: ToolLike): FamilyData {
 
 /** The family's own counts, sitting where a suffix would (§6.2). */
 function familyStats(family: FamilyData): string | undefined {
-  // A capped patch's counts are partial — `+0 −17` on a whole-file rewrite
+  // An old capped patch's counts are partial — `+0 −17` on a whole-file rewrite
   // whose adds were cut — so the suffix stays off rather than lying. A search
   // list is never capped by the parser (only by the tool itself, which says so
   // in the notice), so its counts are the list's own and always honest.
-  if (family.patch !== undefined && !family.patch.capped) return patchStats(family.patch)
+  if (family.patch !== undefined && !family.patch.partial) return patchStats(family.patch)
   if (family.found !== undefined) return searchStats(family.found)
   if (family.rows !== undefined) return readStats(family.rows)
   return agentStats(family.agent)
@@ -1429,7 +1441,7 @@ function ranAgentLabel(step: ToolLike, run: SubagentRun | undefined): Child[] {
 /** The right edge of a row: the family's counts, if it has any. */
 function rowRight(family: FamilyData, stats: string | undefined): HTMLElement | undefined {
   if (stats === undefined) return undefined
-  const patch = family.patch !== undefined && !family.patch.capped ? family.patch : undefined
+  const patch = family.patch !== undefined && !family.patch.partial ? family.patch : undefined
   return el('span', 'step-right', ...(patch ? diffStat(patch.added, patch.deleted) : [stats]))
 }
 
@@ -1500,7 +1512,7 @@ function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => 
         'div',
         'step-command',
         el('pre', 'step-command-text', `$ ${command}`),
-        button('step-command-copy', '', '复制命令', () => painter.onCopy(command), { icon: 'copy' }),
+        copyButton(painter, 'step-command-copy', '复制命令', command),
       )
     // Still running: the command alone, so the abbreviated row can always be opened.
     if (terminal === undefined) return () => el('div', 'step-body', bubble())
@@ -1662,6 +1674,9 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
   if (item.kind === 'thread-notes' && item.threadNotes) return threadNotesNode(painter, item, classes, key)
   if (item.kind === 'receipt' && item.receipt) return receiptNode(painter, item.receipt, classes, key)
   if (item.kind === 'turn-failure' && item.failure) return turnFailureNode(painter, item.failure, classes, key)
+  if (item.kind === 'compaction') {
+    return painter.node(key, classes.join(' '), [item.text], () => [icon('fold-vertical'), el('span', 'line-text', item.text)])
+  }
   if (isAgentCall(item)) {
     const row = toolRow(painter, toStep(item) as ToolLike)
     return painter.node(`agent:${item.id}`, 'run agent-entry', [row], () => [row])
@@ -1687,18 +1702,23 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
     // element by element with `===`, and a fresh array per paint would never
     // match itself — every streamed chunk would refill this node.
     const thumbs = item.images?.map((image) => painter.imageThumbUrl(image.id) ?? '').join(' ')
+    const expanded = isExpanded(painter.disclosure, item.id)
     return painter.node(
       key,
       classes.join(' '),
-      [item.text, item.createdAt, item.images, thumbs],
-      () => [
-        item.images !== undefined && item.images.length > 0
-          ? el('div', 'user-images', ...item.images.map((image, index) =>
-            imageTileNode(painter, image, index)))
-          : undefined,
-        el('div', 'user-bubble', ...userParts(item)),
-        metaRow(painter, item),
-      ],
+      [item.text, item.createdAt, item.images, thumbs, expanded],
+      () => {
+        const { text, paths } = splitAttachedPaths(item.text)
+        return [
+          paths.length > 0 ? el('div', 'user-paths', ...paths.map(pathTileNode)) : undefined,
+          item.images !== undefined && item.images.length > 0
+            ? el('div', 'user-images', ...item.images.map((image, index) =>
+              imageTileNode(painter, image, index)))
+            : undefined,
+          text.trim().length > 0 || paths.length === 0 ? userBubble(painter, item.id, text, expanded) : undefined,
+          metaRow(painter, item),
+        ]
+      },
     )
   }
   // The interruption is said once, in the turn's own words: 「已中断」, the way a
@@ -1772,6 +1792,26 @@ function threadNoteCard(painter: Painter, card: ThreadNoteCard): HTMLElement {
   )
 }
 
+/** A copy button whose glyph turns into a tick for a few seconds once the text is on the clipboard. */
+function copyButton(painter: Painter, className: string, title: string, text: string): HTMLButtonElement {
+  let reset: ReturnType<typeof setTimeout> | undefined
+  const node = button(className, '', title, () => {
+    void painter.onCopy(text).then((ok) => {
+      if (!ok) return
+      node.replaceChildren(icon('check'))
+      node.title = '已复制'
+      clearTimeout(reset)
+      reset = setTimeout(() => {
+        node.replaceChildren(icon('copy'))
+        node.title = title
+      }, COPIED_MS)
+    })
+  }, { icon: 'copy' })
+  return node
+}
+
+const COPIED_MS = 5000
+
 /**
  * A message's meta row: 复制 · which model wrote it · when it settled.
  *
@@ -1798,18 +1838,22 @@ function metaRow(painter: Painter, item: TranscriptItem, footer?: TurnFooter): H
   const model = item.kind === 'assistant' ? item.model : undefined
   // A draft has no stamp of its own; copying half a sentence is not the offer.
   if (time === undefined && model === undefined) return undefined
-  const copy = button('item-copy', '', '复制', () => painter.onCopy(item.text), { icon: 'copy' })
+  const copy = copyButton(painter, 'item-copy', '复制', item.text)
   const onRewind = painter.onRewind
-  const rewind = item.kind === 'user' && onRewind
-    ? button('item-rewind', '', '回退到此消息之前', () => onRewind(item.id), { icon: 'rewind' })
-    : undefined
+  const timeLabel = time === undefined ? undefined : timeNode(time, item.createdAt)
+  // The user's row hangs off the bubble's right edge, read right to left: the controls end it.
+  if (item.kind === 'user') {
+    const rewind = onRewind
+      ? button('item-rewind', '', '回退到此消息之前', () => onRewind(item.id), { icon: 'rewind' })
+      : undefined
+    return el('div', 'item-meta', timeLabel, copy, rewind)
+  }
   return el(
     'div',
     'item-meta',
     copy,
-    rewind,
     model === undefined ? undefined : quiet('item-model', model),
-    time === undefined ? undefined : timeNode(time, item.createdAt),
+    timeLabel,
     ...(footer ? footerFacts(footer).map((fact) => quiet('item-fact', fact)) : []),
   )
 }
@@ -1881,6 +1925,16 @@ function quiet(className: string, text: string): HTMLElement {
   return node
 }
 
+/** The bubble around the user's words: a long one is clamped, with 显示更多 under it once it overflows. */
+function userBubble(painter: Painter, id: string, source: string, expanded: boolean): HTMLElement {
+  const text = el('div', 'user-text', ...userParts(source))
+  const label = expanded ? '收起' : '显示更多'
+  const more = button('user-more', label, label, () => painter.onToggle(id, expanded))
+  const bubble = el('div', expanded ? 'user-bubble' : 'user-bubble clamped', text, more)
+  if (!expanded) painter.observeOverflow(text)
+  return bubble
+}
+
 /**
  * The user's bubble, with every `@` mention drawn as a pill in place.
  *
@@ -1890,8 +1944,8 @@ function quiet(className: string, text: string): HTMLElement {
  * nothing is a worse lie than plain text (the same call 5c made for the context
  * pills).
  */
-function userParts(item: TranscriptItem): Child[] {
-  return splitFileMentions(item.text).map((segment) =>
+function userParts(text: string): Child[] {
+  return splitFileMentions(text).map((segment) =>
     segment.kind === 'text'
       ? segment.text
       : el('span', 'file-chip', icon('file'), el('span', 'file-chip-label', segment.label)),

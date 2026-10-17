@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { CoordinationWakeEngine, type WakeEnginePort, type WakeLaneController } from '../src/runtime/coordination/wakeEngine.js'
 import { CoordinationStore } from '../src/services/coordination/threadStore.js'
+import { AUTO_WAKE_LIMIT } from '../src/runtime/coordination/wakeDecision.js'
 import type { ThreadRecord } from '../src/services/coordination/types.js'
 import type { CoordinationLaneControl } from '../src/runtime/protocol/coordinationHost.js'
 import type { SessionEvent } from '../src/runtime/sessionController.js'
@@ -100,23 +101,29 @@ async function runThread(t: FakeLane, origin: TurnOrigin = 'coordinator', text =
   t.end(origin, extra)
 }
 
-test('converged wake fires once after both threads finish', async () => {
+test('each report wakes the coordinator; the last says the threads have finished', async () => {
   const h = await setup()
   h.threads[0]!.start('coordinator'); h.threads[1]!.start('coordinator')
   h.threads[0]!.say('first done'); h.threads[0]!.end('coordinator')
   await h.settle()
-  assert.equal(h.coord.wakes.length, 0)
-  h.threads[1]!.say('second done'); h.threads[1]!.end('coordinator')
-  await h.settle()
   assert.equal(h.coord.wakes.length, 1)
   assert.match(h.coord.wakes[0]!, /first done/)
-  assert.match(h.coord.wakes[0]!, /second done/)
-  const f = await h.store.read()
+  assert.match(h.coord.wakes[0]!, /others are still running/)
+  let f = await h.store.read()
   assert.equal(f.coordinator!.notes.length, 0)
-  assert.equal(f.coordinator!.autoWakeCount, 1)
   assert.equal(f.coordinator!.wakeLocked, true)
   assert.equal(f.threads[0]!.status, 'idle')
   assert.equal(f.threads[0]!.lastReport, 'first done')
+  h.coord.start('wake'); h.coord.end('wake')
+  await h.settle()
+
+  h.threads[1]!.say('second done'); h.threads[1]!.end('coordinator')
+  await h.settle()
+  assert.equal(h.coord.wakes.length, 2)
+  assert.match(h.coord.wakes[1]!, /second done/)
+  assert.match(h.coord.wakes[1]!, /Your threads have finished/)
+  f = await h.store.read()
+  assert.equal(f.coordinator!.autoWakeCount, 2)
 })
 
 test('two threads ending in the same tick wake once', async () => {
@@ -220,24 +227,24 @@ test('wake turn end releases the lock and replays a suppressed wake once', async
   assert.equal((await h.store.read()).coordinator!.wakeLocked, false)
 })
 
-test('the limit of 10 counts question wakes and resets on a user coordinator turn', async () => {
+test(`the limit of ${AUTO_WAKE_LIMIT} counts question wakes and resets on a user coordinator turn`, async () => {
   const h = await setup(1)
   const t = h.threads[0]!
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < AUTO_WAKE_LIMIT + 2; i++) {
     t.start('coordinator')
     if (i % 2) h.engine.noteQuestion(h.cwd, t.id, `q${i}`)
     t.end('coordinator')
     await h.settle()
-    if (h.coord.wakes.length > 0 && i < 10) { h.coord.start('wake'); h.coord.end('wake'); await h.settle() }
+    if (h.coord.wakes.length > 0 && i < AUTO_WAKE_LIMIT) { h.coord.start('wake'); h.coord.end('wake'); await h.settle() }
   }
-  assert.equal(h.coord.wakes.length, 10)
-  assert.equal((await h.store.read()).coordinator!.autoWakeCount, 10)
+  assert.equal(h.coord.wakes.length, AUTO_WAKE_LIMIT)
+  assert.equal((await h.store.read()).coordinator!.autoWakeCount, AUTO_WAKE_LIMIT)
   h.coord.start('user')
   await h.settle()
   assert.equal((await h.store.read()).coordinator!.autoWakeCount, 0)
   h.coord.end('user')
   await h.settle()
-  assert.equal(h.coord.wakes.length, 11)
+  assert.equal(h.coord.wakes.length, AUTO_WAKE_LIMIT + 1)
 })
 
 test('a closed coordinator lane is cold-opened without activating', async () => {

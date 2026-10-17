@@ -34,6 +34,7 @@ function createMockBridge(): MockBridge {
 
   return {
     platform: 'win32',
+    pathForFile: () => '',
     sent,
     send(message) {
       sent.push(message)

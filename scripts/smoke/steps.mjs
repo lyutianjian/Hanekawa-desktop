@@ -49,7 +49,8 @@
  *    window" is really "does `#settings-body` scroll inside itself".
  */
 import * as app from './app.mjs'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { clearViewport, evaluate, key, mouseClick, setViewport, sleep, waitFor } from './cdp.mjs'
@@ -1175,6 +1176,46 @@ async function step9(ctx) {
  * Ordering: after S9 (the composer is proven), before S11 (it leaves the run in
  * the dark theme the screenshots prefer).
  */
+/**
+ * Files and folders dragged over the canvas: the overlay while hovering, then
+ * one path tile per entry in the composer strip. CDP's drag events carry real
+ * paths, which a synthetic `DataTransfer` cannot.
+ */
+async function step29(ctx) {
+  const scratch = mkdtempSync(join(tmpdir(), 'smoke-drop-'))
+  const file = join(scratch, 'tsconfig.base.json')
+  const folder = join(scratch, 'pi-main')
+  writeFileSync(file, '{}\n')
+  mkdirSync(folder)
+  try {
+    const { x, y } = await read(ctx, `(() => {
+      const box = document.getElementById('transcript-area').getBoundingClientRect()
+      return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2) }
+    })()`)
+    const data = { items: [], files: [file, folder], dragOperationsMask: 1 }
+    await ctx.cdp.send('Input.dispatchDragEvent', { type: 'dragEnter', x, y, data })
+    await ctx.cdp.send('Input.dispatchDragEvent', { type: 'dragOver', x, y, data })
+    await waitFor('the drop overlay', () => read(ctx, `document.getElementById('canvas').classList.contains('drop-active')`))
+    await sleep(200)
+    await ctx.shot('29a-drop-overlay', 'files dragged over the chat area: blurred, blue-bordered hint')
+    await ctx.cdp.send('Input.dispatchDragEvent', { type: 'drop', x, y, data })
+    const tiles = await waitFor('two path tiles', async () => {
+      const found = await read(ctx, `[...document.querySelectorAll('#composer-attachments .path-tile')]
+        .map((tile) => [tile.title, tile.querySelector('.path-tile-badge').textContent])`)
+      return found.length === 2 ? found : undefined
+    })
+    ctx.eq('one tile per dropped entry, with its kind', tiles, [[file, 'JSON'], [folder, '文件夹']])
+    ctx.ok('the overlay clears after the drop', !(await read(ctx, `document.getElementById('canvas').classList.contains('drop-active')`)))
+    await ctx.shot('29b-path-tiles', 'a dropped file and folder as path tiles: full path, kind in the lower-left corner')
+    for (let left = 2; left > 0; left -= 1) {
+      await read(ctx, `document.querySelector('#composer-attachments .path-tile .attachment-remove').click()`)
+    }
+    await waitFor('the strip empties', () => read(ctx, `document.querySelectorAll('#composer-attachments .path-tile').length === 0`))
+  } finally {
+    rmSync(scratch, { recursive: true, force: true })
+  }
+}
+
 async function step26(ctx) {
   const rootA = ctx.state.projectRootA ?? (await lanes(ctx))[0].projectRoot
 
@@ -1921,7 +1962,7 @@ async function step1(ctx) {
   if (!ended) await app.post(ctx.app, lane, { type: 'interrupt', reason: 'user-cancel' })
   ctx.ok('the turn ended on its own', ended === true, ended ? 'turn-end observed' : 'interrupted')
   const status = await read(ctx, probes.status())
-  ctx.note(`after the turn: usage "${status.usage}", cost "${status.cost}"`)
+  ctx.note(`after the turn: usage "${status.usage}"`)
   ctx.ok('the submit itself was answered', await app.hasReply(ctx.app, submitId), `reply for ${submitId}`)
   await ctx.shot('01c-turn-end', 'the finished turn: status bar usage and cost, and the reply as rendered markdown')
 }
@@ -2114,6 +2155,7 @@ export const STEPS = [
   { id: 'S8', item: 8, name: 'settings edit, fan out, and lay out inside the window', timeout: 180000, run: step8 },
   { id: 'S28', item: 8, name: 'the floating browser card and its native view sits inside the card, dragged or not', timeout: 90000, run: step28 },
   { id: 'S9', item: 9, name: 'the composer chip changes effort without persisting it', timeout: 45000, run: step9 },
+  { id: 'S29', item: 2, name: 'dropped files and folders show the overlay and become path tiles', timeout: 60000, run: step29 },
   { id: 'S26', item: 2, name: 'image attachments import, strip, preview, gate, and isolate end to end', timeout: 240000, run: step26 },
   { id: 'S11', item: 8, name: 'the light theme paints, floats, and is given back', timeout: 90000, run: step11 },
   { id: 'S1', item: 1, name: 'a live turn keeps running in the background', timeout: 180000, run: step1, paid: true },

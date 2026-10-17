@@ -51,7 +51,7 @@ test('turns are kept apart, and a turn without a finished edit has no card', () 
   assert.deepEqual(edits.get(8)!.files.map((file) => file.name), ['README.md'])
 })
 
-test('a capped patch leaves the counts out rather than short', () => {
+test('an old capped patch without counts leaves the counts out rather than short', () => {
   const capped = patch('/p/big.ts', ['@@ -1,1 +1,1 @@', '-a', '+b', '… 40 more lines not shown'])
   const turn = collectTurnEdits([run(edit('e1', capped)), answer('a1')], new Set([1])).get(1)!
   assert.equal(turn.files[0]!.added, undefined)

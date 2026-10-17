@@ -5,10 +5,7 @@ import type {
   CommandUsage,
   SetModelResult,
 } from '../../commands/types.js'
-import { setLocalThinking } from '../../config/settings.js'
-import { resetAutoCompactFailureState } from '../../harness/compact.js'
 import type { SessionRecord } from '../../harness/types.js'
-import { resolveUsageWithCost } from '../../harness/usage.js'
 import type { SessionMeta } from '../../sessions/service.js'
 import { switchModel, type ModelSwitchDeps } from '../modelSwitch.js'
 import { applyPermissionModeTransition } from '../permissionMode.js'
@@ -75,15 +72,13 @@ export const COMMAND_CONTEXT_COVERAGE = {
   clearCachedSections: 'host',
   invalidateRecordsCache: 'host',
   repairRecords: 'host',
-  resetCompactFailureCount: 'host',
+  compactConversation: 'host',
   getUsage: 'host',
   getSessionMetricsSummary: 'host',
   getModel: 'host',
   setModel: 'host',
   getEffort: 'host',
   setEffort: 'host',
-  getThinking: 'host',
-  setThinking: 'host',
   openModelPicker: 'open-surface',
   openEffortPicker: 'open-surface',
   reloadAgentDefinitions: 'host',
@@ -151,20 +146,14 @@ export function createHostCommandContext(deps: HostCommandContextDeps): CommandC
     invalidateRecordsCache: () => runtimeSlot.current?.loop.invalidateRecordsCache(),
 
     repairRecords: async () => project.store.repairRecords(deps.getSession().id),
-    resetCompactFailureCount: async () => {
-      const sessionId = deps.getSession().id
-      await project.store.setCompactFailureCount(sessionId, 0)
-      resetAutoCompactFailureState(sessionId)
+    compactConversation: async (instructions) => {
+      if (controller.getSnapshot().isStreaming) return 'busy'
+      return (await controller.compact(instructions)).compacted ? 'compacted' : 'empty'
     },
     getSessionMetricsSummary: async () => project.store.loadMetricsSummary(deps.getSession().id),
 
-    // Shared with the desktop status bar, which reads the same value off the
-    // `snapshot` event. Both go through one function so `/cost` and the always-on
-    // readout cannot print different numbers for the same turn.
-    getUsage: (): CommandUsage => resolveUsageWithCost(
-      controller.getSnapshot().usage.total,
-      runtimeSlot.current?.modelConfig.pricing,
-    ),
+    // The same total the desktop status bar reads off the `snapshot` event.
+    getUsage: (): CommandUsage => controller.getSnapshot().usage.total,
 
     getModel: currentModel,
     // The full `/model` semantics, including the config write-back that the
@@ -172,17 +161,6 @@ export function createHostCommandContext(deps: HostCommandContextDeps): CommandC
     setModel: (input): SetModelResult => switchModel(modelSwitchDeps(), input),
     getEffort: () => runtimeSlot.getEffort(),
     setEffort: (level) => { runtimeSlot.setEffort(level) },
-    getThinking: () => runtimeSlot.current
-      ? runtimeSlot.current.loop.getThinking()?.type !== 'disabled'
-      : project.getSettings().thinking !== false,
-    // Written to the local settings layer *and* reloaded, so the next runtime
-    // this project builds agrees with the loop this just changed.
-    setThinking: async (enabled) => {
-      await setLocalThinking(project.cwd, enabled)
-      await project.reloadSettings()
-      runtimeSlot.current?.loop.setThinking(enabled ? { type: 'adaptive' } : { type: 'disabled' })
-    },
-
     reloadAgentDefinitions: () => project.reloadAgentDefinitions(),
     reloadSkills: () => project.reloadSkills(),
 

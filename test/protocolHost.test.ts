@@ -40,12 +40,11 @@ interface Harness {
   setContextUsedTokens: (contextUsedTokens: number | undefined) => void
   /** Sets the turn state rather than toggling it; the queue pump reads the edge. */
   setStreaming: (value: boolean) => void
-  setUsageTotal: (total: { inputTokens: number; cacheReadInputTokens: number; outputTokens: number }) => void
+  setUsageTotal: (total: TokenUsage) => void
   setLastRequestUsage: (
     lastRequest: { inputTokens: number; cacheReadInputTokens: number; outputTokens: number } | null,
   ) => void
   /** Gives the active model a price list, which is what makes a cost derivable. */
-  setPricing: (pricing: Record<string, unknown> | undefined) => void
   /** Makes the next `controller.submit` reject, for the pump's failure path. */
   failNextSubmit: (message: string, options?: { afterAcceptance?: boolean }) => void
   bridges: ReturnType<typeof createUiBridges>
@@ -418,7 +417,7 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
       snapshot = { ...snapshot, isStreaming: value }
       for (const listener of [...snapshotListeners]) listener()
     },
-    setUsageTotal: (total: { inputTokens: number; cacheReadInputTokens: number; outputTokens: number }) => {
+    setUsageTotal: (total: TokenUsage) => {
       snapshot = { ...snapshot, usage: { ...snapshot.usage, total } }
       for (const listener of [...snapshotListeners]) listener()
     },
@@ -433,12 +432,6 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
     ) => {
       snapshot = { ...snapshot, usage: { ...snapshot.usage, lastRequest } }
       for (const listener of [...snapshotListeners]) listener()
-    },
-    /** Gives the active model a price list, which is what makes a cost derivable. */
-    setPricing: (pricing: Record<string, unknown> | undefined) => {
-      const config = agentSession.modelConfig as Record<string, unknown>
-      if (pricing === undefined) delete config.pricing
-      else config.pricing = pricing
     },
     /** Makes the next `controller.submit` reject, for the pump's failure path. */
     failNextSubmit: (message: string, options?: { afterAcceptance?: boolean }) => {
@@ -1876,37 +1869,6 @@ test('a turn that fails after acceptance is not queued again', async () => {
   harness.dispose()
 })
 
-// --- derived cost -----------------------------------------------------------
-
-/** The `cost` on the most recent snapshot event. */
-function latestCost(received: HostEvent[]): { amount: number; currency: string } | undefined {
-  const last = received.filter((event) => event.type === 'snapshot').at(-1)
-  return last && last.type === 'snapshot' ? last.cost : undefined
-}
-
-test('the snapshot carries a derived cost once the model has pricing', async () => {
-  const harness = await createHarness()
-  harness.setPricing({ inputPerMillionTokens: 3, outputPerMillionTokens: 15, currency: 'USD' })
-  harness.setUsageTotal({ inputTokens: 1_000_000, cacheReadInputTokens: 0, outputTokens: 1_000_000 })
-  await settle()
-
-  // Derived host-side because a renderer may not import `harness/` — the same
-  // bargain `PermissionRequestDto` makes by shipping a rendered preview.
-  assert.deepEqual(latestCost(harness.received), { amount: 18, currency: 'USD' })
-  harness.dispose()
-})
-
-test('the snapshot omits the cost when the model has no complete pricing', async () => {
-  const harness = await createHarness()
-  harness.setUsageTotal({ inputTokens: 500, cacheReadInputTokens: 0, outputTokens: 500 })
-  await settle()
-
-  // Absent rather than zero: "not priced" and "free" are different answers, so the
-  // status bar shows nothing instead of a misleading 0.
-  assert.equal(latestCost(harness.received), undefined)
-  harness.dispose()
-})
-
 // --- context occupancy ------------------------------------------------------
 
 /** The occupancy on the most recent snapshot event. */
@@ -1943,20 +1905,18 @@ test('context occupancy is forwarded, not recomputed', async () => {
   harness.dispose()
 })
 
-test('/cost and the status bar report the same number', async () => {
-  // The reason `resolveUsageWithCost` exists. Both readouts used to compute the
-  // cost from `usage.total` plus `modelConfig.pricing` in their own eight lines —
-  // `/cost` through `CommandContext.getUsage`, the desktop status bar through the
-  // snapshot event — so they could drift on rounding, on the currency default, or
-  // on what "incomplete pricing" means. This drives both and compares.
+test('/cost reports the cost accumulated on the session total', async () => {
+  // Each request is priced as it lands, so `/cost` and the status bar read one
+  // figure off the snapshot instead of repricing the total at today's rate.
   const harness = await createHarness()
   registerBuiltinCommands(harness.commands)
-  harness.setPricing({ inputPerMillionTokens: 3, outputPerMillionTokens: 15, currency: 'USD' })
-  harness.setUsageTotal({ inputTokens: 1_234_567, cacheReadInputTokens: 89_000, outputTokens: 4_321 })
+  harness.setUsageTotal({
+    inputTokens: 1_234_567,
+    cacheReadInputTokens: 89_000,
+    outputTokens: 4_321,
+    cost: { amounts: { USD: 3.77 } },
+  })
   await settle()
-
-  const cost = latestCost(harness.received)
-  assert.ok(cost, 'the snapshot must carry a cost')
 
   harness.send({ type: 'run-command', id: 'rc1', input: '/cost' })
   await waitFor(
@@ -1967,18 +1927,10 @@ test('/cost and the status bar report the same number', async () => {
   const view = harness.received.find((event) =>
     event.type === 'command-effect' && event.effect.kind === 'open-command-view')
   assert.ok(view && view.type === 'command-effect' && view.effect.kind === 'open-command-view')
-  // `CommandView` is a union; `/cost` opens the `info` kind, which is the only
-  // one with sections.
   const opened = view.effect.view
-  assert.equal(opened.kind, 'info')
   assert.ok(opened.kind === 'info')
-  const rows = opened.sections.flatMap((section) => section.rows)
-  const total = rows.find((row) => row.label === 'Total cost')
-  assert.ok(total, '/cost must report a total')
-
-  // `/cost` prints six decimals and the status bar rounds; the agreement that
-  // matters is the underlying number, so compare at `/cost`'s precision.
-  assert.equal(total.value, `${cost.currency} ${cost.amount.toFixed(6).replace(/0+$/, '').replace(/\.$/, '')}`)
+  const total = opened.sections.flatMap((section) => section.rows).find((row) => row.label === 'Total cost')
+  assert.equal(total?.value, 'USD 3.77')
   harness.dispose()
 })
 

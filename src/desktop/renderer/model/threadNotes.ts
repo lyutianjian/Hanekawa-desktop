@@ -15,7 +15,7 @@
  * `coordination_update` record type).
  */
 
-export type WakeReason = 'question' | 'converged'
+export type WakeReason = 'question' | 'progress' | 'converged'
 
 export interface ThreadNoteCard {
   /** Absent when the tag carried no well-formed thread id. */
@@ -37,7 +37,7 @@ export interface ThreadNotesData {
 export const REPORT_PREVIEW_MAX = 160
 import { OPENING_HEAD } from '../../../runtime/protocol/coordinationHost.js'
 
-const WAKE_HEAD_RE = /^This is an automatic wake \((\d+) of (\d+)\)\. (A thread is waiting for an answer\.|Your threads have finished\.)/
+const WAKE_HEAD_RE = /^This is an automatic wake \((\d+) of (\d+)\)\. (A thread is waiting for an answer\.|Some threads have reported;|Your threads have finished\.)/
 const NOTE_RE = /<thread-note(?: thread="(thr_[0-9a-f]{12})")?>\n([\s\S]*?)\n<\/thread-note>/g
 const NOTE_HEAD_RE = /^\[([^\]]*)\] (.*)$/
 
@@ -52,7 +52,7 @@ export function parseThreadNoteMessage(text: string): ThreadNotesData | undefine
     wake: {
       count: Number(head[1]),
       limit: Number(head[2]),
-      reason: head[3]!.startsWith('A thread') ? 'question' : 'converged',
+      reason: head[3]!.startsWith('A thread') ? 'question' : head[3]!.startsWith('Some') ? 'progress' : 'converged',
     },
     cards,
   }

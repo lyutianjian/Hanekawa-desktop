@@ -355,7 +355,7 @@ test('a model row opens to its switches, and the effort levels are one switch ea
   stub.click(findOne(switches[1]!, 'settings-toggle').node)
   assert.deepEqual(intents.at(-1), { kind: 'model-row-switch', rowId: 'saved-0', field: 'imageInput', value: true })
 
-  const trigger = findOne(item(), 'settings-levels-trigger')
+  const trigger = findOne(findOne(item(), 'settings-model-levels'), 'settings-levels-trigger')
   assert.equal(trigger.attributes.get('aria-expanded'), 'false')
   assert.match(trigger.text, /思考档位全部/)
   apply({ kind: 'toggle-row-efforts', rowId: 'saved-0' })
@@ -368,6 +368,14 @@ test('a model row opens to its switches, and the effort levels are one switch ea
   // Thinking off: there are no levels left to pick.
   apply({ kind: 'model-row-switch', rowId: 'saved-0', field: 'thinking', value: false })
   assert.equal(findAll(item(), 'settings-model-levels').length, 0)
+
+  // The prices fold the same way, with four boxes and a currency once open.
+  const prices = (): StubView => findOne(item(), 'settings-model-prices')
+  assert.match(prices().text, /价格未设置/)
+  assert.equal(findAll(prices(), 'settings-input').length, 0, 'closed means no boxes')
+  apply({ kind: 'toggle-row-prices', rowId: 'saved-0' })
+  assert.equal(findAll(prices(), 'settings-input').length, 4)
+  assert.equal(findAll(prices(), 'settings-select').length, 1)
 })
 
 test('clicking the trigger asks to toggle that row, keyed by its row id', (t) => {

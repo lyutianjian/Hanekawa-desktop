@@ -130,13 +130,28 @@ export interface ModelDraftRow {
   readonly thinkingOff: boolean
   /** Empty means every level, as in the config. */
   readonly supportedEfforts: readonly EffortLevel[]
+  /** Per-million-token prices as typed; all four empty means unpriced. */
+  readonly inputPrice: string
+  readonly outputPrice: string
+  readonly cacheWritePrice: string
+  readonly cacheReadPrice: string
+  readonly currency: string
   /** A model-level `provider` override from a hand-written config, carried as is. */
   readonly provider?: string
   /** An unassigned row's endpoint reference, carried as is: it may name one not configured. */
   readonly endpoint?: string
   readonly expanded?: boolean
   readonly effortsOpen?: boolean
+  readonly pricesOpen?: boolean
 }
+
+/** The row fields one text box each edits. */
+export type ModelRowTextField =
+  | 'model' | 'displayName' | 'contextWindow' | 'maxOutputTokens'
+  | 'inputPrice' | 'outputPrice' | 'cacheWritePrice' | 'cacheReadPrice' | 'currency'
+
+/** The two currencies the form offers; a hand-written other one is kept as a third choice. */
+const PRICE_CURRENCIES = ['USD', 'CNY'] as const
 
 /**
  * One change that has been sent and not yet answered.
@@ -491,6 +506,15 @@ export interface SettingsModelRowView {
   readonly effortSummary: string
   /** `locked`: the last level still on, which cannot be switched off. */
   readonly efforts: ReadonlyArray<{ readonly level: EffortLevel; readonly label: string; readonly on: boolean; readonly locked: boolean }>
+  readonly pricesOpen: boolean
+  /** 「未设置」 or 「$3 / $15」 — input and output, beside the section's name. */
+  readonly priceSummary: string
+  readonly inputPrice: string
+  readonly outputPrice: string
+  readonly cacheWritePrice: string
+  readonly cacheReadPrice: string
+  readonly currency: string
+  readonly currencyChoices: ReadonlyArray<{ readonly value: string; readonly label: string }>
   /** Saved but not resolvable — the warning the old model list drew. */
   readonly warning?: string
 }
@@ -711,6 +735,7 @@ function projectOne(snapshot: WireSettingsSnapshot, change: SettingsChange): Wir
         ...(change.maxOutputTokens !== undefined ? { maxOutputTokens: change.maxOutputTokens } : {}),
         ...(change.supportedEfforts !== undefined ? { supportedEfforts: change.supportedEfforts } : {}),
         ...(change.thinkingOff ? { thinkingOff: true } : {}),
+        ...(change.pricing ? { pricing: change.pricing } : {}),
         // The raw switch projects, but the effective marker cannot: it is the
         // host's registry call, so it is kept from the previous row only while
         // the switch stays on and re-arrives with the next snapshot. Turning
@@ -1988,8 +2013,24 @@ function modelRowView(row: ModelDraftRow, snapshot: WireSettingsSnapshot): Setti
       on: on(level),
       locked: on(level) && levels.length === 1,
     })),
+    pricesOpen: row.pricesOpen === true,
+    priceSummary: priceSummary(row),
+    inputPrice: row.inputPrice,
+    outputPrice: row.outputPrice,
+    cacheWritePrice: row.cacheWritePrice,
+    cacheReadPrice: row.cacheReadPrice,
+    currency: row.currency,
+    currencyChoices: [...new Set([...PRICE_CURRENCIES, row.currency])].map((value) => ({ value, label: value })),
     ...(saved && !saved.resolves ? { warning: '无法解析' } : {}),
   }
+}
+
+function priceSummary(row: ModelDraftRow): string {
+  const input = row.inputPrice.trim()
+  const output = row.outputPrice.trim()
+  if (!input && !output) return row.cacheWritePrice.trim() || row.cacheReadPrice.trim() ? '不完整' : '未设置'
+  const symbol = row.currency === 'USD' ? '$' : row.currency === 'CNY' ? '¥' : `${row.currency} `
+  return `${symbol}${input || '—'} / ${symbol}${output || '—'}`
 }
 
 /** 200000 → 200K, 1000000 → 1M. */
@@ -2214,6 +2255,8 @@ function modelChange(
   if (contextWindow === 'invalid') return { error: `${key} 的上下文长度必须是正整数。` }
   const maxOutputTokens = parseCount(row.maxOutputTokens)
   if (maxOutputTokens === 'invalid') return { error: `${key} 的最大输出 Token 必须是正整数。` }
+  const pricing = modelPricing(row, key)
+  if ('error' in pricing) return pricing
   const supportedEfforts = normalizeSupportedEfforts(row.supportedEfforts)
   // Switches are written only when they differ from the default, so turning
   // one back removes the field instead of storing it.
@@ -2229,7 +2272,37 @@ function modelChange(
     ...(maxOutputTokens !== undefined ? { maxOutputTokens } : {}),
     ...(supportedEfforts !== undefined ? { supportedEfforts } : {}),
     ...(row.thinkingOff ? { thinkingOff: true } : {}),
+    ...(pricing.value ? { pricing: pricing.value } : {}),
   }
+}
+
+/** Absent when all four prices are empty; input and output are required once any is set. */
+function modelPricing(
+  row: ModelDraftRow,
+  key: string,
+): { value: NonNullable<Extract<SettingsChange, { kind: 'set-model' }>['pricing']> | undefined } | { error: string } {
+  const prices = {
+    inputPerMillionTokens: parsePrice(row.inputPrice),
+    outputPerMillionTokens: parsePrice(row.outputPrice),
+    cacheWriteInputPerMillionTokens: parsePrice(row.cacheWritePrice),
+    cacheReadInputPerMillionTokens: parsePrice(row.cacheReadPrice),
+  }
+  const values = Object.values(prices)
+  if (values.includes('invalid')) return { error: `${key} 的价格必须是不小于 0 的数字。` }
+  if (values.every((value) => value === undefined)) return { value: undefined }
+  if (prices.inputPerMillionTokens === undefined || prices.outputPerMillionTokens === undefined) {
+    return { error: `${key} 设置价格时需要填写输入和输出单价。` }
+  }
+  const value: Record<string, number | string> = { currency: row.currency }
+  for (const [name, price] of Object.entries(prices)) if (typeof price === 'number') value[name] = price
+  return { value }
+}
+
+function parsePrice(raw: string): number | undefined | 'invalid' {
+  const trimmed = raw.trim()
+  if (!trimmed) return undefined
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) return 'invalid'
+  return Number(trimmed)
 }
 
 function seedModelRow(model: WireModelInfo, rowId: string): ModelDraftRow {
@@ -2243,6 +2316,11 @@ function seedModelRow(model: WireModelInfo, rowId: string): ModelDraftRow {
     supportsImageInput: model.supportsImageInput === true,
     thinkingOff: model.thinkingOff === true,
     supportedEfforts: model.supportedEfforts ?? [],
+    inputPrice: priceText(model.pricing?.inputPerMillionTokens),
+    outputPrice: priceText(model.pricing?.outputPerMillionTokens),
+    cacheWritePrice: priceText(model.pricing?.cacheWriteInputPerMillionTokens),
+    cacheReadPrice: priceText(model.pricing?.cacheReadInputPerMillionTokens),
+    currency: model.pricing?.currency ?? 'USD',
     ...(model.provider ? { provider: model.provider } : {}),
     ...(model.endpoint ? { endpoint: model.endpoint } : {}),
   }
@@ -2258,7 +2336,16 @@ function newModelRow(seq: number, listed?: ProbedModel): ModelDraftRow {
     supportsImageInput: listed?.imageInput === true,
     thinkingOff: false,
     supportedEfforts: [],
+    inputPrice: '',
+    outputPrice: '',
+    cacheWritePrice: '',
+    cacheReadPrice: '',
+    currency: 'USD',
   }
+}
+
+function priceText(price: number | undefined): string {
+  return price === undefined ? '' : String(price)
 }
 
 /** The dialog for an endpoint already saved, or for the models that name none. */
@@ -2467,9 +2554,10 @@ export type SettingsIntent =
   | { kind: 'add-model-row' }
   | { kind: 'remove-model-row'; rowId: string }
   | { kind: 'toggle-model-row'; rowId: string }
-  | { kind: 'model-row-field'; rowId: string; field: 'model' | 'displayName' | 'contextWindow' | 'maxOutputTokens'; value: string }
+  | { kind: 'model-row-field'; rowId: string; field: ModelRowTextField; value: string }
   | { kind: 'model-row-switch'; rowId: string; field: 'thinking' | 'imageInput'; value: boolean }
   | { kind: 'toggle-row-efforts'; rowId: string }
+  | { kind: 'toggle-row-prices'; rowId: string }
   /** Switches one level; the last level still on stays on. */
   | { kind: 'model-row-effort'; rowId: string; level: EffortLevel }
   | { kind: 'new-mcp-server' }
@@ -2728,6 +2816,8 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return withModelRow(state, intent.rowId, (row) => ({ ...row, expanded: !row.expanded }), false)
     case 'toggle-row-efforts':
       return withModelRow(state, intent.rowId, (row) => ({ ...row, effortsOpen: !row.effortsOpen }), false)
+    case 'toggle-row-prices':
+      return withModelRow(state, intent.rowId, (row) => ({ ...row, pricesOpen: !row.pricesOpen }), false)
     case 'model-row-field': {
       // A field also commits its unchanged value on blur and Enter; that is not an edit.
       const row = state.draft?.kind === 'endpoint' ? state.draft.models.find((item) => item.rowId === intent.rowId) : undefined

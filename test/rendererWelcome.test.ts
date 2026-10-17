@@ -5,6 +5,7 @@ import {
   WELCOME_GLOBAL_LOCATION,
   WELCOME_PROJECT_FALLBACK,
   WELCOME_TITLE,
+  coordinatorSurvey,
   coordinatorWelcome,
   createWelcomeState,
   isTranscriptEmpty,
@@ -231,11 +232,27 @@ test('a notice arriving while the screen is up does not move the signature', () 
   assert.equal(after, before)
 })
 
-test('the coordinator welcome names the project, links 线程, and says it went to look only for a survey', () => {
-  const plain = coordinatorWelcome({ projectName: 'Hanekawa', opening: false })
+test('the coordinator welcome names the project, links 线程, and carries the survey line', () => {
+  const plain = coordinatorWelcome({ projectName: 'Hanekawa', survey: undefined })
   assert.ok(String(plain[0]![0]).includes('「Hanekawa」'))
   assert.ok(plain.flat().some((segment) => typeof segment === 'object' && segment.link === 'overview' && segment.label === '线程'))
-  assert.equal(coordinatorWelcome({ projectName: 'Hanekawa', opening: true }).length, plain.length + 1)
+  const offer = coordinatorWelcome({ projectName: 'Hanekawa', survey: 'offer' })
+  assert.equal(offer.length, plain.length + 1)
+  assert.ok(offer.at(-1)!.some((segment) => typeof segment === 'object' && segment.link === 'survey' && segment.label === '读取项目'))
+  const started = coordinatorWelcome({ projectName: 'Hanekawa', survey: 'started' })
+  assert.equal(started.length, plain.length + 1)
+  assert.ok(!started.flat().some((segment) => typeof segment === 'object' && segment.link === 'survey'))
+})
+
+test('读取项目 is offered only to an empty coordinator whose project has no thread', () => {
+  const empty = transcript()
+  const table = { threads: [] }
+  assert.equal(coordinatorSurvey({ table, transcript: empty, pending: false }), 'offer')
+  assert.equal(coordinatorSurvey({ table: undefined, transcript: empty, pending: false }), undefined, 'not before the table arrives')
+  assert.equal(coordinatorSurvey({ table, transcript: empty, pending: true }), undefined, 'not again once clicked')
+  assert.equal(coordinatorSurvey({ table: { threads: [{}] }, transcript: empty, pending: false }), undefined)
+  assert.equal(coordinatorSurvey({ table, transcript: transcript({ items: [item('user', 'u1')] }), pending: false }), undefined)
+  assert.equal(coordinatorSurvey({ table: { openingThreadId: 't1', threads: [{}] }, transcript: empty, pending: false }), 'started')
 })
 
 test('a coordinator session shows its own welcome, never the Hero, empty or not', () => {

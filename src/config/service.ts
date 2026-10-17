@@ -81,7 +81,7 @@ export interface ModelConfig {
  * rebuild silently drops everything they don't own, so a JSON-configured field
  * would survive exactly until the first unrelated edit.
  *
- * `supportsImageInput` and `thinking` are *not* here: the form owns a widget for each, so
+ * `supportsImageInput`, `thinking` and `pricing` are *not* here: the form owns a widget for each, so
  * the forms seed and send it, and carrying it here would override a deliberate
  * switch-off with the stale on-disk value on every save.
  */
@@ -90,7 +90,6 @@ const JSON_ONLY_MODEL_FIELDS = [
   'baseUrl',
   'promptCaching',
   'promptCacheRetention',
-  'pricing',
 ] as const satisfies readonly (keyof ModelConfig)[]
 
 /**

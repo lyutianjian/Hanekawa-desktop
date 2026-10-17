@@ -1,4 +1,4 @@
-import type { SessionRecord } from '../harness/types.js'
+import type { SessionRecord, TokenUsage } from '../harness/types.js'
 import type { EffortLevel } from '../config/effort.js'
 import type { Hooks } from '../harness/hooks.js'
 
@@ -12,14 +12,7 @@ export interface CommandDefinition {
   run: (args: string, context: CommandContext) => Promise<string | void>
 }
 
-export interface CommandUsage {
-  inputTokens: number
-  cacheCreationInputTokens?: number
-  cacheReadInputTokens: number
-  outputTokens: number
-  cost?: number
-  currency?: string
-}
+export type CommandUsage = TokenUsage
 
 export interface CommandSessionMetricsSummary {
   totalCacheHitRate: number | null
@@ -28,6 +21,9 @@ export interface CommandSessionMetricsSummary {
   cacheBreakCount: number
   averageCompactIntervalTurns: number | null
 }
+
+/** `busy`: a turn is running. `empty`: no user message since the last compaction. */
+export type CommandCompactResult = 'compacted' | 'busy' | 'empty'
 
 export interface CommandModelInfo {
   key: string
@@ -106,17 +102,14 @@ export interface CommandContext {
   clearCachedSections?: () => void
   invalidateRecordsCache?: () => void
   repairRecords?: () => Promise<{ repairedCount: number; diagnostics: Array<{ message: string }> }>
-  resetCompactFailureCount?: () => Promise<void>
+  /** Summarizes the conversation now; throws when the summary fails. */
+  compactConversation?: (instructions?: string) => Promise<CommandCompactResult>
   getUsage?: () => CommandUsage
   getSessionMetricsSummary?: () => Promise<CommandSessionMetricsSummary | null>
   getModel?: () => CommandModelInfo | undefined
   setModel?: (model: string) => void | SetModelResult | Promise<void | SetModelResult>
   getEffort?: () => string
   setEffort?: (level: string) => void | Promise<void>
-  /** Whether requests carry a `thinking` parameter at all. */
-  getThinking?: () => boolean
-  /** Persists the switch *and* applies it to the live loop. */
-  setThinking?: (enabled: boolean) => void | Promise<void>
   openModelPicker?: () => void
   openEffortPicker?: () => void
   reloadAgentDefinitions?: () => Promise<number>

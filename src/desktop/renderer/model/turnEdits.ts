@@ -21,7 +21,7 @@ export interface ChangeRow extends DiffRow {
 export interface EditedFile {
   readonly path: string
   readonly name: string
-  /** Lines counted from every patch; absent when one of them was capped and the count would be short. */
+  /** Lines counted from every patch; absent when one of them was capped without its counts and the count would be short. */
   readonly added?: number
   readonly deleted?: number
   /** Each patch's rows in the order the tools ran. */
@@ -43,7 +43,7 @@ interface FileAcc {
   rows: ChangeRow[]
   added: number
   deleted: number
-  capped: boolean
+  partial: boolean
 }
 
 /**
@@ -66,14 +66,14 @@ export function collectTurnEdits(entries: readonly TranscriptEntry[], ends: Read
         const path = detail === undefined ? undefined : patchPath(detail)
         if (patch === undefined || path === undefined) continue
         key ??= step.id
-        const file = files.get(path) ?? { path, rows: [], added: 0, deleted: 0, capped: false }
+        const file = files.get(path) ?? { path, rows: [], added: 0, deleted: 0, partial: false }
         files.set(path, file)
         file.rows.push(...markChangedWords(patch.rows).map((row, at, all) => (
           row.kind === 'elided' ? { ...row, text: elidedText(row.text, patch.capped && at === all.length - 1) } : row
         )))
         file.added += patch.added
         file.deleted += patch.deleted
-        file.capped ||= patch.capped
+        file.partial ||= patch.partial
       }
     }
     if (!ends.has(index)) return
@@ -95,7 +95,7 @@ export function sessionEdits(items: readonly TranscriptItem[]): TurnEdits | unde
 }
 
 function turnEdits(key: string, userMessageId: string | undefined, files: readonly FileAcc[]): TurnEdits {
-  const counted = files.every((file) => !file.capped)
+  const counted = files.every((file) => !file.partial)
   return {
     key,
     ...(userMessageId === undefined ? {} : { userMessageId }),
@@ -103,7 +103,7 @@ function turnEdits(key: string, userMessageId: string | undefined, files: readon
       path: file.path,
       name: baseName(file.path),
       rows: file.rows,
-      ...(file.capped ? {} : { added: file.added, deleted: file.deleted }),
+      ...(file.partial ? {} : { added: file.added, deleted: file.deleted }),
     })),
     ...(counted
       ? { added: files.reduce((sum, file) => sum + file.added, 0), deleted: files.reduce((sum, file) => sum + file.deleted, 0) }

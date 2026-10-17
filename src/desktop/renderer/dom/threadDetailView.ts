@@ -140,9 +140,10 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
         onOpenPath: handlers.onOpenPath,
         onViewImage: () => {},
         imageThumbUrl: () => undefined,
-        onCopy: (text) => {
-          void copyText(text).then((ok) => { if (!ok) handlers.onError?.('复制失败：无法写入剪贴板。') })
-        },
+        onCopy: (text) => copyText(text).then((ok) => {
+          if (!ok) handlers.onError?.('复制失败：无法写入剪贴板。')
+          return ok
+        }),
         onOpenSubagent: () => {},
       }),
     }

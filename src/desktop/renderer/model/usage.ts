@@ -1,4 +1,4 @@
-import type { TokenUsage } from '../../../harness/types.js'
+import type { TokenUsage, UsageCost } from '../../../harness/types.js'
 import type { WireRuntimeSnapshot } from '../../../runtime/protocol/wire.js'
 
 /**
@@ -99,6 +99,8 @@ export interface StatusUsageView {
   readonly text: string
   /** The same numbers unabbreviated, for the hover card. Empty when `text` is. */
   readonly breakdown: readonly UsageBreakdownRow[]
+  /** Why the 会话开销 row may fall short of the real spend; absent when it does not. */
+  readonly costNote: string | undefined
   /**
    * The breakdown as one string, for the accessible name only.
    *
@@ -115,6 +117,7 @@ const EMPTY: StatusUsageView = Object.freeze({
   rate: undefined,
   text: '',
   breakdown: [],
+  costNote: undefined,
   title: '',
 })
 
@@ -150,7 +153,7 @@ function hitRate(usage: TokenUsage): number | undefined {
 /**
  * The session's total token spend, and the cache hit rate beside it.
  *
- * The count is cumulative, to match the cost sitting next to it. The rate is the
+ * The count is cumulative, like the cost in the hover. The rate is the
  * last request's, because that is the one an unexpectedly cold turn shows up in;
  * the cumulative rate is in the hover, which is where a number that can only
  * fall belongs.
@@ -167,8 +170,10 @@ export function statusUsageView(
   const metrics: UsageMetric[] = [
     { kind: 'total', value: `${formatTokens(allTokens)} tok`, label: '总计' },
   ]
+  const cost = formatSessionCost(total.cost)
   const breakdown: UsageBreakdownRow[] = [
     { label: '总计', value: `${formatExact(allTokens)} 标记` },
+    ...(cost ? [{ label: '会话开销', value: cost }] : []),
     { label: '输入（未缓存）', value: formatExact(inputTokens) },
     { label: '缓存写入', value: formatExact(writes(total)) },
     { label: '缓存命中', value: formatExact(cacheReadInputTokens) },
@@ -197,8 +202,36 @@ export function statusUsageView(
     rate,
     text: parts.join(' · '),
     breakdown,
+    costNote: cost ? costNote(total.cost!) : undefined,
     title: `本会话累计\n${breakdown.map((row) => `${row.label} ${row.value}`).join('\n')}`,
   }
+}
+
+/**
+ * `$0.42`, or `$0.42 + ¥1.20` across currencies; undefined when no request was
+ * priced, so a session on unpriced models shows no row rather than a zero.
+ */
+function formatSessionCost(cost: UsageCost | undefined): string | undefined {
+  const amounts = Object.entries(cost?.amounts ?? {})
+  if (amounts.length === 0) return undefined
+  return amounts.map(([currency, amount]) => `${CURRENCY_SYMBOLS[currency] ?? `${currency} `}${formatCost(amount)}`).join(' + ')
+}
+
+const CURRENCY_SYMBOLS: Record<string, string> = { USD: '$', CNY: '¥' }
+
+/** Enough digits to see a cheap turn move the number, without a wall of zeros. */
+function formatCost(amount: number): string {
+  if (amount === 0) return '0'
+  if (amount < 0.01) return amount.toFixed(4)
+  return amount.toFixed(2)
+}
+
+function costNote(cost: UsageCost): string | undefined {
+  const notes = [
+    ...(cost.unpriced ? ['开销未计入未设置价格的模型'] : []),
+    ...(cost.legacy ? ['开销不含早期请求'] : []),
+  ]
+  return notes.length > 0 ? notes.join('；') : undefined
 }
 
 export type ContextGaugeLevel = 'normal' | 'warn' | 'critical'
