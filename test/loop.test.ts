@@ -2242,6 +2242,121 @@ test('agent loop runs consecutive safe calls concurrently and unsafe calls as ba
   assert.ok(events.indexOf('unsafe:start') > events.indexOf('safeB:end'))
 })
 
+test('agent loop runs read-only Bash calls concurrently and other commands as barriers', async () => {
+  const records: SessionRecord[] = []
+  const events: string[] = []
+  let callCount = 0
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage() {
+      callCount += 1
+      if (callCount === 1) {
+        return {
+          content: 'using tools',
+          toolCalls: [
+            { id: 'a', name: 'Bash', input: { command: 'git status' } },
+            { id: 'b', name: 'Bash', input: { command: 'ls' } },
+            { id: 'c', name: 'Bash', input: { command: 'npm test' } },
+          ],
+        }
+      }
+      return { content: 'done', toolCalls: [] }
+    },
+  }
+  const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+  const tools: Tool[] = [{
+    name: 'Bash',
+    description: 'bash',
+    inputSchema: z.object({ command: z.string() }).strict(),
+    riskLevel: 'dangerous',
+    isDestructive: true,
+    concurrentWhenReadonly: true,
+    execute: async (input) => {
+      const { command } = input as { command: string }
+      events.push(`${command}:start`)
+      await delay(command === 'git status' ? 20 : 5)
+      events.push(`${command}:end`)
+      return { ok: true, content: command }
+    },
+  }]
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'loop-bash-concurrency-'))
+  const runner = new ToolRunner(tools, new PermissionGate(async () => true, [], { cwd }), {
+    onRecord: async (record) => { records.push(record) },
+  })
+  const loop = new AgentLoop({
+    provider,
+    model: 'fake-model',
+    tools,
+    contextBuilder: new ContextBuilder(),
+    toolRunner: runner,
+    toolContext: { cwd, sessionId: 's1', readFiles: new Set() },
+    recordStream: recordStreamFor(records),
+  })
+
+  await loop.run({ text: 'hello' })
+
+  assert.ok(events.indexOf('ls:start') < events.indexOf('git status:end'))
+  assert.ok(events.indexOf('npm test:start') > events.indexOf('git status:end'))
+  await rm(cwd, { recursive: true, force: true })
+})
+
+test('agent loop caps concurrent calls and runs a call alone when classifying it fails', async () => {
+  for (const classifierThrows of [false, true]) {
+    const records: SessionRecord[] = []
+    let inFlight = 0
+    let maxInFlight = 0
+    let callCount = 0
+    const provider: ModelProvider = {
+      name: 'fake',
+      async createMessage() {
+        callCount += 1
+        if (callCount === 1) {
+          return {
+            content: 'using tools',
+            toolCalls: Array.from({ length: 12 }, (_, i) => ({ id: `c${i}`, name: 'Bash', input: { command: 'ls' } })),
+          }
+        }
+        return { content: 'done', toolCalls: [] }
+      },
+    }
+    const tools: Tool[] = [{
+      name: 'Bash',
+      description: 'bash',
+      inputSchema: z.object({ command: z.string() }).strict(),
+      riskLevel: 'dangerous',
+      isDestructive: true,
+      concurrentWhenReadonly: true,
+      execute: async () => {
+        inFlight += 1
+        maxInFlight = Math.max(maxInFlight, inFlight)
+        await new Promise((resolve) => setTimeout(resolve, 5))
+        inFlight -= 1
+        return { ok: true, content: 'ok' }
+      },
+    }]
+    const cwd = await mkdtemp(path.join(os.tmpdir(), 'loop-bash-cap-'))
+    const runner = new ToolRunner(tools, new PermissionGate(async () => true, [], { cwd }), {
+      onRecord: async (record) => { records.push(record) },
+    })
+    if (classifierThrows) runner.isReadonlyCall = () => { throw new Error('classifier failed') }
+    const loop = new AgentLoop({
+      provider,
+      model: 'fake-model',
+      tools,
+      contextBuilder: new ContextBuilder(),
+      toolRunner: runner,
+      toolContext: { cwd, sessionId: 's1', readFiles: new Set() },
+      recordStream: recordStreamFor(records),
+    })
+
+    await loop.run({ text: 'hello' })
+
+    assert.equal(records.filter((record) => record.type === 'tool_result').length, 12)
+    assert.equal(maxInFlight, classifierThrows ? 1 : 10)
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
 test('agent loop runs read-only Agent calls concurrently by subagent_type', async () => {
   const records: SessionRecord[] = []
   const events: string[] = []

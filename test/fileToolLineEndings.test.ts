@@ -148,6 +148,7 @@ test('a zero-match edit says the text is missing and names the whitespace cause'
     assert.equal(result.ok, false)
     assert.match(result.content, /String to replace not found in file/)
     assert.match(result.content, /whitespace differs/)
+    assert.match(result.content, /Lines 1-2 as they appear in the file:\ndef run\(\):\n {4}return 1\n/)
     assert.equal((result.errorDetails as { occurrences?: number }).occurrences, 0)
   })
 })

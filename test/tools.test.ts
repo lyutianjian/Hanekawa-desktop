@@ -94,6 +94,42 @@ test('read and glob tools return structured TUI summaries', async () => {
   }
 })
 
+test('glob skips gitignored trees, keeps dotfiles opt-in and caps results', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  try {
+    const glob = getBuiltinTools().find((tool) => tool.name === 'Glob')!
+    await mkdir(path.join(dir, '.git'))
+    await mkdir(path.join(dir, 'node_modules', 'pkg'), { recursive: true })
+    await mkdir(path.join(dir, 'src'))
+    await mkdir(path.join(dir, '.myagent'))
+    await writeFile(path.join(dir, '.gitignore'), 'node_modules/\n', 'utf8')
+    await writeFile(path.join(dir, 'node_modules', 'pkg', 'index.ts'), '', 'utf8')
+    await writeFile(path.join(dir, 'src', 'a.ts'), '', 'utf8')
+    await writeFile(path.join(dir, 'top.ts'), '', 'utf8')
+    await writeFile(path.join(dir, '.myagent', 'notes.md'), '', 'utf8')
+
+    const all = await glob.execute({ pattern: '**/*.ts' }, context(dir))
+    assert.deepEqual(all.content.split('\n').sort(), ['src/a.ts', 'top.ts'])
+    const top = await glob.execute({ pattern: '*.ts' }, context(dir))
+    assert.equal(top.content, 'top.ts')
+    assert.equal((await glob.execute({ pattern: '**/*.md' }, context(dir))).content, 'No files found.')
+    assert.equal((await glob.execute({ pattern: '.myagent/**/*.md' }, context(dir))).content, '.myagent/notes.md')
+
+    assert.equal((await glob.execute({ pattern: './src/*.ts' }, context(dir))).content, 'src/a.ts')
+    assert.equal((await glob.execute({ pattern: 'missing/**/*.ts' }, context(dir))).content, 'No files found.')
+    assert.equal((await glob.execute({ pattern: 'README.md' }, context(dir))).content, 'No files found.')
+    assert.equal((await glob.execute({ pattern: `${dir}/src/*.ts` }, context(dir))).content, `${dir}/src/a.ts`)
+    assert.equal((await glob.execute({ pattern: '../*.ts' }, context(path.join(dir, 'src')))).content, '../top.ts')
+    assert.equal((await glob.execute({ pattern: 'node_modules/pkg/*.ts' }, context(dir))).content, 'node_modules/pkg/index.ts')
+
+    for (let i = 0; i < 205; i += 1) await writeFile(path.join(dir, 'src', `f${i}.txt`), '', 'utf8')
+    const many = await glob.execute({ pattern: 'src/*.txt' }, context(dir))
+    assert.match(many.content, /\[Showing 200 of 205 files;/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('bash reports nonzero exits as command_failed', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
   try {
@@ -257,6 +293,32 @@ test('editFile edits after readFile', async () => {
     const result = await editFileTool.execute({ filePath: 'a.txt', oldString: 'hello', newString: 'hi' }, ctx)
     assert.equal(result.ok, true)
     assert.equal(await readFile(path.join(dir, 'a.txt'), 'utf8'), 'hi\n')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('readFile caps lines, long lines and tokens while Edit still reaches the whole file', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  try {
+    const ctx = context(dir)
+    const lines = Array.from({ length: 3000 }, (_, i) => `line ${i + 1}`)
+    await writeFile(path.join(dir, 'long.txt'), `${lines.join('\n')}\n`, 'utf8')
+    const result = await readFileTool.execute({ filePath: 'long.txt' }, ctx)
+    assert.match(result.content, /\[Showing lines 1-2000 of 3000\./)
+    assert.doesNotMatch(result.content, /line 2001/)
+    const edit = await editFileTool.execute({ filePath: 'long.txt', oldString: 'line 2500\n', newString: 'changed\n' }, ctx)
+    assert.equal(edit.ok, true)
+
+    await writeFile(path.join(dir, 'wide.txt'), `${'x'.repeat(5000)}\n`, 'utf8')
+    const wide = await readFileTool.execute({ filePath: 'wide.txt' }, ctx)
+    assert.match(wide.content, /\.\.\. \[line truncated\]/)
+    assert.ok(wide.content.length < 2100)
+
+    await writeFile(path.join(dir, 'big.txt'), `${Array.from({ length: 500 }, () => 'y'.repeat(1000)).join('\n')}\n`, 'utf8')
+    const big = await readFileTool.execute({ filePath: 'big.txt' }, ctx)
+    const shown = Number(/Showing lines 1-(\d+) of 500/.exec(big.content)?.[1])
+    assert.ok(shown > 0 && shown < 500)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

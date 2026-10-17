@@ -273,6 +273,8 @@ export interface AgentLoopOptions {
 
 const MAX_RECOVERY_COUNT = 3
 const DEFAULT_FALLBACK_RETRY_DELAY_MS = 5 * 60 * 1000
+/** Safe calls in one response run at most this many at a time, so a burst of shell commands cannot swamp the machine. */
+const MAX_CONCURRENT_TOOL_CALLS = 10
 
 export class AgentLoop {
   private readonly modelState: {
@@ -1961,7 +1963,7 @@ export class AgentLoop {
       }
 
       const safeBatch: ToolCall[] = []
-      while (index < calls.length) {
+      while (index < calls.length && safeBatch.length < MAX_CONCURRENT_TOOL_CALLS) {
         const candidate = calls[index]
         if (!candidate || !this.isConcurrencySafe(candidate)) break
         safeBatch.push(candidate)
@@ -2032,7 +2034,16 @@ export class AgentLoop {
 
   private isConcurrencySafe(call: ToolCall): boolean {
     const tool = this.currentTools.find((candidate) => candidate.name === call.name)
-    if (!tool || tool.isDestructive === true) return false
+    if (!tool) return false
+    if (tool.concurrentWhenReadonly) {
+      // A classifier failure must not fail the turn; the call then just runs alone.
+      try {
+        return this.options.toolRunner.isReadonlyCall(tool, call)
+      } catch {
+        return false
+      }
+    }
+    if (tool.isDestructive === true) return false
     if (tool.isConcurrencySafeInput) return tool.isConcurrencySafeInput(call.input)
     return tool.isConcurrencySafe === true && tool.isReadOnly === true
   }

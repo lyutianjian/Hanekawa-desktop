@@ -352,6 +352,10 @@ export class PermissionGate {
     return decision
   }
 
+  riskLevel(tool: Tool, input: unknown): RiskTier {
+    return classifyToolCall(tool, input, this.riskContextFor()).level
+  }
+
   private async decide(tool: Tool, input: unknown): Promise<PermissionDecision> {
     const mode = this.mode
     const risk = classifyToolCall(tool, input, this.riskContextFor())

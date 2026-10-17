@@ -744,6 +744,8 @@ export interface Tool {
    * on the requested mode or subcommand.
    */
   isConcurrencySafeInput?(input: unknown): boolean
+  /** Run alongside other safe tools when the risk classifier grades the call `readonly`. */
+  concurrentWhenReadonly?: boolean
   /**
    * One-line capability phrase used by ToolSearch for keyword matching.
    * Should be 3-10 words describing what the tool does (e.g. "search file contents with regex").

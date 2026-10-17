@@ -317,6 +317,7 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
   }).strict(),
   riskLevel: 'dangerous',
   isDestructive: true,
+  concurrentWhenReadonly: true,
   maxResultSizeChars: 100_000,
   userFacingName: () => 'Bash',
   getToolUseSummary(input) {

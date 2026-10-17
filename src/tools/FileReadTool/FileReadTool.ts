@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod/v3'
 import type { Tool, ToolContext, ToolResult } from '../../harness/types.js'
+import { countTextTokens } from '../../prompts/budget.js'
 import { resolveToolPath } from '../../utils/paths.js'
 import { readFileAndRemember } from '../fileState.js'
 import {
@@ -21,6 +22,11 @@ const BLOCKED_DEVICE_PATHS = new Set([
   '/dev/fd/0', '/dev/fd/1', '/dev/fd/2',
 ])
 
+const DEFAULT_LINE_LIMIT = 2000
+const MAX_LINE_CHARS = 2000
+/** Below the request-prep spill threshold, so a read never comes back as a spill file the model must read again. */
+const MAX_READ_TOKENS = 20_000
+
 function isBlockedDevicePath(filePath: string): boolean {
   if (BLOCKED_DEVICE_PATHS.has(filePath)) return true
   // /proc/self/fd/* and /proc/<pid>/fd/* patterns
@@ -35,7 +41,7 @@ export const readFileTool: Tool = {
   inputSchema: z.object({
     filePath: z.string().min(1).describe('Path to the file. Relative paths resolve against the working directory.'),
     offset: z.number().int().min(1).optional().describe('1-based line number to start reading from. Defaults to 1.'),
-    limit: z.number().int().min(1).optional().describe('Maximum number of lines to return. Defaults to the whole file.'),
+    limit: z.number().int().min(1).optional().describe('Maximum number of lines to return. Defaults to 2000.'),
   }).strict(),
   riskLevel: 'safe',
   isReadOnly: true,
@@ -212,11 +218,18 @@ function countLines(content: string): number {
     : content.split('\n').length
 }
 
-function sliceLines(content: string, offset: number, limit: number | undefined): { lines: string[]; start: number; end: number } {
+function sliceLines(content: string, offset: number, limit = DEFAULT_LINE_LIMIT): { lines: string[]; start: number; end: number } {
   const all = content.endsWith('\n') ? content.slice(0, -1).split('\n') : content.split('\n')
   if (content.length === 0) return { lines: [], start: 1, end: 0 }
   const start = Math.max(1, offset)
-  const lines = all.slice(start - 1, limit === undefined ? undefined : start - 1 + limit)
+  const lines: string[] = []
+  let tokens = 0
+  for (const raw of all.slice(start - 1, start - 1 + limit)) {
+    const line = raw.length > MAX_LINE_CHARS ? `${raw.slice(0, MAX_LINE_CHARS)}... [line truncated]` : raw
+    tokens += countTextTokens(line) + 3
+    if (tokens > MAX_READ_TOKENS && lines.length > 0) break
+    lines.push(line)
+  }
   return { lines, start, end: start + lines.length - 1 }
 }
 

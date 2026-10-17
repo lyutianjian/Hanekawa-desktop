@@ -1,8 +1,15 @@
+import { execFile } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
 import fg from 'fast-glob'
+import picomatch from 'picomatch'
 import { z } from 'zod/v3'
 import type { Tool } from '../../harness/types.js'
 import { resolveToolPath } from '../../utils/paths.js'
+import { RG_TIMEOUT_MS, VCS_EXCLUSIONS } from '../GrepTool/constants.js'
 import { DESCRIPTION } from './prompt.js'
+
+const MAX_RESULTS = 200
 
 interface GlobInput {
   pattern: string
@@ -42,11 +49,20 @@ export const globTool: Tool = {
   async execute(input, context) {
     const options = input as GlobInput
     const cwd = options.path ? resolveToolPath(context, options.path) : context.cwd
-    const entries = await fg(options.pattern, { cwd, dot: false })
+    const pattern = options.pattern.replace(/^(\.\/)+/, '')
+    const isMatch = picomatch(pattern, { dot: false })
+    // Only the pattern's static prefix is walked, so `src/*.ts` stays cheap even from the home directory.
+    const base = picomatch.scan(pattern).base
+    const entries = base && !existsSync(path.resolve(cwd, base))
+      ? []
+      : ((await listWithRipgrep(cwd, base, namesDotSegment(pattern))) ?? await fg(pattern, { cwd, dot: false, ignore: FALLBACK_IGNORE }))
+        .filter((entry) => isMatch(entry))
     const count = entries.length
+    const shown = entries.slice(0, MAX_RESULTS).join('\n')
+    const notice = count > MAX_RESULTS ? `\n\n[Showing ${MAX_RESULTS} of ${count} files; narrow the pattern or path.]` : ''
     return {
       ok: true,
-      content: entries.join('\n') || 'No files found.',
+      content: shown ? shown + notice : 'No files found.',
       metadata: {
         display: {
           summary: count === 0
@@ -56,6 +72,31 @@ export const globTool: Tool = {
       },
     }
   },
+}
+
+/** `.gitignore` is ripgrep's job; without it, at least these never come back. */
+const FALLBACK_IGNORE = ['**/node_modules/**', ...VCS_EXCLUSIONS.map((dir) => `**/${dir}/**`)]
+
+function namesDotSegment(pattern: string): boolean {
+  return pattern.split('/').some((segment) => segment.startsWith('.') && segment !== '.' && segment !== '..')
+}
+
+/**
+ * Every file under `base` that ripgrep would search, so `.gitignore`d trees
+ * like node_modules stay out exactly as they do for Grep. Paths come back
+ * relative to `cwd` (absolute when `base` is). `null` when rg is not installed.
+ */
+function listWithRipgrep(cwd: string, base: string, hidden: boolean): Promise<string[] | null> {
+  const args = ['--files', ...(hidden ? ['--hidden'] : []), ...VCS_EXCLUSIONS.flatMap((dir) => ['--glob', `!${dir}`]), ...(base ? ['--', base] : [])]
+  return new Promise((resolve, reject) => {
+    execFile('rg', args, { cwd, timeout: RG_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const code = (err as { code?: unknown } | null)?.code
+      if (code === 'ENOENT') return resolve(null)
+      // exit 1 means no files at all.
+      if (err && code !== 1) return reject(new Error(`ripgrep failed: ${String(stderr).trim() || err.message}`))
+      resolve(stdout.split('\n').filter(Boolean).map((line) => line.replace(/\\/g, '/')))
+    })
+  })
 }
 
 function truncateMiddle(value: string, maxLength: number): string {

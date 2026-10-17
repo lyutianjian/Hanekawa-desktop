@@ -88,7 +88,7 @@ export function buildOversizeReplacement(
   const preview = buildPreview(record.content)
   const spillPath = spillDir ? writeSpillFile(spillDir, record) : undefined
   const where = spillPath
-    ? `full output saved to ${spillPath} — Read that path for the rest`
+    ? `full output saved to ${spillPath} — Read that path with offset/limit for the rest`
     : 'the remainder could not be saved and is gone from this session'
   return [
     `[Large result: ${record.tool} produced ${record.content.length} characters (~${tokens} tokens); ${where}]`,

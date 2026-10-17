@@ -266,9 +266,12 @@ export function multipleMatchFailure(oldString: string, matches: StringMatchCont
  */
 export function noMatchFailure(content: string, oldString: string, label = 'oldString'): ToolResult {
   const reason = diagnoseNearMiss(content, oldString)
-  const advice = reason
-    ? `${reason} Re-read the file and copy the text exactly as it appears.`
-    : 'Read the file again and copy the exact text, including indentation. If the text appears more than once, include surrounding lines to make it unique.'
+  const actual = reason ? linesMatchingIgnoringIndent(content, oldString) : null
+  const advice = actual
+    ? `${reason} Lines ${actual.start}-${actual.end} as they appear in the file:\n${actual.text}`
+    : reason
+      ? `${reason} Re-read the file and copy the text exactly as it appears.`
+      : 'Read the file again and copy the exact text, including indentation. If the text appears more than once, include surrounding lines to make it unique.'
   return {
     ok: false,
     content: `String to replace not found in file (${label}).\n${advice}\n\n${label}:\n${oldString}`,
@@ -293,6 +296,19 @@ function diagnoseNearMiss(content: string, oldString: string): string | null {
   }
   if (/^\s*\d+\t/m.test(oldString)) {
     return "oldString still carries Read's line-number prefixes; those are not part of the file."
+  }
+  return null
+}
+
+/** The file's own lines where `oldString` matches line for line once leading and trailing whitespace is ignored. */
+function linesMatchingIgnoringIndent(content: string, oldString: string): { start: number; end: number; text: string } | null {
+  const wanted = oldString.split('\n').map((line) => line.trim())
+  if (wanted.every((line) => line === '')) return null
+  const lines = content.split('\n')
+  for (let i = 0; i + wanted.length <= lines.length; i += 1) {
+    if (wanted.every((line, k) => lines[i + k]!.trim() === line)) {
+      return { start: i + 1, end: i + wanted.length, text: lines.slice(i, i + wanted.length).join('\n') }
+    }
   }
   return null
 }

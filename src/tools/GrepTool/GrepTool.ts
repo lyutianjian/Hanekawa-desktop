@@ -90,12 +90,14 @@ function buildRipgrepArgs(options: SearchOptions): string[] {
 function tryRipgrep(options: SearchOptions): Promise<string[] | null> {
   return new Promise((resolve, reject) => {
     const args = buildRipgrepArgs(options)
-    let spawnFailed = false
-    const proc = execFile('rg', args, { cwd: options.cwd, timeout: RG_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
-      if (spawnFailed) return
-      const exitCode = typeof (err as { code?: unknown } | null)?.code === 'number'
-        ? (err as unknown as { code: number }).code
-        : undefined
+    execFile('rg', args, { cwd: options.cwd, timeout: RG_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+      const code = (err as { code?: unknown } | null)?.code
+      // rg not installed is the one fallback-worthy case.
+      if (code === 'ENOENT') {
+        resolve(null)
+        return
+      }
+      const exitCode = typeof code === 'number' ? code : undefined
       if (err && exitCode === undefined) {
         // Killed by signal or timed out — not something a fallback can fix.
         reject(err)
@@ -107,12 +109,6 @@ function tryRipgrep(options: SearchOptions): Promise<string[] | null> {
       }
       // exit 0 = matches, exit 1 = no matches. Both are answers.
       resolve(toRelativeMatches(stdout, options.cwd, options.outputMode === 'files_with_matches'))
-    })
-
-    // Spawn errors (rg not installed) are the one fallback-worthy case.
-    proc.on('error', () => {
-      spawnFailed = true
-      resolve(null)
     })
   })
 }
@@ -195,7 +191,7 @@ async function fallbackGrep(options: SearchOptions, limit: number): Promise<stri
 
   const files = options.targetIsFile
     ? [options.target]
-    : (await fg(options.glob ?? '**/*', { cwd: options.target, onlyFiles: true, dot: false }))
+    : (await fg(options.glob ?? '**/*', { cwd: options.target, onlyFiles: true, dot: false, ignore: ['**/node_modules/**'] }))
       .map((entry) => path.join(options.target, entry))
   const rows: string[] = []
 

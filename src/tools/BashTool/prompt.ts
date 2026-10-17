@@ -50,7 +50,6 @@ Avoid running \`find\`, \`grep\`, \`cat\`, \`head\`, \`tail\`, \`sed\`, \`awk\`,
 # Paths and the working directory
  - Quote paths containing spaces: \`cd "path with spaces/file.txt"\`.
  - Prefer absolute paths over \`cd\`, which does not survive the call.
- - Before creating directories or files, \`ls\` the parent to confirm it exists and is the right place.
 
 # Timeouts and background work
  - \`timeout\` is in milliseconds: default ${defaultTimeout}, max ${MAX_BASH_TIMEOUT_MS}.

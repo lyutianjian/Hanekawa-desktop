@@ -51,6 +51,10 @@ export class ToolRunner {
     return new ToolRunner(this.tools, this.permissionGate, events, this.hooks)
   }
 
+  isReadonlyCall(tool: Tool, call: ToolCall): boolean {
+    return this.permissionGate.riskLevel(tool, call.input) === 'readonly'
+  }
+
   async run(call: ToolCall, context: ToolContext, signal?: AbortSignal, turnId?: string, options?: ToolRunOptions): Promise<ToolResultRecord> {
     if (signal?.aborted) {
       throw new DOMException('The operation was aborted.', 'AbortError')
