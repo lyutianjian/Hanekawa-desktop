@@ -38,19 +38,23 @@ export interface ProgressiveCompactResult {
   tokenCount: number
   microCompacted: boolean
   snipped: boolean
+  /** The last response's count less what a clear took out of the records it covered. */
+  lastResponseTokenCount?: number
 }
 
 export function applyProgressiveCompaction(input: ProgressiveCompactInput): ProgressiveCompactResult {
   let records = input.records
   let tokenCount = estimateCurrentTokens(input)
+  let lastResponseTokenCount = input.lastResponseTokenCount
   let microCompacted = false
 
   // Keep active request prefixes stable. Only clear old tool results after
   // a long idle gap; capacity-based compaction is handled by autoCompact.
   const timeBased = applyTimeBasedMicrocompact(records, input.now, input.trimState, input.turnId)
   if (timeBased.changed) {
+    lastResponseTokenCount = subtractClearedTokens(input, timeBased.records)
     records = timeBased.records
-    tokenCount = estimateCurrentTokens({ ...input, records })
+    tokenCount = estimateCurrentTokens({ ...input, records, lastResponseTokenCount })
     microCompacted = true
   }
 
@@ -59,7 +63,28 @@ export function applyProgressiveCompaction(input: ProgressiveCompactInput): Prog
     tokenCount,
     microCompacted,
     snipped: false,
+    lastResponseTokenCount,
   }
+}
+
+/**
+ * The provider counted the cleared records at full size. Records after its
+ * boundary are estimated from their cleared form anyway, so only the ones it
+ * covered come off.
+ */
+function subtractClearedTokens(input: ProgressiveCompactInput, cleared: SessionRecord[]): number | undefined {
+  if (input.lastResponseTokenCount === undefined) return undefined
+  const boundaryIndex = findLastResponseBoundaryIndex(input.records, input.lastResponseRecordId, input.lastResponseRecordCount)
+  if (boundaryIndex === undefined) return undefined
+  let saved = 0
+  for (let index = 0; index <= boundaryIndex; index++) {
+    const before = input.records[index]!
+    const after = cleared[index]!
+    if (before !== after) {
+      saved += countSessionRecordTokens(before, input.imageTokenStrategy) - countSessionRecordTokens(after, input.imageTokenStrategy)
+    }
+  }
+  return Math.max(0, input.lastResponseTokenCount - saved)
 }
 
 export function estimateCurrentTokens(input: ProgressiveCompactInput): number {

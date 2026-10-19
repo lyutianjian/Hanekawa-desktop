@@ -668,6 +668,9 @@ export function createComposerView(els: {
     ;(items.find((item) => item.classList.contains('active')) ?? items[0])?.focus()
   }
 
+  /** The flyout's `margin-right` clearance plus a little daylight at the canvas edge. */
+  const FLYOUT_GAP_PX = 16
+
   function openFlyout(key: RuntimeMenuKey): void {
     clearTimeout(flyoutIntent)
     // The guard is what breaks the hover loop described above, and it also makes
@@ -715,6 +718,12 @@ export function createComposerView(els: {
       replace(kept.node, el('div', 'chip-flyout-title', entry.title), ...entry.rows.map(flyoutItem))
     }
     kept.presence.set(true)
+    // The canvas clips: with a side panel open there may be no room left of the
+    // popover, and the list then opens above it instead.
+    kept.node.classList.remove('above')
+    const canvasLeft = els.chipShell.closest('#canvas')?.getBoundingClientRect().left ?? 0
+    const room = runtimeMenuNode!.getBoundingClientRect().left - canvasLeft
+    kept.node.classList.toggle('above', kept.node.offsetWidth + FLYOUT_GAP_PX > room)
     flyoutNode = kept.node
   }
 

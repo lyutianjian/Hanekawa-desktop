@@ -4590,6 +4590,16 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-float);
 }
+/* No room left of the popover (a side panel narrows the canvas, which clips):
+   the flyout stands on top of the popover instead, right edges aligned. A static
+   shell hands its containing block to the popover. */
+.chip-menu-shell:has(> .chip-flyout.above) { position: static; }
+.chip-flyout.above {
+  right: 0;
+  bottom: calc(100% + var(--space-2));
+  margin-right: 0;
+  max-width: min(24rem, calc(100cqw - var(--space-4)));
+}
 .chip-flyout-title { color: var(--text-tertiary); font-size: var(--type-meta); padding: var(--space-1) var(--space-2); }
 .chip-flyout-item {
   display: flex;

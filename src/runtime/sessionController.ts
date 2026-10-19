@@ -14,7 +14,7 @@ import type {
 } from '../harness/types.js'
 import { getRecordsAfterLastCompact } from '../harness/requestPrep.js'
 import { promptTokens } from '../harness/usage.js'
-import { breakDownContext, type ContextBreakdown } from '../harness/contextBreakdown.js'
+import { breakDownContext, fixedContextTokens, type ContextBreakdown } from '../harness/contextBreakdown.js'
 import { promptCacheTtlMs } from '../harness/cacheControl.js'
 import { shouldIdleCompact } from './coordination/contextPolicy.js'
 import { isSystemReminderBlock } from '../harness/systemReminder.js'
@@ -224,9 +224,14 @@ export class SessionController {
   private lastRequestAt: number | undefined
   /** The response still streaming, estimated: context it adds before its records land. */
   private streamedTokens = 0
-  /** Memo for {@link contextUsed}, invalidated by either input that feeds it. */
+  /**
+   * System, tool schemas, skills and instructions as the loop would send them
+   * now: the part of a request no record accounts for. Refreshed per turn.
+   */
+  private fixedContextTokens: number | undefined
+  /** Memo for {@link contextUsed}, invalidated by any input that feeds it. */
   private contextUsedMemo:
-    | { anchor: string | undefined; size: number; base: number | undefined; tokens: number }
+    | { anchor: string | undefined; size: number; base: number | undefined; fixed: number | undefined; tokens: number; estimated: boolean }
     | undefined
 
   private snapshot: SessionControllerSnapshot
@@ -254,6 +259,7 @@ export class SessionController {
     this.recordProxy.setStreamEventHandler(this.handleStreamEvent)
     this.recordProxy.setRequestUsageHandler(this.handleRequestUsage)
     this.seedUsageFromMetrics(this.session.id)
+    this.refreshFixedContext()
   }
 
   // --- pull state -----------------------------------------------------------
@@ -424,6 +430,7 @@ export class SessionController {
     // Ordering inside is unchanged: publish, then snapshot, then run.
     try {
       this.publish()
+      this.refreshFixedContext()
 
       await turn.prepare?.()
 
@@ -584,6 +591,7 @@ export class SessionController {
     this.usageAnchorRecordId = undefined
     this.ledger.rebase(records)
     this.seedUsageFromMetrics(session.id)
+    this.refreshFixedContext()
     this.taskSnapshot = findLatestTaskSnapshot(records)
     this.spinnerSubText = undefined
     this.turnOutputTokens = undefined
@@ -620,7 +628,7 @@ export class SessionController {
     const used = this.contextUsed()
     if (used === undefined) return undefined
     const sources = await this.getSession().loop.describeContextSources(this.ledger.list())
-    return breakDownContext(sources, used, !this.usage.lastRequest)
+    return breakDownContext(sources, used, this.contextUsedMemo?.estimated ?? true)
   }
 
   /** The one file history for the active session; also drives `/rewind`. */
@@ -722,6 +730,26 @@ export class SessionController {
   }
 
   /**
+   * Measures the fixed part of a request off the request path. Best-effort: no
+   * runtime is installed yet when the constructor runs, and a misconfigured
+   * model never gets one.
+   */
+  private refreshFixedContext(): void {
+    let sources
+    try {
+      sources = this.getSession().loop.describeContextSources(this.ledger.list())
+    } catch {
+      return
+    }
+    void sources.then((resolved) => {
+      const tokens = fixedContextTokens(resolved)
+      if (this.disposed || tokens === this.fixedContextTokens) return
+      this.fixedContextTokens = tokens
+      this.publish()
+    }).catch(() => {})
+  }
+
+  /**
    * The context readout (see {@link SessionControllerSnapshot.contextUsedTokens}).
    *
    * The provider's count describes the request it answered, which is already a
@@ -734,26 +762,14 @@ export class SessionController {
    * Memoized because this runs on every publish, and publish now fires per
    * record.
    */
-  /**
-   * The system text, or nothing when no runtime is installed yet — the first
-   * snapshot is built in the constructor, before a session exists, and a
-   * misconfigured model never gets one at all.
-   */
-  private systemPromptForEstimate(): string | undefined {
-    try {
-      return this.getSession().loop.getSystemPrompt()
-    } catch {
-      return undefined
-    }
-  }
-
   private contextUsed(): number | undefined {
     const anchor = this.usageAnchorRecordId
     const size = this.ledger.size
     const base = this.usage.lastRequest ? promptTokens(this.usage.lastRequest) : undefined
     if (base === undefined && size === 0) return undefined
+    const fixed = this.fixedContextTokens
     let memo = this.contextUsedMemo
-    if (!memo || memo.anchor !== anchor || memo.size !== size || memo.base !== base) {
+    if (!memo || memo.anchor !== anchor || memo.size !== size || memo.base !== base || memo.fixed !== fixed) {
       const records = this.ledger.list()
       let anchorIndex = -1
       if (anchor !== undefined) {
@@ -763,14 +779,15 @@ export class SessionController {
           if (records[i]?.type === 'compact_boundary') break
         }
       }
-      const tokens = base !== undefined && anchorIndex >= 0
+      const estimated = base === undefined || anchorIndex < 0
+      const tokens = !estimated
         ? base + countSessionRecordsTokens(records.slice(anchorIndex + 1))
         // No anchor: estimate the same thing a request would carry — the
-        // records the compactor would keep, plus the system prompt no record
+        // records the compactor would keep, plus the fixed part no record
         // accounts for. Counting the whole ledger bare reads low on a resumed
         // session and double-counts everything a compaction already dropped.
-        : countSessionRecordsTokens(getRecordsAfterLastCompact([...records]), this.systemPromptForEstimate())
-      memo = this.contextUsedMemo = { anchor, size, base, tokens }
+        : countSessionRecordsTokens(getRecordsAfterLastCompact([...records])) + (fixed ?? 0)
+      memo = this.contextUsedMemo = { anchor, size, base, fixed, tokens, estimated }
     }
     return memo.tokens + Math.ceil(this.streamedTokens)
   }

@@ -405,11 +405,6 @@ export class AgentLoop {
     }
   }
 
-  /** The caller-supplied system text, for context estimates outside a request. */
-  getSystemPrompt(): string | undefined {
-    return this.options.system
-  }
-
   clearCachedSections(key?: string): void {
     this.options.contextBuilder.clearCachedSections(key)
   }
@@ -777,13 +772,15 @@ export class AgentLoop {
       let maxOutputTokensRecoveryCount = 0
       const responseSegments: string[] = []
       let lastAssistantContent = ''
-      const resetModelRequestState = () => {
+      const resetModelRequestState = (modelChanged = true) => {
         lastRequestId = undefined
         // A model switch also invalidates the usage baseline: the previous
         // response's cost described a request shaped for the previous model
         // — its image-token strategy included (design §11.2) — so the next
-        // estimate must be recomputed from the records.
-        this.responseBaseline = undefined
+        // estimate must be recomputed from the records. An image-state move on
+        // the same model keeps it: omitting images only shrinks the request,
+        // and new images sit in the pending records the estimate adds on.
+        if (modelChanged) this.responseBaseline = undefined
         maxOutputTokensOverride = this.options.maxOutputTokens
         maxOutputTokensRecoveryCount = 0
       }
@@ -812,9 +809,7 @@ export class AgentLoop {
         }
         await this.flushReadyToolUseSummaries(turnId)
         const preparedRecords = await this.loadPreparedRecords(turnId, userMessage.id)
-        // The image state of the prepared records moved since the response the
-        // baseline was taken from — drop it and estimate from the records.
-        if (this.consumeImageRequestStateChanged()) resetModelRequestState()
+        if (this.consumeImageRequestStateChanged()) resetModelRequestState(false)
         const imageTokenStrategy = resolveImageTokenStrategy(
           this.activeModel.providerName,
           this.activeModel.supportsImageInput,
@@ -834,11 +829,10 @@ export class AgentLoop {
         })
         await this.appendPendingTrimRecords()
         let recordsBeforeCompact = progressive.records
-        const useCachedTokenEstimate = !progressive.microCompacted && !progressive.snipped
         const compactResult = await this.runCompaction(autoCompactIfNeeded, recordsBeforeCompact, turnId, userMessage.id, cacheSource, {
-          lastResponseTokenCount: useCachedTokenEstimate ? this.responseBaseline?.tokens : undefined,
-          lastResponseRecordCount: useCachedTokenEstimate ? this.responseBaseline?.recordCount : undefined,
-          lastResponseRecordId: useCachedTokenEstimate ? this.responseBaseline?.recordId : undefined,
+          lastResponseTokenCount: progressive.lastResponseTokenCount,
+          lastResponseRecordCount: this.responseBaseline?.recordCount,
+          lastResponseRecordId: this.responseBaseline?.recordId,
           ...(iteration === 0 && this.activeRunOverrides?.compactBeforeSend === true ? { force: true } : {}),
         }, signal)
         usage = addTokenUsage(usage, compactResult.usage)
@@ -849,7 +843,7 @@ export class AgentLoop {
           resetModelRequestState()
         }
         recordsBeforeCompact = await this.loadPreparedRecords(turnId, userMessage.id)
-        if (this.consumeImageRequestStateChanged()) resetModelRequestState()
+        if (this.consumeImageRequestStateChanged()) resetModelRequestState(false)
       }
 
       const records = await this.materializePostCompactRestore(recordsBeforeCompact)
@@ -862,7 +856,7 @@ export class AgentLoop {
           .filter((item): item is string => Boolean(item)),
       })
       const requestRecordCount = records.length
-      const canReuseResponseTokenEstimate = useCachedTokenEstimate && !compactResult.compacted
+      const canReuseResponseTokenEstimate = !compactResult.compacted
       pendingAssistantStreamContent = ''
 
       const modelRequest: ModelRequest = {
@@ -1626,11 +1620,10 @@ export class AgentLoop {
 
   /**
    * Remembers the image state the request was built from. Any move —
-   * capability flip, a different omitted set or a different cap —
-   * means the usage baseline from the previous response describes a request
-   * whose image content no longer matches, so it must be re-estimated rather
-   * than reused (design §11.2). Model switches cover this too (via the
-   * model-request reset), so this catches the image-only changes between them.
+   * capability flip, a different omitted set or a different cap — means the
+   * next request no longer continues the previous one, so the per-request
+   * state resets. Model switches cover this too (via the model-request reset),
+   * so this catches the image-only changes between them.
    */
   private noteImageRequestState(
     projection: RequestImageProjection,

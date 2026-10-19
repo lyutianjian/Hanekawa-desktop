@@ -1767,20 +1767,23 @@ export class ShellHost<
         projectRoot: open.root,
         projectName: projectDisplayName(open.cwd),
       }))
-    if (projectRoot !== undefined) {
-      return this.withProjectEntry(projectRoot, async (entry) => ({
-        settings: await this.describeSettings(entry),
-        // Read inside, while the transient project is still open: the screen's
-        // selector must be able to name the project it is showing.
-        projects: projects(),
-      } satisfies WireShellSettingsResult))
-    }
-    const entry = this.deps.directory.entries()[0]
-    if (!entry) throw new Error('No project is open.')
-    return {
+    return this.withProjectEntry(await this.settingsRoot(projectRoot), async (entry) => ({
       settings: await this.describeSettings(entry),
+      // Read inside, while the transient project is still open: the screen's
+      // selector must be able to name the project it is showing.
       projects: projects(),
-    } satisfies WireShellSettingsResult
+    } satisfies WireShellSettingsResult))
+  }
+
+  /**
+   * The root a settings read lands on. A root that no longer resolves (its
+   * project was removed while the screen remembered it) falls back like no root
+   * at all — the first open project, else the global workspace — so the screen
+   * re-anchors on its next load instead of failing every read and save.
+   */
+  private async settingsRoot(projectRoot?: string): Promise<string> {
+    if (projectRoot !== undefined && (await this.cwdForRoot(projectRoot)) !== undefined) return projectRoot
+    return this.deps.directory.entries()[0]?.root ?? projectRootKey(homedir())
   }
 
   /**
@@ -1811,7 +1814,9 @@ export class ShellHost<
     projectRoot: string,
     change: SettingsChange,
   ): Promise<WireShellSettingsChangeResult> {
-    return this.withProjectEntry(projectRoot, (entry) => this.applySettingsChangeTo(entry, change))
+    // Provider configuration is global, so a stale root must not block it.
+    const root = change.scope === 'provider' ? await this.settingsRoot(projectRoot) : projectRoot
+    return this.withProjectEntry(root, (entry) => this.applySettingsChangeTo(entry, change))
   }
 
   private async probeEndpoint(
@@ -1819,7 +1824,7 @@ export class ShellHost<
   ): Promise<WireShellProbeEndpointResult> {
     const apiKey = command.apiKey ?? (command.endpointName === undefined
       ? undefined
-      : await this.withProjectEntry(command.projectRoot, async (entry) =>
+      : await this.withProjectEntry(await this.settingsRoot(command.projectRoot), async (entry) =>
         entry.project.config.get().endpoints?.[command.endpointName!]?.apiKey))
     return probeEndpoint({
       provider: command.provider,

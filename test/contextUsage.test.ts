@@ -36,10 +36,15 @@ async function createHarness(existingRecords: readonly SessionRecord[] = [], sys
     session,
     existingRecords,
     recordProxy: proxy,
-    getSession: () => ({ loop: { invalidateRecordsCache: () => {}, getSystemPrompt: () => system } } as unknown as AgentSession),
+    getSession: () => ({
+      loop: {
+        invalidateRecordsCache: () => {},
+        describeContextSources: async () => ({ system: system ?? '', loadedTools: [], deferredTools: [] }),
+      },
+    } as unknown as AgentSession),
     createFileHistoryService: () => fileHistoryService,
   })
-  await Promise.resolve()
+  await new Promise((resolve) => setImmediate(resolve))
   return { controller, proxy, store, session }
 }
 

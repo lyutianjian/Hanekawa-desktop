@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { z } from 'zod/v3'
-import { breakDownContext, splitInstructionFiles } from '../src/harness/contextBreakdown.js'
+import { breakDownContext, fixedContextTokens, splitInstructionFiles } from '../src/harness/contextBreakdown.js'
 import type { Tool } from '../src/harness/types.js'
 import { contextPopoverView, shortenPath } from '../src/desktop/renderer/model/contextBreakdown.js'
 
@@ -43,17 +43,19 @@ test('the categories sum to the used figure and the messages take the remainder'
   assert.equal(breakdown.memoryFiles.length, 3)
 })
 
-test('fixed parts larger than the total are scaled down rather than driving the messages negative', () => {
-  const breakdown = breakDownContext({
+test('the fixed parts do not move with the total', () => {
+  const sources = {
     system: 'S'.repeat(30_000),
     loadedTools: [tool('Read', 'r'.repeat(3_000))],
     deferredTools: [],
-  }, 1_000, true)
-  const messages = breakdown.categories.find((row) => row.key === 'messages')!.tokens
-  assert.ok(messages >= 0)
-  const total = breakdown.categories.reduce((sum, row) => sum + row.tokens, 0)
-  assert.ok(Math.abs(total - 1_000) <= 2, `total ${total}`)
-  assert.equal(breakdown.estimated, true)
+  }
+  const fixedRows = (used: number) => breakDownContext(sources, used, true).categories
+    .filter((row) => row.key !== 'messages')
+    .map((row) => row.tokens)
+  assert.deepEqual(fixedRows(1_000), fixedRows(50_000))
+  const low = breakDownContext(sources, 1_000, true)
+  assert.equal(low.categories.find((row) => row.key === 'messages')!.tokens, 0)
+  assert.equal(fixedContextTokens(sources), fixedRows(1_000).reduce((a, b) => a + b, 0))
 })
 
 test('the popover rows cover the model window: used parts, the compaction reserve and the free space', () => {

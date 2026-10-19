@@ -5,6 +5,7 @@ import type { SessionRecord } from '../src/harness/types.js'
 import { makeImageAttachmentRef } from './helpers/imageFixtures.js'
 import { ToolResultTrimState } from '../src/harness/toolResultTrimState.js'
 import { prepareRecordsForRequestWithDiagnostics } from '../src/harness/requestPrep.js'
+import { countSessionRecordTokens, countSessionRecordsTokens } from '../src/prompts/budget.js'
 
 function userTurn(index: number, content = `user ${index}`): SessionRecord {
   return {
@@ -226,6 +227,26 @@ test('a time-based clear is recorded in the trim ledger so the next request repl
   const next = prepareRecordsForRequestWithDiagnostics(records, {}, new Date(), { trimState }).records
   assert.match(toolResultContent(next, 'result-0'), /Old tool result content cleared/)
   assert.doesNotMatch(toolResultContent(next, 'result-7'), /Old tool result/)
+})
+
+test('a time-based clear takes its savings off the last response count instead of dropping it', () => {
+  const records: SessionRecord[] = []
+  for (let index = 0; index < 8; index++) {
+    records.push(userTurn(index), ...toolPair(index, 'large output '.repeat(500)), assistantTurn(index))
+  }
+  const cleared = applyProgressiveCompaction({ records, now: new Date('2026-05-10T02:00:00.000Z') }).records
+  const saved = countSessionRecordsTokens(records) - countSessionRecordsTokens(cleared)
+  assert.ok(saved > 0)
+
+  const result = applyProgressiveCompaction({
+    records: [...records, userTurn(9, 'next')],
+    lastResponseTokenCount: 50_000,
+    lastResponseRecordId: records.at(-2)!.id,
+    now: new Date('2026-05-10T02:00:00.000Z'),
+  })
+
+  assert.equal(result.lastResponseTokenCount, 50_000 - saved)
+  assert.equal(result.tokenCount, 50_000 - saved + countSessionRecordTokens(userTurn(9, 'next')))
 })
 
 test('applyProgressiveCompaction skips time-based microcompact when gap is under threshold', () => {

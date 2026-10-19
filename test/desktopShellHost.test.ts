@@ -2859,10 +2859,27 @@ test('pick-images rejects on a shell with no picker, rather than reading as canc
 
 test('settings commands fail cleanly for a project that is not open', async () => {
   const h = createHarness()
-  await assert.rejects(h.client.getSettings(fixturePath('repo', 'never-opened')), /No project is open/)
   await assert.rejects(
     h.client.renameSession(fixturePath('repo', 'never-opened'), 's1', 'x'),
     /No project is open/,
+  )
+})
+
+test('a settings root that no longer resolves falls back for reads and provider edits only', async () => {
+  const h = createHarness()
+  seedConfig(h.project)
+  const gone = fixturePath('repo', 'never-opened')
+
+  const read = await h.client.getSettings(gone)
+  assert.equal(read.settings.projectRoot, h.entry.root, 'the screen re-anchors on an open project')
+
+  await h.client.changeSettings(gone, { scope: 'provider', kind: 'set-routing', role: 'plan', value: 'small' })
+  assert.equal(h.project.config.config.routing?.plan, 'small', 'provider configuration is global')
+
+  await assert.rejects(
+    h.client.changeSettings(gone, { scope: 'permissions', kind: 'set-permission-entries', behavior: 'allow', entries: ['Bash(ls)'] }),
+    /No project is open/,
+    'a project-scoped edit never lands on a different project',
   )
 })
 

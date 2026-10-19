@@ -2134,6 +2134,19 @@ async function step28(ctx) {
   await mouseClick(ctx.cdp, tasks.x, tasks.y)
   await pageShown('side-sections')
   await ctx.shot('28-tasks-page', 'the 任务 page and its pressed title bar button: the empty state, or plan / 命令 / 子代理 sections')
+  // The panel narrows the canvas, which clips: the model list must stay whole.
+  await read(ctx, probes.clickChip())
+  await waitFor('the chip popover', async () => (await read(ctx, probes.chipMenu())).open || undefined)
+  await read(ctx, probes.hoverChipRow('模型'))
+  await waitFor('the model flyout', async () => (await read(ctx, probes.chipMenu())).flyout)
+  await settleAnimations(ctx)
+  const narrow = await read(ctx, probes.chipMenu())
+  ctx.ok('with the panel open the model list stays inside the canvas, beside or above the popover',
+    narrow.flyout.left >= narrow.canvasLeft
+      && (narrow.flyout.right <= narrow.rect.left || narrow.flyout.bottom <= narrow.rect.top),
+    JSON.stringify({ flyout: narrow.flyout && { left: narrow.flyout.left, right: narrow.flyout.right, bottom: narrow.flyout.bottom }, popover: narrow.rect, canvasLeft: narrow.canvasLeft }))
+  await ctx.shot('28-model-list-narrow', 'the model list with the 任务 page open: whole, beside the popover or standing on it')
+  await read(ctx, probes.clickChip())
   const changes = await button('changes')
   await mouseClick(ctx.cdp, changes.x, changes.y)
   await pageShown('changes-view')
