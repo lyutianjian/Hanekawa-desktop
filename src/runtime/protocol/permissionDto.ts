@@ -1,4 +1,5 @@
 import { analyzeDestructiveCommands } from '../../harness/destructiveCommands.js'
+import { SHELL_TOOLS } from '../../harness/risk/index.js'
 import type { PermissionRequest } from '../../harness/permissions.js'
 import {
   buildFileToolPreview,
@@ -64,7 +65,7 @@ function buildPreview(
 }
 
 function analyzeDestructive(request: PermissionRequest): ReturnType<typeof analyzeDestructiveCommands> {
-  if (request.tool.name !== 'Bash') return []
+  if (!SHELL_TOOLS.has(request.tool.name)) return []
   const input = request.input
   if (typeof input !== 'object' || input === null) return []
   const command = (input as Record<string, unknown>).command

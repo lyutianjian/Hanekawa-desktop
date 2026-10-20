@@ -37,6 +37,8 @@ import { REPORT_MAX, sanitizeReportText } from '../../utils/reportSanitizer.js'
 // Tools that no sub-agent should ever call directly.
 export const ALL_AGENT_DISALLOWED_TOOLS = [
   'Agent',
+  // Its events go to the parent session's queue, which a sub-agent's turn never reads.
+  'Monitor',
   'EnterPlanMode',
   'ExitPlanMode',
   'AskUserQuestion',

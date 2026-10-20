@@ -305,7 +305,7 @@ agent 通过 `Browser` 工具使用同一组标签页：打开、导航、后退
 
 「始终允许」只对 `normal` 持久保存。`risky` 可以在本会话内按精确的命令或路径允许。`critical` 两者都不提供。
 
-文件规则匹配解析后的绝对路径。以 `/` 或 `~` 开头的模式是绝对路径，其他都相对于项目根目录，所以 `Read(.env)` 只匹配根目录的 `.env`——要匹配所有的请写 `Read(**/.env)`。`Read`/`Edit` 的 deny 规则也会尽力应用到从 Bash 命令中提取出的路径。规则名有家族别名：`Edit` 涵盖所有写入工具，`Read` 涵盖 `Grep`/`Glob`。
+文件规则匹配解析后的绝对路径。以 `/` 或 `~` 开头的模式是绝对路径，其他都相对于项目根目录，所以 `Read(.env)` 只匹配根目录的 `.env`——要匹配所有的请写 `Read(**/.env)`。`Read`/`Edit` 的 deny 规则也会尽力应用到从 Bash 命令中提取出的路径。`Bash(...)` 的 deny/ask 规则会逐个检查命令里实际会运行的每条命令：`while`/`for`/`if` 循环体、子 shell 与 `{ }` 分组、`$(...)` 替换、`sudo`/`timeout`/`xargs` 等包装以及 `sh -c`/`eval` 的内容都算在内，所以 `Bash(curl:*)` 也拦得住 `while true; do curl …; done`。规则名有家族别名：`Bash` 涵盖 `Monitor`，`Edit` 涵盖所有写入工具，`Read` 涵盖 `Grep`/`Glob`。
 
 项目 `.myagent/settings.json` 里的 `permissions.mode` 和 `mcp.trustedServers` 会被忽略并给出诊断，请在用户或本地设置中设置。`Config` 工具不能修改权限模式。`WebFetch` 只跟随同一主机内的重定向；跨主机重定向会返回给模型，它的下一次请求重新经过权限闸门。
 
@@ -474,7 +474,8 @@ OpenAI 官方端点（`api.openai.com`）的 Chat Completions 请求带上基于
 每个内置工具一个目录 `src/tools/<Name>Tool/`，包含实现文件和 `prompt.ts`（工具描述及工具名常量），统一在 `src/tools/index.ts` 注册：
 
 - 文件：`Read`、`Write`、`Edit`、`MultiEdit`、`Delete`、`NotebookEdit`、`Grep`、`Glob`
-- Shell：`Bash`、`BashOutput`、`KillShell`
+- Shell：`Bash`、`KillShell`。后台命令的输出边跑边写进会话的 tool-results 目录（超过 5 MB 只保留开头和结尾），模型用 `Read` 读取；命令结束时通知会附上最后 20 行，并唤醒空闲的会话，所以不需要轮询
+- 监控：`Monitor` 在后台跑一个脚本，它 stdout 的每一行是一个事件，在模型下一步开始时合并送进对话（每个监控最多带最近 50 行，多出的只留计数和输出文件路径）。事件只在模型工作时送达：会话空闲时不唤醒，攒到用户下一条消息一起带上；工作中一次送达就超出上限的监控会被自动停掉。默认 5 分钟后结束，最长 1 小时，`persistent` 不限时；用 `KillShell` 停止。命令按 Bash 的分级和 `Bash(...)` 规则判定，子代理不提供
 - 网络：`WebFetch`、`WebSearch`
 - 规划与交互：`EnterPlanMode`、`ExitPlanMode`、`AskUserQuestion`、`TaskCreate`、`TaskList`、`TaskGet`、`TaskUpdate`
 - 其他：`Agent`、`SendMessage`、`Skill`、`ToolSearch`、`Config`

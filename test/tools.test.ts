@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, realpath, rename, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -14,7 +14,6 @@ import {
   isAutobackgroundingAllowed,
   resolveBashTimeoutMs,
   DEFAULT_BASH_TIMEOUT_MS,
-  MAX_BASH_TIMEOUT_MS,
 } from '../src/tools/BashTool/BashTool.js'
 import { readFileTool } from '../src/tools/FileReadTool/FileReadTool.js'
 import { editFileTool } from '../src/tools/FileEditTool/FileEditTool.js'
@@ -22,10 +21,10 @@ import { multiEditTool } from '../src/tools/MultiEditTool/MultiEditTool.js'
 import { writeFileTool } from '../src/tools/FileWriteTool/FileWriteTool.js'
 import { deleteFileTool } from '../src/tools/FileDeleteTool/FileDeleteTool.js'
 import { buildUnifiedPatch } from '../src/tools/editPatch.js'
+import { rememberShownFiles } from '../src/tools/fileState.js'
 import { toolSearchTool } from '../src/tools/ToolSearchTool/ToolSearchTool.js'
 import { getToolSearchMode, getAutoThreshold, resetToolSearchCache, resolveToolSearchState } from '../src/utils/toolSearch.js'
 import { BackgroundTaskRegistry, defaultBackgroundTaskRegistry } from '../src/services/backgroundTasks/registry.js'
-import { createBashOutputTool } from '../src/tools/BashOutputTool/BashOutputTool.js'
 
 function context(cwd: string) {
   return { cwd, sessionId: 's1', readFiles: new Set<string>() }
@@ -142,10 +141,10 @@ test('bash reports nonzero exits as command_failed', async () => {
   }
 })
 
-test('resolveBashTimeoutMs defaults to 120s and clamps to max', () => {
+test('resolveBashTimeoutMs defaults to 60s and has no max unless the environment sets one', () => {
   assert.equal(resolveBashTimeoutMs(undefined, {}), DEFAULT_BASH_TIMEOUT_MS)
   assert.equal(resolveBashTimeoutMs(50, {}), 50)
-  assert.equal(resolveBashTimeoutMs(999_999, {}), MAX_BASH_TIMEOUT_MS)
+  assert.equal(resolveBashTimeoutMs(3_600_000, {}), 3_600_000)
   assert.equal(resolveBashTimeoutMs(undefined, { MYAGENT_BASH_DEFAULT_TIMEOUT_MS: '5000' }), 5_000)
   assert.equal(resolveBashTimeoutMs(8000, { MYAGENT_BASH_MAX_TIMEOUT_MS: '6000', MYAGENT_BASH_DEFAULT_TIMEOUT_MS: '1000' }), 6_000)
 })
@@ -206,7 +205,6 @@ test('bash timeout auto-background preserves process output', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
   const registry = new BackgroundTaskRegistry()
   const tool = createBashTool(registry)
-  const outputTool = createBashOutputTool(registry)
   const ctx = { ...context(dir), sessionId: 'auto-bg-out' }
   try {
     const result = await tool.execute({
@@ -217,11 +215,12 @@ test('bash timeout auto-background preserves process output', async () => {
     const idMatch = /Task ID: (bash_\d+)/.exec(result.content)
     assert.ok(idMatch?.[1])
 
-    // Wait for the delayed print, then read via BashOutput.
-    await new Promise((r) => setTimeout(r, 600))
-    const read = await outputTool.execute({ task_id: idMatch[1]!, wait_ms: 1_000 }, ctx)
-    assert.equal(read.ok, true)
-    assert.match(read.content, /late-output/)
+    const outputPath = registry.getTask(ctx.sessionId, idMatch[1]!)?.outputPath
+    assert.ok(outputPath)
+    for (let i = 0; i < 100 && registry.getTask(ctx.sessionId, idMatch[1]!)?.status === 'running'; i++) {
+      await new Promise((r) => setTimeout(r, 20))
+    }
+    assert.match(await readFile(outputPath, 'utf8'), /late-output/)
   } finally {
     await registry.stopAll(ctx.sessionId, 'test cleanup')
     await rm(dir, { recursive: true, force: true })
@@ -571,6 +570,75 @@ test('editFile refuses files replaced after read even when size matches', async 
     assert.equal(stale.errorCode, 'stale_file')
     assert.match(stale.content, /changed since it was last read/)
     assert.equal((stale.errorDetails as { current?: { size?: number } }).current?.size, 6)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('editFile accepts a file whose metadata changed but whose text did not', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  try {
+    const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
+    const file = path.join(dir, 'a.txt')
+    await writeFile(file, 'alpha\nbeta\n', 'utf8')
+    await readFileTool.execute({ filePath: 'a.txt' }, ctx)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    await chmod(file, 0o600)
+    await utimes(file, new Date(), new Date(Date.now() + 5_000))
+
+    const first = await editFileTool.execute({ filePath: 'a.txt', oldString: 'alpha', newString: 'gamma' }, ctx)
+    assert.equal(first.ok, true, first.content)
+    const second = await editFileTool.execute({ filePath: 'a.txt', oldString: 'beta', newString: 'delta' }, ctx)
+    assert.equal(second.ok, true, second.content)
+    assert.equal(await readFile(file, 'utf8'), 'gamma\ndelta\n')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('rememberShownFiles counts only files shown whole and unchanged as read', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  try {
+    const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
+    const whole = path.join(dir, 'AGENTS.md')
+    const cut = path.join(dir, 'MEMORY.md')
+    await writeFile(whole, '# Rules\n\n- one\n', 'utf8')
+    await writeFile(cut, '- a\n- b\n', 'utf8')
+    await rememberShownFiles([
+      'Codebase and user instructions are shown below.',
+      `Contents of ${whole} (project instructions, checked into the codebase):\n\n# Rules\n\n- one`,
+      `Contents of ${cut} (user's auto-memory, persists across conversations):\n\n- a\n\n> The index has more than 200 lines`,
+    ].join('\n\n'), ctx)
+
+    assert.equal(ctx.readFileState.get(whole)?.shownInContext, true, 'compaction must not restore a file the reminder already shows')
+    const edited = await editFileTool.execute({ filePath: whole, oldString: '- one', newString: '- two' }, ctx)
+    assert.equal(edited.ok, true, edited.content)
+    const refused = await editFileTool.execute({ filePath: cut, oldString: '- a', newString: '- c' }, ctx)
+    assert.equal(refused.ok, false)
+    assert.match(refused.content, /must be read first/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('editFile points a missed oldString at the most similar lines', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  try {
+    const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
+    await writeFile(path.join(dir, 'a.ts'), 'const a = 1\nfunction total(items) {\n  return items.reduce((sum, x) => sum + x, 0)\n}\nconst b = 2\n', 'utf8')
+    await readFileTool.execute({ filePath: 'a.ts' }, ctx)
+
+    const missed = await editFileTool.execute({
+      filePath: 'a.ts',
+      oldString: 'function total(list) {\n  return list.reduce((sum, x) => sum + x, 0)',
+      newString: 'x',
+    }, ctx)
+    assert.equal(missed.ok, false)
+    assert.match(missed.content, /most similar text in the file is lines 2-3/)
+    assert.match(missed.content, /return items\.reduce/)
+
+    const unrelated = await editFileTool.execute({ filePath: 'a.ts', oldString: 'zzzz qqqq', newString: 'x' }, ctx)
+    assert.match(unrelated.content, /Read the file again/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

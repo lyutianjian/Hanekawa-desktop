@@ -52,6 +52,7 @@ export interface BashRisk {
   reasons: RiskReason[]
   readPaths: string[]
   writePaths: string[]
+  commands: string[]
 }
 
 export function classifyBash(command: string, ctx: RiskContext): BashRisk {
@@ -76,6 +77,7 @@ class BashAnalyzer {
   private readonly reasons: RiskReason[] = []
   private readonly reads = new Set<string>()
   private readonly writes = new Set<string>()
+  private readonly commands = new Set<string>()
 
   constructor(private readonly ctx: RiskContext) {}
 
@@ -84,7 +86,7 @@ class BashAnalyzer {
   }
 
   result(): BashRisk {
-    return { reasons: this.reasons, readPaths: [...this.reads], writePaths: [...this.writes] }
+    return { reasons: this.reasons, readPaths: [...this.reads], writePaths: [...this.writes], commands: [...this.commands] }
   }
 
   source(text: string, cwd: string | undefined, depth: number): void {
@@ -141,6 +143,7 @@ class BashAnalyzer {
       this.add('risky', 'nesting_too_deep', 'Nests shells or wrappers too deeply to analyze.')
       return false
     }
+    this.commands.add(words.map((word) => word.text).join(' '))
     const head = words[0]!
     if (head.dynamic) {
       this.add('risky', 'dynamic_command', 'Runs a program whose name is only known at runtime.')

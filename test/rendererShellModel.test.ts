@@ -402,8 +402,8 @@ test('resuming opens the pane that owns the session; a task row peeks its output
   assert.deepEqual(activateSurfaceRowById(sessions, 'a'), { kind: 'open-pane', sessionId: 'a' })
 
   const running = [
-    { id: 't1', sessionId: 's', kind: 'shell', status: 'running', command: 'npm test', startedAt: 0, outputBytes: 10, unreadBytes: 4 },
-    { id: 't3', sessionId: 's', kind: 'shell', status: 'killed', command: 'sleep 9', startedAt: 0, finishedAt: 1, outputBytes: 0, unreadBytes: 0 },
+    { id: 't1', sessionId: 's', kind: 'shell', status: 'running', command: 'npm test', startedAt: 0, outputBytes: 10 },
+    { id: 't3', sessionId: 's', kind: 'shell', status: 'killed', command: 'sleep 9', startedAt: 0, finishedAt: 1, outputBytes: 0 },
   ] as const
   assert.equal(runningProcessCount(running), 1)
 })

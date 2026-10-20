@@ -11,19 +11,18 @@ import {
 import { terminateProcessTree } from '../../services/backgroundTasks/processTree.js'
 import {
   DEFAULT_BASH_TIMEOUT_MS,
-  MAX_BASH_TIMEOUT_MS,
   SLEEP_BLOCK_THRESHOLD_SECONDS,
   resolveBashTimeoutMs,
 } from './constants.js'
 import { buildBashDescription } from './prompt.js'
 import { extractBashWritePaths } from './writeTargets.js'
 import { trackFileEdit } from '../trackFileEdit.js'
+import { getToolResultSpillDir } from '../../utils/paths.js'
 
 // Re-exported so existing importers of these names keep working; the values
 // live in bashConstants.ts because bashPrompt.ts quotes them.
 export {
   DEFAULT_BASH_TIMEOUT_MS,
-  MAX_BASH_TIMEOUT_MS,
   SLEEP_BLOCK_THRESHOLD_SECONDS,
   resolveBashTimeoutMs,
 } from './constants.js'
@@ -150,7 +149,7 @@ function detectShell(): ShellInfo {
 // spawnSync) during module load and block TUI startup.
 let cachedShell: ShellInfo | undefined
 
-function getShell(): ShellInfo {
+export function getShell(): ShellInfo {
   if (!cachedShell) {
     cachedShell = detectShell()
   }
@@ -189,6 +188,8 @@ export function describeShell(platform: NodeJS.Platform = process.platform): str
   // the pairing is what names it.
   // Anything reaching here is spawned with `-c`, so it *is* a POSIX shell.
   if (platform === 'win32') return `${name} (POSIX shell on Windows)`
+  // The tool calls itself Bash, so bash-only test syntax is the usual slip.
+  if (name === 'zsh') return 'zsh (not bash: `[ a == b ]` is an error in zsh, use `=`)'
   return name
 }
 
@@ -247,30 +248,35 @@ export function isAutobackgroundingAllowed(command: string): boolean {
 
 function formatBackgroundStartMessage(
   task: BackgroundTaskSnapshot,
-  kind: 'explicit' | 'timeout',
-  timeoutMs?: number,
+  kind: 'explicit' | 'timeout' | 'user',
+  blockedMs?: number,
 ): string {
-  const header =
-    kind === 'timeout'
-      ? `Command exceeded the blocking timeout (${timeoutMs}ms) and was moved to the background.`
-      : 'Shell started in background.'
+  const header = {
+    explicit: 'Shell started in background.',
+    timeout: `Command was still running after ${blockedMs}ms and was moved to the background.`,
+    user: 'The user moved this command to the background.',
+  }[kind]
   return [
     header,
     `Task ID: ${task.id}`,
     ...(task.pid ? [`PID: ${task.pid}`] : []),
-    `Use BashOutput with task_id \"${task.id}\" to read output or KillShell to stop it.`,
+    ...(task.outputPath ? [`Output is being written to ${task.outputPath}; Read it to check progress.`] : []),
+    'You will be notified when it finishes, with the last lines of its output. Do not poll: continue with other work, or end your turn if nothing else is left.',
+    `Stop it with KillShell (task_id "${task.id}").`,
   ].join('\n')
 }
 
-function attachBackgroundLifecycle(options: {
+export function attachBackgroundLifecycle(options: {
   proc: ChildProcess
   backgroundTasks: BackgroundTaskRegistry
   sessionId: string
   taskId: string
   /** Optional hard-kill timeout for background shells (explicit BG only). */
   killAfterMs?: number
+  /** Stdout lines are also the task's monitor events. */
+  monitor?: boolean
 }): void {
-  const { proc, backgroundTasks, sessionId, taskId, killAfterMs } = options
+  const { proc, backgroundTasks, sessionId, taskId, killAfterMs, monitor } = options
   let timeoutId: ReturnType<typeof setTimeout> | undefined
   if (killAfterMs !== undefined) {
     timeoutId = setTimeout(() => {
@@ -286,13 +292,22 @@ function attachBackgroundLifecycle(options: {
   const onData = (data: Buffer) => backgroundTasks.appendOutput(sessionId, taskId, data)
   proc.stdout?.on('data', onData)
   proc.stderr?.on('data', onData)
+  if (monitor) proc.stdout?.on('data', (data: Buffer) => backgroundTasks.appendMonitorStdout(sessionId, taskId, data))
 
   // Use 'exit' not 'close': 'close' waits for stdio to close, which can
   // include grandchild processes that inherit file descriptors.
+  // Grandchildren inheriting the pipes can hold 'close' off indefinitely, so
+  // 'exit' ends the task, after a short wait for the last lines still in the pipes.
   proc.once('exit', (code: number | null, signal: NodeJS.Signals | null) => {
     if (timeoutId) clearTimeout(timeoutId)
-    backgroundTasks.finishShell(sessionId, taskId, code, signal)
+    const finish = () => {
+      clearTimeout(grace)
+      backgroundTasks.finishShell(sessionId, taskId, code, signal)
+    }
+    const grace = setTimeout(finish, 250)
+    proc.once('close', finish)
   })
+  proc.once('close', () => backgroundTasks.closeOutput(sessionId, taskId))
   proc.once('error', (error: Error) => {
     if (timeoutId) clearTimeout(timeoutId)
     backgroundTasks.fail(sessionId, taskId, error.message)
@@ -306,10 +321,10 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
   searchHint: 'run shell commands terminal',
   inputSchema: z.object({
     command: z.string().min(1).describe('The shell command to execute. Chain dependent steps with && rather than newlines.'),
-    timeout: z.number().min(1).max(MAX_BASH_TIMEOUT_MS).optional()
-      .describe(`Optional timeout in milliseconds (default ${DEFAULT_BASH_TIMEOUT_MS}, max ${MAX_BASH_TIMEOUT_MS}). On timeout, non-sleep commands are moved to the background.`),
+    timeout: z.number().min(1).optional()
+      .describe(`Optional timeout in milliseconds (default ${DEFAULT_BASH_TIMEOUT_MS}, no maximum). On timeout, non-sleep commands are moved to the background.`),
     run_in_background: z.boolean().optional()
-      .describe('Set to true to run this command in the background immediately. Use BashOutput to read output later.'),
+      .describe('Set to true to run this command in the background immediately. Its output goes to a file you can Read, and you are notified when it finishes.'),
     env: z.record(z.union([z.string(), z.number(), z.boolean()])).optional()
       .describe('Optional environment variables to set for this command execution.'),
     description: z.string().optional()
@@ -374,6 +389,7 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
         sessionId: context.sessionId,
         command: options.command,
         proc,
+        outputDir: getToolResultSpillDir(context.projectDir ?? context.cwd, context.sessionId),
       })
       // Explicit BG: only install a kill timer when the caller set timeout.
       attachBackgroundLifecycle({
@@ -422,6 +438,7 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
       let mode: 'foreground' | 'backgrounded' = 'foreground'
       let timeoutId: ReturnType<typeof setTimeout> | undefined
       const autoBgAllowed = isAutobackgroundingAllowed(options.command)
+      let unregisterForeground: (() => void) | undefined
 
       const buildOutput = (extra?: string): string => {
         // Decode accumulated Buffer chunks as UTF-8 in one shot to avoid
@@ -442,6 +459,7 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
         if (settled) return
         settled = true
         if (timeoutId !== undefined) clearTimeout(timeoutId)
+        unregisterForeground?.()
         if (context.abortSignal) {
           context.abortSignal.removeEventListener('abort', onAbort)
         }
@@ -478,7 +496,8 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
         }
       }
 
-      const promoteToBackground = (): void => {
+      const promoteToBackground = (kind: 'timeout' | 'user'): void => {
+        if (settled || mode !== 'foreground') return
         mode = 'backgrounded'
         // Stop foreground abort from killing the promoted process.
         if (context.abortSignal) {
@@ -491,9 +510,10 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
           sessionId: context.sessionId,
           command: options.command,
           proc,
+          outputDir: getToolResultSpillDir(context.projectDir ?? context.cwd, context.sessionId),
         })
 
-        // Preserve output collected while foreground so BashOutput is not empty.
+        // The output file starts with what the foreground call already collected.
         if (stdoutChunks.length > 0) {
           backgroundTasks.appendOutput(context.sessionId, task.id, Buffer.concat(stdoutChunks))
         }
@@ -511,10 +531,10 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
 
         finish({
           ok: true,
-          content: formatBackgroundStartMessage(task, 'timeout', timeout),
+          content: formatBackgroundStartMessage(task, kind, timeout),
           metadata: {
             display: {
-              summary: `background shell ${task.id} (timeout)`,
+              summary: `background shell ${task.id} (${kind === 'user' ? 'moved by user' : 'timeout'})`,
               detail: task.pid ? `PID: ${task.pid}` : undefined,
             },
           },
@@ -527,7 +547,7 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
 
         if (autoBgAllowed) {
           // Same process keeps running; only the tool call returns early.
-          promoteToBackground()
+          promoteToBackground('timeout')
           return
         }
 
@@ -541,6 +561,13 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
           })
         })
       }, timeout)
+      if (context.currentToolUseId) {
+        unregisterForeground = backgroundTasks.registerForeground(
+          context.sessionId,
+          context.currentToolUseId,
+          () => promoteToBackground('user'),
+        )
+      }
 
       if (context.abortSignal) {
         if (context.abortSignal.aborted) {

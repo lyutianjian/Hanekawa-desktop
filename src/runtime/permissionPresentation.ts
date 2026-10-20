@@ -271,6 +271,7 @@ export function formatPermissionTitle(
   const titles = STRINGS[locale].titles
   switch (request.toolName) {
     case 'Bash':
+    case 'Monitor':
       return titles.bash
     case 'Write':
       return titles.write
@@ -339,7 +340,7 @@ export function formatPermissionInputBlock(
   locale: Locale = DEFAULT_LOCALE,
 ): PermissionInputBlock {
   const labels = STRINGS[locale].blocks
-  if (request.toolName === 'Bash') {
+  if (request.toolName === 'Bash' || request.toolName === 'Monitor') {
     const command = isRecord(request.input) && typeof request.input.command === 'string'
       ? request.input.command
       : stringifyInput(request.input, 500)

@@ -1121,7 +1121,7 @@ test('the terminal shows what the command printed, not the collapsed line’s ex
   const view = mount(t)
   // A backgrounded shell's `detail` is the one-line extract the collapsed row
   // reads; the full start message in `content` is the transcript the block owes
-  // the reader — the task id is what they need to call BashOutput with.
+  // the reader — the task id and output file are what they need.
   view.render(
     transcript([bashStep({ content: 'Task ID: bg-1\nPID: 123', detail: 'PID: 123' })]),
     opened('bash-1'),

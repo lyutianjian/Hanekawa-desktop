@@ -4,7 +4,6 @@ import {
   _resetCachedShellForTests,
   describeShell,
   detectSleepPattern,
-  MAX_BASH_TIMEOUT_MS,
   SLEEP_BLOCK_THRESHOLD_SECONDS,
   resolveBashTimeoutMs,
   buildSubprocessEnv,
@@ -57,7 +56,7 @@ test('on Windows the shell is named as the POSIX shell it is', () => {
 
 test('elsewhere the shell is named by its own binary, without path or extension', () => {
   withShell('/bin/bash', () => assert.equal(describeShell('linux'), 'bash'))
-  withShell('/usr/bin/zsh', () => assert.equal(describeShell('darwin'), 'zsh'))
+  withShell('/usr/bin/zsh', () => assert.match(describeShell('darwin'), /^zsh \(not bash/))
 })
 
 // The PowerShell fallback has no case here on purpose: `detectShell` ignores
@@ -97,7 +96,7 @@ test('the description quotes the timeouts the tool actually enforces', () => {
     withEnv('BASH_DEFAULT_TIMEOUT_MS', undefined, () => {
       const description = buildBashDescription()
       assert.match(description, new RegExp(`default ${resolveBashTimeoutMs()}`))
-      assert.match(description, new RegExp(`max ${MAX_BASH_TIMEOUT_MS}`))
+      assert.match(description, /no maximum/)
     })
   })
 })
@@ -121,7 +120,7 @@ test('the sleep rule quotes the threshold that rejects the command', () => {
 test('the description states the constraints the tool enforces silently', () => {
   const description = buildBashDescription()
   // cwd is re-read from ToolContext on every spawn, so `cd` cannot carry over.
-  assert.match(description, /does NOT carry over to the next Bash call/)
+  assert.match(description, /NOT carry over to the next Bash call/)
   // stdio is ['ignore', 'pipe', 'pipe'].
   assert.match(description, /stdin is closed/)
   assert.match(description, /--no-verify/)

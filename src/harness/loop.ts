@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import os from 'node:os'
 import { ContextBuilder, INSTRUCTIONS_MESSAGE_ID } from './contextBuilder.js'
@@ -256,8 +257,8 @@ export interface AgentLoopOptions {
    * readout.
    */
   onRequestUsage?(usage: TokenUsage, anchorRecordId?: string): void
-  /** User-role messages appended verbatim at the start of each step. */
-  consumePendingUserMessages?(): string[]
+  /** User-role messages appended verbatim at the start of each step; `midTurn` is false on a turn's first step. */
+  consumePendingUserMessages?(midTurn: boolean): string[]
   /** The user's mid-turn messages, recorded into the running turn at each step. */
   steer?: SteerSource
   /** Fixed role segment for the static system prompt (coordinator lanes). */
@@ -790,7 +791,7 @@ export class AgentLoop {
         if (signal?.aborted) {
           throw new DOMException('The operation was aborted.', 'AbortError')
         }
-        const pendingUserMessages = this.options.consumePendingUserMessages?.() ?? []
+        const pendingUserMessages = this.options.consumePendingUserMessages?.(iteration > 0) ?? []
         for (const message of pendingUserMessages) {
           await this.appendRecord({
             type: 'message',
@@ -1734,7 +1735,7 @@ export class AgentLoop {
       // Bash before PowerShell, and this line is what the model writes syntax
       // for.
       shell: describeShell(),
-      osVersion: `${os.type()} ${os.release()}`,
+      osVersion: osVersion(),
       isGitRepo: this.options.isGitRepo ?? false,
       model: this.activeModel.model,
     }
@@ -2585,5 +2586,20 @@ function userMessageInput(message: ChatMessage): UserInput {
   return {
     text: message.content,
     ...(message.images && message.images.length > 0 ? { images: message.images } : {}),
+  }
+}
+
+let cachedOsVersion: string | undefined
+
+/** The kernel string alone ("Darwin 25.1.0") does not name the macOS release. */
+function osVersion(): string {
+  if (cachedOsVersion !== undefined) return cachedOsVersion
+  const kernel = `${os.type()} ${os.release()}`
+  if (process.platform !== 'darwin') return cachedOsVersion = kernel
+  try {
+    const product = execFileSync('sw_vers', ['-productVersion'], { encoding: 'utf8', timeout: 2000 }).trim()
+    return cachedOsVersion = `macOS ${product} (${kernel})`
+  } catch {
+    return cachedOsVersion = kernel
   }
 }

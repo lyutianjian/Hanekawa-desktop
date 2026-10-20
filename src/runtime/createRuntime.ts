@@ -15,7 +15,7 @@ import { PlanModeManager } from '../harness/planModeManager.js'
 import { ToolRunner } from '../harness/toolRunner.js'
 import type { SystemPromptSectionCache } from '../harness/sections.js'
 import type { PermissionGate } from '../harness/permissions.js'
-import type { AttachmentBytesLoader, CoordinationRole, ImageAttachmentImporter, ModelPricing, ModelProvider, SessionRecord } from '../harness/types.js'
+import type { AttachmentBytesLoader, CoordinationRole, ImageAttachmentImporter, ModelPricing, ModelProvider, SessionRecord, ToolContext } from '../harness/types.js'
 import type { AttachmentFactsResolver } from '../harness/turnImages.js'
 import { MODEL_CONTEXT_WINDOW_DEFAULT } from '../prompts/budget.js'
 import type { ContextManagementConfig } from '../prompts/budget.js'
@@ -24,6 +24,7 @@ import type { SessionMeta, SessionStore } from '../sessions/service.js'
 import { createAgentTool, prepareForkPreloadRecords } from '../tools/AgentTool/AgentTool.js'
 import type { BaseAgentDefinition } from '../tools/AgentTool/AgentTool.js'
 import { restoreTaskStateFromRecords } from '../tools/taskState.js'
+import { rememberShownFiles } from '../tools/fileState.js'
 import type { SkillDefinition } from '../services/skills/skillsService.js'
 import type { BackgroundTaskRegistry } from '../services/backgroundTasks/registry.js'
 import type { UiBridges } from './bridges.js'
@@ -372,6 +373,25 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
         }
       : {}
 
+    const toolContext: ToolContext = {
+      cwd: workingDir,
+      projectDir: cwd,
+      sessionId: runtimeSession.id,
+      readFiles: new Set(),
+      readFileState: new Map(),
+      invokedSkills: new Map(),
+      taskState: new Map(restoreTaskStateFromRecords(runtimeRecords)),
+      getPermissionMode: () => permissionGate.getMode(),
+      setPermissionMode: (mode) => permissionGate.setMode(mode),
+      exitPlanMode: () => permissionGate.exitPlanMode(),
+      planModeBridge: planModeManager.buildBridge(),
+      askUserQuestionBridge: bridges.askUserQuestion,
+      ...(trackFileEdit ? { trackFileEdit } : {}),
+      ...(imageAttachments ? { imageAttachments } : {}),
+    }
+    // Instruction files the conversation opens with count as read.
+    void rememberShownFiles([projectContext, snapshot.memoryIndex ?? ''].join('\n\n'), toolContext)
+
     loop = new AgentLoop({
       ...coordinatorHooks,
       provider: targetProvider,
@@ -381,22 +401,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       tools: runtimeTools,
       contextBuilder: new ContextBuilder(undefined, contextManagement, promptSections),
       toolRunner: runtimeToolRunner,
-      toolContext: {
-        cwd: workingDir,
-        projectDir: cwd,
-        sessionId: runtimeSession.id,
-        readFiles: new Set(),
-        readFileState: new Map(),
-        invokedSkills: new Map(),
-        taskState: new Map(restoreTaskStateFromRecords(runtimeRecords)),
-        getPermissionMode: () => permissionGate.getMode(),
-        setPermissionMode: (mode) => permissionGate.setMode(mode),
-        exitPlanMode: () => permissionGate.exitPlanMode(),
-        planModeBridge: planModeManager.buildBridge(),
-        askUserQuestionBridge: bridges.askUserQuestion,
-        ...(trackFileEdit ? { trackFileEdit } : {}),
-        ...(imageAttachments ? { imageAttachments } : {}),
-      },
+      toolContext,
       system: config.get().agent.system,
       projectContext,
       memoryPrompt: snapshot.memoryPrompt,
@@ -421,7 +426,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       onRecord: (record) => bridges.record.onRecord(record),
       onStreamEvent: (event) => bridges.record.onStreamEvent(event),
       onRequestUsage: (usage, anchorRecordId) => bridges.record.onRequestUsage(usage, anchorRecordId),
-      consumePendingUserMessages: () => backgroundTasks.consumeParentNotifications(runtimeSession.id),
+      consumePendingUserMessages: (midTurn) => backgroundTasks.consumeParentNotifications(runtimeSession.id, midTurn),
       steer: bridges.steer,
       ...(imageAttachments ? { imageAttachments } : {}),
       ...(attachmentFacts ? { attachmentFacts } : {}),

@@ -463,6 +463,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     onOpenThread: (id) => deps.onOpenThread?.(id),
     ...(deps.onOpenProviderSettings ? { onOpenProviderSettings: deps.onOpenProviderSettings } : {}),
     onRetryTurn: (id) => { void retryTurn(id) },
+    onBackgroundTool: (id) => {
+      void client.backgroundToolCall(id).catch((error) => note(`转后台失败：${describe(error)}`, 'error'))
+    },
     // A receipt can name a plan the pane no longer holds (a reopened session), so
     // the plan it was decided on becomes the one the tab shows.
     onOpenPlan: (planContent) => {

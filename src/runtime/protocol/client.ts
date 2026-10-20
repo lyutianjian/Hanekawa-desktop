@@ -378,6 +378,12 @@ export class SessionClient {
     return result.task
   }
 
+  /** Moves a still-blocking Bash call to the background; false once it has already settled. */
+  async backgroundToolCall(toolUseId: string): Promise<boolean> {
+    const result = await this.send({ type: 'background-tool-call', id: randomUUID(), toolUseId }) as { ok: boolean }
+    return result.ok
+  }
+
   async runTool(name: string, input: unknown): Promise<{ ok: boolean; content: string; errorCode?: string }> {
     return this.send({ type: 'run-tool', id: randomUUID(), name, input }) as Promise<{
       ok: boolean
@@ -938,8 +944,8 @@ export class SessionClient {
 
 /**
  * Compared field by field rather than deeply: the fields that move are the
- * ones a task list renders, and `outputBytes`/`unreadBytes` change on every
- * chunk, which is exactly what the comparison needs to catch.
+ * ones a task list renders, and `outputBytes` changes on every chunk, which
+ * is exactly what the comparison needs to catch.
  */
 function sameTaskList(
   a: readonly BackgroundTaskSnapshot[],
@@ -953,7 +959,6 @@ function sameTaskList(
     return task.id === other.id
       && task.status === other.status
       && task.outputBytes === other.outputBytes
-      && task.unreadBytes === other.unreadBytes
       && task.finishedAt === other.finishedAt
   })
 }

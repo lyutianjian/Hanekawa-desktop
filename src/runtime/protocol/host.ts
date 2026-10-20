@@ -1052,6 +1052,9 @@ export class SessionHost implements CoordinationLaneControl {
         return { ...(task ? { task } : {}) } satisfies WireTaskResult
       }
 
+      case 'background-tool-call':
+        return { ok: this.project.backgroundTasks.backgroundForeground(this.session.id, command.toolUseId) }
+
       case 'shutdown':
         await this.project.shutdown(command.reason)
         return { ok: true }

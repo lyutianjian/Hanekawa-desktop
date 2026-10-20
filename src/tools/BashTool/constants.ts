@@ -5,9 +5,9 @@
  * importing the tool module that imports the prompt back.
  */
 
-/** Align with Claude Code defaults (2 min / 10 min). */
-export const DEFAULT_BASH_TIMEOUT_MS = 120_000
-export const MAX_BASH_TIMEOUT_MS = 600_000
+export const DEFAULT_BASH_TIMEOUT_MS = 60_000
+/** `setTimeout`'s own ceiling (~24.8 days); a longer delay fires at once. */
+const MAX_TIMER_MS = 2_147_483_647
 
 /**
  * Minimum sleep duration (seconds) that triggers the blocked-sleep pattern.
@@ -23,10 +23,10 @@ function parsePositiveInt(value: string | undefined): number | undefined {
 
 /**
  * Resolve the effective foreground timeout.
- * - explicit tool input wins (clamped to max)
+ * - explicit tool input wins
  * - else MYAGENT_BASH_DEFAULT_TIMEOUT_MS / BASH_DEFAULT_TIMEOUT_MS
- * - else 120s
- * Max from MYAGENT_BASH_MAX_TIMEOUT_MS / BASH_MAX_TIMEOUT_MS (at least default), capped schema max 600s.
+ * - else 60s
+ * No max unless MYAGENT_BASH_MAX_TIMEOUT_MS / BASH_MAX_TIMEOUT_MS sets one (at least default).
  */
 export function resolveBashTimeoutMs(requested?: number, env: NodeJS.ProcessEnv = process.env): number {
   const envDefault =
@@ -37,10 +37,7 @@ export function resolveBashTimeoutMs(requested?: number, env: NodeJS.ProcessEnv 
     ?? parsePositiveInt(env.BASH_MAX_TIMEOUT_MS)
 
   const defaultMs = envDefault ?? DEFAULT_BASH_TIMEOUT_MS
-  const maxMs = Math.min(
-    MAX_BASH_TIMEOUT_MS,
-    Math.max(defaultMs, envMax ?? MAX_BASH_TIMEOUT_MS),
-  )
+  const maxMs = Math.min(MAX_TIMER_MS, envMax === undefined ? MAX_TIMER_MS : Math.max(defaultMs, envMax))
   const raw = requested ?? defaultMs
   return Math.min(Math.max(1, raw), maxMs)
 }

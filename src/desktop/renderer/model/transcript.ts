@@ -160,9 +160,9 @@ export interface ToolStepDetail {
   readonly durationMs?: number
   /** The call has a `tool_use` record but no approval yet (§3). */
   readonly awaitingApproval?: boolean
-  /** `Bash` only: the model's own words for what the command does (`input.description`). */
+  /** `Bash` and `Monitor` only: the model's own words for what the command does (`input.description`). */
   readonly description?: string
-  /** `Bash` only: the full command (`input.command`), untruncated, for the body and its copy button. */
+  /** `Bash` and `Monitor` only: the full command (`input.command`), untruncated, for the body and its copy button. */
   readonly command?: string
   /** The Agent family: the task the parent handed the sub-agent (`input.task`). */
   readonly task?: string
@@ -1036,7 +1036,7 @@ function recordItems(record: SessionRecord, context: ItemContext = {}): Transcri
         ...(context.approved?.has(record.id) === true ? {} : { awaitingApproval: true }),
         ...(dto ? { captioned: true } : {}),
         ...(record.tool === AGENT_TOOL ? agentTask(record.input) : {}),
-        ...(record.tool === 'Bash' ? bashInput(record.input) : {}),
+        ...(record.tool === 'Bash' || record.tool === 'Monitor' ? bashInput(record.input) : {}),
         ...(record.tool === ASK_TOOL ? askedQuestions(record.input) : {}),
         ...(TASK_TOOLS.has(record.tool) ? { taskOps: [taskOp(record.tool, record.input)] } : {}),
       }

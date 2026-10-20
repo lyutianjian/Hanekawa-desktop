@@ -1,8 +1,8 @@
 import { grepTool } from './GrepTool/GrepTool.js'
 import { globTool } from './GlobTool/GlobTool.js'
 import { createBashTool } from './BashTool/BashTool.js'
-import { createBashOutputTool } from './BashOutputTool/BashOutputTool.js'
 import { createKillShellTool } from './KillShellTool/KillShellTool.js'
+import { createMonitorTool } from './MonitorTool/MonitorTool.js'
 import { readFileTool } from './FileReadTool/FileReadTool.js'
 import { writeFileTool } from './FileWriteTool/FileWriteTool.js'
 import { editFileTool } from './FileEditTool/FileEditTool.js'
@@ -27,7 +27,7 @@ import type { Tool } from '../harness/types.js'
 import type { BackgroundTaskRegistry } from '../services/backgroundTasks/registry.js'
 
 export function getBuiltinTools(backgroundTasks?: BackgroundTaskRegistry): Tool[] {
-  return [grepTool, globTool, createBashTool(backgroundTasks), createBashOutputTool(backgroundTasks), createKillShellTool(backgroundTasks), readFileTool, writeFileTool, editFileTool, multiEditTool, deleteFileTool, enterPlanModeTool, exitPlanModeTool, askUserQuestionTool, createSendMessageTool(backgroundTasks), taskCreateTool, taskListTool, taskGetTool, taskUpdateTool, webFetchTool, webSearchTool, configTool, notebookEditTool]
+  return [grepTool, globTool, createBashTool(backgroundTasks), createKillShellTool(backgroundTasks), createMonitorTool(backgroundTasks), readFileTool, writeFileTool, editFileTool, multiEditTool, deleteFileTool, enterPlanModeTool, exitPlanModeTool, askUserQuestionTool, createSendMessageTool(backgroundTasks), taskCreateTool, taskListTool, taskGetTool, taskUpdateTool, webFetchTool, webSearchTool, configTool, notebookEditTool]
 }
 
 export async function getAllTools(backgroundTasks?: BackgroundTaskRegistry): Promise<Tool[]> {

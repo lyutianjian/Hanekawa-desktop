@@ -28,13 +28,28 @@ export async function captureReadFileState(absolute: string, content: string, me
  * CRLF file, because the model emits `\n`.
  */
 export async function readFileAndRemember(absolute: string, context: ToolContext): Promise<string> {
-  const { content, encoding, lineEndings, fileStat } = await readTextFileWithStat(absolute)
-  const state = captureReadFileStateFromStat(content, fileStat, { encoding, lineEndings })
-  context.readFileState ??= new Map()
-  evictOldestReadFileStateIfNeeded(context, absolute)
-  context.readFiles.add(absolute)
-  context.readFileState.set(absolute, state)
-  return content
+  const file = await readTextFileWithStat(absolute)
+  storeReadFileState(absolute, captureReadFileStateFromStat(file.content, file.fileStat, file), context)
+  return file.content
+}
+
+/**
+ * Marks the files shown whole under a `Contents of <path> (...):` label as read,
+ * so editing an instruction file the conversation opened with costs no Read. A
+ * file counts only while its text is exactly what was shown: a truncated or
+ * since-changed one still has to be read.
+ */
+export async function rememberShownFiles(shown: string, context: ToolContext): Promise<void> {
+  for (const match of shown.matchAll(/^Contents of (.+?) \([^\n]*\):\n\n/gm)) {
+    const absolute = match[1]!
+    const start = match.index + match[0].length
+    const file = await readTextFileWithStat(absolute).catch(() => undefined)
+    const text = file?.content.trim()
+    if (!file || !text) continue
+    const end = start + text.length
+    if (shown.slice(start, end) !== text || (end < shown.length && !shown.startsWith('\n\n', end))) continue
+    storeReadFileState(absolute, { ...captureReadFileStateFromStat(file.content, file.fileStat, file), shownInContext: true }, context)
+  }
 }
 
 /** Single-handle read that also returns the stat, for atomic read+metadata capture. */
@@ -60,7 +75,10 @@ export async function readTextFileWithStat(absolute: string): Promise<{
  * instead when possible to avoid TOCTOU between read and stat.
  */
 export async function rememberReadFile(absolute: string, content: string, context: ToolContext, meta: TextFileMeta = {}): Promise<void> {
-  const state = await captureReadFileState(absolute, content, meta)
+  storeReadFileState(absolute, await captureReadFileState(absolute, content, meta), context)
+}
+
+function storeReadFileState(absolute: string, state: ReadFileState, context: ToolContext): void {
   context.readFileState ??= new Map()
   evictOldestReadFileStateIfNeeded(context, absolute)
   context.readFiles.add(absolute)
@@ -181,6 +199,13 @@ export async function requireFreshRead(absolute: string, filePath: string, conte
 
   const current = captureFileSignature(fileStat)
   if (signatureChanged(state, current)) {
+    // A metadata-only change (xattr, chmod, touch) moves ctime/mtime without
+    // touching the text; the remembered content is always the whole file.
+    const fresh = await readTextFileWithStat(absolute).catch(() => undefined)
+    if (fresh?.content === state.content) {
+      context.readFileState!.set(absolute, { ...state, ...captureReadFileStateFromStat(fresh.content, fresh.fileStat, fresh) })
+      return undefined
+    }
     return {
       ok: false,
       content: `Refusing to modify ${filePath}: file changed since it was last read. Read it again before retrying.`,

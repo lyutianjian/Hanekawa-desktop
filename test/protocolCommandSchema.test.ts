@@ -48,6 +48,7 @@ const SAMPLES = {
   'list-background-tasks': { type: 'list-background-tasks', id: '1' },
   'peek-task-output': { type: 'peek-task-output', id: '1', taskId: 't' },
   'kill-task': { type: 'kill-task', id: '1', taskId: 't' },
+  'background-tool-call': { type: 'background-tool-call', id: '1', toolUseId: 'call_1' },
   'open-pane': { type: 'open-pane', id: '1' },
   'close-pane': { type: 'close-pane', id: '1', paneId: 'p' },
   'list-panes': { type: 'list-panes', id: '1' },

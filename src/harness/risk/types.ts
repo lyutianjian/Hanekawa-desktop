@@ -26,6 +26,12 @@ export interface RiskAssessment {
   /** Paths the call reads or writes, absolute where they could be resolved. */
   readPaths: string[]
   writePaths: string[]
+  /**
+   * Shell tools: each command the shell would run, as its words — loop and
+   * `if` keywords, subshells, wrappers (`sudo`, `timeout`, `xargs`) peeled off,
+   * substitutions and `sh -c`/`eval` payloads included.
+   */
+  commands: string[]
 }
 
 export interface RiskContext {

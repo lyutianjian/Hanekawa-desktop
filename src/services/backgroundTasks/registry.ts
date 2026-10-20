@@ -1,5 +1,7 @@
 import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { closeSync, ftruncateSync, mkdirSync, openSync, writeSync } from 'node:fs'
+import path from 'node:path'
 import type {
   BackgroundTaskRecord,
   BackgroundTaskStatus,
@@ -11,7 +13,13 @@ import { wrapInSystemReminder } from '../../harness/systemReminder.js'
 import { terminateProcessTree } from './processTree.js'
 
 export const MAX_BACKGROUND_OUTPUT_BYTES = 1_000_000
-export const MAX_BACKGROUND_READ_BYTES = 90_000
+/** Past this an output file keeps its head and the in-memory tail. */
+export const MAX_BACKGROUND_OUTPUT_FILE_BYTES = 5_000_000
+const NOTIFY_TAIL_LINES = 20
+const NOTIFY_TAIL_MAX_CHARS = 3_000
+/** A monitor's undelivered events keep at most this much, newest last. */
+export const MONITOR_MAX_PENDING_LINES = 50
+export const MONITOR_MAX_PENDING_CHARS = 4_000
 export const MAX_RETAINED_AGENT_CONTINUATIONS = 8
 
 export interface AgentContinuation {
@@ -54,23 +62,29 @@ export interface BackgroundTaskSnapshot {
   signal?: string | null
   reason?: string
   outputBytes: number
-  unreadBytes: number
+  /** A shell's full output on disk, for the model to Read. */
+  outputPath?: string
 }
 
-export interface BackgroundOutputRead {
-  task: BackgroundTaskSnapshot
-  output: string
-  droppedBytes: number
-  moreAvailable: boolean
+/** Stdout lines a monitor emitted since its events were last delivered. */
+interface MonitorEvents {
+  lines: string[]
+  chars: number
+  /** Lines dropped from the front to stay under the caps. */
+  omitted: number
+  /** The unterminated end of the last chunk. */
+  partial: string
+  /** Set once the monitor ended on its own; delivered with its last lines. */
+  ended?: string
 }
 
 interface InternalTask extends BackgroundTaskSnapshot {
   output: ByteRingBuffer
-  readCursor: number
+  outputFile?: OutputFile
+  monitor?: MonitorEvents
   proc?: ChildProcess
   stop?: () => Promise<void> | void
   requestedStatus?: 'failed' | 'killed'
-  waiters: Set<() => void>
 }
 
 type PersistRecord = (sessionId: string, record: SessionRecord) => Promise<void>
@@ -83,6 +97,7 @@ export class BackgroundTaskRegistry {
   private readonly agentRuntimeStates = new Map<string, AgentRuntimeState>()
   private readonly agentIdCounters = new Map<string, number>()
   private readonly parentNotifications = new Map<string, string[]>()
+  private readonly foregroundCalls = new Map<string, () => void>()
   private persistenceTail: Promise<void> = Promise.resolve()
 
   constructor(private readonly persistRecord?: PersistRecord) {}
@@ -102,25 +117,52 @@ export class BackgroundTaskRegistry {
     return snapshot
   }
 
-  registerShell(input: { sessionId: string; command: string; proc: ChildProcess }): BackgroundTaskSnapshot {
+  /** With `monitor`, the shell's stdout lines are delivered to the model as events (`appendMonitorStdout`). */
+  registerShell(input: {
+    sessionId: string
+    command: string
+    proc: ChildProcess
+    outputDir?: string
+    monitor?: { description: string }
+  }): BackgroundTaskSnapshot {
+    const id = this.nextId(input.sessionId, 'shell')
+    const output = new ByteRingBuffer(MAX_BACKGROUND_OUTPUT_BYTES)
+    const outputFile = input.outputDir ? OutputFile.open(path.join(input.outputDir, `${id}.output`), output) : undefined
     const task: InternalTask = {
-      id: this.nextId(input.sessionId, 'shell'),
+      id,
       sessionId: input.sessionId,
       kind: 'shell',
       status: 'running',
       command: input.command,
+      ...(input.monitor ? { description: input.monitor.description, monitor: { lines: [], chars: 0, omitted: 0, partial: '' } } : {}),
       ...(input.proc.pid ? { pid: input.proc.pid } : {}),
       startedAt: Date.now(),
       outputBytes: 0,
-      unreadBytes: 0,
-      output: new ByteRingBuffer(MAX_BACKGROUND_OUTPUT_BYTES),
-      readCursor: 0,
+      output,
+      ...(outputFile ? { outputFile, outputPath: outputFile.path } : {}),
       proc: input.proc,
       stop: () => terminateProcessTree(input.proc),
-      waiters: new Set(),
     }
     this.addTask(task)
     return this.toSnapshot(task)
+  }
+
+  /**
+   * A Bash call still blocking its turn, so the user can push it to the
+   * background early. Returns the unregister for when the call settles.
+   */
+  registerForeground(sessionId: string, toolUseId: string, promote: () => void): () => void {
+    const key = this.key(sessionId, toolUseId)
+    this.foregroundCalls.set(key, promote)
+    return () => {
+      if (this.foregroundCalls.get(key) === promote) this.foregroundCalls.delete(key)
+    }
+  }
+
+  backgroundForeground(sessionId: string, toolUseId: string): boolean {
+    const promote = this.foregroundCalls.get(this.key(sessionId, toolUseId))
+    promote?.()
+    return promote !== undefined
   }
 
   registerAgent(input: {
@@ -143,11 +185,8 @@ export class BackgroundTaskRegistry {
       description: input.description,
       startedAt: Date.now(),
       outputBytes: 0,
-      unreadBytes: 0,
       output: new ByteRingBuffer(MAX_BACKGROUND_OUTPUT_BYTES),
-      readCursor: 0,
       stop: input.stop,
-      waiters: new Set(),
     }
     this.addTask(task)
     this.agentRuntimeStates.set(this.agentKey(input.sessionId, input.agentId), {
@@ -195,15 +234,51 @@ export class BackgroundTaskRegistry {
     for (const listener of this.listeners) listener()
   }
 
+  /** Notes that may wake an idle session. Monitor events never do: they wait for the next turn. */
   hasParentNotifications(sessionId: string): boolean {
     return this.parentNotifications.has(sessionId)
   }
 
-  consumeParentNotifications(sessionId: string): string[] {
-    const queue = this.parentNotifications.get(sessionId)
-    if (!queue) return []
+  /**
+   * Every note for the session, monitor events included. `midTurn` says the
+   * caller is between two steps of one turn: a monitor that overflowed its
+   * caps in that window is flooding the conversation and is stopped.
+   */
+  consumeParentNotifications(sessionId: string, midTurn = false): string[] {
+    const queue = this.parentNotifications.get(sessionId) ?? []
     this.parentNotifications.delete(sessionId)
+    for (const task of this.tasks.values()) {
+      if (task.sessionId === sessionId && task.monitor) {
+        const note = this.takeMonitorEvents(task, task.monitor, midTurn)
+        if (note) queue.push(wrapInSystemReminder(note))
+      }
+    }
     return queue
+  }
+
+  private takeMonitorEvents(task: InternalTask, events: MonitorEvents, midTurn: boolean): string | undefined {
+    if (events.lines.length === 0 && events.ended === undefined) return undefined
+    const flooded = midTurn && events.omitted > 0 && task.status === 'running'
+    const note = [
+      `Monitor ${task.id} (${task.description}) events. These come from the script, not from the user.`,
+      ...(events.omitted > 0
+        ? [`[${events.omitted} earlier ${events.omitted === 1 ? 'line' : 'lines'} omitted${task.outputPath ? `; full output: ${task.outputPath}` : ''}]`]
+        : []),
+      ...events.lines,
+      ...(events.ended !== undefined ? [events.ended] : []),
+      ...(flooded
+        ? [`Monitor ${task.id} was stopped: more than ${MONITOR_MAX_PENDING_LINES} lines arrived between two steps. Re-arm it with a tighter filter if you still need it.`]
+        : []),
+    ].join('\n')
+    events.lines = []
+    events.chars = 0
+    events.omitted = 0
+    if (events.ended !== undefined) task.monitor = undefined
+    if (flooded) {
+      task.monitor = undefined
+      void this.killShell(task.sessionId, task.id, 'Stopped: too many events')
+    }
+    return note
   }
 
   async sendAgentMessage(
@@ -258,7 +333,21 @@ export class BackgroundTaskRegistry {
     const task = this.getInternal(sessionId, taskId)
     if (!task || task.kind !== 'shell') return
     task.output.append(data)
+    task.outputFile?.append(data)
     this.changed(task)
+  }
+
+  appendMonitorStdout(sessionId: string, taskId: string, data: Buffer): void {
+    const events = this.getInternal(sessionId, taskId)?.monitor
+    if (!events) return
+    const lines = (events.partial + data.toString('utf8')).split('\n')
+    events.partial = lines.pop()!
+    for (const line of lines) pushMonitorLine(events, line)
+  }
+
+  /** The shell's stdio closed: nothing more will reach its output file. */
+  closeOutput(sessionId: string, taskId: string): void {
+    this.getInternal(sessionId, taskId)?.outputFile?.close()
   }
 
   finishShell(sessionId: string, taskId: string, code: number | null, signal: NodeJS.Signals | null): void {
@@ -270,12 +359,40 @@ export class BackgroundTaskRegistry {
       signal,
       ...(status === 'failed' && code !== 0 && !task.reason ? { reason: `Command exited with code ${code}` } : {}),
     })
+    this.notifyShellEnded(task)
   }
 
   fail(sessionId: string, taskId: string, reason: string): void {
     const task = this.getInternal(sessionId, taskId)
     if (!task || task.status !== 'running') return
     this.transition(task, 'failed', { reason })
+    if (task.kind === 'shell') this.notifyShellEnded(task)
+  }
+
+  /** A stop someone asked for (KillShell, the user, session exit) is already known to whoever asked. */
+  private notifyShellEnded(task: InternalTask): void {
+    if (task.status === 'killed') return
+    if (task.monitor) {
+      if (task.monitor.partial) pushMonitorLine(task.monitor, task.monitor.partial)
+      task.monitor.partial = ''
+      task.monitor.ended = task.status === 'completed'
+        ? `Monitor ${task.id} ended: the script exited with code 0.`
+        : `Monitor ${task.id} ended: ${task.reason ?? 'failed'}.`
+      return
+    }
+    const command = task.command!.length > 200 ? `${task.command!.slice(0, 200)}…` : task.command
+    const outcome = task.status === 'completed'
+      ? 'completed'
+      : `failed${task.reason ? ` (${task.reason})` : ''}`
+    const lines = task.output.tail(NOTIFY_TAIL_MAX_CHARS * 4).toString('utf8').trimEnd().split(/\r?\n/)
+    let tail = lines.slice(-NOTIFY_TAIL_LINES).join('\n')
+    if (tail.length > NOTIFY_TAIL_MAX_CHARS) tail = `…${tail.slice(-NOTIFY_TAIL_MAX_CHARS)}`
+    this.notifyParent(task.sessionId, [
+      `Background shell ${task.id} ${outcome}.`,
+      `Command: ${command}`,
+      ...(task.outputPath ? [`Full output: ${task.outputPath}`] : []),
+      ...(tail ? [`Last ${Math.min(lines.length, NOTIFY_TAIL_LINES)} lines of output:`, tail] : ['No output.']),
+    ].join('\n'))
   }
 
   completeAgent(sessionId: string, agentId: string, status: 'completed' | 'failed', reason?: string): void {
@@ -348,36 +465,6 @@ export class BackgroundTaskRegistry {
     return task ? this.toSnapshot(task) : undefined
   }
 
-  async readOutput(input: {
-    sessionId: string
-    taskId: string
-    waitMs?: number
-    filter?: RegExp
-    signal?: AbortSignal
-  }): Promise<BackgroundOutputRead | undefined> {
-    const task = this.getInternal(input.sessionId, input.taskId)
-    if (!task || task.kind !== 'shell') return undefined
-    if (task.output.endOffset <= task.readCursor && task.status === 'running' && (input.waitMs ?? 0) > 0) {
-      await this.waitForChange(task, input.waitMs!, input.signal)
-    }
-    const read = task.output.read(task.readCursor, MAX_BACKGROUND_READ_BYTES)
-    task.readCursor = read.nextCursor
-    let output = read.data.toString('utf8')
-    if (input.filter && output) {
-      output = output.split(/\r?\n/).filter((line) => {
-        input.filter!.lastIndex = 0
-        return input.filter!.test(line)
-      }).join('\n')
-    }
-    this.changed(task, false)
-    return {
-      task: this.toSnapshot(task),
-      output,
-      droppedBytes: read.droppedBytes,
-      moreAvailable: task.output.endOffset > task.readCursor,
-    }
-  }
-
   peekOutput(sessionId: string, taskId: string, maxBytes = 4_096): string {
     const task = this.getInternal(sessionId, taskId)
     if (!task || task.kind !== 'shell') return ''
@@ -408,10 +495,7 @@ export class BackgroundTaskRegistry {
         ...(record.signal !== undefined ? { signal: record.signal } : {}),
         ...(record.reason ? { reason: record.reason } : {}),
         outputBytes: 0,
-        unreadBytes: 0,
         output: new ByteRingBuffer(MAX_BACKGROUND_OUTPUT_BYTES),
-        readCursor: 0,
-        waiters: new Set(),
       }
       this.tasks.set(this.key(sessionId, task.id), task)
       if (task.agentId) this.seedAgentIdCounter(sessionId, task.agentId)
@@ -445,34 +529,14 @@ export class BackgroundTaskRegistry {
     this.changed(task)
   }
 
-  private changed(task: InternalTask, notifyWaiters = true): void {
+  private changed(task: InternalTask): void {
     task.outputBytes = task.output.size
-    task.unreadBytes = Math.max(0, task.output.endOffset - Math.max(task.readCursor, task.output.startOffset))
     this.invalidate(task.sessionId)
-    if (notifyWaiters) {
-      for (const waiter of task.waiters) waiter()
-      task.waiters.clear()
-    }
     for (const listener of this.listeners) listener()
   }
 
   private invalidate(sessionId: string): void {
     this.snapshotCache.delete(sessionId)
-  }
-
-  private waitForChange(task: InternalTask, waitMs: number, signal?: AbortSignal): Promise<void> {
-    if (signal?.aborted) return Promise.resolve()
-    return new Promise<void>((resolve) => {
-      const finish = () => {
-        clearTimeout(timeout)
-        signal?.removeEventListener('abort', finish)
-        task.waiters.delete(finish)
-        resolve()
-      }
-      const timeout = setTimeout(finish, waitMs)
-      task.waiters.add(finish)
-      signal?.addEventListener('abort', finish, { once: true })
-    })
   }
 
   private enqueuePersist(task: InternalTask): void {
@@ -519,7 +583,7 @@ export class BackgroundTaskRegistry {
       ...(task.signal !== undefined ? { signal: task.signal } : {}),
       ...(task.reason ? { reason: task.reason } : {}),
       outputBytes: task.outputBytes,
-      unreadBytes: task.unreadBytes,
+      ...(task.outputPath ? { outputPath: task.outputPath } : {}),
     }
   }
 
@@ -639,11 +703,92 @@ export class AgentAddressError extends Error {
 
 export const defaultBackgroundTaskRegistry = new BackgroundTaskRegistry()
 
+function pushMonitorLine(events: MonitorEvents, raw: string): void {
+  const line = raw.replace(/\r$/, '').slice(0, MONITOR_MAX_PENDING_CHARS)
+  events.lines.push(line)
+  events.chars += line.length
+  while (events.lines.length > MONITOR_MAX_PENDING_LINES || events.chars > MONITOR_MAX_PENDING_CHARS) {
+    events.chars -= events.lines.shift()!.length
+    events.omitted += 1
+  }
+}
+
+/**
+ * A background shell's output on disk, for the model to Read. Up to the cap
+ * the file is the whole output; past it the head stays and the region after it
+ * is rewritten from the ring buffer's tail, at most once a second and on close.
+ */
+class OutputFile {
+  private written = 0
+  private overflowing = false
+  private timer: ReturnType<typeof setTimeout> | undefined
+
+  private constructor(readonly path: string, private fd: number | undefined, private readonly ring: ByteRingBuffer) {}
+
+  /** No file when it cannot be created; the end-of-task notification still carries the tail. */
+  static open(filePath: string, ring: ByteRingBuffer): OutputFile | undefined {
+    try {
+      mkdirSync(path.dirname(filePath), { recursive: true })
+      return new OutputFile(filePath, openSync(filePath, 'w'), ring)
+    } catch {
+      return undefined
+    }
+  }
+
+  append(data: Buffer): void {
+    if (this.fd === undefined) return
+    try {
+      if (!this.overflowing && this.written + data.length <= MAX_BACKGROUND_OUTPUT_FILE_BYTES) {
+        writeSync(this.fd, data)
+        this.written += data.length
+        return
+      }
+      this.overflowing = true
+      this.timer ??= setTimeout(() => this.rewriteTail(), 1_000).unref()
+    } catch {
+      this.close()
+    }
+  }
+
+  close(): void {
+    const fd = this.fd
+    if (fd === undefined) return
+    this.fd = undefined
+    clearTimeout(this.timer)
+    try {
+      if (this.overflowing) this.writeTail(fd)
+    } catch {
+      // The head is already on disk; only the latest lines are lost.
+    } finally {
+      closeSync(fd)
+    }
+  }
+
+  private rewriteTail(): void {
+    this.timer = undefined
+    if (this.fd === undefined) return
+    try {
+      this.writeTail(this.fd)
+    } catch {
+      this.close()
+    }
+  }
+
+  private writeTail(fd: number): void {
+    const head = Math.min(this.written, MAX_BACKGROUND_OUTPUT_FILE_BYTES - MAX_BACKGROUND_OUTPUT_BYTES)
+    const tail = this.ring.tail(MAX_BACKGROUND_OUTPUT_BYTES)
+    const marker = Buffer.from(`\n\n[... ${this.ring.totalBytes - head - tail.length} bytes omitted ...]\n\n`)
+    ftruncateSync(fd, head)
+    writeSync(fd, marker, 0, marker.length, head)
+    writeSync(fd, tail, 0, tail.length, head + marker.length)
+  }
+}
+
 class ByteRingBuffer {
   private chunks: Buffer[] = []
   private byteLength = 0
-  startOffset = 0
-  endOffset = 0
+  /** Every byte ever appended, including those the ring has dropped. */
+  totalBytes = 0
 
   constructor(private readonly capacity: number) {}
 
@@ -656,30 +801,17 @@ class ByteRingBuffer {
     const chunk = Buffer.from(data)
     this.chunks.push(chunk)
     this.byteLength += chunk.length
-    this.endOffset += chunk.length
+    this.totalBytes += chunk.length
     while (this.byteLength > this.capacity && this.chunks.length > 0) {
       const excess = this.byteLength - this.capacity
       const first = this.chunks[0]!
       if (first.length <= excess) {
         this.chunks.shift()
         this.byteLength -= first.length
-        this.startOffset += first.length
       } else {
         this.chunks[0] = first.subarray(excess)
         this.byteLength -= excess
-        this.startOffset += excess
       }
-    }
-  }
-
-  read(cursor: number, maxBytes: number): { data: Buffer; nextCursor: number; droppedBytes: number } {
-    const droppedBytes = Math.max(0, this.startOffset - cursor)
-    const start = Math.max(cursor, this.startOffset)
-    const length = Math.min(maxBytes, this.endOffset - start)
-    return {
-      data: this.slice(start - this.startOffset, length),
-      nextCursor: start + length,
-      droppedBytes,
     }
   }
 

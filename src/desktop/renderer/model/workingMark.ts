@@ -132,6 +132,7 @@ const TOOL_BODIES: Readonly<Record<string, MarkBody>> = {
   ExitPlanMode: 'write',
   Bash: 'code',
   KillShell: 'code',
+  Monitor: 'code',
 }
 
 // Claude Desktop's lexicon for a call no table names: a Bash description's

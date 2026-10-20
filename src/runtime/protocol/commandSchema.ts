@@ -205,6 +205,9 @@ const COMMAND_SCHEMAS = {
       maxBytes: z.number().optional(),
     })
     .strict(),
+  'background-tool-call': z
+    .object({ type: z.literal('background-tool-call'), id: commandId, toolUseId: z.string() })
+    .strict(),
   'kill-task': z
     .object({
       type: z.literal('kill-task'),

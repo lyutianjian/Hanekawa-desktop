@@ -663,6 +663,8 @@ export interface ReadFileState {
   /** Original on-disk encoding and line endings, restored on write-back. */
   encoding?: BufferEncoding
   lineEndings?: 'CRLF' | 'LF'
+  /** Counted as read because the opening reminder shows it whole; compaction does not restore it. */
+  shownInContext?: true
 }
 
 export interface ToolResult {

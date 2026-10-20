@@ -10,6 +10,8 @@ export type { RiskAssessment, RiskContext, RiskReason, RiskTier } from './types.
 
 const READ_TOOLS = new Set(['Read', 'Grep', 'Glob', 'NotebookRead'])
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Delete'])
+/** Tools that run their `command` in the shell, graded and governed as Bash. */
+export const SHELL_TOOLS: ReadonlySet<string> = new Set(['Bash', 'Monitor'])
 
 type ClassifiableTool = Pick<Tool, 'name' | 'riskLevel' | 'isReadOnly' | 'isReadOnlyInput' | 'classifyRisk'>
 
@@ -20,10 +22,10 @@ type ClassifiableTool = Pick<Tool, 'name' | 'riskLevel' | 'isReadOnly' | 'isRead
 export function classifyToolCall(tool: ClassifiableTool, input: unknown, ctx: RiskContext): RiskAssessment {
   const fields = input && typeof input === 'object' ? input as Record<string, unknown> : {}
 
-  if (tool.name === 'Bash') {
+  if (SHELL_TOOLS.has(tool.name)) {
     const command = typeof fields.command === 'string' ? fields.command : ''
     const bash = classifyBash(command, ctx)
-    return assessment(bash.reasons, false, bash.readPaths, bash.writePaths)
+    return assessment(bash.reasons, false, bash.readPaths, bash.writePaths, bash.commands)
   }
 
   if (READ_TOOLS.has(tool.name) || WRITE_TOOLS.has(tool.name)) {
@@ -65,7 +67,7 @@ function filePathOf(fields: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-function assessment(reasons: RiskReason[], isFileWrite: boolean, readPaths: string[], writePaths: string[]): RiskAssessment {
+function assessment(reasons: RiskReason[], isFileWrite: boolean, readPaths: string[], writePaths: string[], commands: string[] = []): RiskAssessment {
   const seen = new Set<string>()
   const unique = reasons.filter((reason) => {
     const key = `${reason.code}\0${reason.message}`
@@ -75,5 +77,5 @@ function assessment(reasons: RiskReason[], isFileWrite: boolean, readPaths: stri
   })
   unique.sort((a, b) => tierRank(b.level) - tierRank(a.level))
   const level = unique.reduce<RiskTier>((highest, reason) => maxTier(highest, reason.level), 'readonly')
-  return { level, reasons: unique, isFileWrite, readPaths, writePaths }
+  return { level, reasons: unique, isFileWrite, readPaths, writePaths, commands }
 }

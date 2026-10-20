@@ -166,6 +166,8 @@ export interface TranscriptHandlers {
   onOpenProviderSettings?(): void
   /** A failed turn's 「重试」: run the turn again on its own message. Absent draws no button. */
   onRetryTurn?(failureId: string): void
+  /** A running `Bash` row's 转后台: stop blocking the turn on it. */
+  onBackgroundTool?(toolUseId: string): void
   /** An edited-files card's row or 查看全部: the turn's changes in the side panel, `path` scrolled to. Absent draws no card. */
   onViewEdits?(edits: TurnEdits, path: string | undefined): void
 }
@@ -861,6 +863,7 @@ function createPainter(
     onOpenThread: handlers.onOpenThread,
     onOpenProviderSettings: handlers.onOpenProviderSettings,
     onRetryTurn: handlers.onRetryTurn,
+    onBackgroundTool: handlers.onBackgroundTool,
     onViewEdits: handlers.onViewEdits,
     node(key, className, signature, fill, create) {
       filling.at(-1)?.push(key)
@@ -1380,7 +1383,11 @@ function toolRow(painter: Painter, step: ToolLike): HTMLElement {
       const content = body()
       return painter.node(bodyKey, 'step-body', [step.text, detail], () => [...content.childNodes])
     })
-    return [head, live === undefined ? undefined : liveLine(live), shown]
+    // A sibling of the head, which is itself a button.
+    const toBackground = step.kind === 'tool' && step.toolName === 'Bash' && status === 'running' && painter.onBackgroundTool !== undefined
+      ? button('step-background', '转后台', '不再等待这条命令，让它在后台继续运行', () => painter.onBackgroundTool!(step.id))
+      : undefined
+    return [head, toBackground, live === undefined ? undefined : liveLine(live), shown]
   })
 }
 
@@ -1501,7 +1508,7 @@ function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => 
   }
   if (family.found !== undefined) return () => el('div', 'step-body', searchBody(family.found!, painter))
   const terminal = shellOutput(step)
-  const command = step.toolName === 'Bash' ? step.tool.command : undefined
+  const command = step.toolName === 'Bash' || step.toolName === 'Monitor' ? step.tool.command : undefined
   if (terminal !== undefined || command !== undefined) {
     const { errorCode } = step.tool
     const error = errorCode === undefined ? undefined : TOOL_ERROR_LABELS[errorCode]

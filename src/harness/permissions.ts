@@ -3,7 +3,7 @@ import { lstatSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { matchBashRule, bashCommandSegments, parseShellRule, suggestBashPrefix } from './shellRuleMatching.js'
-import { classifyToolCall, createRiskContext, type RiskAssessment, type RiskContext, type RiskTier } from './risk/index.js'
+import { classifyToolCall, createRiskContext, SHELL_TOOLS, type RiskAssessment, type RiskContext, type RiskTier } from './risk/index.js'
 import { classifyBash } from './risk/bash.js'
 import { parseShell } from './risk/shellParse.js'
 import { classifyPath, expandHome, realPath, samePath } from './risk/paths.js'
@@ -90,9 +90,11 @@ const DOMAIN_RULE_PREFIX = 'domain:'
 /**
  * Rule tool names that stand for a whole family (Claude Code §4.4): an
  * `Edit(...)` rule governs every write tool and a `Read(...)` rule every read
- * tool. A rule naming one concrete tool still matches that tool alone.
+ * tool, and a `Bash(...)` rule every tool that runs a shell command. A rule
+ * naming one concrete tool still matches that tool alone.
  */
 const RULE_TOOL_ALIASES: Record<string, ReadonlySet<string>> = {
+  Bash: SHELL_TOOLS,
   Edit: WRITE_FAMILY,
   Read: READ_FAMILY,
 }
@@ -493,14 +495,15 @@ export class PermissionGate {
   private memoryRuleFor(tool: Tool, input: unknown, risk: RiskAssessment): PermissionRule | undefined {
     if (risk.level === 'critical') return undefined
     const rule = (contentPattern?: string): PermissionRule => ({
-      toolName: tool.name,
+      // A remembered command is a Bash rule, so it covers that command under every shell tool.
+      toolName: SHELL_TOOLS.has(tool.name) ? 'Bash' : tool.name,
       ...(contentPattern ? { contentPattern } : {}),
       behavior: 'allow',
       source: 'session',
     })
 
     if (risk.level === 'risky') {
-      if (tool.name === 'Bash') {
+      if (SHELL_TOOLS.has(tool.name)) {
         // A `*` would turn the exact command into a wildcard rule.
         const command = extractCommand(input).trim()
         return command && !command.includes('*') ? rule(command) : undefined
@@ -509,7 +512,7 @@ export class PermissionGate {
       return FILE_TOOLS.has(tool.name) && filePath ? rule(path.resolve(this.cwd, filePath)) : undefined
     }
 
-    if (tool.name === 'Bash') {
+    if (SHELL_TOOLS.has(tool.name)) {
       // Every segment must suggest the identical prefix, otherwise a compound
       // like `git commit && git push` would yield a rule that over-approves.
       let shared: string | undefined
@@ -666,7 +669,7 @@ export class PermissionGate {
   ): PermissionRule | undefined {
     return [...this.configRules, ...this.sessionRuleStore.rules].find((rule) => (
       rule.behavior === behavior
-      && (this.matchesRule(rule, toolName, input) || (behavior === 'deny' && this.matchesBashPaths(rule, toolName, risk)))
+      && (this.matchesRule(rule, toolName, input, risk) || (behavior === 'deny' && this.matchesBashPaths(rule, toolName, risk)))
     ))
   }
 
@@ -689,7 +692,7 @@ export class PermissionGate {
    * something else on its own, and then the whole command is judged as one.
    */
   private segmentsCovered(tool: Tool, input: unknown, risk: RiskAssessment, mode: PermissionMode, rules: PermissionRule[]): boolean {
-    if (tool.name !== 'Bash' || !rules.some((rule) => rule.behavior === 'allow')) return false
+    if (!SHELL_TOOLS.has(tool.name) || !rules.some((rule) => rule.behavior === 'allow')) return false
     const command = extractCommand(input)
     const segments = bashCommandSegments(command)
     if (segments.length < 2) return false
@@ -752,7 +755,7 @@ export class PermissionGate {
     return 'risky'
   }
 
-  private matchesRule(rule: PermissionRule, toolName: string, input: unknown): boolean {
+  private matchesRule(rule: PermissionRule, toolName: string, input: unknown, risk?: RiskAssessment): boolean {
     if (!ruleAppliesToTool(rule.toolName, toolName)) return false
     const pattern = rule.contentPattern
     if (!pattern) return true
@@ -764,14 +767,15 @@ export class PermissionGate {
       return matchesDomainRule(pattern.slice(DOMAIN_RULE_PREFIX.length), url)
     }
 
-    if (toolName === 'Bash') {
+    if (SHELL_TOOLS.has(toolName)) {
       const command = extractCommand(input)
       if (!command) return false
       // deny/ask rules strip ALL env var prefixes and match compound commands
-      // (whole + each segment) so a denied subcommand stays denied regardless
-      // of prefix wrapping. allow rules match the whole command only.
+      // (whole, each segment, and each command the classifier found inside
+      // loops, subshells, wrappers and substitutions) so a denied subcommand
+      // stays denied however it is wrapped. allow rules match the whole command only.
       const strict = rule.behavior === 'deny' || rule.behavior === 'ask'
-      const candidates = strict ? [command, ...bashCommandSegments(command)] : [command]
+      const candidates = strict ? [command, ...bashCommandSegments(command), ...(risk?.commands ?? [])] : [command]
       return matchBashRule(pattern, candidates, { stripAllEnvVars: strict, skipCompoundCheck: strict })
     }
 
@@ -786,7 +790,7 @@ export class PermissionGate {
 
   /** A `Read(...)`/`Edit(...)` deny rule also blocks the paths a shell command reads or writes. */
   private matchesBashPaths(rule: PermissionRule, toolName: string, risk: RiskAssessment): boolean {
-    if (toolName !== 'Bash' || !rule.contentPattern) return false
+    if (!SHELL_TOOLS.has(toolName) || !rule.contentPattern) return false
     const paths = rule.toolName === 'Read' ? risk.readPaths : rule.toolName === 'Edit' ? risk.writePaths : []
     return paths.some((abs) => this.pathMatches(rule.contentPattern!, abs))
   }

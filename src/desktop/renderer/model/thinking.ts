@@ -104,7 +104,7 @@ export interface RunSummary {
 type Category = 'cmd' | 'read' | 'edit' | 'search' | 'web' | 'agent' | 'todo' | 'plan' | 'other'
 
 const CATEGORY_OF: Readonly<Record<string, Category>> = {
-  Bash: 'cmd', BashOutput: 'cmd', KillShell: 'cmd',
+  Bash: 'cmd', BashOutput: 'cmd', KillShell: 'cmd', Monitor: 'cmd',
   Read: 'read',
   Edit: 'edit', MultiEdit: 'edit', Write: 'edit', NotebookEdit: 'edit', Delete: 'edit',
   Grep: 'search', Glob: 'search',

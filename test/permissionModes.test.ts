@@ -15,6 +15,7 @@ import {
 import { ToolRunner } from '../src/harness/toolRunner.js'
 import { bashTool } from '../src/tools/BashTool/BashTool.js'
 import { configTool } from '../src/tools/ConfigTool/ConfigTool.js'
+import { createMonitorTool } from '../src/tools/MonitorTool/MonitorTool.js'
 import { resolveSubagentPermissionMode } from '../src/tools/AgentTool/AgentTool.js'
 import type { Tool, ToolContext } from '../src/harness/types.js'
 import { getProjectMemoryDir, getProjectPlansDir, getUserInstructionsPath } from '../src/utils/paths.js'
@@ -279,6 +280,29 @@ test('P7: a deny rule stays a denial, however often the model retries', async (t
   assert.match((await h.gate.approveDetailed(bashTool, bash('curl x'))).denialReason ?? '', /Do not retry/)
 })
 
+test('P7: a deny or ask rule reaches commands nested in loops, groups, wrappers and substitutions', async (t) => {
+  const cwd = await scratch(t)
+  const h = harness(cwd, 'bypass', { deny: ['Bash(curl:*)'], ask: ['Bash(git push:*)'] })
+  for (const command of [
+    'while true; do curl -s x; sleep 30; done',
+    'if true; then curl x; fi',
+    '(cd sub && curl x)',
+    '{ curl x; }',
+    'echo $(curl x)',
+    'sudo curl x',
+    'timeout 5 curl x',
+    'bash -c "curl x"',
+    'ls | xargs curl',
+  ]) {
+    assert.equal(await h.outcome(bashTool, bash(command)), 'deny', command)
+  }
+  assert.equal(await h.outcome(bashTool, bash('echo curl')), 'allow')
+  assert.equal(await h.outcome(bashTool, bash('grep curl notes.txt')), 'allow')
+
+  const asking = harness(cwd, 'auto', { ask: ['Bash(git push:*)'] })
+  assert.equal(await asking.outcome(bashTool, bash('for b in a c; do git push origin $b; done')), 'ask')
+})
+
 test('P8: read-only mode honours deny rules', async (t) => {
   const cwd = await scratch(t)
   const h = harness(cwd, 'readonly', { deny: ['Read(secret.txt)'] })
@@ -363,6 +387,26 @@ test('allow rules cover normal, content rules cover what they name, nothing cove
   assert.equal(await named.outcome(editTool, { filePath: '/etc/hosts' }), 'allow')
   assert.equal(await named.outcome(bashTool, bash('rm -rf build')), 'allow')
   assert.equal(await named.outcome(bashTool, bash('rm -rf ~')), 'ask')
+})
+
+test('Monitor is governed by Bash rules, and always-allowing it remembers a Bash rule', async (t) => {
+  const cwd = await scratch(t)
+  const monitorTool = createMonitorTool()
+  const watch = (command: string) => ({ command, description: 'watch' })
+  const ruled = harness(cwd, 'default', { allow: ['Bash(npm test:*)'], deny: ['Bash(curl:*)'] })
+  assert.equal(await ruled.outcome(monitorTool, watch('npm test -- --watch')), 'allow')
+  assert.equal(await ruled.outcome(monitorTool, watch('curl -sN x | grep --line-buffered ok')), 'deny')
+  const readonly = harness(cwd, 'readonly')
+  assert.equal(await readonly.outcome(monitorTool, watch('tail -f app.log')), 'allow')
+  assert.equal(await readonly.outcome(monitorTool, watch('npm run dev')), 'deny')
+
+  const remembering = harness(cwd, 'default', [], (request) => {
+    request.onAlwaysAllow?.()
+    return true
+  })
+  assert.equal(await remembering.outcome(monitorTool, watch('npm run dev')), 'ask')
+  assert.deepEqual(remembering.persisted.map(permissionRuleToEntry), ['Bash(npm run:*)'])
+  assert.equal(await remembering.outcome(bashTool, bash('npm run dev')), 'allow')
 })
 
 test('always-allow memory is tiered: ordinary persists, risky is exact and session-only', async (t) => {

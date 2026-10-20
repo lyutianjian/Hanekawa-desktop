@@ -2724,6 +2724,25 @@ body.settings-open #browser-resizer { display: none; }
 }
 .step:not(.collapsed) > .step-head .icon { transform: rotate(90deg); }
 .step-right { flex: none; margin-left: auto; padding-left: var(--space-3); }
+/* A running command's 转后台, laid over the head's right end: the head is a
+   button, so the control cannot sit inside it. */
+.step:has(> .step-background) { position: relative; }
+.step:has(> .step-background) > .step-head { padding-right: 84px; }
+.step-background {
+  position: absolute;
+  top: 6px;
+  right: var(--space-3);
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: var(--surface-base);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-meta);
+  cursor: pointer;
+}
+.step-background:hover { color: var(--text-primary); background: var(--surface-hover); }
+.step-background:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* A sub-agent is a line of the transcript, outside any run card. Running, it is
    a bordered capsule; finished, a line of prose whose verb and model sit back
    and whose name carries it. */
@@ -4047,6 +4066,11 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 /* The question itself, and the only thing here at body size: everything above
    is a label and everything below is evidence. */
 .request-question { margin: var(--space-2) 0; color: var(--text-primary); }
+/* These quote absolute paths, which have no break opportunity of their own. */
+.request-question,
+.request-streak,
+.request-warning,
+.request-description { overflow-wrap: anywhere; }
 .request-streak { color: var(--text-warn); font-size: var(--type-meta); }
 .request-warning { color: var(--text-danger); font-size: var(--type-meta); }
 .request-waiting { color: var(--text-secondary); font-size: var(--type-meta); }

@@ -106,7 +106,6 @@ const DOING_TASKS_SECTION = `# Doing tasks
  - Write safe, secure code. Avoid OWASP top 10 vulnerabilities. If you write insecure code, fix it immediately.
  - For UI changes, test the feature before reporting completion. Type checking and tests verify code correctness, not feature correctness — if you can't test the UI, say so.
  - Find out rather than speculate: read the file, run the command, compute it in code. A quick tool call beats reasoning about what something probably is.
- - Plan only as far as the next step; tool results will shape the rest.
  - Write file content directly in the Write or Edit call — the tool input is the draft.`.trim()
 
 const ACTIONS_SECTION = `# Executing actions with care
@@ -116,7 +115,7 @@ Consider reversibility and blast radius. Local, reversible actions (editing file
 const USING_TOOLS_SECTION = `# Using your tools
  - Prefer dedicated tools over Bash when one fits (Read, Edit, Write, Glob, Grep).
  - Use TaskCreate, TaskList, TaskGet, and TaskUpdate to plan and track complex multi-step work.
- - Call independent tool calls in parallel. Call dependent tool calls sequentially.`.trim()
+ - You can call multiple tools in a single response. When calls don't depend on each other's results, make them all in that one response — read every file you need, run every search, check git status and diff together. Each extra response re-sends the whole conversation, so batching saves time and tokens. Only call sequentially when a later call needs an earlier call's result.`.trim()
 
 const TONE_AND_STYLE_SECTION = `# Tone and style
  - Only use emojis if the user explicitly requests it. Avoid using emojis in all communication unless asked.
@@ -625,7 +624,7 @@ interface RestoreLimits {
   totalBudget: number
 }
 
-function selectRestoreEntries<T extends { content: string; timestamp: number }>(
+function selectRestoreEntries<T extends { content: string; timestamp: number; shownInContext?: true }>(
   entries: Map<string, T> | undefined,
   limits: RestoreLimits,
 ): Array<{ name: string; content: string }> {
@@ -635,6 +634,7 @@ function selectRestoreEntries<T extends { content: string; timestamp: number }>(
 
   for (const [name, entry] of [...entries.entries()].sort((a, b) => b[1].timestamp - a[1].timestamp)) {
     if (selected.length >= limits.maxEntries) break
+    if (entry.shownInContext) continue
     const content = truncateToTokenBudget(entry.content, limits.maxTokensPerEntry)
     const tokens = countTextTokens(content)
     if (used + tokens > limits.totalBudget) continue

@@ -267,11 +267,14 @@ export function multipleMatchFailure(oldString: string, matches: StringMatchCont
 export function noMatchFailure(content: string, oldString: string, label = 'oldString'): ToolResult {
   const reason = diagnoseNearMiss(content, oldString)
   const actual = reason ? linesMatchingIgnoringIndent(content, oldString) : null
+  const closest = reason ? null : mostSimilarLines(content, oldString)
   const advice = actual
     ? `${reason} Lines ${actual.start}-${actual.end} as they appear in the file:\n${actual.text}`
     : reason
       ? `${reason} Re-read the file and copy the text exactly as it appears.`
-      : 'Read the file again and copy the exact text, including indentation. If the text appears more than once, include surrounding lines to make it unique.'
+      : closest
+        ? `The most similar text in the file is lines ${closest.start}-${closest.end}. If that is the target, copy it exactly from here:\n${closest.text}`
+        : 'Read the file again and copy the exact text, including indentation. If the text appears more than once, include surrounding lines to make it unique.'
   return {
     ok: false,
     content: `String to replace not found in file (${label}).\n${advice}\n\n${label}:\n${oldString}`,
@@ -311,6 +314,49 @@ function linesMatchingIgnoringIndent(content: string, oldString: string): { star
     }
   }
   return null
+}
+
+/**
+ * The run of file lines, as many as `oldString` has, that resembles it most
+ * (mean per-line bigram similarity), so a misremembered edit can be retried
+ * without another Read. Null below a similarity that would only mislead.
+ */
+function mostSimilarLines(content: string, oldString: string): { start: number; end: number; text: string } | null {
+  const wanted = oldString.replace(/\n+$/, '').split('\n').map((line) => bigrams(line.trim()))
+  const lines = content.split('\n')
+  if (wanted.length > lines.length) return null
+  const fileBigrams = lines.map((line) => bigrams(line.trim()))
+  let best = { score: 0, start: 0 }
+  for (let i = 0; i + wanted.length <= lines.length; i += 1) {
+    let score = 0
+    for (let k = 0; k < wanted.length; k += 1) score += dice(wanted[k]!, fileBigrams[i + k]!)
+    score /= wanted.length
+    if (score > best.score) best = { score, start: i }
+  }
+  if (best.score < 0.6) return null
+  const end = best.start + wanted.length
+  return { start: best.start + 1, end, text: lines.slice(best.start, end).join('\n') }
+}
+
+function bigrams(text: string): Map<string, number> {
+  const counts = new Map<string, number>()
+  for (let i = 0; i + 1 < text.length; i += 1) {
+    const pair = text.slice(i, i + 2)
+    counts.set(pair, (counts.get(pair) ?? 0) + 1)
+  }
+  return counts
+}
+
+function dice(a: Map<string, number>, b: Map<string, number>): number {
+  if (a.size === 0 && b.size === 0) return 1
+  let shared = 0
+  let total = 0
+  for (const [pair, count] of a) {
+    shared += Math.min(count, b.get(pair) ?? 0)
+    total += count
+  }
+  for (const count of b.values()) total += count
+  return total === 0 ? 0 : (2 * shared) / total
 }
 
 function matchContext(content: string, index: number): StringMatchContext {

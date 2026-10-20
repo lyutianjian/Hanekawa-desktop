@@ -116,6 +116,7 @@ export const notebookEditTool: Tool = {
   name: 'NotebookEdit',
   description: DESCRIPTION,
   searchHint: 'edit jupyter notebook ipynb cells',
+  shouldDefer: true,
   inputSchema: z.object({
     notebook_path: z.string().min(1).describe('Path to the .ipynb file. Relative paths resolve against the working directory.'),
     cell_id: z.string().optional().describe('Target cell, either its real id or a 0-based "cell-N". Required for replace and delete; for insert it names the cell to insert after.'),

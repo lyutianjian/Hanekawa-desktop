@@ -20,6 +20,7 @@ const PHRASES: Record<string, { readonly verb: string; readonly target?: 'file' 
   Bash: { verb: '运行', target: 'text' },
   BashOutput: { verb: '读取输出' },
   KillShell: { verb: '结束进程' },
+  Monitor: { verb: '监控', target: 'text' },
   WebFetch: { verb: '抓取', target: 'text' },
   WebSearch: { verb: '联网搜索', target: 'text' },
   Browser: { verb: '浏览器', target: 'text' },

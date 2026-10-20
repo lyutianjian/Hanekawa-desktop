@@ -230,7 +230,7 @@ test('an unchanged background task list keeps its identity', async () => {
   const harness = createHarness()
   const post = (outputBytes: number) => harness.post({
     type: 'background-tasks',
-    tasks: [{ id: 't1', status: 'running', outputBytes, unreadBytes: 4 }],
+    tasks: [{ id: 't1', status: 'running', outputBytes }],
   } as unknown as HostEvent)
 
   let notifications = 0

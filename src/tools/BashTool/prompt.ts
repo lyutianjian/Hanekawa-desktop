@@ -1,5 +1,4 @@
 import {
-  MAX_BASH_TIMEOUT_MS,
   SLEEP_BLOCK_THRESHOLD_SECONDS,
   resolveBashTimeoutMs,
 } from './constants.js'
@@ -27,8 +26,7 @@ export function buildBashDescription(): string {
 
 - Parameters are \`command\` (required), \`description\`, \`timeout\`, \`run_in_background\`, and optional \`env\` (key-value object). Any other key is rejected.
 - Always pass \`description\`: what the command does, in active voice, shown to the user when they approve it. Do not echo the command, its flags or paths. Keep simple commands to 5-10 words ("List files in current directory", "Install package dependencies"); for piped or obscure commands, add enough context to say what they achieve ("Find and delete all .tmp files recursively").
-- Each call starts in the session working directory. \`cd\` affects only that one command and does NOT carry over to the next Bash call. Use absolute paths, or chain with \`&&\` inside a single call.
-- Shell state (environment variables, functions, aliases) does not persist between calls either.
+- Each call starts in the session working directory. \`cd\`, environment variables, functions and aliases do NOT carry over to the next Bash call. Prefer absolute paths, or chain with \`&&\` inside a single call. Quote paths containing spaces: \`cd "path with spaces/file.txt"\`.
 - stdin is closed. Interactive commands (password prompts, pagers, editors, \`-i\` flags) will hang or fail. Pass flags that avoid interaction, such as \`--no-pager\`.
 - Large output is truncated.
 
@@ -47,27 +45,25 @@ Avoid running \`find\`, \`grep\`, \`cat\`, \`head\`, \`tail\`, \`sed\`, \`awk\`,
  - Use \`;\` only when you need them sequential but do not care whether earlier commands fail.
  - Do NOT use newlines to separate commands. Newlines inside quoted strings are fine.
 
-# Paths and the working directory
- - Quote paths containing spaces: \`cd "path with spaces/file.txt"\`.
- - Prefer absolute paths over \`cd\`, which does not survive the call.
-
 # Timeouts and background work
- - \`timeout\` is in milliseconds: default ${defaultTimeout}, max ${MAX_BASH_TIMEOUT_MS}.
- - On timeout the command is moved to the background (except \`sleep\`); read it with BashOutput and stop it with KillShell.
- - Set \`run_in_background: true\` for servers and long jobs. No trailing \`&\` is needed, and you are notified when the task finishes.
+ - \`timeout\` is in milliseconds: default ${defaultTimeout}, no maximum.
+${process.platform === 'darwin' ? ' - macOS has no `timeout` command; set the `timeout` parameter instead.\n' : ''} - A command still running after \`timeout\` is moved to the background (except \`sleep\`); you are notified when it finishes, so continue with other work.
+ - Set \`run_in_background: true\` for servers and long jobs; no trailing \`&\` is needed.
+ - A background command's output goes to a file named in the result; Read it to check progress. The finish notification includes the last lines. Stop a task with KillShell.
+ - To be told about each line a long-running process prints (errors in a log, each CI step), use Monitor instead.
 
 # Avoid sleeping
  - \`sleep N\` with N >= ${SLEEP_BLOCK_THRESHOLD_SECONDS} as the first command is rejected. Use \`run_in_background\` instead.
  - Do not sleep between commands that can run immediately.
  - Do not poll a background task you started; you will be notified when it completes.
+ - To wait for a condition, such as a server coming up, make one call that loops until it holds and set \`timeout\`: \`until curl -sf localhost:3000 >/dev/null; do sleep 1; done\`.
  - Do not retry a failing command in a sleep loop. Diagnose the root cause.
 
 # Git
  - NEVER update the git config.
  - NEVER run destructive git commands (\`push --force\`, \`reset --hard\`, \`checkout .\`, \`restore .\`, \`clean -f\`, \`branch -D\`) unless the user explicitly requests them.
  - NEVER skip hooks (\`--no-verify\`) or bypass signing (\`--no-gpg-sign\`, \`-c commit.gpgsign=false\`) unless the user explicitly asks. If a hook fails, fix the underlying issue.
- - A failed pre-commit hook means the commit did NOT happen. Fix the issue, re-stage, and create a NEW commit. Never use \`--amend\` to recover: it would rewrite the previous commit and can destroy work.
- - Prefer creating a new commit over amending an existing one.
+ - Prefer a new commit over amending. A failed pre-commit hook means the commit did NOT happen: fix the issue, re-stage, and create a NEW commit. Never \`--amend\` to recover; it would rewrite the previous commit and can destroy work.
  - When staging, name files explicitly rather than \`git add -A\` or \`git add .\`, which can pull in secrets (.env, credentials) or large binaries.
  - Interactive flags are not supported in this environment (\`git rebase -i\`, \`git add -i\`).
  - Only commit when the user asks, and only push when the user asks.

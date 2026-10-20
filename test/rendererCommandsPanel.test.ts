@@ -4,7 +4,7 @@ import { commandRows, formatElapsed } from '../src/desktop/renderer/model/comman
 import type { BackgroundTaskSnapshot } from '../src/services/backgroundTasks/registry.js'
 
 function task(overrides: Partial<BackgroundTaskSnapshot> & Pick<BackgroundTaskSnapshot, 'id' | 'status' | 'startedAt'>): BackgroundTaskSnapshot {
-  return { sessionId: 's', kind: 'shell', outputBytes: 0, unreadBytes: 0, ...overrides }
+  return { sessionId: 's', kind: 'shell', outputBytes: 0, ...overrides }
 }
 
 test('commands list running processes first, then the finished ones newest first, without agents', () => {

@@ -34,7 +34,8 @@ export function commandRows(tasks: readonly BackgroundTaskSnapshot[]): CommandRo
       const exit = task.exitCode !== undefined && task.exitCode !== null ? `exit ${task.exitCode}` : undefined
       return {
         id: task.id,
-        command: task.command ?? task.description ?? task.id,
+        // Of shell tasks only a monitor carries a description.
+        command: task.description !== undefined ? `监控 · ${task.description}` : task.command ?? task.id,
         tone: task.status === 'running' ? 'running' : task.status === 'completed' ? 'done' : 'failed',
         running: task.status === 'running',
         status: [STATUS_LABELS[task.status], exit].filter((part) => part !== undefined).join(' · '),

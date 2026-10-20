@@ -1,21 +1,27 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import os from 'node:os'
+import path from 'node:path'
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { BackgroundTaskRegistry, MAX_BACKGROUND_OUTPUT_BYTES } from '../src/services/backgroundTasks/registry.js'
+import {
+  BackgroundTaskRegistry,
+  MAX_BACKGROUND_OUTPUT_BYTES,
+  MAX_BACKGROUND_OUTPUT_FILE_BYTES,
+} from '../src/services/backgroundTasks/registry.js'
 import { createBashTool, isDevServerCommand } from '../src/tools/BashTool/BashTool.js'
-import { createBashOutputTool } from '../src/tools/BashOutputTool/BashOutputTool.js'
 import { createKillShellTool } from '../src/tools/KillShellTool/KillShellTool.js'
+import { readFileTool } from '../src/tools/FileReadTool/FileReadTool.js'
 import type { SessionRecord } from '../src/harness/types.js'
 
 function context() {
   return { cwd: process.cwd(), sessionId: 'session-1', readFiles: new Set<string>() }
 }
 
-test('background Bash returns immediately and BashOutput consumes incremental output', async () => {
+test('background Bash writes its output to a file and notifies with the last lines', async () => {
   const registry = new BackgroundTaskRegistry()
   const bash = createBashTool(registry)
-  const output = createBashOutputTool(registry)
   try {
     await bash.execute({ command: 'echo warmup' }, context())
     const startedAt = Date.now()
@@ -31,19 +37,19 @@ test('background Bash returns immediately and BashOutput consumes incremental ou
     assert.ok(Date.now() - startedAt < 350)
     const taskId = result.content.match(/Task ID: (bash_\d+)/)?.[1]
     assert.ok(taskId)
+    const outputPath = registry.getTask('session-1', taskId)?.outputPath
+    assert.ok(outputPath)
+    assert.ok(result.content.includes(`Output is being written to ${outputPath}`))
 
-    const first = await output.execute({ task_id: taskId, wait_ms: 3_000 }, context())
-    assert.equal(first.ok, true)
-    assert.match(first.content, /first/)
-
-    // Output can arrive before the shell's exit event, especially under the
-    // full suite's process load on Windows. Wait for the state being asserted.
-    await waitFor(() => registry.getTask('session-1', taskId)?.status === 'completed')
-    const second = await output.execute({ task_id: taskId, wait_ms: 1_000 }, context())
-    assert.equal(second.ok, true)
-    assert.match(second.content, /second/)
-    assert.doesNotMatch(second.content, /first/)
-    assert.equal(registry.getTask('session-1', taskId)?.status, 'completed')
+    await waitFor(() => registry.hasParentNotifications('session-1'))
+    const [note] = registry.consumeParentNotifications('session-1')
+    assert.match(note ?? '', new RegExp(`Background shell ${taskId} completed`))
+    assert.ok(note?.includes(`Full output: ${outputPath}`))
+    assert.match(note ?? '', /first\r?\nsecond/)
+    assert.match(await readFile(outputPath, 'utf8'), /^first\r?\nsecond/)
+    const read = await readFileTool.execute({ filePath: outputPath }, context())
+    assert.equal(read.ok, true)
+    assert.match(read.content, /second/)
   } finally {
     await registry.stopAll()
   }
@@ -85,7 +91,8 @@ test('an explicit background timeout terminates the task as failed', async () =>
   }
 })
 
-test('ring buffer reports overwritten bytes and retains only the newest 1MB', async () => {
+test('an output file past its cap keeps the head and the newest tail', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-bg-output-'))
   const registry = new BackgroundTaskRegistry()
   const proc = Object.assign(new EventEmitter(), {
     pid: undefined,
@@ -93,13 +100,23 @@ test('ring buffer reports overwritten bytes and retains only the newest 1MB', as
     signalCode: null,
     kill: () => true,
   }) as unknown as ChildProcess
-  const task = registry.registerShell({ sessionId: 'session-1', command: 'fake', proc })
-  registry.appendOutput('session-1', task.id, Buffer.alloc(MAX_BACKGROUND_OUTPUT_BYTES + 128, 97))
-  const read = await registry.readOutput({ sessionId: 'session-1', taskId: task.id })
-  assert.ok(read)
-  assert.equal(read.droppedBytes, 128)
-  assert.equal(read.output.length, 90_000)
-  assert.equal(read.moreAvailable, true)
+  try {
+    const task = registry.registerShell({ sessionId: 'session-1', command: 'fake', proc, outputDir: dir })
+    const chunk = 64 * 1024
+    const total = MAX_BACKGROUND_OUTPUT_FILE_BYTES + 2 * MAX_BACKGROUND_OUTPUT_BYTES
+    for (let written = 0; written < total; written += chunk) {
+      registry.appendOutput('session-1', task.id, Buffer.alloc(chunk, written < total - chunk ? 97 : 98))
+    }
+    registry.closeOutput('session-1', task.id)
+    const content = await readFile(task.outputPath!, 'utf8')
+    const head = MAX_BACKGROUND_OUTPUT_FILE_BYTES - MAX_BACKGROUND_OUTPUT_BYTES
+    assert.equal(content.slice(0, head), 'a'.repeat(head))
+    assert.match(content.slice(head), /^\n\n\[\.\.\. \d+ bytes omitted \.\.\.\]\n\n/)
+    assert.ok(content.endsWith('b'.repeat(chunk)))
+    assert.ok(content.length < MAX_BACKGROUND_OUTPUT_FILE_BYTES + 100)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })
 
 test('restore marks running persisted tasks orphaned and preserves terminal tasks', async () => {
@@ -113,23 +130,6 @@ test('restore marks running persisted tasks orphaned and preserves terminal task
   assert.equal(registry.getTask('session-1', 'bash_3')?.status, 'orphaned')
   assert.equal(registry.getTask('session-1', 'agent_2')?.status, 'completed')
   assert.ok(persisted.some((record) => record.type === 'background_task' && record.taskId === 'bash_3' && record.status === 'orphaned'))
-})
-
-test('BashOutput validates filters and rejects agent task ids', async () => {
-  const registry = new BackgroundTaskRegistry()
-  const output = createBashOutputTool(registry)
-  const proc = Object.assign(new EventEmitter(), {
-    pid: undefined,
-    exitCode: null,
-    signalCode: null,
-    kill: () => true,
-  }) as unknown as ChildProcess
-  registry.registerShell({ sessionId: 'session-1', command: 'fake', proc })
-  registry.registerAgent({ sessionId: 'session-1', agentId: 'uuid', agentType: 'general', description: 'agent' })
-  const invalid = await output.execute({ task_id: 'bash_1', filter: '[' }, context())
-  assert.equal(invalid.errorCode, 'invalid_input')
-  const agent = await output.execute({ task_id: 'agent_1' }, context())
-  assert.equal(agent.errorCode, 'precondition_failed')
 })
 
 test('agent tasks share registry status and subscriptions with shell tasks', () => {
@@ -214,4 +214,41 @@ test('isDevServerCommand matches the usual dev servers and leaves other commands
   for (const command of ['npm run build', 'npm test', 'git log --oneline', 'node scripts/devtool.js']) {
     assert.equal(isDevServerCommand(command), false, command)
   }
+})
+
+test('a running Bash call moved to the background by the user notifies the parent when it exits', async () => {
+  const registry = new BackgroundTaskRegistry()
+  const bash = createBashTool(registry)
+  const ctx = { ...context(), sessionId: 'manual-bg', currentToolUseId: 'call-1' }
+  try {
+    const executable = process.platform === 'win32' ? 'node' : JSON.stringify(process.execPath)
+    const running = bash.execute({ command: `${executable} -e "setTimeout(() => {}, 300)"` }, ctx)
+    await new Promise((resolve) => setTimeout(resolve, 50))
+    assert.equal(registry.backgroundForeground('manual-bg', 'call-1'), true)
+    const result = await running
+    assert.equal(result.ok, true)
+    assert.match(result.content, /The user moved this command to the background/)
+    assert.equal(registry.backgroundForeground('manual-bg', 'call-1'), false)
+
+    const taskId = result.content.match(/Task ID: (bash_\d+)/)?.[1]
+    for (let i = 0; i < 100 && !registry.hasParentNotifications('manual-bg'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    }
+    const [note] = registry.consumeParentNotifications('manual-bg')
+    assert.match(note ?? '', new RegExp(`Background shell ${taskId} completed`))
+  } finally {
+    await registry.stopAll('manual-bg', 'test cleanup')
+  }
+})
+
+test('a background shell stopped on request does not notify the parent', async () => {
+  const registry = new BackgroundTaskRegistry()
+  const bash = createBashTool(registry)
+  const ctx = { ...context(), sessionId: 'killed-bg' }
+  const executable = process.platform === 'win32' ? 'node' : JSON.stringify(process.execPath)
+  const result = await bash.execute({ command: `${executable} -e "setTimeout(() => {}, 5000)"`, run_in_background: true }, ctx)
+  const taskId = result.content.match(/Task ID: (bash_\d+)/)?.[1]
+  await registry.killShell('killed-bg', taskId!)
+  await new Promise((resolve) => setTimeout(resolve, 100))
+  assert.equal(registry.hasParentNotifications('killed-bg'), false)
 })

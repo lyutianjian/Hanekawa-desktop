@@ -207,6 +207,7 @@ export type HostCommand =
   | { type: 'list-background-tasks'; id: string }
   | { type: 'peek-task-output'; id: string; taskId: string; maxBytes?: number }
   | { type: 'kill-task'; id: string; taskId: string; reason?: string }
+  | { type: 'background-tool-call'; id: string; toolUseId: string }
   // --- lifecycle ------------------------------------------------------------
   // --- panes (multi-tab) ---------------------------------------------------
   /**

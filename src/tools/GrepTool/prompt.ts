@@ -18,10 +18,7 @@ Usage:
 - Search with this tool rather than running \`grep\` or \`rg\` through Bash.
 - \`pattern\` is ripgrep regex syntax, not grep: literal braces need escaping, so \`interface\\{\\}\` is how you find \`interface{}\`.
 - A pattern that spans lines needs \`multiline: true\`. Without it ripgrep refuses a literal \`\\n\`.
-- \`outputMode\` picks the shape of the result and defaults to \`"content"\` (Claude Code defaults to files_with_matches; this tool does not):
-  - \`"content"\` returns \`path:line:text\` rows.
-  - \`"files_with_matches"\` returns matching file paths only.
-  - \`"count"\` returns \`path:count\` rows.
+- \`outputMode\`: \`"content"\` (default, unlike Claude Code's files_with_matches) returns \`path:line:text\` rows, \`"files_with_matches"\` returns file paths only, \`"count"\` returns \`path:count\` rows.
 - \`contextLines\` (both sides), \`contextBefore\` and \`contextAfter\` add surrounding lines. They are valid only with \`outputMode: "content"\`.
 - Narrow the search with \`glob\` (\`"*.ts"\`, \`"**/*.{ts,tsx}"\`) or \`type\` (\`"js"\`, \`"py"\`, \`"rust"\`). \`path\` may be a directory or a single file; when it names a file, \`glob\` and \`type\` are ignored.
 - \`headLimit\` caps the rows returned (default ${DEFAULT_HEAD_LIMIT}, \`0\` means unlimited) and \`offset\` skips rows before that cap.
