@@ -399,7 +399,8 @@ export interface PaneSession {
   queueMessage(): Promise<void>
   /** The form/button path: the same send-or-queue verdict as the keymap. */
   submitFromForm(): Promise<void>
-  onComposerInput(): void
+  /** `composing` while an IME composition is open: resize, but look nothing up. */
+  onComposerInput(composing?: boolean): void
   // --- image attachments (S11) ---
   /** 「选择图片」: the OS picker, then one import per chosen path. */
   pickImages(): Promise<void>
@@ -2350,9 +2351,12 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     send,
     queueMessage,
     submitFromForm,
-    onComposerInput: () => {
+    onComposerInput: (composing = false) => {
       deps.composer.autosize()
-      refreshCompletions()
+      // Mid-IME the text holds the romanisation, not what will be committed:
+      // `@zhong` would be looked up on the way to `@中`. The commit's own
+      // `compositionend` calls back in with the settled text.
+      if (!composing) refreshCompletions()
     },
     pickImages,
     importImagesFromFiles,

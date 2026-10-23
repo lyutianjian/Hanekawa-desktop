@@ -147,3 +147,17 @@ test('the transcript is a log that holds its announcement while a turn streams',
   assert.match(source, /transcriptEl\.setAttribute\('role', 'log'\)/)
   assert.match(source, /if \(isStreaming\) transcriptEl\.setAttribute\('aria-busy', 'true'\)\n\s*else transcriptEl\.removeAttribute\('aria-busy'\)/)
 })
+
+/**
+ * A source check because the IME's event order only exists in a real Chromium:
+ * mid-composition the composer holds romanisation, so `@zhong` must not be sent
+ * as a file query on the way to `@中`, and the settled text is looked up on
+ * `compositionend`, which Chromium fires after the composition's last `input`.
+ */
+test('the composer looks nothing up while an IME composition is open', () => {
+  const app = readFileSync(new URL('../src/desktop/renderer/app.ts', import.meta.url), 'utf8')
+  assert.match(app, /addEventListener\('input', \(event\) => \{\n\s+activePane\(\)\?\.onComposerInput\(\(event as InputEvent\)\.isComposing\)/)
+  assert.match(app, /addEventListener\('compositionend', \(\) => \{\n\s+activePane\(\)\?\.onComposerInput\(\)/)
+  const pane = readFileSync(new URL('../src/desktop/renderer/paneSession.ts', import.meta.url), 'utf8')
+  assert.match(pane, /if \(!composing\) refreshCompletions\(\)/)
+})

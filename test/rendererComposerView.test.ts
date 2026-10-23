@@ -1040,6 +1040,11 @@ test('the + menu offers both entrances and keeps the @ path intact', (t) => {
   const r = render(t)
   r.stub.click(r.els.attach)
   assert.deepEqual(r.attachMenuItems().map((item) => item.text), ['选择图片', '引用项目文件（@）'])
+  // Two commands, so a menu: a listbox made each read as an unselected option.
+  assert.equal(r.view('attach').attributes.get('aria-haspopup'), 'menu')
+  assert.equal(r.view('attach').attributes.get('aria-expanded'), 'true')
+  assert.deepEqual(r.attachMenuItems().map((item) => item.attributes.get('role')), ['menuitem', 'menuitem'])
+  assert.ok(r.attachMenuItems().every((item) => !item.attributes.has('aria-selected')))
 
   r.stub.click(r.attachMenuItems()[1]!.node)
   assert.deepEqual(r.attaches, [1], 'the mention path still asks the pane to recompute completions')

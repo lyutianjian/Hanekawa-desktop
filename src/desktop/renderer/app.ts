@@ -2477,7 +2477,12 @@ document.addEventListener('keydown', (event) => {
   }
 })
 
-composerInput.addEventListener('input', () => {
+composerInput.addEventListener('input', (event) => {
+  activePane()?.onComposerInput((event as InputEvent).isComposing)
+})
+// Chromium fires the composition's last `input` before `compositionend`, still
+// flagged as composing, so the settled text is looked up from here.
+composerInput.addEventListener('compositionend', () => {
   activePane()?.onComposerInput()
 })
 

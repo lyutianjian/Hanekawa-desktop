@@ -223,6 +223,8 @@ export function createComposerView(els: {
   els.stop.title = '停止（Esc）'
   replace(els.attach, icon('plus'))
   els.attach.setAttribute('aria-label', '附件')
+  els.attach.setAttribute('aria-haspopup', 'menu')
+  els.attach.setAttribute('aria-expanded', 'false')
   els.attach.title = '添加附件（图片 / @ 引用项目文件）'
 
   // --- the attachment control (S11) ------------------------------------------------
@@ -263,14 +265,15 @@ export function createComposerView(els: {
     }
 
     const menu = el('div', 'composer-menu attachment-menu')
-    menu.setAttribute('role', 'listbox')
+    // Commands, not a choice among values: `menu`/`menuitem`, which also keeps
+    // a screen reader from announcing 「未选中」 on each of them.
+    menu.setAttribute('role', 'menu')
     menu.setAttribute('aria-label', '附件')
     const pickItem = button('composer-menu-item', '选择图片', '选择图片', () => {
       closeAttachMenu()
       actions.onPickImages()
     })
-    pickItem.setAttribute('role', 'option')
-    pickItem.setAttribute('aria-selected', 'false')
+    pickItem.setAttribute('role', 'menuitem')
     const mentionItem = button('composer-menu-item', '引用项目文件（@）', '在光标处插入 @，引用项目文件', () => {
       closeAttachMenu()
       const next = insertMentionToken(els.input.value, els.input.selectionStart ?? els.input.value.length)
@@ -280,8 +283,7 @@ export function createComposerView(els: {
       els.input.focus()
       actions.onAttach()
     })
-    mentionItem.setAttribute('role', 'option')
-    mentionItem.setAttribute('aria-selected', 'false')
+    mentionItem.setAttribute('role', 'menuitem')
     attachItems.push(pickItem, mentionItem)
     menu.appendChild(pickItem)
     menu.appendChild(mentionItem)
