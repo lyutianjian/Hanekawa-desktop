@@ -148,16 +148,28 @@ function fakeHost(platform: DesktopPlatform = 'win32'): FakeHost {
   }
 
   const storage = { getItem: () => null, setItem() {} }
+  // The page runs a minute ticker for its relative times, stopped only by
+  // `pagehide`. Clear whatever interval the bundle started instead of firing
+  // that: a live interval keeps the test process running forever.
+  const realSetInterval = globalThis.setInterval
+  const intervals: Array<ReturnType<typeof setInterval>> = []
 
   return {
     shellCommands,
     install(): void {
       Reflect.set(globalThis, 'window', fakeWindow)
       Reflect.set(globalThis, 'localStorage', storage)
+      Reflect.set(globalThis, 'setInterval', (...args: Parameters<typeof setInterval>) => {
+        const handle = realSetInterval(...args)
+        intervals.push(handle)
+        return handle
+      })
     },
     uninstall(): void {
       Reflect.deleteProperty(globalThis, 'window')
       Reflect.deleteProperty(globalThis, 'localStorage')
+      Reflect.set(globalThis, 'setInterval', realSetInterval)
+      for (const handle of intervals.splice(0)) clearInterval(handle)
     },
   }
 }

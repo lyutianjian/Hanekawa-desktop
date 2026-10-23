@@ -1754,8 +1754,9 @@ test('a message carries a meta row: 复制, its model, its time — and a draft 
   const { render, items, copied, rewound, stub } = mount(t)
   const meta = (item: StubView): StubView | undefined =>
     item.children.find((child) => child.classes.includes('item-meta'))
-  // Local time, so the expectation is derived the same way the view derives it.
-  const at = new Date(2026, 4, 7, 14, 32).toISOString()
+  // Five minutes ago: the stamp reads the window's one time label, which counts
+  // up for the first hour.
+  const at = new Date(Date.now() - 5 * 60_000).toISOString()
 
   // The streaming draft has neither a model nor a stamp, so there is no row at
   // all — an empty one would reserve height under a message that is still
@@ -1768,7 +1769,7 @@ test('a message carries a meta row: 复制, its model, its time — and a draft 
   assert.ok(row, 'the committed answer draws its meta row')
   assert.deepEqual(
     row.children.map((child) => [child.classes.join(' '), child.text]),
-    [['item-copy', ''], ['item-model', 'glm-5.3'], ['item-time', '14:32']],
+    [['item-copy', ''], ['item-model', 'glm-5.3'], ['item-time', '5 分钟前']],
     '复制 first, the model in the middle, the time last',
   )
   // The transcript is `aria-live="polite"`: the labels are not what a reader
@@ -1803,7 +1804,7 @@ test('a message carries a meta row: 复制, its model, its time — and a draft 
   // At the bubble's right edge, the time first and the controls ending the row.
   assert.deepEqual(
     userRow.children.map((child) => [child.classes.join(' '), child.text]),
-    [['item-time', '14:32'], ['item-copy', ''], ['item-rewind', '']],
+    [['item-time', '5 分钟前'], ['item-copy', ''], ['item-rewind', '']],
   )
   stub.click(userRow.children[1]!.node)
   assert.deepEqual(copied, ['part done', 'go'])

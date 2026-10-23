@@ -37,27 +37,7 @@ export function splitTurnFooters(
   return { entries: kept, footers }
 }
 
-/** 「刚刚」 · 「N 分钟前」 · 「今天 14:32」 · 「5月7日」. */
-export function relativeTime(createdAt: string | undefined, now: number): string | undefined {
-  const at = createdAt === undefined ? undefined : new Date(createdAt)
-  if (at === undefined || Number.isNaN(at.getTime())) return undefined
-  const minutes = Math.floor((now - at.getTime()) / 60_000)
-  if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes} 分钟前`
-  const today = new Date(now)
-  if (at.toDateString() === today.toDateString()) return `今天 ${clock(at)}`
-  return `${at.getMonth() + 1}月${at.getDate()}日`
-}
-
-/** The hover title: 「2026-05-07 14:32」. */
-export function absoluteTime(createdAt: string): string {
-  const at = new Date(createdAt)
-  return `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, '0')}-${String(at.getDate()).padStart(2, '0')} ${clock(at)}`
-}
-
-function clock(at: Date): string {
-  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
-}
+export { absoluteTime, relativeTime } from './timeLabel.js'
 
 /** `['用时 24m 0s', '3.2k tokens']`. */
 export function footerFacts(footer: TurnFooter): string[] {

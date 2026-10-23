@@ -648,23 +648,6 @@ export function formatWorkedDuration(ms: number): string {
 }
 
 /**
- * The wall-clock time a message settled at, as `14:32` — the right-hand end of a
- * message's meta row.
- *
- * Local time, and formatted by hand rather than through `toLocaleTimeString`: the
- * shell is a fixed 24-hour layout, and a locale that decides to render `下午2:32`
- * changes the row's width once per message. `undefined` for anything unparseable
- * (an old record with no stamp, a live draft), which is the view's cue to draw no
- * time at all rather than a placeholder.
- */
-export function formatMessageTime(createdAt: string | undefined): string | undefined {
-  if (createdAt === undefined) return undefined
-  const at = new Date(createdAt)
-  if (Number.isNaN(at.getTime())) return undefined
-  return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`
-}
-
-/**
  * Closes every open thinking segment: clears `pending`, which is what the view
  * reads as "stop breathing, collapse me".
  *

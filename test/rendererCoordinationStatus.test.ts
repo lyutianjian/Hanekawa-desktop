@@ -33,13 +33,15 @@ test('coordinationCounts counts running and blocked threads', () => {
   assert.deepEqual(coordinationCounts(threads), { running: 2, blocked: 2 })
 })
 
-test('formatLastActivity buckets elapsed time', () => {
-  const now = Date.parse('2026-10-10T12:00:00.000Z')
-  assert.equal(formatLastActivity('2026-10-10T11:59:30.000Z', now), '刚刚')
-  assert.equal(formatLastActivity('2026-10-10T11:55:00.000Z', now), '5 分钟前')
-  assert.equal(formatLastActivity('2026-10-10T09:00:00.000Z', now), '3 小时前')
-  assert.equal(formatLastActivity('2026-10-08T12:00:00.000Z', now), '2 天前')
-  assert.equal(formatLastActivity('2026-10-10T12:05:00.000Z', now), '刚刚', 'clock skew reads as just now')
+test('formatLastActivity speaks the window\'s one time label', () => {
+  // It used to count hours and days (「3 小时前」, 「2 天前」) while the transcript
+  // said 「今天 09:00」; both now read through `timeLabel.ts`.
+  const now = new Date(2026, 9, 10, 12, 0).getTime()
+  assert.equal(formatLastActivity(new Date(now - 30_000).toISOString(), now), '刚刚')
+  assert.equal(formatLastActivity(new Date(now - 5 * 60_000).toISOString(), now), '5 分钟前')
+  assert.equal(formatLastActivity(new Date(2026, 9, 10, 9, 0).toISOString(), now), '今天 09:00')
+  assert.equal(formatLastActivity(new Date(2026, 9, 8, 12, 0).toISOString(), now), '10月8日')
+  assert.equal(formatLastActivity(new Date(now + 5 * 60_000).toISOString(), now), '刚刚', 'clock skew reads as just now')
   assert.equal(formatLastActivity('', now), '')
 })
 

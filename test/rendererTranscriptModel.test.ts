@@ -3,7 +3,6 @@ import assert from 'node:assert/strict'
 import {
   applySessionEvent,
   createTranscriptState,
-  formatMessageTime,
   formatTurnSummary,
   formatWorkedDuration,
   groupTranscript,
@@ -1187,13 +1186,6 @@ test('consecutive task calls fold into one row that says what they did', () => {
   assert.equal(folded.tool.detail, 'list after u3', 'the body is the list as the last call left it')
   assert.equal(taskPhrase([{ kind: 'view' }]), '查看任务')
   assert.equal(taskPhrase(['1', '2', '3', '4'].map((id) => ({ kind: 'complete' as const, id }))), '完成 4 个任务')
-})
-
-test('a message time is the local wall clock, and unparseable stamps draw nothing', () => {
-  const at = new Date(2026, 4, 7, 9, 5)
-  assert.equal(formatMessageTime(at.toISOString()), '09:05', 'padded, so the column stays aligned')
-  assert.equal(formatMessageTime(undefined), undefined)
-  assert.equal(formatMessageTime('not a date'), undefined)
 })
 
 test('a run record no call claims keeps a row of its own, without erroring', () => {

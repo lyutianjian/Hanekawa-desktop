@@ -141,6 +141,7 @@ import {
 } from './model/browserPanel.js'
 import { bindWindowChrome, type WindowControlsOverlay } from './dom/windowChrome.js'
 import { REDUCED_MOTION_QUERY } from './model/reducedMotion.js'
+import { RELATIVE_TIME_REFRESH_MS } from './model/timeLabel.js'
 import { finishPresenceWithin } from './dom/presence.js'
 import type { WireCoordinationThreads, WireThreadMerge, WireThreadStatus } from '../shellProtocol.js'
 import { THREAD_STATUS_LABEL, coordinationCounts, threadBySession, threadFinished, threadTone } from './model/coordinationStatus.js'
@@ -2182,11 +2183,22 @@ function syncMotion(): void {
 }
 motionQuery.addEventListener('change', syncMotion)
 document.addEventListener('visibilitychange', syncMotion)
+
+// Relative stamps move on by the minute, or a 「刚刚」 stays up for as long as
+// nothing else repaints. Only what is on screen: the active pane, and the
+// projects page or thread list when one is open; a hidden window skips the tick.
+const timeTicker = setInterval(() => {
+  if (document.hidden) return
+  activePane()?.refreshTimes()
+  if (projectsOpen) renderProjects()
+  else renderSubagents()
+}, RELATIVE_TIME_REFRESH_MS)
 // Decoded once the window is idle, so the first turn's mark grows in rather than starting as a dot.
 sheetStore.prefetch()
 window.addEventListener('pagehide', () => {
   motionQuery.removeEventListener('change', syncMotion)
   document.removeEventListener('visibilitychange', syncMotion)
+  clearInterval(timeTicker)
   syncMotion()
   for (const pane of paneSessions.values()) pane.dispose()
 })

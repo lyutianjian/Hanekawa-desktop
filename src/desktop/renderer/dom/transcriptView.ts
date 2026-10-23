@@ -13,7 +13,6 @@ import {
   type RunSummary,
 } from '../model/thinking.js'
 import {
-  formatMessageTime,
   groupTranscript,
   isAgentCall,
   toStep,
@@ -1902,7 +1901,7 @@ function itemCopyButton(painter: Painter, item: TranscriptItem): HTMLButtonEleme
  * the row's only real control, and it names itself.
  */
 function metaRow(painter: Painter, item: TranscriptItem, footer?: TurnFooter): HTMLElement | undefined {
-  const time = footer ? relativeTime(item.createdAt, Date.now()) : formatMessageTime(item.createdAt)
+  const time = relativeTime(item.createdAt, Date.now())
   const model = item.kind === 'assistant' ? item.model : undefined
   // A draft has no stamp of its own; copying half a sentence is not the offer.
   if (time === undefined && model === undefined) return undefined

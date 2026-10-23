@@ -161,3 +161,13 @@ test('the composer looks nothing up while an IME composition is open', () => {
   const pane = readFileSync(new URL('../src/desktop/renderer/paneSession.ts', import.meta.url), 'utf8')
   assert.match(pane, /if \(!composing\) refreshCompletions\(\)/)
 })
+
+/**
+ * A source check, like the IME one above: the tick is a window timer. Without
+ * it a 「刚刚」 stayed up for hours whenever nothing else repainted.
+ */
+test('relative stamps are recomputed on a minute tick, and the tick stops with the page', () => {
+  const app = readFileSync(new URL('../src/desktop/renderer/app.ts', import.meta.url), 'utf8')
+  assert.match(app, /const timeTicker = setInterval\(\(\) => \{[\s\S]*?activePane\(\)\?\.refreshTimes\(\)[\s\S]*?\}, RELATIVE_TIME_REFRESH_MS\)/)
+  assert.match(app, /clearInterval\(timeTicker\)/)
+})

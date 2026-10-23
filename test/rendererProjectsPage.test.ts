@@ -5,6 +5,7 @@ import { isCoordinationProject } from '../src/desktop/renderer/model/coordinatio
 import { projectCards } from '../src/desktop/renderer/model/projectsPage.js'
 import type { SidebarProjectSessions } from '../src/desktop/renderer/model/sidebar.js'
 import type { WireCoordinationThreads, WireThreadInfo, WireThreadStatus } from '../src/desktop/shellProtocol.js'
+import { relativeTime } from '../src/desktop/renderer/model/timeLabel.js'
 
 const NOW = Date.parse('2026-10-10T12:00:00Z')
 const hoursAgo = (hours: number) => new Date(NOW - hours * 3_600_000).toISOString()
@@ -68,10 +69,13 @@ test('cards are sorted by newest activity, ties keep registry order, and activit
     none,
     NOW,
   )
+  // The label itself is `timeLabel.ts`'s (and local-time, so derived the same
+  // way here); this test is about which stamp each card reads and the order.
+  const label = (iso: string): string => relativeTime(iso, NOW)!
   assert.deepEqual(cards.map((card) => [card.name, card.lastActivity]), [
-    ['c', '2 小时前'],
-    ['b', '5 小时前'],
-    ['a', '1 天前'],
+    ['c', label(hoursAgo(2))],
+    ['b', label(hoursAgo(5))],
+    ['a', label(hoursAgo(30))],
     ['d', ''],
   ])
 })

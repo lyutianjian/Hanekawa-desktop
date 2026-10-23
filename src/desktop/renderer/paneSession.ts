@@ -345,6 +345,8 @@ export interface PaneSession {
   deactivate(): void
   beginLayoutChange(): void
   syncMotion(): void
+  /** Repaints so relative stamps (「刚刚」, 「N 分钟前」) move on; the minute tick's. */
+  refreshTimes(): void
   dispose(): void
   /** The `hello()` startup sequence: records, notices, queue, commands, panes. */
   start(): Promise<void>
@@ -2318,6 +2320,11 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     syncMotion() {
       transcriptView.stopClock()
       transcriptView.syncMotion(document.hidden || !active)
+      if (!document.hidden) renderTranscript()
+    },
+    // The paint's signatures carry each stamp's text, so only the stamps that
+    // changed are rebuilt.
+    refreshTimes() {
       if (!document.hidden) renderTranscript()
     },
     dispose,
