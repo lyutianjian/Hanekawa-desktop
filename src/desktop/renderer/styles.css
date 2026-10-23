@@ -925,6 +925,19 @@ body.resizing #frame::after { transition: none; }
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-float);
 }
+/* The full session name over the actions: the title in the header is cut
+   and, in the drag strip, has no tooltip on Windows. Wraps rather than cuts —
+   being read whole is its only job — within a width a menu can carry. */
+.canvas-menu-heading {
+  max-width: 22rem;
+  padding: var(--space-1) var(--space-2) var(--space-2);
+  margin-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+  line-height: var(--leading-ui);
+  overflow-wrap: anywhere;
+}
 .canvas-menu-item {
   text-align: left;
   background: transparent;

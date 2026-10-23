@@ -81,6 +81,7 @@ interface Rendered {
   identity(): StubView
   titleNode(): StubView | undefined
   menuItems(): StubView[]
+  menuHeading(): StubView | undefined
   openLocation(): StubView | undefined
   crumb(): StubView | undefined
 }
@@ -137,8 +138,10 @@ function render(t: { after(fn: () => void): void }): Rendered {
     menuItems: () => {
       const shell = find(identity(), 'canvas-menu-shell')
       const menu = find(shell, 'canvas-menu')
-      return [...(menu?.children ?? [])]
+      // The heading that names the session is not an item.
+      return [...(menu?.children ?? [])].filter((child) => !child.classes.includes('canvas-menu-heading'))
     },
+    menuHeading: () => find(find(find(identity(), 'canvas-menu-shell'), 'canvas-menu'), 'canvas-menu-heading'),
     openLocation: () =>
       find(rightControls(), 'canvas-open-location'),
     crumb: () => find(identity(), 'canvas-breadcrumb'),
@@ -484,4 +487,18 @@ test('the empty canvas says so and offers the two ways out', (t) => {
   stub.click(create!.node)
   stub.click(open!.node)
   assert.deepEqual(calls, ['new', 'open'])
+})
+
+/**
+ * The header's title is cut to an ellipsis and sits in the window's drag strip,
+ * which takes no hover on Windows, so a long name could not be read anywhere.
+ * The menu now opens on it, whole; it is not an item, so the arrows skip it.
+ */
+test('the open menu heads its items with the full session title', (t) => {
+  const r = render(t)
+  r.paint({ menuOpen: true })
+  assert.equal(r.menuHeading()?.text, '原标题')
+  assert.equal(r.menuHeading()?.attributes.get('role'), 'none')
+  assert.ok(r.menuItems().length > 0)
+  assert.ok(r.menuItems().every((item) => item.classes.includes('canvas-menu-item')))
 })
