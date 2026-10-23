@@ -50,7 +50,7 @@ import {
   type ShellState,
   type WindowLayers,
 } from './model/keymap.js'
-import { isPrimaryModifier } from './model/desktopShortcuts.js'
+import { desktopShortcut, isPrimaryModifier } from './model/desktopShortcuts.js'
 import {
   createSidebarState,
   moveSelection,
@@ -120,7 +120,7 @@ import { createStatusView } from './dom/statusView.js'
 import { createSuggestionsView } from './dom/suggestionsView.js'
 import { createSidebarView } from './dom/sidebarView.js'
 import { createTitleBarView } from './dom/titleBarView.js'
-import { sideRailView, titleBarMenus, type TitleBarAction } from './model/titleBar.js'
+import { NEEDS_PROJECT, sideRailView, titleBarMenus, type TitleBarAction } from './model/titleBar.js'
 import { createBrowserPanelView, browserPanelNodes } from './dom/browserPanelView.js'
 import { createSubagentPanelView } from './dom/subagentPanelView.js'
 import {
@@ -186,6 +186,7 @@ const overlayApi = (window.navigator as Navigator & { windowControlsOverlay?: Wi
 const disposeWindowChrome = bindWindowChrome(document.documentElement, bridge.platform, window, overlayApi)
 window.addEventListener('pagehide', disposeWindowChrome, { once: true })
 const titleMenus = titleBarMenus(bridge.platform)
+const railChord = desktopShortcut(bridge.platform, 'toggle-sidebar')
 
 // One transport, many lanes: session traffic rides per-pane lanes untouched,
 // and the reserved `__shell` lane speaks for the window.
@@ -195,8 +196,10 @@ const shellClient = new ShellClient(mux.lane(SHELL_LANE))
 // Theme. The preference lives in localStorage; the resolved theme is written to
 // `documentElement.dataset.theme`, which the stylesheet reads. "Follow system"
 // is resolved here (in JS), so the sheet stays flat token blocks — see
-// `model/theme.ts`. A light-preference user sees a brief dark frame first (the
-// bare `:root` default): CSP forbids an inline pre-paint script.
+// `model/theme.ts`. The first frame is not this block's: `theme-boot.js`, a
+// same-origin script in `<head>`, writes the attribute before the stylesheet
+// paints (CSP forbids an *inline* one, not that), and `main.ts` opens the
+// window on the remembered theme's colours. This block takes over from there.
 //
 // This block must stay *after* the transport: `applyResolvedTheme` runs at
 // module top level and tells the main process to repaint the native overlay, so
@@ -211,8 +214,10 @@ function applyResolvedTheme(preference: ThemePreference): void {
   // The window's three buttons are painted by the OS into chrome the document
   // does not reach (5g), so the main process has to be told. Fire-and-forget:
   // a shell without an overlay answers `ok`, and there is nothing here for the
-  // user to act on if it does not.
-  void shellClient.setWindowTheme(theme).catch(() => {})
+  // user to act on if it does not. The preference goes too: main follows it
+  // with `nativeTheme.themeSource`, so a "follow system" switch can move this
+  // query again — the listener below answers that second change.
+  void shellClient.setWindowTheme(theme, preference).catch(() => {})
 }
 applyResolvedTheme(themePreference)
 darkQuery.addEventListener('change', () => {
@@ -386,6 +391,9 @@ function attachPaneSession(lane: string): void {
     // pull it triggers is what swaps「未命名会话」for the real first-message
     // title — the same trigger `turn-end` uses, one interaction earlier.
     onFirstContent: () => void refreshSessions(),
+    // Any pane, not just the active one: a background session asking for
+    // permission is exactly the one the user is not looking at.
+    onAttentionNeeded: () => shellClient.requestAttention(),
     // A search result's path, clicked (§6.2 检索). The lane's project is read at
     // click time, not captured — a lane outlives any one `lanes` snapshot — and
     // the reply is awaited like the canvas header's "open location": "code is
@@ -729,6 +737,7 @@ function renderSidebar(): void {
   // drift apart — the bar's own signature guard absorbs the repaints.
   titleBar.render({
     menus: titleMenus,
+    railChord,
     openMenu: titleBarMenu,
     sidebarCollapsed: view.collapsed,
     side: sideRail(),
@@ -2522,6 +2531,26 @@ shellClient.onLanes((lanes) => {
 })
 
 shellClient.onActivate((lane) => activateLane(lane))
+
+// The macOS menu bar (`desktop/appMenu.ts`). Its items carry no accelerator of
+// their own — the chords stay this window's keydown handler's — so a click here
+// is the only way in, and it is gated exactly as the drawn menu's item is.
+shellClient.onMenuAction((action) => {
+  if (action === 'close-session') {
+    if (activeLane !== undefined) runSidebarIntent({ kind: 'close', lane: activeLane })
+    return
+  }
+  if (NEEDS_PROJECT.has(action) && !currentSidebarState().canCreate) return
+  runTitleBarAction(action)
+})
+
+// Inactive windows dim their chrome on both platforms; the stylesheet reads it.
+// Starts active: a push main sent before this listener existed was dropped, and
+// a window wrongly dimmed reads as broken where one wrongly lit does not.
+document.documentElement.dataset.windowActive = 'true'
+shellClient.onWindowFocus((focused) => {
+  document.documentElement.dataset.windowActive = String(focused)
+})
 
 shellClient.onBrowserState((tabs) => {
   // A *new* tab on the active lane raises the panel: the agent opening a page is

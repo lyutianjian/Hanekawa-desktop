@@ -64,6 +64,7 @@ import {
   type WireLaneInfo,
   type WireShellDeleteSessionResult,
   type WireShellOpenInEditorResult,
+  type WireMenuAction,
   type WireShellSetWindowThemeResult,
   type WireShellProbeEndpointResult,
   type WireShellPickImagesResult,
@@ -361,12 +362,19 @@ export interface ShellHostDeps<
    */
   onPickImages?: (options: { defaultPath?: string }) => Promise<string[] | undefined>
   /**
-   * Repaints the native title-bar overlay for the resolved theme (5g).
+   * Repaints the native title-bar overlay for the resolved theme (5g), and
+   * hands the shell the preference behind it (`nativeTheme.themeSource`, the
+   * next launch's first frame).
    *
    * Not awaited and allowed to be absent: see the `set-window-theme` arm of
    * `execute`.
    */
-  onWindowTheme?: (theme: 'dark' | 'light') => void
+  onWindowTheme?: (appearance: { theme: 'dark' | 'light'; preference: 'system' | 'dark' | 'light' }) => void
+  /**
+   * Flashes the taskbar button or bounces the Dock icon while the window is
+   * unfocused. Absent and silent alike in a shell without either.
+   */
+  onRequestAttention?: () => void
   /**
    * While quitting, `detachLane` skips project shutdown: teardown owns the
    * ordering then, and closing projects mid-loop would race its own sweep.
@@ -755,8 +763,10 @@ const SHELL_COMMAND_SCHEMAS = {
       type: z.literal('set-window-theme'),
       id: commandId,
       theme: z.enum(['dark', 'light']),
+      preference: z.enum(['system', 'dark', 'light']),
     })
     .strict(),
+  'request-attention': z.object({ type: z.literal('request-attention'), id: commandId }).strict(),
   'pick-images': z
     .object({
       type: z.literal('pick-images'),
@@ -1308,9 +1318,13 @@ export class ShellHost<
         // `ok` rather than rejecting: the overlay is chrome, a shell without one
         // (every non-Windows build, and the test host) is not broken, and a
         // rejection here would put a native-chrome detail in the transcript.
-        this.deps.onWindowTheme?.(command.theme)
+        this.deps.onWindowTheme?.({ theme: command.theme, preference: command.preference })
         return { ok: true } satisfies WireShellSetWindowThemeResult
       }
+      case 'request-attention':
+        // Chrome again: no shell, no cue, and nothing worth rejecting over.
+        this.deps.onRequestAttention?.()
+        return { ok: true } satisfies WireShellSetWindowThemeResult
       case 'pick-images': {
         if (!this.deps.onPickImages) throw new Error('The shell cannot open an image picker.')
         // Anchor only; an unknown or closed root opens the dialog unanchored
@@ -2204,6 +2218,16 @@ export class ShellHost<
         )
       }, COORDINATION_BROADCAST_DELAY_MS),
     )
+  }
+
+  /** A native menu item was clicked; the renderer decides what it means now. */
+  postMenuAction(action: WireMenuAction): void {
+    if (!this.disposed) this.post({ type: 'menu-action', action })
+  }
+
+  /** The window gained or lost focus. */
+  broadcastWindowFocus(focused: boolean): void {
+    if (!this.disposed) this.post({ type: 'window-focus', focused })
   }
 
   /** Drops the pending pushes; the window (and its renderer) is gone. */

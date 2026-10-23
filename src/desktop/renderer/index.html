@@ -8,6 +8,13 @@
     />
     <title>Hanekawa</title>
     <!--
+      Synchronous and first, on purpose: it writes `data-theme` and
+      `data-platform` on <html> before the stylesheets below paint anything,
+      so a light-theme launch never shows a dark frame (see `themeBoot.ts`).
+      Same-origin, which is what the CSP's `script-src 'self'` allows.
+    -->
+    <script src="./theme-boot.js"></script>
+    <!--
       The bundled webfonts (see `fonts.css`): the two faces the first paint
       needs — the sans body and the serif display title — are preloaded so
       their bytes arrive beside the CSS rather than after it. `crossorigin` is
@@ -123,7 +130,7 @@
                 empties it whenever there is nothing to show.
               -->
               <div id="composer-attachments"></div>
-<textarea id="input" placeholder="随心输入，/ 调用命令，@ 引用文件" rows="1"></textarea>
+<textarea id="input" spellcheck="false" placeholder="随心输入，/ 调用命令，@ 引用文件" rows="1"></textarea>
               <div id="composer-bar">
                 <button id="composer-attach" type="button"></button>
                 <!--

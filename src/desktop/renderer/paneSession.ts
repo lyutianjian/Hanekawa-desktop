@@ -262,6 +262,12 @@ export interface PaneSessionDeps {
   /** Shell chrome (the tab bar) re-renders from the active session. */
   onShellChanged?: () => void
   /**
+   * A blocking request just arrived: the user has to answer before the agent
+   * goes on. The shell turns this into a taskbar flash or a Dock bounce, and
+   * only while the window is unfocused — this pane does not know about focus.
+   */
+  onAttentionNeeded?: () => void
+  /**
    * This pane's transcript just went from nothing to something — its first
    * input or output. The sidebar's row for a lane-only session appears on this
    * edge, and the history pull it triggers is what replaces the「未命名会话」
@@ -1307,6 +1313,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       // it stayed on a row whose prompt had been answered until something else
       // moved. Both `hasOverlay` transitions have to announce themselves.
       deps.onShellChanged?.()
+      deps.onAttentionNeeded?.()
     })
   }
 

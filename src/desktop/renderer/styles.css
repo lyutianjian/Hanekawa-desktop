@@ -13,6 +13,11 @@
   `test/rendererStyleTokens.test.ts` asserts that at source level.
 */
 :root {
+  /* Native widgets follow the theme: scrollbars, a `<select>`'s popup, form
+     controls and the caret are drawn by Chromium from this, not from the tokens
+     below. The one non-custom property a token block may carry. */
+  color-scheme: dark;
+
   /* --- surfaces: the canvas anchors, the frame is one rung up ---
      The canvas is the *extreme* of the theme — the deepest well in dark, the
      brightest paper in light — and everything else steps away from it along one
@@ -380,6 +385,7 @@
    enforces (so #e3ded5, not #d9d4c9 — chroma, not lightness, is what the guard
    bounds). */
 :root[data-theme="light"] {
+  color-scheme: light;
   --surface-base: #f3f3f2;
   --surface-canvas: #fdfdfd;
   --surface-card: #f8f8f7;
@@ -6844,6 +6850,19 @@ body.projects-open #browser-resizer,
   margin-block: 0;
   opacity: 1;
   transform: none;
+}
+
+/* A window in the background reads as one: its caption and the labels that
+   head the columns drop a rung, the way both systems' own windows dim their
+   title text when another app has focus. `app.ts` writes the attribute from the
+   main process's focus/blur push. Hover and an open menu keep their own colour —
+   pointing at a background window is already asking for it. Content (the
+   transcript, rows, the composer) is untouched: it is still being read. */
+:root[data-window-active="false"] :is(.titlebar-rail, .titlebar-menu-trigger):not(:hover, .open),
+:root[data-window-active="false"] .canvas-title,
+:root[data-window-active="false"] .side-section-head:not(:hover),
+:root[data-window-active="false"] .project-heading:not(:hover) {
+  color: var(--text-tertiary);
 }
 
 /* Hidden windows settle transition state in JS and pause decorative loops. */

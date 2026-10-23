@@ -47,12 +47,3 @@ export function enterChordLabel(platform: DesktopPlatform, chord: { primary?: bo
   if (platform === 'darwin') return `${chord.shift === true ? '⇧' : ''}${chord.primary === true ? '⌘' : ''}⏎`
   return [chord.primary === true && 'Ctrl', chord.shift === true && 'Shift', 'Enter'].filter(Boolean).join('+')
 }
-
-/** Only this native menu accelerator conflicts with the renderer's session close. */
-export function isMacSessionCloseShortcut(chord: KeyChord): boolean {
-  return chord.metaKey === true
-    && chord.ctrlKey !== true
-    && chord.shiftKey !== true
-    && chord.altKey !== true
-    && chord.key.toUpperCase() === SHORTCUTS['close-session'].key
-}

@@ -36,6 +36,7 @@ export interface EditorTarget {
 export interface SpawnOptions {
   detached: boolean
   stdio: 'ignore'
+  windowsHide?: boolean
   windowsVerbatimArguments?: boolean
 }
 
@@ -90,6 +91,8 @@ export function openInEditor(
       ? spawn('cmd.exe', ['/c', 'code', ...(goto === undefined ? [] : ['-g']), `"${location}"`], {
           detached: true,
           stdio: 'ignore',
+          // `cmd.exe` would otherwise flash a console window over the app.
+          windowsHide: true,
           windowsVerbatimArguments: true,
         })
       : spawn('code', goto === undefined ? [file] : ['-g', location], {

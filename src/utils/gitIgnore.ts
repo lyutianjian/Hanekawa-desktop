@@ -7,6 +7,7 @@ export async function gitIgnoredPaths(cwd: string, filePaths: string[]): Promise
   return new Promise((resolve) => {
     const child = spawn('git', ['-C', cwd, 'check-ignore', '--no-index', '--stdin'], {
       stdio: ['pipe', 'pipe', 'ignore'],
+      windowsHide: true,
     })
     const ignored = new Set<string>()
     let output = ''

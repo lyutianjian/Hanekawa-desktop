@@ -2414,3 +2414,36 @@ test('a diff is the only block in a turn that scrolls sideways', () => {
     assert.ok(declares(body, 'overflow-x', 'clip'), `${selector} must not grow a horizontal scrollbar`)
   }
 })
+
+test('the token blocks carry one non-custom property: the color-scheme that themes native widgets', () => {
+  // Scrollbars, a `<select>`'s popup and the form controls are painted by
+  // Chromium, not by any rule here; `color-scheme` is the only way to tell it
+  // which theme it is drawing for. Without it a dark window opened a white
+  // dropdown. It rides on the token blocks because it is a theme decision like
+  // the palette — and nothing else may: the light block is colours only.
+  for (const [selector, scheme] of [[':root', 'dark'], [LIGHT_SELECTOR, 'light']] as const) {
+    const plain = declarations.filter((d) => d.selector === selector && !d.prop.startsWith('--'))
+    assert.deepEqual(
+      plain.map((d) => `${d.prop}: ${d.value}`),
+      [`color-scheme: ${scheme}`],
+      `${selector} declares only tokens plus its color-scheme`,
+    )
+  }
+})
+
+test('a background window dims its caption and column heads, and nothing it is reading', () => {
+  // Both systems draw an inactive window's title text a rung down; without it
+  // two Hanekawa windows (or Hanekawa beside the editor) looked equally focused.
+  // Hover and an open menu are excluded so pointing at a background window still
+  // answers. The transcript and rows are left alone — they are still content.
+  const dimmed = blocks.filter((block) => block.selector.includes('[data-window-active="false"]'))
+  assert.equal(dimmed.length, 1, 'one rule owns the inactive look')
+  const rule = dimmed[0]!
+  assert.deepEqual(rule.decls.map((d) => `${d.prop}: ${d.value}`), ['color: var(--text-tertiary)'])
+  for (const part of ['.titlebar-rail', '.titlebar-menu-trigger', '.canvas-title', '.side-section-head', '.project-heading']) {
+    assert.ok(rule.selector.includes(part), `${part} dims with the window`)
+  }
+  for (const content of ['.transcript', '.session-row', '#input']) {
+    assert.ok(!rule.selector.includes(content), `${content} is content and keeps its colour`)
+  }
+})

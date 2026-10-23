@@ -449,8 +449,10 @@ interface Harness {
   editorRequests: Array<{ cwd: string; target?: { path: string; line?: number } }>
   /** Makes the next `open-in-editor` reject, the way an uninstalled `code` does. */
   failEditor(message: string | undefined): void
-  /** The themes `set-window-theme` handed to the window overlay, in order. */
-  windowThemes: Array<'dark' | 'light'>
+  /** What `set-window-theme` handed the window, in order: the theme and the preference behind it. */
+  windowThemes: Array<{ theme: 'dark' | 'light'; preference: 'system' | 'dark' | 'light' }>
+  /** One entry per `request-attention` that reached the window. */
+  attentionRequests: number[]
   /** What `pick-images` handed the picker: the anchor, when one was resolvable. */
   pickedImageAnchors: Array<{ defaultPath?: string }>
   /** The paths the next `pick-images` round trip answers with. */
@@ -480,7 +482,7 @@ function createHarness(
   options: {
     withOpenProject?: boolean
     withOpenInEditor?: boolean
-    /** A shell with no native overlay — every non-Windows build. */
+    /** A shell with no native chrome: no overlay, no taskbar or Dock to flash. */
     withWindowTheme?: boolean
     cwd?: string
     /** The registry the sidebar's full history is built from. */
@@ -523,7 +525,8 @@ function createHarness(
   const allLanesClosed: string[] = []
   const openProjectRequests: Array<string | undefined> = []
   const editorRequests: Array<{ cwd: string; target?: { path: string; line?: number } }> = []
-  const windowThemes: Array<'dark' | 'light'> = []
+  const windowThemes: Array<{ theme: 'dark' | 'light'; preference: 'system' | 'dark' | 'light' }> = []
+  const attentionRequests: number[] = []
   const pickedImageAnchors: Array<{ defaultPath?: string }> = []
   let pickedImages: string[] | undefined = []
   const setPickedImages = (paths: string[] | undefined): void => {
@@ -571,7 +574,11 @@ function createHarness(
         }),
     ...(options.withWindowTheme === false
       ? {}
-      : { onWindowTheme: (theme: 'dark' | 'light') => windowThemes.push(theme) }),
+      : {
+          onWindowTheme: (appearance: { theme: 'dark' | 'light'; preference: 'system' | 'dark' | 'light' }) =>
+            windowThemes.push(appearance),
+          onRequestAttention: () => attentionRequests.push(attentionRequests.length + 1),
+        }),
     ...(options.withPickImages === false
       ? {}
       : {
@@ -618,6 +625,7 @@ function createHarness(
     openProjectRequests,
     editorRequests,
     windowThemes,
+    attentionRequests,
     pickedImageAnchors,
     setPickedImages,
     forgottenProjects,
@@ -680,7 +688,8 @@ const COMMAND_SAMPLES = {
   'rename-session': { type: 'rename-session', id: 'h', projectRoot: 'r', sessionId: 's1', title: 'T' },
   'probe-endpoint': { type: 'probe-endpoint', id: 'w', projectRoot: 'r', provider: 'openai', endpointName: 'main' },
   'open-in-editor': { type: 'open-in-editor', id: 'i', projectRoot: 'r' },
-  'set-window-theme': { type: 'set-window-theme', id: 'j', theme: 'light' },
+  'set-window-theme': { type: 'set-window-theme', id: 'j', theme: 'light', preference: 'system' },
+  'request-attention': { type: 'request-attention', id: 'ra' },
   'pick-images': { type: 'pick-images', id: 'l', projectRoot: 'r' },
   'remove-project': { type: 'remove-project', id: 'k', projectRoot: 'r' },
   'browser-create-tab': { type: 'browser-create-tab', id: 'm', lane: '1', url: 'https://example.com' },
@@ -832,6 +841,7 @@ test('every shell command variant round-trips through its schema', () => {
       'probe-endpoint',
       'remove-project',
       'rename-session',
+      'request-attention',
       'set-window-theme',
       'settings-change',
       'thread-merge',
@@ -2807,9 +2817,22 @@ test('a target outside the project is refused before it reaches the editor', asy
 test('set-window-theme reaches the window, and carries a theme rather than a colour', async () => {
   const h = createHarness()
 
-  assert.deepEqual(await h.client.setWindowTheme('light'), { ok: true })
-  assert.deepEqual(await h.client.setWindowTheme('dark'), { ok: true })
-  assert.deepEqual(h.windowThemes, ['light', 'dark'])
+  assert.deepEqual(await h.client.setWindowTheme('light', 'light'), { ok: true })
+  assert.deepEqual(await h.client.setWindowTheme('dark', 'system'), { ok: true })
+  // The preference rides along because the resolved theme cannot say "follow
+  // the system": main sets `nativeTheme.themeSource` from it, and remembers it
+  // for the next launch's first frame.
+  assert.deepEqual(h.windowThemes, [
+    { theme: 'light', preference: 'light' },
+    { theme: 'dark', preference: 'system' },
+  ])
+})
+
+test('set-window-theme refuses a colour, a missing preference and an unknown one', () => {
+  const base = { type: 'set-window-theme', id: 'x', theme: 'dark' }
+  assert.equal(parseShellCommand(base).ok, false, 'the preference is required')
+  assert.equal(parseShellCommand({ ...base, preference: 'auto' }).ok, false)
+  assert.equal(parseShellCommand({ ...base, preference: 'dark', color: '#000' }).ok, false)
 })
 
 test('set-window-theme answers ok on a shell with no overlay', async () => {
@@ -2819,8 +2842,49 @@ test('set-window-theme answers ok on a shell with no overlay', async () => {
   // detail into the transcript on every theme switch.
   const h = createHarness({ withWindowTheme: false })
 
-  assert.deepEqual(await h.client.setWindowTheme('dark'), { ok: true })
+  assert.deepEqual(await h.client.setWindowTheme('dark', 'dark'), { ok: true })
   assert.deepEqual(h.windowThemes, [])
+})
+
+// --- native chrome: attention, menu, focus -------------------------------------
+
+test('request-attention reaches the window, and is silent on a shell without one', async () => {
+  const h = createHarness()
+  h.client.requestAttention()
+  h.client.requestAttention()
+  await settle()
+  assert.deepEqual(h.attentionRequests, [1, 2])
+
+  // Fire-and-forget like `browser-set-bounds`: the host replies, the client
+  // has no pending entry for it, and a shell with no taskbar to flash says
+  // nothing at all rather than putting a native detail in front of the user.
+  const bare = createHarness({ withWindowTheme: false })
+  bare.client.requestAttention()
+  await settle()
+  assert.deepEqual(bare.attentionRequests, [])
+})
+
+test('menu actions and window focus are pushed to the renderer, and stop with the host', async () => {
+  const h = createHarness()
+  const actions: string[] = []
+  const focus: boolean[] = []
+  h.client.onMenuAction((action) => actions.push(action))
+  h.client.onWindowFocus((focused) => focus.push(focused))
+
+  h.host.postMenuAction('new-session')
+  h.host.postMenuAction('close-session')
+  h.host.broadcastWindowFocus(false)
+  h.host.broadcastWindowFocus(true)
+  await settle()
+  assert.deepEqual(actions, ['new-session', 'close-session'])
+  assert.deepEqual(focus, [false, true])
+
+  h.host.dispose()
+  h.host.postMenuAction('open-settings')
+  h.host.broadcastWindowFocus(false)
+  await settle()
+  assert.deepEqual(actions, ['new-session', 'close-session'], 'a disposed host pushes nothing')
+  assert.deepEqual(focus, [false, true])
 })
 
 // --- pick-images (S11) --------------------------------------------------------

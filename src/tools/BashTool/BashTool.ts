@@ -134,7 +134,7 @@ function detectShell(): ShellInfo {
   //    only ever run this lazily on the first bash tool execution, never at
   //    module load, so it cannot stall TUI startup.
   try {
-    const result = spawnSync('bash', ['--version'], { timeout: 3000, stdio: 'pipe' })
+    const result = spawnSync('bash', ['--version'], { timeout: 3000, stdio: 'pipe', windowsHide: true })
     if (result.status === 0) {
       return { shell: 'bash', args: (cmd) => ['-c', cmd] }
     }

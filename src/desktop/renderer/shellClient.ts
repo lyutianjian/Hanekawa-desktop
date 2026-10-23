@@ -9,6 +9,7 @@ import type {
   WireShellSettingsChangeResult,
   WireShellRenameSessionResult,
   WireShellOpenInEditorResult,
+  WireMenuAction,
   WireShellSetWindowThemeResult,
   WireShellProbeEndpointResult,
   WireShellPickImagesResult,
@@ -56,6 +57,8 @@ export class ShellClient {
   private readonly activateListeners = new Set<(lane: string) => void>()
   private readonly browserListeners = new Set<(tabs: readonly WireBrowserTabInfo[]) => void>()
   private readonly coordinationListeners = new Set<(state: WireCoordinationThreads) => void>()
+  private readonly menuListeners = new Set<(action: WireMenuAction) => void>()
+  private readonly focusListeners = new Set<(focused: boolean) => void>()
   /** Project root -> its latest thread table, from pull replies and pushes alike. */
   private readonly coordinationThreadsByRoot = new Map<string, WireCoordinationThreads>()
   private lanes: readonly WireLaneInfo[] = Object.freeze([])
@@ -83,6 +86,22 @@ export class ShellClient {
     this.activateListeners.add(listener)
     return () => {
       this.activateListeners.delete(listener)
+    }
+  }
+
+  /** A native application-menu item was clicked (the macOS menu bar). */
+  onMenuAction(listener: (action: WireMenuAction) => void): () => void {
+    this.menuListeners.add(listener)
+    return () => {
+      this.menuListeners.delete(listener)
+    }
+  }
+
+  /** The window gained (`true`) or lost (`false`) focus. */
+  onWindowFocus(listener: (focused: boolean) => void): () => void {
+    this.focusListeners.add(listener)
+    return () => {
+      this.focusListeners.delete(listener)
     }
   }
 
@@ -222,12 +241,26 @@ export class ShellClient {
    * Fire-and-forget at the call site: the overlay is chrome, and a shell without
    * one answers `ok` anyway — there is nothing here for the user to act on.
    */
-  async setWindowTheme(theme: 'dark' | 'light'): Promise<WireShellSetWindowThemeResult> {
+  async setWindowTheme(
+    theme: 'dark' | 'light',
+    preference: 'system' | 'dark' | 'light',
+  ): Promise<WireShellSetWindowThemeResult> {
     return this.send({
       type: 'set-window-theme',
       id: crypto.randomUUID(),
       theme,
+      preference,
     }) as Promise<WireShellSetWindowThemeResult>
+  }
+
+  /**
+   * Asks the shell to flash the taskbar button or bounce the Dock icon; the
+   * shell does nothing while the window has focus. Posted like
+   * `browserSetBounds`, for the same reason: nobody awaits a cue.
+   */
+  requestAttention(): void {
+    if (this.disposed) return
+    this.channel.post({ type: 'request-attention', id: crypto.randomUUID() })
   }
 
   /**
@@ -452,6 +485,8 @@ export class ShellClient {
     this.browserListeners.clear()
     this.coordinationThreadsByRoot.clear()
     this.coordinationListeners.clear()
+    this.menuListeners.clear()
+    this.focusListeners.clear()
   }
 
   // --- internals -----------------------------------------------------------
@@ -473,6 +508,12 @@ export class ShellClient {
         return
       case 'coordination-threads':
         this.applyCoordinationThreads(event.state)
+        return
+      case 'menu-action':
+        for (const listener of [...this.menuListeners]) listener(event.action)
+        return
+      case 'window-focus':
+        for (const listener of [...this.focusListeners]) listener(event.focused)
         return
       case 'reply':
         this.replies.settle(event.id, { ok: true, result: event.result })

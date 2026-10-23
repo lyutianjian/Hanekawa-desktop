@@ -89,7 +89,7 @@ function namesDotSegment(pattern: string): boolean {
 function listWithRipgrep(cwd: string, base: string, hidden: boolean): Promise<string[] | null> {
   const args = ['--files', ...(hidden ? ['--hidden'] : []), ...VCS_EXCLUSIONS.flatMap((dir) => ['--glob', `!${dir}`]), ...(base ? ['--', base] : [])]
   return new Promise((resolve, reject) => {
-    execFile('rg', args, { cwd, timeout: RG_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile('rg', args, { cwd, timeout: RG_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       const code = (err as { code?: unknown } | null)?.code
       if (code === 'ENOENT') return resolve(null)
       // exit 1 means no files at all.

@@ -10,6 +10,7 @@ import {
   sideRailView,
   titleBarMenus,
   itemEnabled,
+  NEEDS_PROJECT,
   toggleMenu,
   type TitleBarAction,
   type TitleBarView,
@@ -42,6 +43,7 @@ interface Rendered {
 function viewOf(overrides: Partial<TitleBarView> = {}): TitleBarView {
   return {
     menus: TITLE_BAR_MENUS,
+    railChord: 'Ctrl+B',
     openMenu: undefined,
     sidebarCollapsed: false,
     side: sideRailView({ modes: ['tasks', 'changes', 'browser'], open: undefined, running: false, blockedThreads: 0 }),
@@ -241,21 +243,29 @@ test('every item names an action the model can enable, and toggling is idempoten
   assert.equal(toggleMenu(undefined, 'view'), 'view')
 })
 
-test('macOS menus and the rail use the supplied Command labels, including on repaint', (t) => {
+test('macOS draws no menus of its own, and the rail still names its Command chord', (t) => {
+  // The menu bar is the system's on macOS (`desktop/appMenu.ts`, the same
+  // actions in Chinese); 文件 / 视图 beside the traffic lights would be the
+  // Windows idiom painted onto a Mac. The rail's tooltip used to read its chord
+  // off 视图's item, so it now comes in on its own field.
+  assert.deepEqual(titleBarMenus('darwin'), [])
   const { render, root, stub, actions } = mount(t)
-  render(viewOf({ openMenu: 'file' }))
-  const macMenus = titleBarMenus('darwin')
-  render(viewOf({ menus: macMenus, openMenu: 'file' }))
-  assert.deepEqual(openList(root())?.children.map((item) => item.text), [
-    '新建会话⌘T', '打开项目…⇧⌘O', '设置⌘,',
-  ])
-  assert.equal((root().children[0]?.node as HTMLElement).title, '收起侧栏（⌘B）')
-  const item = openList(root())?.children[0]?.node
-  render(viewOf({ menus: macMenus, openMenu: 'file', sidebarCollapsed: true }))
-  assert.equal(openList(root())?.children[0]?.node, item, 'a shell repaint rebuilt the open menu')
-  assert.equal((root().children[0]?.node as HTMLElement).title, '展开侧栏（⌘B）')
-  stub.click(item)
-  assert.deepEqual(actions, ['new-session'])
+  render(viewOf({ menus: titleBarMenus('darwin'), railChord: '⌘B' }))
+  const rail = root().children[0]?.node as HTMLElement
+  assert.equal(rail.title, '收起侧栏（⌘B）')
+  assert.equal(root().children.length, 1, 'the lead holds the rail and nothing else')
+  render(viewOf({ menus: titleBarMenus('darwin'), railChord: '⌘B', sidebarCollapsed: true }))
+  assert.equal(rail.title, '展开侧栏（⌘B）')
+  stub.click(rail)
+  assert.deepEqual(actions, ['toggle-sidebar'])
+})
+
+test('the items greyed under a blocking dialog are exactly NEEDS_PROJECT', () => {
+  // The native menu's clicks are refused by this set (`app.ts`), the drawn
+  // menu's by `needsProject`; one list per platform would let them disagree.
+  for (const menu of titleBarMenus('win32')) {
+    for (const item of menu.items) assert.equal(item.needsProject === true, NEEDS_PROJECT.has(item.action), item.action)
+  }
 })
 
 test('window chrome reserves space before measurement and follows resize/fullscreen until disposed', (t) => {
