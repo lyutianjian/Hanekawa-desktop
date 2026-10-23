@@ -217,6 +217,10 @@ export function createComposerView(els: {
   // by `setStreaming` for the one button whose meaning changes.
   replace(els.submit, icon('send'))
   replace(els.stop, icon('stop'))
+  // Fixed, unlike the send button's: stopping means one thing in every state.
+  // The key is named because Escape is how most people will want to do it.
+  els.stop.setAttribute('aria-label', '停止（Esc）')
+  els.stop.title = '停止（Esc）'
   replace(els.attach, icon('plus'))
   els.attach.setAttribute('aria-label', '附件')
   els.attach.title = '添加附件（图片 / @ 引用项目文件）'
@@ -391,9 +395,11 @@ export function createComposerView(els: {
       thumb.setAttribute('tabindex', '0')
       thumb.addEventListener('click', () => actions.onPreviewAttachment(row.draftId))
       thumb.addEventListener('keydown', (event) => {
-        if ((event as KeyboardEvent).key !== 'Enter') return
+        const key = (event as KeyboardEvent).key
+        if (key !== 'Enter' && key !== ' ') return
         // The viewer takes focus onto its close button; left alone, this same
-        // Enter's keypress would press that button and shut the viewer at once.
+        // Enter's keypress would press that button and shut the viewer at once
+        // (and Space would scroll the page under it).
         event.preventDefault()
         actions.onPreviewAttachment(row.draftId)
       })

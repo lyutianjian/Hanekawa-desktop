@@ -203,6 +203,7 @@ import {
 } from './model/imageViewer.js'
 import type { ImageViewerView } from './dom/imageViewerView.js'
 import type { ImageAttachmentRef } from '../../media/types.js'
+import type { DesktopPlatform } from '../types.js'
 import { appendAttachedPaths, splitAttachedPaths, type AttachedPath } from '../../media/attachedPaths.js'
 import { localizeCommands } from './model/builtinLabels.js'
 import {
@@ -227,6 +228,8 @@ export interface PaneSessionDeps {
   onOpenThreads?: (target: ThreadStripView['target']) => void
   /** The lane key. Stable across `/clear` and `/resume`; identifies this pane. */
   lane: string
+  /** The host OS, for the key hints drawn on the docked cards. */
+  platform: DesktopPlatform
   channel: RuntimeChannel
   /** `#transcript-area`; this pane's subtree is appended here. */
   mount: HTMLElement
@@ -1381,11 +1384,11 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         return
       }
       case 'enter-plan':
-        deps.planCard.showEnter(enterPlanViewModel())
+        deps.planCard.showEnter(enterPlanViewModel(deps.platform))
         return
       case 'exit-plan':
         if (exitPlan) {
-          deps.planCard.showExit(exitPlanViewModel(exitPlan))
+          deps.planCard.showExit(exitPlanViewModel(exitPlan, deps.platform))
           if (planShownFor !== current.requestId) {
             planShownFor = current.requestId
             deps.onPlanProposed?.()
@@ -1402,42 +1405,48 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // A focused button keeps Enter and Space: pressing it is its own click.
     const onButton = event.target instanceof HTMLButtonElement && (event.key === 'Enter' || event.key === ' ')
     if (onButton && (current.kind === 'enter-plan' || current.kind === 'exit-plan')) return
-    const typing = current.kind === 'ask-user-question' || (current.kind === 'exit-plan' && exitPlan?.modifying === true)
-    if (!typing) event.preventDefault()
     const chord = {
       key: event.key,
       shiftKey: event.shiftKey,
       ctrlKey: event.ctrlKey,
       metaKey: event.metaKey,
     }
+    // The card takes only the keys it answers. Everything else keeps its native
+    // meaning: Tab moves focus through the card, Space presses its focused
+    // button, Ctrl+C copies a selection, and typing in 「其他」 or the plan's
+    // 修改… field is the browser's.
+    const take = (kind: string): void => {
+      if (kind !== 'none') event.preventDefault()
+    }
 
     switch (current.kind) {
       case 'permission': {
         const view = permissionViewModel({ request: current.payload, selectedIndex: permissionIndex })
-        applyPermissionIntent(
-          current.requestId,
-          permissionKeyToIntent(chord, { selectedIndex: permissionIndex, options: view.options }),
-        )
+        const intent = permissionKeyToIntent(chord, { selectedIndex: permissionIndex, options: view.options })
+        take(intent.kind)
+        applyPermissionIntent(current.requestId, intent)
         return
       }
 
       case 'ask-user-question': {
         if (!askState) return
         const intent = askKeyToIntent(chord, askState)
-        // Typing in the 「其他」 input is the browser's, not ours.
-        if (intent.kind !== 'none' || !askState.otherMode) event.preventDefault()
+        take(intent.kind)
         applyAsk(current.requestId, intent)
         return
       }
 
-      case 'enter-plan':
-        applyEnterPlanIntent(current.requestId, enterPlanKeyToIntent(chord))
+      case 'enter-plan': {
+        const intent = enterPlanKeyToIntent(chord)
+        take(intent.kind)
+        applyEnterPlanIntent(current.requestId, intent)
         return
+      }
 
       case 'exit-plan': {
         if (!exitPlan) return
         const intent = exitPlanKeyToIntent(chord, exitPlan)
-        if (typing && intent.kind !== 'none') event.preventDefault()
+        take(intent.kind)
         applyExitPlan(current.requestId, intent)
         return
       }

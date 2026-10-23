@@ -1980,7 +1980,12 @@ function imageTileNode(painter: Painter, image: ImageAttachmentRef, index: numbe
   const open = () => painter.onViewImage(image)
   thumb.addEventListener('click', open)
   thumb.addEventListener('keydown', (event) => {
-    if ((event as KeyboardEvent).key !== 'Enter') return
+    const key = (event as KeyboardEvent).key
+    if (key !== 'Enter' && key !== ' ') return
+    // A `role="button"` answers Space as well as Enter. Either one's default
+    // must go: the viewer moves focus onto its close button, and the same
+    // Enter's keypress would press it and shut the viewer at once.
+    event.preventDefault()
     open()
   })
   return thumb

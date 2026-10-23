@@ -32,8 +32,9 @@ import type { WireSessionSummary } from '../src/desktop/shellProtocol.js'
  *
  * The load-bearing cases:
  *
- * - `sidebarChordToIntent` answers `'none'` without ctrl/meta. It resolves
- *   *before* the global keymap, so anything else silently shadows every dialog.
+ * - `sidebarChordToIntent` answers `'none'` without the platform's primary
+ *   modifier (⌘ on macOS, Ctrl elsewhere). It resolves *before* the global
+ *   keymap, so anything else silently shadows every dialog.
  * - `Ctrl+1`–`9` indexes the open rows only. Reaching into history would turn a
  *   switch into an open.
  * - A live lane with no file behind it still gets a row, or the session the user
@@ -228,9 +229,9 @@ test('a folded workspace keeps its rows but contributes none to the cursor', () 
   assert.equal(view.groups[0]!.rows.length, 2, 'the folded group still knows what it holds')
   assert.deepEqual(view.rows.map((row) => row.sessionId), ['b1'])
   assert.deepEqual(view.liveRows.map((row) => row.lane), ['2'])
-  assert.deepEqual(sidebarChordToIntent({ key: '1', ctrlKey: true }, state), { kind: 'switch', lane: '2' })
+  assert.deepEqual(sidebarChordToIntent({ key: '1', ctrlKey: true }, state, 'win32'), { kind: 'switch', lane: '2' })
   assert.deepEqual(
-    sidebarChordToIntent({ key: '2', ctrlKey: true }, state),
+    sidebarChordToIntent({ key: '2', ctrlKey: true }, state, 'win32'),
     { kind: 'none' },
     'the folded workspace\u2019s lane is not reachable by chord',
   )
@@ -629,7 +630,7 @@ test('an unmodified key is never a sidebar intent', () => {
   })
   for (const key of ['1', '2', 'b', 'B', 't', 'w', 'o', 'Enter', 'Escape', 'ArrowDown', 'x']) {
     assert.deepEqual(
-      sidebarChordToIntent({ key }, state),
+      sidebarChordToIntent({ key }, state, 'win32'),
       { kind: 'none' },
       `expected ${key} without a modifier to be none`,
     )
@@ -647,9 +648,9 @@ test('Ctrl+1-9 switches among open lanes in visual order', () => {
   })
 
   // Visual order is wire order (alpha before beta), activation irrelevant.
-  assert.deepEqual(sidebarChordToIntent({ key: '1', ctrlKey: true }, state), { kind: 'switch', lane: '5' })
-  assert.deepEqual(sidebarChordToIntent({ key: '2', ctrlKey: true }, state), { kind: 'switch', lane: '6' })
-  assert.deepEqual(sidebarChordToIntent({ key: '3', ctrlKey: true }, state), { kind: 'none' })
+  assert.deepEqual(sidebarChordToIntent({ key: '1', ctrlKey: true }, state, 'win32'), { kind: 'switch', lane: '5' })
+  assert.deepEqual(sidebarChordToIntent({ key: '2', ctrlKey: true }, state, 'win32'), { kind: 'switch', lane: '6' })
+  assert.deepEqual(sidebarChordToIntent({ key: '3', ctrlKey: true }, state, 'win32'), { kind: 'none' })
 })
 
 test('Ctrl+1-9 never reaches into history', () => {
@@ -660,15 +661,37 @@ test('Ctrl+1-9 never reaches into history', () => {
     lanes: [lane('9', 'a3', '/a')],
   })
 
-  assert.deepEqual(sidebarChordToIntent({ key: '1', ctrlKey: true }, state), { kind: 'switch', lane: '9' })
-  assert.deepEqual(sidebarChordToIntent({ key: '2', ctrlKey: true }, state), { kind: 'none' })
-  assert.deepEqual(sidebarChordToIntent({ key: '3', ctrlKey: true }, state), { kind: 'none' })
+  assert.deepEqual(sidebarChordToIntent({ key: '1', ctrlKey: true }, state, 'win32'), { kind: 'switch', lane: '9' })
+  assert.deepEqual(sidebarChordToIntent({ key: '2', ctrlKey: true }, state, 'win32'), { kind: 'none' })
+  assert.deepEqual(sidebarChordToIntent({ key: '3', ctrlKey: true }, state, 'win32'), { kind: 'none' })
 })
 
-test('Ctrl+B toggles the sidebar, on either modifier', () => {
+test('Ctrl+B toggles the sidebar, on the platform’s own modifier only', () => {
   const state = stateWith({})
-  assert.deepEqual(sidebarChordToIntent({ key: 'b', ctrlKey: true }, state), { kind: 'toggle-collapse' })
-  assert.deepEqual(sidebarChordToIntent({ key: 'B', metaKey: true }, state), { kind: 'toggle-collapse' })
+  assert.deepEqual(sidebarChordToIntent({ key: 'b', ctrlKey: true }, state, 'win32'), { kind: 'toggle-collapse' })
+  assert.deepEqual(sidebarChordToIntent({ key: 'B', metaKey: true }, state, 'darwin'), { kind: 'toggle-collapse' })
+  // Control on macOS is Cocoa's text-editing modifier — Ctrl+B moves the caret
+  // back a character in every field — so it must reach the field untouched.
+  // And the ⊞ key on Windows is the system's.
+  assert.deepEqual(sidebarChordToIntent({ key: 'b', ctrlKey: true }, state, 'darwin'), { kind: 'none' })
+  assert.deepEqual(sidebarChordToIntent({ key: 'b', metaKey: true }, state, 'win32'), { kind: 'none' })
+})
+
+test('a chord under the other platform’s modifier, or with Alt, is no chord', () => {
+  const state = stateWith({
+    projects: [project('/a', 'alpha', [session('a1')])],
+    lanes: [lane('1', 'a1', '/a')],
+    activeLane: '1',
+  })
+  for (const key of ['1', 'b', 't', 'w', 'O']) {
+    // Ctrl+T transposes and Ctrl+O opens a line in a macOS field.
+    assert.deepEqual(sidebarChordToIntent({ key, ctrlKey: true, shiftKey: key === 'O' }, state, 'darwin'), { kind: 'none' }, `⌃${key} on macOS`)
+    assert.deepEqual(sidebarChordToIntent({ key, metaKey: true, shiftKey: key === 'O' }, state, 'win32'), { kind: 'none' }, `⊞${key} on Windows`)
+    // Ctrl+Alt is AltGr on many Windows layouts: it types characters.
+    assert.deepEqual(sidebarChordToIntent({ key, ctrlKey: true, altKey: true }, state, 'win32'), { kind: 'none' }, `Ctrl+Alt+${key}`)
+    // Both modifiers at once is neither platform's chord.
+    assert.deepEqual(sidebarChordToIntent({ key, ctrlKey: true, metaKey: true }, state, 'darwin'), { kind: 'none' }, `⌃⌘${key}`)
+  }
 })
 
 test('Ctrl+Shift+O resolves before the unshifted letters', () => {
@@ -677,11 +700,11 @@ test('Ctrl+Shift+O resolves before the unshifted letters', () => {
   // layout that disagrees.
   const state = stateWith({})
   assert.deepEqual(
-    sidebarChordToIntent({ key: 'O', ctrlKey: true, shiftKey: true }, state),
+    sidebarChordToIntent({ key: 'O', ctrlKey: true, shiftKey: true }, state, 'win32'),
     { kind: 'open-project' },
   )
   assert.deepEqual(
-    sidebarChordToIntent({ key: 'o', ctrlKey: true, shiftKey: true }, state),
+    sidebarChordToIntent({ key: 'o', ctrlKey: true, shiftKey: true }, state, 'win32'),
     { kind: 'open-project' },
   )
 })
@@ -692,11 +715,11 @@ test('Ctrl+T targets the active pane project, and answers without one', () => {
     lanes: [lane('2', 'b1', '/b')],
     activeLane: '2',
   })
-  assert.deepEqual(sidebarChordToIntent({ key: 't', ctrlKey: true }, withActive), {
+  assert.deepEqual(sidebarChordToIntent({ key: 't', ctrlKey: true }, withActive, 'win32'), {
     kind: 'new',
     projectRoot: '/b',
   })
-  assert.deepEqual(sidebarChordToIntent({ key: 'T', ctrlKey: true }, stateWith({})), { kind: 'new' })
+  assert.deepEqual(sidebarChordToIntent({ key: 'T', ctrlKey: true }, stateWith({}), 'win32'), { kind: 'new' })
 })
 
 test('Ctrl+W closes the active lane, and does nothing without one', () => {
@@ -705,9 +728,9 @@ test('Ctrl+W closes the active lane, and does nothing without one', () => {
     lanes: [lane('4', 'a1', '/a')],
     activeLane: '4',
   })
-  assert.deepEqual(sidebarChordToIntent({ key: 'w', ctrlKey: true }, state), { kind: 'close', lane: '4' })
+  assert.deepEqual(sidebarChordToIntent({ key: 'w', ctrlKey: true }, state, 'win32'), { kind: 'close', lane: '4' })
   assert.deepEqual(
-    sidebarChordToIntent({ key: 'w', ctrlKey: true }, stateWith({})),
+    sidebarChordToIntent({ key: 'w', ctrlKey: true }, stateWith({}), 'win32'),
     { kind: 'none' },
   )
 })
@@ -718,13 +741,13 @@ test('Command chords retain session routing and blocking-dialog gates', () => {
     lanes: [lane('1', 'a1', '/a'), lane('2', 'b1', '/b')],
     activeLane: '2',
   })
-  assert.deepEqual(sidebarChordToIntent({ key: '1', metaKey: true }, state), { kind: 'switch', lane: '1' })
-  assert.deepEqual(sidebarChordToIntent({ key: 't', metaKey: true }, state), { kind: 'new', projectRoot: '/b' })
-  assert.deepEqual(sidebarChordToIntent({ key: 'w', metaKey: true }, state), { kind: 'close', lane: '2' })
-  assert.deepEqual(sidebarChordToIntent({ key: 'w', metaKey: true }, stateWith({})), { kind: 'none' })
-  assert.deepEqual(sidebarChordToIntent({ key: 'O', metaKey: true, shiftKey: true }, state), { kind: 'open-project' })
-  assert.deepEqual(sidebarChordToIntent({ key: 't', metaKey: true }, { ...state, canCreate: false }), { kind: 'none' })
-  assert.deepEqual(sidebarChordToIntent({ key: 'O', metaKey: true, shiftKey: true }, { ...state, canCreate: false }), { kind: 'none' })
+  assert.deepEqual(sidebarChordToIntent({ key: '1', metaKey: true }, state, 'darwin'), { kind: 'switch', lane: '1' })
+  assert.deepEqual(sidebarChordToIntent({ key: 't', metaKey: true }, state, 'darwin'), { kind: 'new', projectRoot: '/b' })
+  assert.deepEqual(sidebarChordToIntent({ key: 'w', metaKey: true }, state, 'darwin'), { kind: 'close', lane: '2' })
+  assert.deepEqual(sidebarChordToIntent({ key: 'w', metaKey: true }, stateWith({}), 'darwin'), { kind: 'none' })
+  assert.deepEqual(sidebarChordToIntent({ key: 'O', metaKey: true, shiftKey: true }, state, 'darwin'), { kind: 'open-project' })
+  assert.deepEqual(sidebarChordToIntent({ key: 't', metaKey: true }, { ...state, canCreate: false }, 'darwin'), { kind: 'none' })
+  assert.deepEqual(sidebarChordToIntent({ key: 'O', metaKey: true, shiftKey: true }, { ...state, canCreate: false }, 'darwin'), { kind: 'none' })
 })
 
 // --- sidebar-focused keys ---------------------------------------------------
@@ -839,14 +862,14 @@ test('canCreate gates the buttons *and* the chords, and collapsing keeps the dat
 
   // "Key path and button must agree": a chord that fires while the button is
   // disabled makes the disabled state a lie.
-  assert.deepEqual(sidebarChordToIntent({ key: 't', ctrlKey: true }, state), { kind: 'none' })
+  assert.deepEqual(sidebarChordToIntent({ key: 't', ctrlKey: true }, state, 'win32'), { kind: 'none' })
   assert.deepEqual(
-    sidebarChordToIntent({ key: 'O', ctrlKey: true, shiftKey: true }, state),
+    sidebarChordToIntent({ key: 'O', ctrlKey: true, shiftKey: true }, state, 'win32'),
     { kind: 'none' },
   )
   // Switching, closing and collapsing are not "create", so they still work.
-  assert.deepEqual(sidebarChordToIntent({ key: 'b', ctrlKey: true }, state), { kind: 'toggle-collapse' })
-  assert.deepEqual(sidebarChordToIntent({ key: 'w', ctrlKey: true }, state), { kind: 'close', lane: '1' })
+  assert.deepEqual(sidebarChordToIntent({ key: 'b', ctrlKey: true }, state, 'win32'), { kind: 'toggle-collapse' })
+  assert.deepEqual(sidebarChordToIntent({ key: 'w', ctrlKey: true }, state, 'win32'), { kind: 'close', lane: '1' })
 })
 
 test('the new-session intent is one decision, so the button and Ctrl+T agree', () => {
@@ -861,7 +884,7 @@ test('the new-session intent is one decision, so the button and Ctrl+T agree', (
   const view = sidebarView(state)
   assert.equal(view.activeProjectRoot, '/b')
   assert.deepEqual(
-    sidebarChordToIntent({ key: 't', ctrlKey: true }, state),
+    sidebarChordToIntent({ key: 't', ctrlKey: true }, state, 'win32'),
     newSessionIntent(view.activeProjectRoot),
   )
   assert.deepEqual(newSessionIntent(undefined), { kind: 'new' }, 'no active pane: let the host choose')

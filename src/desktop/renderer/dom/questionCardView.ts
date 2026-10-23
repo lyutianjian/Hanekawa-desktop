@@ -1,4 +1,6 @@
+import type { DesktopPlatform } from '../../types.js'
 import type { AskIntent, AskViewModel } from '../model/askUserQuestion.js'
+import { enterChordLabel } from '../model/desktopShortcuts.js'
 import { button } from './controls.js'
 import type { DockedCard } from './dockedCard.js'
 import { el, replace } from './dom.js'
@@ -21,6 +23,8 @@ export function createQuestionCardView(
   dock: DockedCard,
   container: HTMLElement,
   onIntent: (intent: AskIntent) => void,
+  /** The host OS: the submit hint reads `⌘⏎` on macOS and `Ctrl+Enter` elsewhere. */
+  platform: DesktopPlatform,
 ): QuestionCardView {
   const otherInput = el('input', 'ask-other-input')
   otherInput.type = 'text'
@@ -78,7 +82,7 @@ export function createQuestionCardView(
 
     submit = button('dialog-btn primary', view.isLast ? '提交' : '下一个', view.isLast ? '提交' : '下一个',
       () => onIntent({ kind: 'commit' }), { enabled: view.canSubmit })
-    submit.appendChild(el('span', 'kbd', '⌘⏎'))
+    submit.appendChild(el('span', 'kbd', enterChordLabel(platform, { primary: true })))
     const back = view.questionTotal > 1 && view.canGoBack
       ? button('dialog-btn', '上一个', '上一个', () => onIntent({ kind: 'back' }))
       : false

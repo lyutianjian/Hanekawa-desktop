@@ -274,6 +274,11 @@
      with an 80px left inset supplied by dom/windowChrome.ts. */
   --titlebar-inset-left: 0px;
   --titlebar-inset-right: 138px;
+  /* The caption band's height. `TITLEBAR_HEIGHT` in `src/desktop/main.ts` is
+     the same number: the OS paints its window controls onto this band, and the
+     two disagreeing puts the caption text off the controls' centre line. Every
+     layer that has to start below the band reads it from here. */
+  --titlebar-height: 40px;
   /* How far the transcript scroller reaches up under the title bar. */
   --transcript-tuck: 8px;
 
@@ -491,10 +496,7 @@ body {
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  /* Kept in step with `WINDOW_CHROME.*.height` in `src/desktop/main.ts`: the OS
-     paints its three buttons onto the same band, and the two numbers disagreeing
-     puts the caption text off the controls' centre line. */
-  height: 40px;
+  height: var(--titlebar-height);
   padding: 0 max(var(--space-3), var(--titlebar-inset-right)) 0 max(var(--space-3), var(--titlebar-inset-left));
   /* Transparent, not `--surface-base`: the frame's material is `body`'s, and a
      fill here would seam that material along the caption strip's foot. */
@@ -1034,8 +1036,8 @@ body.resizing #sidebar { transition: none; }
   flex-direction: column;
   margin: var(--space-2);
   /* Native caption buttons on the right (Windows, Linux) sit where the card's
-     top would be; there it starts under the 40px caption band instead. */
-  margin-top: clamp(var(--space-2), calc(var(--titlebar-inset-right) * 1000), 40px);
+     top would be; there it starts under the caption band instead. */
+  margin-top: clamp(var(--space-2), calc(var(--titlebar-inset-right) * 1000), var(--titlebar-height));
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
@@ -4695,6 +4697,10 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
      absolute against this box. */
   flex-direction: column;
   gap: var(--space-3);
+  /* Over the title bar's drag strip, which would otherwise take every press in
+     the top band as a window drag — the ✕ included. Same reason as
+     `.settings-dialog-layer`. */
+  -webkit-app-region: no-drag;
 }
 /* `.modal-layer::before` is what actually paints a scrim, and it reads
    `--surface-scrim` — which is the *modal* dim, tuned so the app stays readable
@@ -4712,7 +4718,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   width: 100%;
   flex: 1 1 auto;
   min-height: 0;
-  margin-top: var(--space-5);
+  margin-top: calc(var(--titlebar-height) + var(--space-5));
   margin-bottom: var(--space-7);
   overflow: hidden;
 }
@@ -4748,10 +4754,16 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 /* Top left, opposite the ✕ and on its row. It used to sit bottom left, where it
    landed on top of the sidebar's own footer showing through the scrim — the
    picture's name reading as a label for 设置. Up here it is unambiguously part
-   of the viewer, and the bottom edge belongs to the zoom capsule alone. */
+   of the viewer, and the bottom edge belongs to the zoom capsule alone.
+
+   The row starts below the caption band: the OS draws its window controls over
+   every layer of the document, so a ✕ in the band sat under Windows' own close
+   button and could not be pressed, and the caption ran into macOS's traffic
+   lights. The caption sits 8px lower than the ✕ so its line stays on the 36px
+   button's centre. */
 .lightbox-caption {
   position: absolute;
-  top: var(--space-5);
+  top: calc(var(--titlebar-height) + var(--space-4));
   left: var(--space-6);
   color: var(--text-secondary);
   font-size: 13px;
@@ -4801,7 +4813,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 .lightbox-close {
   position: absolute;
-  top: var(--space-4);
+  top: calc(var(--titlebar-height) + var(--space-2));
   right: var(--space-4);
   display: flex;
   align-items: center;
@@ -5352,9 +5364,9 @@ body.projects-open #browser-resizer,
 
 #settings {
   /* Fixed to the same work area on entry and exit, even when the sidebar
-     becomes available again. The title bar above is 40px. */
+     becomes available again: everything below the caption band. */
   position: fixed;
-  inset: 40px 0 0;
+  inset: var(--titlebar-height) 0 0;
   z-index: 8;
   background: var(--surface-canvas);
   display: flex;

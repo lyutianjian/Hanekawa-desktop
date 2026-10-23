@@ -1,7 +1,7 @@
 import type { WireCoordinationThreads, WireLaneInfo, WireSessionSummary } from '../../shellProtocol.js'
 import type { DesktopPlatform } from '../../types.js'
 import { coordinationCounts, isCoordinationProject } from './coordinationStatus.js'
-import { desktopShortcut } from './desktopShortcuts.js'
+import { desktopShortcut, isPrimaryModifier } from './desktopShortcuts.js'
 
 /**
  * The sidebar as data: every session this process can reach, grouped by
@@ -805,18 +805,20 @@ export interface SidebarChord {
   readonly shiftKey?: boolean
   readonly ctrlKey?: boolean
   readonly metaKey?: boolean
+  readonly altKey?: boolean
 }
 
 /**
  * The **global** chords, resolved before `resolveKey`.
  *
- * Everything here requires ctrl or meta, and the early return is what makes the
- * ordering safe: an unmodified key that resolved to an intent would shadow every
- * dialog, panel and composer keystroke in the window. The tab bar this replaced had the
+ * Everything here requires the platform's primary modifier (`isPrimaryModifier`:
+ * ⌘ on macOS, Ctrl elsewhere), and the early return is what makes the ordering
+ * safe: an unmodified key that resolved to an intent would shadow every dialog,
+ * panel and composer keystroke in the window. The tab bar this replaced had the
  * same rule and the same reason.
  */
-export function sidebarChordToIntent(chord: SidebarChord, state: SidebarState): SidebarIntent {
-  if (chord.ctrlKey !== true && chord.metaKey !== true) return { kind: 'none' }
+export function sidebarChordToIntent(chord: SidebarChord, state: SidebarState, platform: DesktopPlatform): SidebarIntent {
+  if (!isPrimaryModifier(chord, platform)) return { kind: 'none' }
 
   // `Ctrl+1`–`9` over the *live* rows in visual order, so the nth chord and the
   // nth open session on screen are the same pane. The view is built inside this

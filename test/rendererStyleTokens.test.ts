@@ -189,7 +189,7 @@ test('the page links the stylesheet and carries no CSS of its own', () => {
 test('title bar uses measured native insets and keeps entire menus clickable', () => {
   const bar = blocks.find((block) => block.selector === '#titlebar')
   assert.ok(bar)
-  assert.ok(bar.decls.some((decl) => decl.prop === 'height' && decl.value === '40px'))
+  assert.ok(bar.decls.some((decl) => decl.prop === 'height' && decl.value === 'var(--titlebar-height)'))
   assert.ok(bar.decls.some((decl) => decl.prop === '-webkit-app-region' && decl.value === 'drag'))
   const padding = bar.decls.find((decl) => decl.prop === 'padding')?.value ?? ''
   assert.match(padding, /var\(--titlebar-inset-left\)/)
@@ -397,6 +397,9 @@ test('the palette is the one that was agreed, value for value', () => {
       '--changes-panel-width': 'clamp(300px, (100vw - var(--sidebar-width)) * 0.45, 640px)',
       '--titlebar-inset-left': '0px',
       '--titlebar-inset-right': '138px',
+      // The caption band, `TITLEBAR_HEIGHT` in `src/desktop/main.ts`. One number
+      // the bar, the browser card's top and the settings screen all read.
+      '--titlebar-height': '40px',
       // How far the transcript scroller reaches up under the title bar.
       '--transcript-tuck': '8px',
       // The sidebar seam, and the 7px slice its scrollbar overhangs (2px of air
@@ -527,6 +530,9 @@ test('the palette is the one that was agreed, value for value', () => {
       '--changes-panel-width': 'clamp(300px, (100vw - var(--sidebar-width)) * 0.45, 640px)',
       '--titlebar-inset-left': '0px',
       '--titlebar-inset-right': '138px',
+      // The caption band, `TITLEBAR_HEIGHT` in `src/desktop/main.ts`. One number
+      // the bar, the browser card's top and the settings screen all read.
+      '--titlebar-height': '40px',
       // How far the transcript scroller reaches up under the title bar.
       '--transcript-tuck': '8px',
       // The sidebar seam, and the 7px slice its scrollbar overhangs (2px of air

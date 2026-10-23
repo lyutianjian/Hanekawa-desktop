@@ -246,12 +246,15 @@ test('routing options put inherit first and keep unresolvable keys, labelled', (
 
 // --- keys --------------------------------------------------------------------
 
-test('the global chord answers none unless ctrl or meta is held', () => {
-  assert.deepEqual(settingsChordToIntent({ key: ',' }), { kind: 'none' })
-  assert.deepEqual(settingsChordToIntent({ key: ',', shiftKey: true }), { kind: 'none' })
-  assert.deepEqual(settingsChordToIntent({ key: ',', ctrlKey: true }), { kind: 'open' })
-  assert.deepEqual(settingsChordToIntent({ key: ',', metaKey: true }), { kind: 'open' })
-  assert.deepEqual(settingsChordToIntent({ key: 'a', ctrlKey: true }), { kind: 'none' })
+test('the global chord answers none unless the platform’s primary modifier is held', () => {
+  assert.deepEqual(settingsChordToIntent({ key: ',' }, 'win32'), { kind: 'none' })
+  assert.deepEqual(settingsChordToIntent({ key: ',', shiftKey: true }, 'win32'), { kind: 'none' })
+  assert.deepEqual(settingsChordToIntent({ key: ',', ctrlKey: true }, 'win32'), { kind: 'open' })
+  assert.deepEqual(settingsChordToIntent({ key: ',', metaKey: true }, 'darwin'), { kind: 'open' })
+  assert.deepEqual(settingsChordToIntent({ key: 'a', ctrlKey: true }, 'win32'), { kind: 'none' })
+  // ⌘, is macOS's settings chord; ⌃, is not, and ⊞, is the system's on Windows.
+  assert.deepEqual(settingsChordToIntent({ key: ',', ctrlKey: true }, 'darwin'), { kind: 'none' })
+  assert.deepEqual(settingsChordToIntent({ key: ',', metaKey: true }, 'win32'), { kind: 'none' })
 })
 
 test('the scoped handler ignores modified keys so the global chords still land', () => {

@@ -684,6 +684,8 @@ test('mid-turn one button: stop while empty, lit send once something is typed', 
   r.composer.setStreaming(true)
   assert.equal(r.view('stop').hidden, false)
   assert.equal(r.view('submit').hidden, true, 'stop takes the send button’s place')
+  // Icon-only, so the name is all a screen reader or a hover has to go on.
+  assert.equal(r.view('stop').attributes.get('aria-label'), '停止（Esc）')
 
   input(r).value = 'next message'
   r.stub.dispatch(r.els.input, 'input')
@@ -1200,6 +1202,11 @@ test('a ready tile paints a thumbnail whose click opens the viewer', (t) => {
   r.stub.click(thumb.node)
   assert.deepEqual(r.previewedDrafts, ['d1'])
   assert.deepEqual(r.openedDrafts, [], 'the tile opens the viewer, not the system image viewer')
+  // The keyboard's two presses for a `role="button"`, each with its default
+  // taken so neither reaches the viewer's close button or scrolls the page.
+  assert.equal(r.stub.dispatch(thumb.node, 'keydown', { key: 'Enter' }).defaultPrevented, true)
+  assert.equal(r.stub.dispatch(thumb.node, 'keydown', { key: ' ' }).defaultPrevented, true)
+  assert.deepEqual(r.previewedDrafts, ['d1', 'd1', 'd1'])
 
   // A ready tile without a URL yet paints the thumbnail without a src — the
   // alt text carries the facts until the on-demand load settles.
@@ -1250,7 +1257,7 @@ function questionCard(t: { after(fn: () => void): void }) {
   const composer = stub.createContainer('composer')
   const container = stub.createContainer('composer-request')
   const intents: AskIntent[] = []
-  const view = createQuestionCardView(createDockedCard(composer, container), container, (intent) => intents.push(intent))
+  const view = createQuestionCardView(createDockedCard(composer, container), container, (intent) => intents.push(intent), 'darwin')
   const card = () => stub.inspect(container).children[0]!
   const find = (cls: string) => stub.inspect(container).children[0]!.children.find((child) => child.classes.includes(cls))!
   return { stub, composer, container, view, intents, card, find }
@@ -1350,7 +1357,7 @@ const planState = () => createExitPlanState({ planContent: '# 计划\n- 做事',
 
 test('the enter-plan card is one question with 拒绝 and 允许', (t) => {
   const p = planCard(t)
-  p.view.showEnter(enterPlanViewModel())
+  p.view.showEnter(enterPlanViewModel('darwin'))
 
   assert.ok(p.stub.inspect(p.composer).classes.includes('request-open'))
   assert.equal(p.find('request-question').text, '先读代码、出方案，你确认前不会修改文件')
@@ -1363,14 +1370,14 @@ test('the enter-plan card is one question with 拒绝 and 允许', (t) => {
 
 test('the exit-plan card reports every button as the intent its key produces', (t) => {
   const p = planCard(t)
-  p.view.showExit(exitPlanViewModel(planState()))
+  p.view.showExit(exitPlanViewModel(planState(), 'darwin'))
 
   const head = p.find('request-head')
   assert.equal(head.children.find((c) => c.classes.includes('request-title'))?.text, '助手提出了一个计划')
   p.stub.click(head.children.find((c) => c.text === '打开计划')!.node)
   assert.equal(p.opened(), 1)
 
-  assert.deepEqual(p.buttons().map((b) => b.text), ['拒绝', '修改…Esc', '接受⌘⇧⏎', '接受并自动执行⌘⏎'])
+  assert.deepEqual(p.buttons().map((b) => b.text), ['拒绝', '修改…Esc', '接受⇧⌘⏎', '接受并自动执行⌘⏎'])
   for (const button of p.buttons()) p.stub.click(button.node)
   assert.deepEqual(p.exit, [
     { kind: 'reject' },
@@ -1382,9 +1389,9 @@ test('the exit-plan card reports every button as the intent its key produces', (
 
 test('修改… swaps the buttons, focuses the field, and typing only touches 发送', (t) => {
   const p = planCard(t)
-  p.view.showExit(exitPlanViewModel(planState()))
+  p.view.showExit(exitPlanViewModel(planState(), 'darwin'))
   const modifying = { ...planState(), modifying: true }
-  p.view.showExit(exitPlanViewModel(modifying))
+  p.view.showExit(exitPlanViewModel(modifying, 'darwin'))
 
   const input = p.stub.inspect(p.container).children[0]!.children.find((c) => c.classes.includes('plan-feedback-input'))!
   assert.equal(input.attributes.get('placeholder'), '告诉助手要怎么改')
@@ -1396,7 +1403,7 @@ test('修改… swaps the buttons, focuses the field, and typing only touches �
   p.stub.dispatch(input.node, 'input')
   assert.deepEqual(p.exit.at(-1), { kind: 'feedback-set', text: '先补测试' })
 
-  p.view.showExit(exitPlanViewModel({ ...modifying, feedback: '先补测试' }))
+  p.view.showExit(exitPlanViewModel({ ...modifying, feedback: '先补测试' }, 'darwin'))
   assert.equal(p.stub.inspect(p.container).children[0]!.node, card, 'nothing is rebuilt while typing')
   assert.equal(p.buttons().find((b) => b.text.startsWith('发送'))!.disabled, false)
   assert.equal(p.stub.activeElement(), input.node)
@@ -1404,7 +1411,7 @@ test('修改… swaps the buttons, focuses the field, and typing only touches �
 
 test('an empty plan card has only 拒绝 and 接受', (t) => {
   const p = planCard(t)
-  p.view.showExit(exitPlanViewModel(createExitPlanState({ planContent: ' ', planFilePath: '/tmp/plan.md' })))
+  p.view.showExit(exitPlanViewModel(createExitPlanState({ planContent: ' ', planFilePath: '/tmp/plan.md' }), 'darwin'))
   assert.deepEqual(p.buttons().map((b) => b.text), ['拒绝Esc', '接受⏎'])
 })
 

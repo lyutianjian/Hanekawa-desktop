@@ -17,6 +17,8 @@ import {
   type ProbedModel,
   type WireShellProbeEndpointResult,
 } from '../../shellProtocol.js'
+import type { DesktopPlatform } from '../../types.js'
+import { isPrimaryModifier } from './desktopShortcuts.js'
 import { providerLabel } from './providerLabels.js'
 import { DEFAULT_THEME_PREFERENCE, THEME_PREFERENCES, type ThemePreference } from './theme.js'
 import { EFFORT_LABELS } from './composer.js'
@@ -2494,15 +2496,17 @@ export interface SettingsChord {
   readonly shiftKey?: boolean
   readonly ctrlKey?: boolean
   readonly metaKey?: boolean
+  readonly altKey?: boolean
 }
 
 /**
  * The *global* entry point, resolved before `resolveKey` — which is only safe
- * because it answers `'none'` unless ctrl or meta is held. The sidebar's chord
- * handler works exactly this way and for exactly this reason.
+ * because it answers `'none'` unless the platform's primary modifier is held
+ * (`isPrimaryModifier`). The sidebar's chord handler works exactly this way and
+ * for exactly this reason.
  */
-export function settingsChordToIntent(chord: SettingsChord): SettingsIntent {
-  if (!chord.ctrlKey && !chord.metaKey) return { kind: 'none' }
+export function settingsChordToIntent(chord: SettingsChord, platform: DesktopPlatform): SettingsIntent {
+  if (!isPrimaryModifier(chord, platform)) return { kind: 'none' }
   if (chord.key === ',') return { kind: 'open' }
   return { kind: 'none' }
 }

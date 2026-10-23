@@ -107,25 +107,37 @@ import {
 const bundleDir = dirname(fileURLToPath(import.meta.url))
 
 /**
+ * The caption band's height, `--titlebar-height` in `styles.css`. The OS paints
+ * its window controls onto the same band, so the two numbers move together or
+ * the caption row and the controls stop sharing a centre line.
+ */
+const TITLEBAR_HEIGHT = 40
+
+/**
  * The native title-bar overlay, per theme.
  *
  * The one place in the app that spells colours outside `styles.css`, and it has
  * to be: these are painted by Windows into chrome the document does not reach,
  * so no stylesheet rule and no renderer token can describe them. Kept in step
- * with `--surface-base` / `--text-secondary` by hand — a drift here shows up as
- * a three-button strip that does not match the frame under it.
+ * with `--surface-canvas` / `--text-secondary` by hand — a drift here shows up
+ * as a three-button strip that does not match what is under it.
  */
 const WINDOW_CHROME = {
-  // `--surface-base`, the frame's own rung (design_guidance 六.1): the overlay
-  // strip sits at the window's right edge, on the same flat base the title bar
-  // and sidebar are painted over — there has been no wash to fade out since
-  // the 2026 re-skin, so the strip matches by being the same colour, full stop.
-  // `height` is `#titlebar`'s in `styles.css`; the OS paints its three buttons
-  // onto the same band, so the two numbers move together or the caption row and
-  // the controls stop sharing a centre line.
-  dark: { color: '#242424', symbolColor: '#a6a6a5', height: 40 },
-  light: { color: '#f3f3f2', symbolColor: '#575756', height: 40 },
+  // `--surface-canvas`, not the frame's `--surface-base`: the three buttons sit
+  // at the window's right edge, and what the document paints there is always
+  // canvas — `#titlebar::before` with the side panel shut, the panel's gutter
+  // with it open, and the settings screen's full-width strip. A base-coloured
+  // overlay read as a grey tab stuck onto the corner.
+  dark: { color: '#1c1c1c', symbolColor: '#a6a6a5', height: TITLEBAR_HEIGHT },
+  light: { color: '#fdfdfd', symbolColor: '#575756', height: TITLEBAR_HEIGHT },
 } as const
+
+/**
+ * What the window is painted with before the document's first frame, per
+ * theme: `body`'s `--surface-base`. Hand-kept beside `WINDOW_CHROME` for the
+ * same reason — no stylesheet reaches a window that has not loaded one yet.
+ */
+const WINDOW_BACKGROUND = { dark: '#242424', light: '#f3f3f2' } as const
 
 // A plain annotation rather than `as unknown as`: `ipcMain` really is
 // assignable to `MainSideIpc`, and letting the compiler confirm that is what
@@ -489,9 +501,9 @@ async function ensureShell(): Promise<Shell> {
     // into `titleBarOverlay`, so no window-control IPC has to exist at all.
     // `backgroundColor` is what the frame is painted with before the first
     // frame arrives; without it the app opens as a white flash.
-    backgroundColor: WINDOW_CHROME.dark.color,
+    backgroundColor: WINDOW_BACKGROUND.dark,
     titleBarStyle: 'hidden',
-    titleBarOverlay: process.platform === 'darwin' ? { height: WINDOW_CHROME.dark.height } : WINDOW_CHROME.dark,
+    titleBarOverlay: process.platform === 'darwin' ? { height: TITLEBAR_HEIGHT } : WINDOW_CHROME.dark,
     webPreferences: {
       preload: join(bundleDir, 'preload.js'),
       contextIsolation: true,
@@ -664,6 +676,10 @@ async function ensureShell(): Promise<Shell> {
     // exists on Windows; elsewhere the command still answers `ok`, because the
     // shell treats a missing overlay as "this platform has none".
     onWindowTheme: (theme) => {
+      // The window's own fill shows wherever the document has not painted yet:
+      // the edge a Windows resize drag uncovers, a reload's first frame. Left
+      // dark under a light theme, it flashed black there.
+      window.setBackgroundColor(WINDOW_BACKGROUND[theme])
       if (process.platform === 'darwin') return
       window.setTitleBarOverlay(WINDOW_CHROME[theme])
     },

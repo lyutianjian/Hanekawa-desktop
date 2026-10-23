@@ -2363,8 +2363,15 @@ test('the images a user message carried draw as clickable thumbnails above the b
   assert.deepEqual(viewedImages, [['img-1', 'shot.png'], ['img-2', 'loop.gif']])
 
   // Enter works too — the tile is a real control, not a mouse-only affordance.
-  stub.dispatch(tiles[0]!.node, 'keydown', { key: 'Enter' })
+  // Its default is taken: the viewer focuses its close button, and the same
+  // Enter's keypress would press it and shut the viewer at once.
+  assert.equal(stub.dispatch(tiles[0]!.node, 'keydown', { key: 'Enter' }).defaultPrevented, true)
   assert.deepEqual(viewedImages.length, 3)
+  // And Space, as every `role="button"` answers, without scrolling the page.
+  assert.equal(stub.dispatch(tiles[1]!.node, 'keydown', { key: ' ' }).defaultPrevented, true)
+  assert.deepEqual(viewedImages.length, 4)
+  assert.equal(stub.dispatch(tiles[1]!.node, 'keydown', { key: 'a' }).defaultPrevented, false)
+  assert.deepEqual(viewedImages.length, 4)
 
   // The item's own node is refilled rather than replaced — it is what the
   // scroll anchor points at — so the repaint discipline is asserted one level

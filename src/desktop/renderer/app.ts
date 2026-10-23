@@ -41,7 +41,16 @@ import { ShellClient } from './shellClient.js'
 import { SHELL_LANE } from '../shellProtocol.js'
 import { DEFAULT_PANE_LIMIT, selectEvictions, type PaneBudgetEntry } from '../paneBudget.js'
 import { createLaneMux } from '../../runtime/protocol/laneChannel.js'
-import { NO_LAYERS, resolveKey, type ShellState, type WindowLayers } from './model/keymap.js'
+import {
+  NO_LAYERS,
+  ownedByTarget,
+  resolveKey,
+  type KeyAction,
+  type KeyTarget,
+  type ShellState,
+  type WindowLayers,
+} from './model/keymap.js'
+import { isPrimaryModifier } from './model/desktopShortcuts.js'
 import {
   createSidebarState,
   moveSelection,
@@ -168,6 +177,8 @@ if (!bridge) {
   document.body.textContent = '没有加载到预加载脚本，请重新安装应用。'
   throw new Error('Preload bridge is missing')
 }
+/** Held apart from `bridge` so hoisted functions below read it without a guard. */
+const platform = bridge.platform
 
 // Reserve native controls before any button is mounted, including while the
 // overlay API is still waiting for its first geometry notification.
@@ -240,7 +251,7 @@ const permissionRequest = createPermissionRequestView(composerDock, required('co
 })
 const questionCard = createQuestionCardView(composerDock, required('composer-request'), (intent) => {
   activePane()?.handleAskIntent(intent)
-})
+}, bridge.platform)
 const planCard = createPlanCardView(composerDock, required('composer-request'), {
   onEnterIntent: (intent) => activePane()?.handleEnterPlanIntent(intent),
   onExitIntent: (intent) => activePane()?.handleExitPlanIntent(intent),
@@ -345,6 +356,7 @@ function attachPaneSession(lane: string): void {
   if (paneSessions.has(lane)) return
   const session = createPaneSession({
     lane,
+    platform,
     channel: mux.lane(lane),
     mount: transcriptArea,
     permissionRequest,
@@ -2272,17 +2284,20 @@ function windowLayers(): WindowLayers {
   }
 }
 
-/**
- * A key the focused control answers itself: anything typed into a field other
- * than the composer (the sidebar search, the browser's address bar), or Enter
- * on a button. Left to the key map, Escape in those fields stopped the turn and
- * Enter on a thumbnail or a browser-panel button sent the draft.
- */
-function ownedByTarget(event: KeyboardEvent): boolean {
+const requestCardHost = required('composer-request')
+const rewindLayer = required('rewind')
+
+/** Where focus sits, for `ownedByTarget` in `model/keymap.ts`; the decision is there. */
+function keyTarget(event: KeyboardEvent, action: KeyAction): KeyTarget {
   const target = event.target
-  if (!(target instanceof HTMLElement) || target === composerInput) return false
-  if (target.matches('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return true
-  return event.key === 'Enter' && target.matches('button, a[href], [role="button"]')
+  if (!(target instanceof HTMLElement)) return { composer: false, editable: false, pressable: false, inLayer: false }
+  const layer = action === 'overlay' ? requestCardHost : action === 'rewind' ? rewindLayer : undefined
+  return {
+    composer: target === composerInput,
+    editable: target.matches('input, textarea, select, [contenteditable]:not([contenteditable="false"])'),
+    pressable: target.matches('button, a[href], [role="button"]'),
+    inLayer: layer?.contains(target) === true,
+  }
 }
 
 document.addEventListener('keydown', (event) => {
@@ -2295,28 +2310,29 @@ document.addEventListener('keydown', (event) => {
     shiftKey: event.shiftKey,
     ctrlKey: event.ctrlKey,
     metaKey: event.metaKey,
+    altKey: event.altKey,
   }
 
   // Sidebar chords are checked before the global keymap: a Ctrl+T is always
   // "new session" regardless of the active dialog, mirroring the browser's tab
   // behavior. Only safe because `sidebarChordToIntent` answers `'none'` for
-  // anything without ctrl/meta — an unmodified key resolving there would shadow
-  // every dialog in the window.
+  // anything without the platform's primary modifier — an unmodified key
+  // resolving there would shadow every dialog in the window.
   //
   // That same modifier test is repeated here rather than left to the model, so a
   // plain keystroke never pays for `currentSidebarState()` — which walks every
   // pane and reads the composer draft once per pane, on every keypress while
   // typing.
-  if (chord.ctrlKey || chord.metaKey) {
-    // Settings first, and for the same reason: it answers `'none'` without
-    // ctrl/meta, so a bare comma still reaches the composer.
-    const settingsIntent = settingsChordToIntent(chord)
+  if (isPrimaryModifier(chord, bridge.platform)) {
+    // Settings first, and for the same reason: it answers `'none'` without the
+    // modifier, so a bare comma still reaches the composer.
+    const settingsIntent = settingsChordToIntent(chord, bridge.platform)
     if (settingsIntent.kind !== 'none') {
       event.preventDefault()
       runSettingsIntent(settingsIntent)
       return
     }
-    const sidebarIntent = sidebarChordToIntent(chord, currentSidebarState())
+    const sidebarIntent = sidebarChordToIntent(chord, currentSidebarState(), bridge.platform)
     if (sidebarIntent.kind !== 'none') {
       event.preventDefault()
       runSidebarIntent(sidebarIntent)
@@ -2326,11 +2342,13 @@ document.addEventListener('keydown', (event) => {
 
   const pane = activePane()
   const action = resolveKey(chord, pane?.shellState() ?? EMPTY_SHELL_STATE, chord.key === 'Escape' ? windowLayers() : NO_LAYERS)
-  // A blocking prompt and the rewind panel still take every key, wherever focus is.
-  if (action !== 'overlay' && action !== 'rewind' && ownedByTarget(event)) return
+  if (ownedByTarget(chord.key, action, keyTarget(event, action))) return
   switch (action) {
     case 'overlay':
       pane?.handleOverlayKey(event)
+      // The card replaces the composer's field; a key still landing there would
+      // type into a draft nobody can see.
+      if (event.target === composerInput) event.preventDefault()
       return
     case 'rewind':
       event.preventDefault()
