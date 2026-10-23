@@ -56,6 +56,18 @@ export const SIDEBAR_EMPTY_TEXT = '还没有会话。'
 /** The「最近」filter is on and the global workspace has no history yet. */
 export const SIDEBAR_EMPTY_RECENT_TEXT = '还没有无项目会话。'
 export const SIDEBAR_NO_MATCHES_TEXT = '没有匹配的会话。'
+/** The first read of the history failed and there is nothing older to show. */
+export const SIDEBAR_LOAD_FAILED_TEXT = '读取会话失败'
+
+/**
+ * Where the history read stands. Only an *empty* list shows it: before the
+ * first read lands the rail is skeleton rows rather than 「还没有会话」, which
+ * read as every session having been deleted; and a first read that failed says
+ * so with 重试 in its place. Once a list has been drawn a later failure keeps
+ * it — the shell reports that one — because a rail that empties itself on a
+ * transient error looks like a deletion too.
+ */
+export type SidebarListLoad = 'loading' | 'ready' | 'failed'
 
 /** The `?` panel's rows: what each chord does, and the chord. */
 export function sidebarHint(platform: DesktopPlatform): Array<{ label: string; chord: string }> {
@@ -271,6 +283,8 @@ export interface SidebarView {
   readonly recentOnly: boolean
   /** The projects page is up, so the nav's「项目」item wears its on-state. */
   readonly projectsOpen: boolean
+  /** Whether the history has been read yet; see {@link SidebarListLoad}. */
+  readonly listLoad: SidebarListLoad
   /**
    * Whether the `?` panel is showing {@link sidebarHint}.
    *
@@ -375,6 +389,7 @@ export interface SidebarState {
    */
   readonly recentOnly: boolean
   readonly projectsOpen: boolean
+  readonly listLoad: SidebarListLoad
   /**
    * Each project's thread table, by project root. Sessions named here (the
    * coordinator and every thread) are drawn in the pinned section and left out
@@ -404,6 +419,7 @@ export function createSidebarState(overrides: Partial<SidebarState> = {}): Sideb
     helpOpen: false,
     recentOnly: false,
     projectsOpen: false,
+    listLoad: 'ready',
     coordination: new Map(),
     ...overrides,
   }
@@ -621,6 +637,7 @@ export function sidebarView(state: SidebarState): SidebarView {
     helpOpen: state.helpOpen,
     recentOnly: state.recentOnly,
     projectsOpen: state.projectsOpen,
+    listLoad: state.listLoad,
   }
 }
 
@@ -797,6 +814,8 @@ export type SidebarIntent =
   | { kind: 'request-delete'; sessionId: string }
   | { kind: 'confirm-delete'; projectRoot: string; sessionId: string }
   | { kind: 'cancel-delete' }
+  /** Read the history again after a first read that failed. */
+  | { kind: 'retry-load' }
   | { kind: 'move'; direction: 'up' | 'down' }
   | { kind: 'none' }
 
@@ -1002,6 +1021,7 @@ export function sidebarRenderSignature(view: SidebarView): string {
     // empty text it produces is different from the plain one.
     view.recentOnly ? 'r' : '-',
     view.projectsOpen ? 'o' : '-',
+    `l:${view.listLoad}`,
     String(view.selectedIndex),
     `q:${view.searchQuery}`,
   ]

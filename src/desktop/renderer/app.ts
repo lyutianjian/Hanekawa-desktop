@@ -64,6 +64,7 @@ import {
   type SidebarIntent,
   type SidebarLaneStatus,
   type SidebarProjectSessions,
+  type SidebarListLoad,
   type SidebarState,
 } from './model/sidebar.js'
 import { rewindKeyToIntent } from './model/rewindPanel.js'
@@ -700,6 +701,8 @@ let collapsedProjects: ReadonlySet<string> = new Set()
 let helpOpen = false
 /** The「最近」filter: only the sessions that belong to no project. Not persisted. */
 let recentOnly = false
+/** Whether the history has been read yet; until it has, the rail draws skeleton rows. */
+let listLoad: SidebarListLoad = 'loading'
 /** The title bar's open menu, if any. Window-level, like the bar itself. */
 let titleBarMenu: string | undefined
 let sessionsInFlight = false
@@ -727,6 +730,7 @@ function currentSidebarState(): SidebarState {
     helpOpen,
     recentOnly,
     projectsOpen,
+    listLoad,
     coordination: coordinationByRoot,
   })
 }
@@ -802,6 +806,7 @@ async function refreshSessions(): Promise<void> {
       sessionsAgain = false
       const result = await shellClient.listSessions()
       projects = result.projects
+      listLoad = 'ready'
       // A removed project takes its thread table, and so its pinned row and card, with it.
       for (const root of coordinationByRoot.keys()) {
         if (!projects.some((project) => project.projectRoot === root)) coordinationByRoot.delete(root)
@@ -818,7 +823,12 @@ async function refreshSessions(): Promise<void> {
     } while (sessionsAgain)
   } catch (error) {
     // Keep the last good list: a sidebar that empties itself on a transient
-    // failure looks like the sessions were deleted.
+    // failure looks like the sessions were deleted. With no list yet, the rail
+    // says the read failed and offers 重试 in place of its rows.
+    if (listLoad !== 'ready') {
+      listLoad = 'failed'
+      renderSidebar()
+    }
     reportError({ action: '读取会话列表' }, error)
   } finally {
     sessionsInFlight = false
@@ -954,6 +964,11 @@ function runSidebarIntent(intent: SidebarIntent): void {
     case 'toggle-help':
       helpOpen = !helpOpen
       renderSidebar()
+      return
+    case 'retry-load':
+      listLoad = 'loading'
+      renderSidebar()
+      void refreshSessions()
       return
     case 'toggle-projects':
       if (projectsOpen) leaveProjects()

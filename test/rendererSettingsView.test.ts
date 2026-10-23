@@ -340,6 +340,30 @@ test('an error sits in the open form, under its row, or pins to the screen', (t)
   assert.ok(banner[0]!.classes.includes('banner'), 'a formless error must stay in view however far the page is scrolled')
 })
 
+test('the dialog is named by its title, an error is announced, and the nav says where you are', (t) => {
+  // A screen reader entering the dialog heard 「对话框」 and nothing else, a
+  // refused save was silent until the reader happened on it, and the selected
+  // category was only a fill.
+  const { view, apply } = mount(t)
+  const current = findAll(child(view(), 'settings-nav'), 'settings-nav-item')
+    .filter((item) => item.attributes.get('aria-current') === 'page')
+  assert.equal(current.length, 1)
+
+  apply({ kind: 'new-endpoint' })
+  const dialog = dialogOf(view())
+  const title = findOne(dialog, 'settings-dialog-title')
+  assert.equal(dialog.attributes.get('aria-labelledby'), title.attributes.get('id'))
+  assert.equal(dialog.attributes.has('aria-describedby'), false)
+
+  apply({ kind: 'submit-draft' })
+  const error = findOne(dialogOf(view()), 'settings-error')
+  assert.equal(error.attributes.get('role'), 'alert')
+  assert.equal(dialogOf(view()).attributes.get('aria-describedby'), error.attributes.get('id'))
+
+  const { view: anchored } = mount(t, stateOf({ category: 'general', error: '上下文窗口必须是数字。', errorRows: ['context:contextWindow'] }))
+  assert.equal(findOne(child(anchored(), 'settings-body'), 'settings-row-error').attributes.get('role'), 'alert')
+})
+
 test('a model row opens to its switches, and the effort levels are one switch each', (t) => {
   const { view, apply, stub, intents } = mount(t)
   apply({ kind: 'edit-endpoint', name: 'main' })

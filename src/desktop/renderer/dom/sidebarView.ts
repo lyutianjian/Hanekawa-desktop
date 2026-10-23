@@ -3,6 +3,7 @@ import {
   SIDEBAR_EMPTY_RECENT_TEXT,
   SIDEBAR_EMPTY_TEXT,
   sidebarHint,
+  SIDEBAR_LOAD_FAILED_TEXT,
   SIDEBAR_NO_MATCHES_TEXT,
   CREATE_BLOCKED_HINT,
   SIDEBAR_RECENT_LABEL,
@@ -913,27 +914,26 @@ export function createSidebarView(
         pinned,
         [pinnedTitle, ...(view.isEmpty || view.noMatches ? [] : view.pinned.map((entry) => pinnedNode(entry, indexOf, view.selectedIndex)))],
       )
-      reconcile(
-        list,
-        view.isEmpty
-          ? [
-              el(
-                'div',
-                'sidebar-empty',
-                // The filter's own empty state: "还没有会话" under a「最近」that
-                // is switched on reads as every project having disappeared.
-                view.recentOnly ? SIDEBAR_EMPTY_RECENT_TEXT : SIDEBAR_EMPTY_TEXT,
-              ),
-            ]
-          : view.noMatches
-            ? [el('div', 'sidebar-empty', SIDEBAR_NO_MATCHES_TEXT)]
-            : [
-                ...(view.pinned.length === 0 ? [] : [pinned]),
-                ...view.groups.map((group) =>
-                  groupNode(group, indexOf, view.selectedIndex, view.canCreate),
-                ),
-              ],
-      )
+      // An empty list says why it is empty: still reading (skeleton rows, which
+      // hold the shape the rows will take), a first read that failed (with
+      // 重试), or genuinely nothing. Busy while reading, for a screen reader.
+      if (view.isEmpty && view.listLoad === 'loading') list.setAttribute('aria-busy', 'true')
+      else list.removeAttribute('aria-busy')
+      const listChildren = (): HTMLElement[] => {
+        if (view.noMatches) return [el('div', 'sidebar-empty', SIDEBAR_NO_MATCHES_TEXT)]
+        if (!view.isEmpty) {
+          return [
+            ...(view.pinned.length === 0 ? [] : [pinned]),
+            ...view.groups.map((group) => groupNode(group, indexOf, view.selectedIndex, view.canCreate)),
+          ]
+        }
+        if (view.listLoad === 'loading') return skeletonRows()
+        if (view.listLoad === 'failed') return [loadFailedNode(() => onIntent({ kind: 'retry-load' }))]
+        // The filter's own empty state: "还没有会话" under a「最近」that is
+        // switched on reads as every project having disappeared.
+        return [el('div', 'sidebar-empty', view.recentOnly ? SIDEBAR_EMPTY_RECENT_TEXT : SIDEBAR_EMPTY_TEXT)]
+      }
+      reconcile(list, listChildren())
 
       // Workspaces that are no longer listed. Their nodes are detached by the
       // `replace` above, but a pending fallback timer would still fire on them —
@@ -1018,6 +1018,27 @@ export function createSidebarView(
       scrolledTo = view.selectedIndex
     },
   }
+}
+
+/** Three placeholder rows, drawn while the first history read is under way. */
+function skeletonRows(): HTMLElement[] {
+  return [0, 1, 2].map(() => {
+    const row = el('div', 'session-skeleton', el('span', 'session-skeleton-bar'))
+    row.setAttribute('aria-hidden', 'true')
+    return row
+  })
+}
+
+/** The rail's own failure, beside its source: the history could not be read. */
+function loadFailedNode(retry: () => void): HTMLElement {
+  const node = el(
+    'div',
+    'sidebar-empty sidebar-load-failed',
+    el('span', undefined, SIDEBAR_LOAD_FAILED_TEXT),
+    button('sidebar-load-retry', '重试', '再次读取会话列表', retry),
+  )
+  node.setAttribute('role', 'alert')
+  return node
 }
 
 /** A row's element id, for the list's `aria-activedescendant`. */

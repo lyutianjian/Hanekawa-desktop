@@ -2,6 +2,7 @@ import { el, reconcile, replace, show } from './dom.js'
 import { button, multiSelectField, pillSelect, selectField, textField, toggleField, updateToggleField, type ToggleOptions } from './controls.js'
 import { icon, type IconName } from './icons.js'
 import { onPressOutside } from './dismiss.js'
+import { trapTab } from './focus.js'
 import { createModalPresence, createPresence, finishPresenceWithin } from './presence.js'
 import type {
   SettingsAnchor,
@@ -149,6 +150,9 @@ export function createSettingsView(
   const dialog = el('div', 'settings-dialog')
   dialog.setAttribute('role', 'dialog')
   dialog.setAttribute('aria-modal', 'true')
+  // Named by its own title and described by its error, so a screen reader
+  // entering it hears which form this is, and hears why a save was refused.
+  dialog.setAttribute('aria-labelledby', DIALOG_TITLE_ID)
   // Where focus goes when a paint disables or removes the focused control: still
   // inside the dialog, so Tab stays trapped and Esc still reaches the form.
   dialog.tabIndex = -1
@@ -160,7 +164,7 @@ export function createSettingsView(
   dialogLayer.addEventListener('pointerdown', (event) => {
     if (event.target === dialogLayer) onIntent({ kind: 'cancel-draft' })
   })
-  dialog.addEventListener('keydown', (event) => trapTab(event, dialog))
+  dialog.addEventListener('keydown', (event) => trapTab(dialog, event))
 
   // Programmatically focusable but not a tab stop, exactly like the sidebar's
   // list. Without focus *inside* the screen the `keydown` above never fires, and
@@ -330,10 +334,10 @@ export function createSettingsView(
             'div',
             'settings-provider-identity',
             el('span', 'settings-provider-avatar', header.initial),
-            el('div', 'settings-dialog-title', header.name),
+            titled(el('div', 'settings-dialog-title', header.name)),
             header.protocol ? el('span', 'settings-provider-badge', header.protocol) : null,
           )
-        : el('div', 'settings-dialog-title', form.title),
+        : titled(el('div', 'settings-dialog-title', form.title)),
       form.kind === 'mcp-server' ? docLinkNode(node(`${key}:doc`, 'a', 'mcp-form-doc-link')) : null,
       keptButton(`${key}:close`, 'settings-dialog-close', '', { kind: 'cancel-draft' }, { title: '关闭（Esc）', icon: 'close' }),
     ])
@@ -368,7 +372,9 @@ export function createSettingsView(
             ),
           ],
     )
-    return [head, content, error ? el('div', 'settings-error', error) : null, foot]
+    if (error) dialog.setAttribute('aria-describedby', DIALOG_ERROR_ID)
+    else dialog.removeAttribute('aria-describedby')
+    return [head, content, error ? alerting(el('div', 'settings-error', error), DIALOG_ERROR_ID) : null, foot]
   }
 
   /** 获取模型列表's outcome, kept so a screen reader hears each change once. */
@@ -731,7 +737,7 @@ export function createSettingsView(
             onIntent,
           }),
         ),
-        view.error && !form && !errorRow ? el('div', 'settings-error banner', view.error) : null,
+        view.error && !form && !errorRow ? alerting(el('div', 'settings-error banner', view.error)) : null,
       ])
 
       // The dialog keeps its last content while it closes; only an open form repaints it.
@@ -849,12 +855,30 @@ function navItemNode(
   item: SettingsNavItem,
   onIntent: (intent: SettingsIntent) => void,
 ): HTMLButtonElement {
-  return button(
+  const node = button(
     item.selected ? 'settings-nav-item selected' : 'settings-nav-item',
     item.label,
     item.label,
     () => onIntent({ kind: 'select-category', category: item.category }),
   )
+  // The selected category is said, not only drawn: `.selected` is a fill.
+  if (item.selected) node.setAttribute('aria-current', 'page')
+  return node
+}
+
+const DIALOG_TITLE_ID = 'settings-dialog-title'
+const DIALOG_ERROR_ID = 'settings-dialog-error'
+
+function titled(node: HTMLElement): HTMLElement {
+  node.id = DIALOG_TITLE_ID
+  return node
+}
+
+/** An error a screen reader hears when it appears, not only when it is read to. */
+function alerting(node: HTMLElement, id?: string): HTMLElement {
+  node.setAttribute('role', 'alert')
+  if (id !== undefined) node.id = id
+  return node
 }
 
 function headerNode(
@@ -927,7 +951,7 @@ function cardNode(
     children.push(rowNode(card.id, row, context))
     // Directly under the row they are about, so the reader does not hunt for them.
     if (context.rowError?.rowId === row.id) {
-      children.push(el('div', 'settings-row-error', context.rowError.message))
+      children.push(alerting(el('div', 'settings-row-error', context.rowError.message)))
     }
     if (context.confirm?.anchor.rowId === row.id) {
       children.push(confirmNode(context.confirm.message, onIntent))
@@ -1107,29 +1131,6 @@ export interface FormMenuContext {
  */
 function formKeyOf(form: SettingsForm): string {
   return `form:${form.anchor.cardId}:${form.anchor.rowId ?? ''}${form.kind === 'mcp-server' ? ':mcp' : ''}`
-}
-
-/**
- * Tab and Shift+Tab wrap inside the dialog. The page behind it is `inert`, but
- * the title bar is not, and Tab off the last button would land there.
- */
-function trapTab(event: KeyboardEvent, dialog: HTMLElement): void {
-  if (event.key !== 'Tab') return
-  const stops = [...dialog.querySelectorAll<HTMLElement>('input, select, button, a')].filter(
-    (candidate) =>
-      !(candidate as HTMLButtonElement).disabled
-      && !(candidate.closest('.settings-menu') as HTMLElement | null)?.hidden,
-  )
-  if (stops.length === 0) return
-  const first = stops[0]!
-  const last = stops[stops.length - 1]!
-  // Focus parked on the dialog itself (a paint disabled the focused button) is
-  // pulled onto a control too, or Tab would walk out of the dialog from there.
-  const at = document.activeElement
-  const outside = at === dialog || !dialog.contains(at)
-  if (!outside && (event.shiftKey ? at !== first : at !== last)) return
-  event.preventDefault()
-  ;(event.shiftKey ? last : first).focus()
 }
 
 function docLinkNode(link: HTMLAnchorElement): HTMLAnchorElement {

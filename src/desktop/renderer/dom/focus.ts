@@ -71,11 +71,20 @@ export function followPointer(menu: HTMLElement, item: string): void {
  * Keeps Tab inside a modal layer: forward from the last control wraps to the
  * first, backward from the first wraps to the last, and focus that is on the
  * layer itself or has strayed outside it is pulled onto a control.
+ *
+ * The one trap: the settings dialog had a second copy that knew about inputs
+ * and links but not `[tabindex]`, while this one knew `[tabindex]` but not
+ * inputs. A stop is now any control that can take focus, minus the disabled,
+ * the `tabindex="-1"` and anything under a `hidden` ancestor inside the layer
+ * (a closed menu's rows).
  */
 export function trapTab(container: HTMLElement, event: KeyboardEvent): void {
   if (event.key !== 'Tab') return
-  const stops = Array.from(container.querySelectorAll<HTMLElement>('button, [tabindex]'))
-    .filter((node) => !(node as HTMLButtonElement).disabled && node.getAttribute('tabindex') !== '-1')
+  const stops = Array.from(container.querySelectorAll<HTMLElement>('input, select, textarea, button, a, [tabindex]'))
+    .filter((node) =>
+      !(node as HTMLButtonElement).disabled
+      && node.getAttribute('tabindex') !== '-1'
+      && !hiddenWithin(node, container))
   const first = stops[0]
   const last = stops[stops.length - 1]
   if (first === undefined || last === undefined) {
@@ -88,6 +97,14 @@ export function trapTab(container: HTMLElement, event: KeyboardEvent): void {
     event.preventDefault()
     ;(event.shiftKey ? last : first).focus()
   }
+}
+
+/** Whether `node` or an ancestor below `container` is `hidden`. */
+function hiddenWithin(node: HTMLElement, container: HTMLElement): boolean {
+  for (let at: HTMLElement | null = node; at !== null && at !== container; at = at.parentElement) {
+    if (at.hidden) return true
+  }
+  return false
 }
 
 /**

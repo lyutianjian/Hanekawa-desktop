@@ -355,6 +355,35 @@ test('the cursor row is named on the list and brought into view when it moves', 
   assert.equal(list().attributes.has('aria-activedescendant'), false)
 })
 
+test('an empty list says why: still reading, a read that failed, or nothing at all', (t) => {
+  // Before the first read landed the rail said 「还没有会话」, and after a failed
+  // first read it said the same — both read as every session having been
+  // deleted. A list that has been drawn keeps its rows on a later failure.
+  const { stub, render, root, intents } = mount(t)
+  const list = (): StubView => region(root(), 'sidebar-list')
+
+  render(viewOf({ listLoad: 'loading' }))
+  assert.deepEqual(list().children.map((child) => child.className), ['session-skeleton', 'session-skeleton', 'session-skeleton'])
+  assert.equal(list().children[0]!.attributes.get('aria-hidden'), 'true')
+  assert.equal(list().attributes.get('aria-busy'), 'true')
+
+  render(viewOf({ listLoad: 'failed' }))
+  const failed = list().children[0]!
+  assert.deepEqual(failed.classes, ['sidebar-empty', 'sidebar-load-failed'])
+  assert.equal(failed.attributes.get('role'), 'alert')
+  assert.equal(list().attributes.has('aria-busy'), false)
+  const retry = find(failed, 'sidebar-load-retry')!
+  assert.equal(retry.text, '重试')
+  stub.click(retry.node)
+  assert.deepEqual(intents.at(-1), { kind: 'retry-load' })
+
+  render(viewOf({ listLoad: 'ready' }))
+  assert.equal(list().children[0]!.text, '还没有会话。')
+
+  render(viewOf({ ...tieredState(), listLoad: 'failed' }))
+  assert.equal(sessionRows(root()).length, 3, 'drawn rows outlive a later failure')
+})
+
 test('the heading + creates a session in *its own* project', (t) => {
   // The reason `newSessionIntent` is reached through the model rather than
   // spelled here: `Ctrl+T` resolves the active project and this resolves the one

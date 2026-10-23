@@ -1965,6 +1965,40 @@ body.settings-open #browser-resizer { display: none; }
    anything the user cannot already see. */
 .sidebar-list:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
 .sidebar-empty { color: var(--text-tertiary); font-size: var(--type-meta); padding: var(--space-2) var(--space-3); }
+/* The first read of the history, still under way: three rows the shape of a
+   session row — same height, same left edge as a title — with a quiet bar for
+   the name, breathing like every other "still loading" mark. 「还没有会话」 in
+   this moment read as every session having been deleted. */
+.session-skeleton {
+  display: flex;
+  align-items: center;
+  min-height: 34px;
+  margin: 1px var(--space-2);
+  padding: 0 var(--space-3) 0 calc(var(--space-3) + 14px + var(--space-2));
+}
+.session-skeleton-bar {
+  width: 60%;
+  height: 10px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  animation: breathe var(--motion-running) var(--ease-out) infinite;
+}
+.session-skeleton:nth-child(2) .session-skeleton-bar { width: 44%; }
+.session-skeleton:nth-child(3) .session-skeleton-bar { width: 52%; }
+/* A first read that failed: the sentence, then 重试 as a quiet text button. */
+.sidebar-load-failed { display: flex; align-items: center; gap: var(--space-2); }
+.sidebar-load-retry {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.sidebar-load-retry:hover { color: var(--text-primary); }
+.sidebar-load-retry:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-xs); }
 .sidebar-footer {
   position: relative;
   flex: 0 0 auto;
