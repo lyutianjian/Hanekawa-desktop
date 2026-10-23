@@ -14,8 +14,8 @@
  * Lifecycle:
  *  1. `ensureProject(cwd)` is the only way a project comes into existence, and
  *     the first project goes through it exactly like the fifth. Inside it,
- *     `bootstrap()` runs with a synchronous `confirmMcpTrust` that drives
- *     `dialog.showMessageBoxSync` for each untrusted MCP server — this fires
+ *     `bootstrap()` runs with a `confirmMcpTrust` that drives a native
+ *     `dialog.showMessageBox` for each untrusted MCP server — this fires
  *     before any channel exists, the only place a pre-channel prompt can live.
  *     Every project is entered through a *new empty session* — `openProject`
  *     from startup/`--cwd=`/the picker, or the shell's on-demand path when a
@@ -49,7 +49,20 @@
  * The `node:fs` imports and the wall-clock commands stay here, never in the
  * renderer bundle.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, screen, shell as electronShell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeTheme,
+  Notification,
+  screen,
+  shell as electronShell,
+  type MessageBoxOptions,
+  type OpenDialogOptions,
+} from 'electron'
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -88,7 +101,18 @@ import { CoordinationWakeEngine } from '../runtime/coordination/wakeEngine.js'
 import type { CoordinationLaneControl } from '../runtime/protocol/coordinationHost.js'
 import { coordinationSettings } from '../config/settings.js'
 import { openInEditor } from './openInEditor.js'
-import { isMacSessionCloseShortcut } from './renderer/model/desktopShortcuts.js'
+import { appMenuTemplate, isPageMenuChord } from './appMenu.js'
+import { contextMenuTemplate } from './contextMenu.js'
+import type { WireMenuAction } from './shellProtocol.js'
+import {
+  DEFAULT_WINDOW_STATE,
+  WINDOW_STATE_FILE,
+  createWindowStateWriter,
+  loadWindowState,
+  minimumSize,
+  placeWindow,
+  type WindowState,
+} from './windowState.js'
 import {
   createElectronMainChannel,
   type MainSideIpc,
@@ -107,30 +131,57 @@ import {
 const bundleDir = dirname(fileURLToPath(import.meta.url))
 
 /**
+ * The caption band's height, `--titlebar-height` in `styles.css`. The OS paints
+ * its window controls onto the same band, so the two numbers move together or
+ * the caption row and the controls stop sharing a centre line.
+ */
+const TITLEBAR_HEIGHT = 40
+
+/**
  * The native title-bar overlay, per theme.
  *
  * The one place in the app that spells colours outside `styles.css`, and it has
  * to be: these are painted by Windows into chrome the document does not reach,
  * so no stylesheet rule and no renderer token can describe them. Kept in step
- * with `--surface-base` / `--text-secondary` by hand — a drift here shows up as
- * a three-button strip that does not match the frame under it.
+ * with `--surface-canvas` / `--text-secondary` by hand — a drift here shows up
+ * as a three-button strip that does not match what is under it.
  */
 const WINDOW_CHROME = {
-  // `--surface-base`, the frame's own rung (design_guidance 六.1): the overlay
-  // strip sits at the window's right edge, on the same flat base the title bar
-  // and sidebar are painted over — there has been no wash to fade out since
-  // the 2026 re-skin, so the strip matches by being the same colour, full stop.
-  // `height` is `#titlebar`'s in `styles.css`; the OS paints its three buttons
-  // onto the same band, so the two numbers move together or the caption row and
-  // the controls stop sharing a centre line.
-  dark: { color: '#242424', symbolColor: '#a6a6a5', height: 40 },
-  light: { color: '#f3f3f2', symbolColor: '#575756', height: 40 },
+  // `--surface-canvas`, not the frame's `--surface-base`: the three buttons sit
+  // at the window's right edge, and what the document paints there is always
+  // canvas — `#titlebar::before` with the side panel shut, the panel's gutter
+  // with it open, and the settings screen's full-width strip. A base-coloured
+  // overlay read as a grey tab stuck onto the corner.
+  dark: { color: '#1c1c1c', symbolColor: '#a6a6a5', height: TITLEBAR_HEIGHT },
+  light: { color: '#fdfdfd', symbolColor: '#575756', height: TITLEBAR_HEIGHT },
 } as const
+
+/**
+ * What the window is painted with before the document's first frame, per
+ * theme: `body`'s `--surface-base`. Hand-kept beside `WINDOW_CHROME` for the
+ * same reason — no stylesheet reaches a window that has not loaded one yet.
+ */
+const WINDOW_BACKGROUND = { dark: '#242424', light: '#f3f3f2' } as const
 
 // A plain annotation rather than `as unknown as`: `ipcMain` really is
 // assignable to `MainSideIpc`, and letting the compiler confirm that is what
 // keeps the structural types honest about the Electron API.
 const mainIpc: MainSideIpc = ipcMain
+
+/**
+ * The name the native chrome shows: the about panel, the macOS menu's 关于 /
+ * 隐藏 / 退出, the Windows notification identity. Not `app.setName`: that also
+ * moves `userData`, and with it the theme and every other renderer preference
+ * stored under the old name.
+ */
+const APP_DISPLAY_NAME = 'Hanekawa'
+
+/**
+ * The last window's placement and theme, loaded once at ready and kept current
+ * while a window is up — see `windowState.ts` for why the theme lives here too.
+ */
+let windowState: WindowState = { ...DEFAULT_WINDOW_STATE }
+const windowStateFile = (): string => join(app.getPath('userData'), WINDOW_STATE_FILE)
 
 /** The one window, its mux, and the host that owns every lane decision. */
 interface Shell {
@@ -245,42 +296,84 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('activate', () => {
-    // On macOS the dock icon survives a window close; projects do not (their
-    // last lane died with the window), so this reopens whichever entry is left
-    // — and when nothing is, the registry's answer, the same resolution a
-    // fresh launch would make.
-    if (BrowserWindow.getAllWindows().length === 0) {
-      const first = directory.entries()[0]
-      if (first) {
-        void openProject(first.cwd)
-      } else {
-        void resolveStartupRoot().then((resolution) => openProject(resolution.root))
-      }
-    }
+    if (BrowserWindow.getAllWindows().length === 0) reopenWindow()
   })
 
   void app.whenReady().then(async () => {
-    // No application menu (5g): the window is frameless, and Electron's default
-    // menu is an English File/Edit/View/Window bar in an otherwise Chinese
-    // interface. The renderer draws 文件 / 视图 in the title bar instead,
-    // and the editing accelerators a textarea needs are the platform's own.
-    // Not on darwin, where removing the menu also removes 退出 and the standard
-    // clipboard roles, and the traffic lights are drawn by the OS regardless.
-    if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
+    // Windows ties notifications and the taskbar button to this id; without
+    // one a toast can be dropped or credited to "electron.app". A dev run has
+    // no installer to register a shortcut under a stable id, so it borrows the
+    // executable's path — the id Windows gives an unregistered process anyway.
+    if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? 'com.hanekawa.desktop' : process.execPath)
+    // Menus (5g). Windows and Linux get none: the window is frameless and the
+    // renderer draws 文件 / 视图 in the title bar. macOS gets its menu bar in
+    // Chinese (`appMenu.ts`) — removing it would also remove 退出 and the
+    // clipboard roles, and Electron's default is English and reloads on ⌘R.
+    if (process.platform === 'darwin') {
+      app.setAboutPanelOptions({ applicationName: APP_DISPLAY_NAME, applicationVersion: app.getVersion() })
+      Menu.setApplicationMenu(Menu.buildFromTemplate(appMenuTemplate({
+        appName: APP_DISPLAY_NAME,
+        devTools: !app.isPackaged,
+        run: runMenuAction,
+      })))
+    } else {
+      Menu.setApplicationMenu(null)
+    }
+    // Before any native surface exists: the theme the window, the caption
+    // overlay and every dialog open in is the one the renderer last reported.
+    windowState = await loadWindowState(windowStateFile())
+    nativeTheme.themeSource = windowState.themePreference
     try {
       await openProject(await resolveStartupProject())
     } catch (error) {
       if (error instanceof RuntimeStartupError) {
-        dialog.showErrorBox('Hanekawa failed to start', error.message)
+        dialog.showErrorBox('Hanekawa 无法启动', error.message)
       } else {
         dialog.showErrorBox(
-          'Hanekawa failed to start',
+          'Hanekawa 无法启动',
           error instanceof Error ? (error.stack ?? error.message) : String(error),
         )
       }
       app.quit()
     }
   })
+}
+
+/**
+ * A window for a process that has none — the Dock icon clicked, or a menu item
+ * chosen, after the last window closed (macOS keeps running). Projects did not
+ * survive the window (their last lane died with it), so this reopens whichever
+ * entry is left and, when nothing is, the registry's answer: the same
+ * resolution a fresh launch would make.
+ */
+function reopenWindow(): void {
+  const first = directory.entries()[0]
+  if (first) {
+    void openProject(first.cwd)
+  } else {
+    void resolveStartupRoot().then((resolution) => openProject(resolution.root))
+  }
+}
+
+/** The window, while there is one to parent a dialog or receive an event. */
+function liveWindow(): BrowserWindow | undefined {
+  return shell && !shell.window.isDestroyed() ? shell.window : undefined
+}
+
+/**
+ * A macOS menu item. The renderer decides what it means — the same intents the
+ * title-bar menu reaches on Windows. With no window, the two items that make
+ * one still work; the rest have nothing to act on.
+ */
+function runMenuAction(action: WireMenuAction): void {
+  const built = shell
+  if (built && !built.window.isDestroyed()) {
+    focusWindow(built.window)
+    built.host.postMenuAction(action)
+    return
+  }
+  if (action === 'new-session') reopenWindow()
+  else if (action === 'open-project') void openProjectInteractive()
 }
 
 /**
@@ -411,7 +504,7 @@ async function openProject(cwd: string): Promise<void> {
     await built.host.openLane(entry, { sessionId: session.id })
   } catch (error) {
     dialog.showErrorBox(
-      'Hanekawa could not open a tab',
+      '无法打开会话',
       error instanceof Error ? error.message : String(error),
     )
     await directory.closeProject(entry, 'window-failed')
@@ -432,10 +525,22 @@ async function openProjectInteractive(path?: string): Promise<void> {
     await openProject(target)
   } catch (error) {
     dialog.showErrorBox(
-      'Hanekawa could not open that project',
+      '无法打开这个项目',
       error instanceof Error ? error.message : String(error),
     )
   }
+}
+
+/**
+ * A native open dialog, parented to the window when there is one: a sheet that
+ * slides out of the title bar on macOS, a modal that stays in front of its owner
+ * on Windows — rather than a free-floating panel that can land behind it.
+ * `message` repeats the title because macOS does not draw a dialog title.
+ */
+function showOpenDialog(options: OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> {
+  const parent = liveWindow()
+  const withMessage = { ...options, ...(options.title !== undefined ? { message: options.title } : {}) }
+  return parent ? dialog.showOpenDialog(parent, withMessage) : dialog.showOpenDialog(withMessage)
 }
 
 /** Native directory picker. Cancelling is a no-op, not an error. */
@@ -443,7 +548,7 @@ async function promptForDirectory(options: {
   title: string
   buttonLabel: string
 }): Promise<string | undefined> {
-  const result = await dialog.showOpenDialog({
+  const result = await showOpenDialog({
     title: options.title,
     buttonLabel: options.buttonLabel,
     properties: ['openDirectory', 'createDirectory'],
@@ -453,7 +558,7 @@ async function promptForDirectory(options: {
 }
 
 async function promptForProjectDirectory(): Promise<string | undefined> {
-  return promptForDirectory({ title: 'Open project', buttonLabel: 'Open' })
+  return promptForDirectory({ title: '打开项目', buttonLabel: '打开' })
 }
 
 /**
@@ -474,24 +579,35 @@ const IMAGE_PICKER_EXTENSIONS = [...IMAGE_FILE_EXTENSIONS].map((extension) => ex
 async function ensureShell(): Promise<Shell> {
   if (shell) return shell
 
-  // Room for the sidebar, a full reading column and a side panel beside it,
-  // shrunk to the work area of a screen smaller than that. The minimums are
-  // where the two columns and the composer's action bar still fit without
-  // wrapping.
-  const workArea = screen.getPrimaryDisplay().workAreaSize
+  // Where the last window was, if that is still on a screen; otherwise room for
+  // the sidebar, a full reading column and a side panel beside it, centred on
+  // the primary display (`windowState.ts`). The minimums are where the two
+  // columns and the composer's action bar still fit without wrapping — clamped
+  // to the work area, because a laptop at 125% has less height than that.
+  const placement = placeWindow(
+    windowState.bounds,
+    screen.getAllDisplays().map((display) => display.workArea),
+    screen.getPrimaryDisplay().workArea,
+  )
+  const floor = minimumSize(placement.workArea)
+  const theme = windowState.theme
   const window = new BrowserWindow({
-    width: Math.min(1152, workArea.width),
-    height: Math.min(738, workArea.height),
-    minWidth: 1000,
-    minHeight: 620,
+    ...placement.bounds,
+    minWidth: floor.width,
+    minHeight: floor.height,
+    // Hidden until the first frame is painted, then shown in one step — no
+    // empty frame, and a remembered maximized window does not flash at its
+    // restored size first. `reveal` below.
+    show: false,
     // Frameless chrome (5g): the renderer draws the title bar — the rail toggle
     // and the Chinese menus — and Windows keeps drawing its own three buttons
     // into `titleBarOverlay`, so no window-control IPC has to exist at all.
     // `backgroundColor` is what the frame is painted with before the first
-    // frame arrives; without it the app opens as a white flash.
-    backgroundColor: WINDOW_CHROME.dark.color,
+    // frame arrives; without it the app opens as a white flash. Both start on
+    // the theme the renderer last reported, so a light launch is light.
+    backgroundColor: WINDOW_BACKGROUND[theme],
     titleBarStyle: 'hidden',
-    titleBarOverlay: process.platform === 'darwin' ? { height: WINDOW_CHROME.dark.height } : WINDOW_CHROME.dark,
+    titleBarOverlay: process.platform === 'darwin' ? { height: TITLEBAR_HEIGHT } : WINDOW_CHROME[theme],
     webPreferences: {
       preload: join(bundleDir, 'preload.js'),
       contextIsolation: true,
@@ -511,19 +627,70 @@ async function ensureShell(): Promise<Shell> {
   browserTabs.attachWindow(window)
 
   if (process.platform === 'darwin') {
-    // Electron's default Close Window menu owns Cmd+W. Let that chord reach
-    // the renderer's close-session intent; preserve native editing, quit and
-    // fullscreen accelerators by resetting the flag for every other input.
+    // The menu bar lists the app's own chords (⌘T, ⌘W, …) but the page handles
+    // them — only it knows whether a prompt is up or which lane is active. AppKit
+    // would fire the menu item as well, so the menu stands aside for exactly
+    // those keys while this document has focus (`appMenu.ts`); copy, paste,
+    // quit and full screen are reset to the menu's on every other input.
     window.webContents.on('before-input-event', (_event, input) => {
-      window.webContents.setIgnoreMenuShortcuts(isMacSessionCloseShortcut({
-        key: input.key,
-        metaKey: input.meta,
-        ctrlKey: input.control,
-        shiftKey: input.shift,
-        altKey: input.alt,
-      }))
+      window.webContents.setIgnoreMenuShortcuts(isPageMenuChord(input))
     })
   }
+
+  // Right-click (`contextMenu.ts`). Chromium shows nothing on its own, so a
+  // selected path in the transcript could not be copied with the mouse.
+  window.webContents.on('context-menu', (_event, params) => {
+    const contents = window.webContents
+    const template = contextMenuTemplate(params, process.platform === 'darwin' ? 'darwin' : process.platform === 'win32' ? 'win32' : 'linux', {
+      replaceMisspelling: (word) => contents.replaceMisspelling(word),
+      addToDictionary: (word) => {
+        contents.session.addWordToSpellCheckerDictionary(word)
+      },
+      copyText: (text) => clipboard.writeText(text),
+      copyImageAt: (x, y) => contents.copyImageAt(x, y),
+    })
+    if (template.length > 0) Menu.buildFromTemplate(template).popup({ window })
+  })
+
+  // Placement is remembered as it changes, debounced; `close` flushes, because
+  // by `closed` the bounds are gone. Bounds are read only from a window in its
+  // normal state — a minimized or full-screen window's rectangle is not where
+  // the user left it — and `getNormalBounds` is the restore rectangle of a
+  // maximized one.
+  const snapshot = (): WindowState | undefined => {
+    if (window.isDestroyed()) return undefined
+    const fullScreen = window.isFullScreen()
+    const bounds = fullScreen || window.isMinimized() ? windowState.bounds : window.getNormalBounds()
+    windowState = {
+      ...windowState,
+      ...(bounds !== undefined ? { bounds } : {}),
+      maximized: window.isMaximized(),
+      fullScreen,
+    }
+    return windowState
+  }
+  const stateWriter = createWindowStateWriter(windowStateFile(), snapshot)
+  const scheduleState = (): void => stateWriter.schedule()
+  window.on('resize', scheduleState)
+  window.on('move', scheduleState)
+  window.on('maximize', scheduleState)
+  window.on('unmaximize', scheduleState)
+  window.on('enter-full-screen', scheduleState)
+  window.on('leave-full-screen', scheduleState)
+  window.on('close', () => {
+    void stateWriter.flush()
+  })
+
+  let revealed = false
+  const reveal = (): void => {
+    if (revealed || window.isDestroyed()) return
+    revealed = true
+    // `maximize` shows the window itself; full screen needs a shown window.
+    if (windowState.maximized) window.maximize()
+    window.show()
+    if (windowState.fullScreen) window.setFullScreen(true)
+  }
+  window.once('ready-to-show', reveal)
 
   // One transport for the whole window; panes are lanes on it, not senders of
   // their own — which is the whole reason the lane mux exists.
@@ -624,7 +791,7 @@ async function ensureShell(): Promise<Shell> {
     // the pipeline with a reason* rather than never offered at all. The
     // `defaultPath` anchor arrives shell-resolved.
     onPickImages: async (options) => {
-      const result = await dialog.showOpenDialog({
+      const result = await showOpenDialog({
         title: '选择图片',
         buttonLabel: '添加',
         properties: ['openFile', 'multiSelections'],
@@ -663,9 +830,30 @@ async function ensureShell(): Promise<Shell> {
     // preference lives — cannot repaint it itself. `setTitleBarOverlay` only
     // exists on Windows; elsewhere the command still answers `ok`, because the
     // shell treats a missing overlay as "this platform has none".
-    onWindowTheme: (theme) => {
+    onWindowTheme: ({ theme, preference }) => {
+      // Native surfaces follow the app rather than the OS: the traffic lights,
+      // dialogs, a `<select>`'s popup, scrollbars and the embedded browser's
+      // `prefers-color-scheme`. Set only on a change — every assignment makes
+      // Chromium re-evaluate the media query in every renderer.
+      if (nativeTheme.themeSource !== preference) nativeTheme.themeSource = preference
+      // The window's own fill shows wherever the document has not painted yet:
+      // the edge a Windows resize drag uncovers, a reload's first frame. Left
+      // dark under a light theme, it flashed black there.
+      window.setBackgroundColor(WINDOW_BACKGROUND[theme])
+      // Remembered for the next launch's first frame.
+      if (windowState.theme !== theme || windowState.themePreference !== preference) {
+        windowState = { ...windowState, theme, themePreference: preference }
+        stateWriter.schedule()
+      }
       if (process.platform === 'darwin') return
       window.setTitleBarOverlay(WINDOW_CHROME[theme])
+    },
+    // A prompt is waiting. Only while the user is elsewhere: the window in front
+    // already shows the card, and flashing it would be nagging.
+    onRequestAttention: () => {
+      if (window.isDestroyed() || window.isFocused()) return
+      if (process.platform === 'darwin') app.dock?.bounce('informational')
+      else window.flashFrame(true)
     },
     browser: browserTabs,
     coordination,
@@ -689,6 +877,13 @@ async function ensureShell(): Promise<Shell> {
   // Every thread-table write, from the service and the wake engine alike;
   // the host coalesces them per project before re-reading the table.
   const stopThreadUpdates = coordination.onThreadsChanged((cwd) => host.broadcastCoordinationThreads(cwd))
+  // The renderer dims its chrome while the window is inactive. Focus also ends
+  // a taskbar flash; Windows would otherwise keep it lit until clicked.
+  window.on('focus', () => {
+    window.flashFrame(false)
+    host.broadcastWindowFocus(true)
+  })
+  window.on('blur', () => host.broadcastWindowFocus(false))
 
   const built: Shell = { window, host }
   shell = built
@@ -713,6 +908,9 @@ async function ensureShell(): Promise<Shell> {
 
   try {
     await window.loadFile(join(bundleDir, 'renderer', 'index.html'))
+    // `ready-to-show` normally comes first; this is the net for a page whose
+    // first paint never reports (it must not leave a loaded window hidden).
+    reveal()
   } catch (error) {
     // The one window failed to build: nothing can be shown at all.
     shell = undefined
@@ -834,10 +1032,11 @@ function guardNavigation(window: BrowserWindow): void {
  * any channel exists, so this cannot be a renderer dialog — a native modal is
  * the only thing available this early. Every project asks for its own servers.
  *
- * `showMessageBoxSync` returns the button *index*; it is the async
- * `showMessageBox` that returns `{ response }`. Reading `.response` off the
- * number here used to make this function return `undefined`, which silently
- * rejected every server even when the user clicked Trust.
+ * The async `showMessageBox` answers `{ response }`; `showMessageBoxSync`,
+ * which this used before, answers the bare button *index* — and reading
+ * `.response` off that number once made this return `undefined`, silently
+ * rejecting every server even when the user clicked 信任. The async form is
+ * also the one that can take a parent window without blocking the main loop.
  */
 async function promptTrustMcpServer(
   name: string,
@@ -845,21 +1044,27 @@ async function promptTrustMcpServer(
 ): Promise<boolean> {
   const detail =
     server.transport === 'stdio'
-      ? `Command: ${[server.command, ...(server.args ?? [])].filter(Boolean).join(' ')}`
+      ? `命令：${[server.command, ...(server.args ?? [])].filter(Boolean).join(' ')}`
       : server.url
-        ? `URL: ${server.url}`
-        : 'Unknown transport'
-  const clicked = dialog.showMessageBoxSync({
+        ? `地址：${server.url}`
+        : '未知的连接方式'
+  const options: MessageBoxOptions = {
     type: 'question',
-    buttons: ['Trust', 'Reject'],
+    buttons: ['信任', '拒绝'],
     // Both default to Reject: a dismissed dialog must not grant trust.
     defaultId: 1,
     cancelId: 1,
-    title: 'Trust MCP server',
-    message: `Trust MCP server "${name}"?`,
+    title: '信任 MCP 服务器',
+    // The line macOS shows in bold — it draws no title at all.
+    message: `要信任 MCP 服务器「${name}」吗？`,
     detail,
-  })
-  return clicked === 0
+  }
+  // Parented when a window exists (a project opened after the first): a sheet
+  // on macOS, a modal owned by the window on Windows. The first project's
+  // servers are asked before any window is built, so that one floats.
+  const parent = liveWindow()
+  const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+  return response === 0
 }
 
 /**

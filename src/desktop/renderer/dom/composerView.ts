@@ -217,8 +217,14 @@ export function createComposerView(els: {
   // by `setStreaming` for the one button whose meaning changes.
   replace(els.submit, icon('send'))
   replace(els.stop, icon('stop'))
+  // Fixed, unlike the send button's: stopping means one thing in every state.
+  // The key is named because Escape is how most people will want to do it.
+  els.stop.setAttribute('aria-label', '停止（Esc）')
+  els.stop.title = '停止（Esc）'
   replace(els.attach, icon('plus'))
   els.attach.setAttribute('aria-label', '附件')
+  els.attach.setAttribute('aria-haspopup', 'menu')
+  els.attach.setAttribute('aria-expanded', 'false')
   els.attach.title = '添加附件（图片 / @ 引用项目文件）'
 
   // --- the attachment control (S11) ------------------------------------------------
@@ -259,14 +265,15 @@ export function createComposerView(els: {
     }
 
     const menu = el('div', 'composer-menu attachment-menu')
-    menu.setAttribute('role', 'listbox')
+    // Commands, not a choice among values: `menu`/`menuitem`, which also keeps
+    // a screen reader from announcing 「未选中」 on each of them.
+    menu.setAttribute('role', 'menu')
     menu.setAttribute('aria-label', '附件')
     const pickItem = button('composer-menu-item', '选择图片', '选择图片', () => {
       closeAttachMenu()
       actions.onPickImages()
     })
-    pickItem.setAttribute('role', 'option')
-    pickItem.setAttribute('aria-selected', 'false')
+    pickItem.setAttribute('role', 'menuitem')
     const mentionItem = button('composer-menu-item', '引用项目文件（@）', '在光标处插入 @，引用项目文件', () => {
       closeAttachMenu()
       const next = insertMentionToken(els.input.value, els.input.selectionStart ?? els.input.value.length)
@@ -276,8 +283,7 @@ export function createComposerView(els: {
       els.input.focus()
       actions.onAttach()
     })
-    mentionItem.setAttribute('role', 'option')
-    mentionItem.setAttribute('aria-selected', 'false')
+    mentionItem.setAttribute('role', 'menuitem')
     attachItems.push(pickItem, mentionItem)
     menu.appendChild(pickItem)
     menu.appendChild(mentionItem)
@@ -346,7 +352,7 @@ export function createComposerView(els: {
     els.attachStrip.setAttribute('aria-label', '待发送附件')
     for (const entry of paths) {
       const tile = pathTileNode(entry)
-      tile.appendChild(button('attachment-remove', '✕', `移除 ${entry.path}`, () => actions.onRemovePath(entry.path)))
+      tile.appendChild(button('attachment-remove', '', `移除 ${entry.path}`, () => actions.onRemovePath(entry.path), { icon: 'close' }))
       els.attachStrip.appendChild(tile)
     }
     for (const row of view.rows) {
@@ -391,9 +397,11 @@ export function createComposerView(els: {
       thumb.setAttribute('tabindex', '0')
       thumb.addEventListener('click', () => actions.onPreviewAttachment(row.draftId))
       thumb.addEventListener('keydown', (event) => {
-        if ((event as KeyboardEvent).key !== 'Enter') return
+        const key = (event as KeyboardEvent).key
+        if (key !== 'Enter' && key !== ' ') return
         // The viewer takes focus onto its close button; left alone, this same
-        // Enter's keypress would press that button and shut the viewer at once.
+        // Enter's keypress would press that button and shut the viewer at once
+        // (and Space would scroll the page under it).
         event.preventDefault()
         actions.onPreviewAttachment(row.draftId)
       })
@@ -415,9 +423,9 @@ export function createComposerView(els: {
     }
     // The corner ✕, over the picture rather than after it: the tile is the
     // whole row now, so the remove has nowhere else to sit.
-    const remove = button('attachment-remove', '✕', `移除 ${row.label}`, () => {
+    const remove = button('attachment-remove', '', `移除 ${row.label}`, () => {
       actions.onRemoveAttachment(row.draftId)
-    })
+    }, { icon: 'close' })
     picture.appendChild(remove)
     if (picture !== item) {
       item.appendChild(picture)
@@ -793,11 +801,21 @@ export function createComposerView(els: {
    */
   const contextRing = el('span', 'context-gauge')
   contextRing.setAttribute('aria-hidden', 'true')
+  // The ring sits in a real button rather than the shell being a `role=button`:
+  // the shell also holds the popover, and a button may not contain the popover's
+  // own buttons. The button is also what puts the indicator in the tab order.
+  const contextTrigger = el('button', 'context-trigger', contextRing)
+  contextTrigger.type = 'button'
+  contextTrigger.setAttribute('aria-haspopup', 'dialog')
+  contextTrigger.setAttribute('aria-expanded', 'false')
   const contextCard = createHoverCard(els.contextIndicator, 'context-tooltip')
-  const contextPopover = createContextPopover()
-  els.contextIndicator.setAttribute('role', 'button')
-  els.contextIndicator.setAttribute('aria-haspopup', 'dialog')
-  els.contextIndicator.setAttribute('aria-expanded', 'false')
+  const contextPopover = createContextPopover({
+    onCompact: () => {
+      setContextOpen(false)
+      contextTrigger.focus()
+      actions.onRuntimeAction({ kind: 'run-command', line: '/compact' })
+    },
+  })
   let contextOpen = false
   let contextLoad = 0
 
@@ -826,7 +844,7 @@ export function createComposerView(els: {
   function setContextOpen(open: boolean): void {
     if (open === contextOpen) return
     contextOpen = open
-    els.contextIndicator.setAttribute('aria-expanded', String(open))
+    contextTrigger.setAttribute('aria-expanded', String(open))
     els.contextIndicator.classList.toggle('open', open)
     contextSignature = undefined
     renderContextGauge()
@@ -834,19 +852,13 @@ export function createComposerView(els: {
     else contextPopover.presence.set(false)
   }
 
-  els.contextIndicator.addEventListener('click', (event) => {
-    if (event.target instanceof Node && contextPopover.node.contains(event.target)) return
-    setContextOpen(!contextOpen)
-  })
+  contextTrigger.addEventListener('click', () => setContextOpen(!contextOpen))
   els.contextIndicator.addEventListener('keydown', (event) => {
-    if ((event.key === 'Enter' || event.key === ' ') && event.target === els.contextIndicator) {
-      event.preventDefault()
-      setContextOpen(!contextOpen)
-    } else if (event.key === 'Escape' && contextOpen) {
+    if (event.key === 'Escape' && contextOpen) {
       event.preventDefault()
       event.stopPropagation()
       setContextOpen(false)
-      els.contextIndicator.focus()
+      contextTrigger.focus()
     }
   })
   els.contextIndicator.addEventListener('focusout', (event) => {
@@ -869,11 +881,11 @@ export function createComposerView(els: {
     if (!contextGauge.visible) {
       contextCard.finish()
       contextOpen = false
-      els.contextIndicator.setAttribute('aria-expanded', 'false')
+      contextTrigger.setAttribute('aria-expanded', 'false')
       els.contextIndicator.classList.remove('open')
       contextPopover.presence.finish()
       replace(els.contextIndicator)
-      els.contextIndicator.removeAttribute('aria-label')
+      contextTrigger.removeAttribute('aria-label')
       return
     }
 
@@ -882,8 +894,8 @@ export function createComposerView(els: {
     contextCard.set(contextOpen
       ? undefined
       : { title: '已使用', lead: `${contextGauge.percent} · ${contextGauge.used} / ${contextGauge.usable}`, rows: [] })
-    reconcile(els.contextIndicator, [contextRing, contextCard.node, contextPopover.node])
-    els.contextIndicator.setAttribute('aria-label', contextGauge.title.replace(/\n/g, '；'))
+    reconcile(els.contextIndicator, [contextTrigger, contextCard.node, contextPopover.node])
+    contextTrigger.setAttribute('aria-label', contextGauge.title.replace(/\n/g, '；'))
     if (contextOpen && moved) void loadContextBreakdown()
   }
 
@@ -969,7 +981,7 @@ export function createComposerView(els: {
       if (!runtimeMenuNode) {
         runtimeMenuNode = el('div', 'chip-menu')
         runtimeMenuNode.setAttribute('role', 'menu')
-        runtimeMenuNode.setAttribute('aria-label', '模型与推理强度')
+        runtimeMenuNode.setAttribute('aria-label', '模型与思考强度')
         runtimeMenuNode.addEventListener('mousemove', (event) => { pointer = { x: event.clientX, y: event.clientY } })
         followPointer(runtimeMenuNode, '.chip-menu-row')
         els.chipShell.appendChild(runtimeMenuNode)

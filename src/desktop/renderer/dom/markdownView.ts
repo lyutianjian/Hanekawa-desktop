@@ -6,6 +6,7 @@ import { REDUCED_MOTION_QUERY } from '../model/reducedMotion.js'
 import { el, append } from './dom.js'
 import { button } from './controls.js'
 import { copyText } from './clipboard.js'
+import { copyButton } from './copyButton.js'
 import { icon } from './icons.js'
 
 /**
@@ -167,10 +168,11 @@ function blockNode(block: MdBlock): HTMLElement {
     }
 
     case 'code': {
-      const wrapper = el('div', 'md-code')
+      // `bare`: no label line for the copy button to sit on, so the code makes room.
+      const wrapper = el('div', block.lang ? 'md-code' : 'md-code bare')
       if (block.lang) wrapper.appendChild(el('div', 'md-code-lang', block.lang))
       wrapper.appendChild(el('pre', undefined, el('code', undefined, block.text)))
-      wrapper.appendChild(copyButton(block.text))
+      wrapper.appendChild(codeCopyButton(block.text))
       return wrapper
     }
 
@@ -237,8 +239,13 @@ function mathNode(tex: string, display: boolean): HTMLElement {
 function listItemNode(item: MdListItem): HTMLElement {
   const node = el('li', item.checked === undefined ? undefined : 'md-task')
   // A real checkbox would be focusable and look editable; the state is a marker.
+  // Drawn, not typed: `[x] ` in the reading face was source leaking into prose.
+  // The marker is an image with a name, so the state still reads aloud.
   if (item.checked !== undefined) {
-    node.appendChild(el('span', 'md-check', item.checked ? '[x] ' : '[ ] '))
+    const mark = el('span', item.checked ? 'md-check done' : 'md-check', icon(item.checked ? 'check-circle' : 'circle'))
+    mark.setAttribute('role', 'img')
+    mark.setAttribute('aria-label', item.checked ? '已完成' : '未完成')
+    node.appendChild(mark)
   }
   // A single paragraph is the common case and reads better unwrapped, so tight
   // items do not gain a block of vertical margin each.
@@ -251,32 +258,10 @@ function listItemNode(item: MdListItem): HTMLElement {
   return node
 }
 
-/**
- * Copies the fence's text; the glyph turns into a tick for a moment as the
- * receipt — or into a cross, with the failure as its name, when nothing was
- * copied.
- */
-function copyButton(text: string): HTMLButtonElement {
-  let reset: ReturnType<typeof setTimeout> | undefined
-  const node = button('md-code-copy', '', '复制代码', () => {
-    void copyText(text).then((ok) => {
-      node.replaceChildren(icon(ok ? 'check' : 'close'))
-      node.setAttribute('aria-label', ok ? '复制代码' : '复制失败')
-      node.title = ok ? '复制代码' : '复制失败'
-      node.classList.toggle('failed', !ok)
-      clearTimeout(reset)
-      reset = setTimeout(() => {
-        node.replaceChildren(icon('copy'))
-        node.setAttribute('aria-label', '复制代码')
-        node.title = '复制代码'
-        node.classList.remove('failed')
-      }, COPY_RECEIPT_MS)
-    })
-  }, { icon: 'copy' })
-  return node
+/** Copies the fence's text, with the shared tick-or-cross receipt. */
+function codeCopyButton(text: string): HTMLButtonElement {
+  return copyButton('md-code-copy', '复制代码', () => copyText(text))
 }
-
-const COPY_RECEIPT_MS = 1200
 
 function tableNode(block: Extract<MdBlock, { kind: 'table' }>): HTMLElement {
   const head = el('thead', undefined, el(

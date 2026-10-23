@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { formatTokens, usageCardView } from '../src/desktop/renderer/model/usageCard.js'
+import { formatTokens, heatCellLabel, heatStep, usageCardView, type UsageHeatCellView } from '../src/desktop/renderer/model/usageCard.js'
 
 test('tokens format in 万 / 亿 with one decimal under 100 of the unit', () => {
   assert.equal(formatTokens(0), '0')
@@ -57,4 +57,25 @@ test('the heatmap is 42 weeks whatever the range', () => {
 
 test('large values group their digits', () => {
   assert.equal(formatTokens(60_660_000), '6,066 万')
+})
+
+/**
+ * The heatmap is one Tab stop walked by the arrows, not 364 Tab stops: a week
+ * a step sideways, a day a step down, and days that have not happened skipped.
+ */
+test('the heatmap arrows step a week sideways and a day down, skipping the future', () => {
+  const day = (name: string): UsageHeatCellView => ({ level: 1, day: name, tokens: '1', messages: '1' })
+  const grid = [
+    [day('a0'), day('a1'), day('a2')],
+    [day('b0'), null, day('b2')],
+    [day('c0'), null, null],
+  ]
+  assert.deepEqual(heatStep(grid, { col: 0, row: 1 }, 'ArrowRight'), undefined, 'the week beside has no such day yet')
+  assert.deepEqual(heatStep(grid, { col: 0, row: 0 }, 'ArrowRight'), { col: 1, row: 0 })
+  assert.deepEqual(heatStep(grid, { col: 1, row: 0 }, 'ArrowDown'), { col: 1, row: 2 }, 'the missing day is stepped over')
+  assert.deepEqual(heatStep(grid, { col: 0, row: 0 }, 'ArrowUp'), undefined, 'the edge stops')
+  assert.deepEqual(heatStep(grid, { col: 1, row: 2 }, 'End'), { col: 2, row: 0 })
+  assert.deepEqual(heatStep(grid, { col: 2, row: 0 }, 'Home'), { col: 0, row: 0 })
+  assert.equal(heatStep(grid, { col: 0, row: 0 }, 'a'), undefined)
+  assert.equal(heatCellLabel(day('10月3日')), '10月3日：1 token，1 条消息')
 })

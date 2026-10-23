@@ -1,8 +1,10 @@
 import { el, reconcile, replace, show } from './dom.js'
-import { button, multiSelectField, pillSelect, selectField, textField, toggleField, updateToggleField, type ToggleOptions } from './controls.js'
+import { button, multiSelectField, nameButton, pillSelect, selectField, textField, toggleField, updateToggleField, type ToggleOptions } from './controls.js'
 import { icon, type IconName } from './icons.js'
 import { onPressOutside } from './dismiss.js'
+import { trapTab } from './focus.js'
 import { createModalPresence, createPresence, finishPresenceWithin } from './presence.js'
+import { SETTINGS_SAVED_TEXT } from '../model/settings.js'
 import type {
   SettingsAnchor,
   SettingsButton,
@@ -121,6 +123,14 @@ export function createSettingsView(
   const nav = el('div', 'settings-nav')
   nav.id = 'settings-nav'
   const navList = el('div', 'settings-nav-list')
+  /**
+   * The nav as last painted. Every keystroke in a field renders the screen, and
+   * the nav used to be rebuilt each time; now it is rebuilt only when its
+   * groups or labels change, and a category switch moves `.selected` and
+   * `aria-current` on the kept buttons — which also keeps focus on the one
+   * just pressed.
+   */
+  let navPainted: { signature: string; items: Array<{ node: HTMLElement; category: SettingsNavItem['category'] }> } | undefined
   const close = button('settings-nav-close', '返回会话', '关闭设置（Esc）', () =>
     onIntent({ kind: 'close' }),
     { icon: 'arrow-left' },
@@ -149,6 +159,9 @@ export function createSettingsView(
   const dialog = el('div', 'settings-dialog')
   dialog.setAttribute('role', 'dialog')
   dialog.setAttribute('aria-modal', 'true')
+  // Named by its own title and described by its error, so a screen reader
+  // entering it hears which form this is, and hears why a save was refused.
+  dialog.setAttribute('aria-labelledby', DIALOG_TITLE_ID)
   // Where focus goes when a paint disables or removes the focused control: still
   // inside the dialog, so Tab stays trapped and Esc still reaches the form.
   dialog.tabIndex = -1
@@ -160,7 +173,7 @@ export function createSettingsView(
   dialogLayer.addEventListener('pointerdown', (event) => {
     if (event.target === dialogLayer) onIntent({ kind: 'cancel-draft' })
   })
-  dialog.addEventListener('keydown', (event) => trapTab(event, dialog))
+  dialog.addEventListener('keydown', (event) => trapTab(dialog, event))
 
   // Programmatically focusable but not a tab stop, exactly like the sidebar's
   // list. Without focus *inside* the screen the `keydown` above never fires, and
@@ -308,8 +321,7 @@ export function createSettingsView(
     made.className = className
     const text = made.querySelector('.btn-label')
     if (text && text.textContent !== label) text.textContent = label
-    made.title = options.title ?? label
-    made.setAttribute('aria-label', made.title)
+    nameButton(made, label, options.title ?? label)
     made.disabled = options.enabled === false
     return made
   }
@@ -330,10 +342,10 @@ export function createSettingsView(
             'div',
             'settings-provider-identity',
             el('span', 'settings-provider-avatar', header.initial),
-            el('div', 'settings-dialog-title', header.name),
+            titled(el('div', 'settings-dialog-title', header.name)),
             header.protocol ? el('span', 'settings-provider-badge', header.protocol) : null,
           )
-        : el('div', 'settings-dialog-title', form.title),
+        : titled(el('div', 'settings-dialog-title', form.title)),
       form.kind === 'mcp-server' ? docLinkNode(node(`${key}:doc`, 'a', 'mcp-form-doc-link')) : null,
       keptButton(`${key}:close`, 'settings-dialog-close', '', { kind: 'cancel-draft' }, { title: '关闭（Esc）', icon: 'close' }),
     ])
@@ -368,7 +380,9 @@ export function createSettingsView(
             ),
           ],
     )
-    return [head, content, error ? el('div', 'settings-error', error) : null, foot]
+    if (error) dialog.setAttribute('aria-describedby', DIALOG_ERROR_ID)
+    else dialog.removeAttribute('aria-describedby')
+    return [head, content, error ? alerting(el('div', 'settings-error', error), DIALOG_ERROR_ID) : null, foot]
   }
 
   /** 获取模型列表's outcome, kept so a screen reader hears each change once. */
@@ -412,7 +426,7 @@ export function createSettingsView(
             el('span', undefined, '显示名'),
             el('span'),
           )
-        : el('div', 'settings-model-empty', '还没有模型。'),
+        : el('div', 'settings-model-empty', '还没有模型'),
       ...form.models.map((row) => modelRowNode(row, key)),
     ])
     return [
@@ -680,17 +694,29 @@ export function createSettingsView(
       // Read before the column is rebuilt: the button that opened a form may not survive it.
       const activeLabel = document.activeElement?.getAttribute('aria-label') ?? undefined
 
-      replace(
-        navList,
-        ...view.navGroups.map((group) =>
-          el(
-            'div',
-            'settings-nav-group',
-            el('div', 'settings-nav-group-label', group.label),
-            ...group.items.map((item) => navItemNode(item, onIntent)),
+      const navSignature = JSON.stringify(view.navGroups.map((group) => [group.label, group.items.map((item) => [item.category, item.label])]))
+      if (navPainted?.signature === navSignature) {
+        const selected = new Set(view.navGroups.flatMap((group) => group.items.filter((item) => item.selected).map((item) => item.category)))
+        for (const { node, category } of navPainted.items) markNavItem(node, selected.has(category))
+      } else {
+        const items: Array<{ node: HTMLElement; category: SettingsNavItem['category'] }> = []
+        replace(
+          navList,
+          ...view.navGroups.map((group) =>
+            el(
+              'div',
+              'settings-nav-group',
+              el('div', 'settings-nav-group-label', group.label),
+              ...group.items.map((item) => {
+                const node = navItemNode(item, onIntent)
+                items.push({ node, category: item.category })
+                return node
+              }),
+            ),
           ),
-        ),
-      )
+        )
+        navPainted = { signature: navSignature, items }
+      }
 
       // A confirmation is drawn inside the card that owns it, so the answer to a
       // click appears where the click was. One whose card the search filtered
@@ -731,7 +757,7 @@ export function createSettingsView(
             onIntent,
           }),
         ),
-        view.error && !form && !errorRow ? el('div', 'settings-error banner', view.error) : null,
+        view.error && !form && !errorRow ? alerting(el('div', 'settings-error banner', view.error)) : null,
       ])
 
       // The dialog keeps its last content while it closes; only an open form repaints it.
@@ -849,12 +875,36 @@ function navItemNode(
   item: SettingsNavItem,
   onIntent: (intent: SettingsIntent) => void,
 ): HTMLButtonElement {
-  return button(
-    item.selected ? 'settings-nav-item selected' : 'settings-nav-item',
+  const node = button(
+    'settings-nav-item',
     item.label,
     item.label,
     () => onIntent({ kind: 'select-category', category: item.category }),
   )
+  markNavItem(node, item.selected)
+  return node
+}
+
+/** The selected category is said, not only drawn: `.selected` is a fill. */
+function markNavItem(node: HTMLElement, selected: boolean): void {
+  node.classList.toggle('selected', selected)
+  if (selected) node.setAttribute('aria-current', 'page')
+  else node.removeAttribute('aria-current')
+}
+
+const DIALOG_TITLE_ID = 'settings-dialog-title'
+const DIALOG_ERROR_ID = 'settings-dialog-error'
+
+function titled(node: HTMLElement): HTMLElement {
+  node.id = DIALOG_TITLE_ID
+  return node
+}
+
+/** An error a screen reader hears when it appears, not only when it is read to. */
+function alerting(node: HTMLElement, id?: string): HTMLElement {
+  node.setAttribute('role', 'alert')
+  if (id !== undefined) node.id = id
+  return node
 }
 
 function headerNode(
@@ -927,7 +977,7 @@ function cardNode(
     children.push(rowNode(card.id, row, context))
     // Directly under the row they are about, so the reader does not hunt for them.
     if (context.rowError?.rowId === row.id) {
-      children.push(el('div', 'settings-row-error', context.rowError.message))
+      children.push(alerting(el('div', 'settings-row-error', context.rowError.message)))
     }
     if (context.confirm?.anchor.rowId === row.id) {
       children.push(confirmNode(context.confirm.message, onIntent))
@@ -970,6 +1020,14 @@ function rowNode(
   // the same cell too, or the caret is dropped once per keystroke.
   const control = context.node(`control:${cardId}:${row.id}`, 'div', 'settings-row-control')
   const controls: Node[] = []
+  if (row.savedSeq !== undefined) {
+    // Keyed by the batch, so a repaint keeps the node and its fade runs once;
+    // the next save of this row is a new key and a new receipt.
+    const receipt = context.node(`saved:${cardId}:${row.id}:${row.savedSeq}`, 'span', 'settings-saved')
+    receipt.textContent = SETTINGS_SAVED_TEXT
+    receipt.setAttribute('role', 'status')
+    controls.push(receipt)
+  }
   switch (row.control.kind) {
     case 'text':
       controls.push(
@@ -1107,29 +1165,6 @@ export interface FormMenuContext {
  */
 function formKeyOf(form: SettingsForm): string {
   return `form:${form.anchor.cardId}:${form.anchor.rowId ?? ''}${form.kind === 'mcp-server' ? ':mcp' : ''}`
-}
-
-/**
- * Tab and Shift+Tab wrap inside the dialog. The page behind it is `inert`, but
- * the title bar is not, and Tab off the last button would land there.
- */
-function trapTab(event: KeyboardEvent, dialog: HTMLElement): void {
-  if (event.key !== 'Tab') return
-  const stops = [...dialog.querySelectorAll<HTMLElement>('input, select, button, a')].filter(
-    (candidate) =>
-      !(candidate as HTMLButtonElement).disabled
-      && !(candidate.closest('.settings-menu') as HTMLElement | null)?.hidden,
-  )
-  if (stops.length === 0) return
-  const first = stops[0]!
-  const last = stops[stops.length - 1]!
-  // Focus parked on the dialog itself (a paint disabled the focused button) is
-  // pulled onto a control too, or Tab would walk out of the dialog from there.
-  const at = document.activeElement
-  const outside = at === dialog || !dialog.contains(at)
-  if (!outside && (event.shiftKey ? at !== first : at !== last)) return
-  event.preventDefault()
-  ;(event.shiftKey ? last : first).focus()
 }
 
 function docLinkNode(link: HTMLAnchorElement): HTMLAnchorElement {

@@ -90,7 +90,7 @@ function buildRipgrepArgs(options: SearchOptions): string[] {
 function tryRipgrep(options: SearchOptions): Promise<string[] | null> {
   return new Promise((resolve, reject) => {
     const args = buildRipgrepArgs(options)
-    execFile('rg', args, { cwd: options.cwd, timeout: RG_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+    execFile('rg', args, { cwd: options.cwd, timeout: RG_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
       const code = (err as { code?: unknown } | null)?.code
       // rg not installed is the one fallback-worthy case.
       if (code === 'ENOENT') {

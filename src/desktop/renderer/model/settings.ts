@@ -17,9 +17,11 @@ import {
   type ProbedModel,
   type WireShellProbeEndpointResult,
 } from '../../shellProtocol.js'
+import type { DesktopPlatform } from '../../types.js'
+import { isPrimaryModifier } from './desktopShortcuts.js'
 import { providerLabel } from './providerLabels.js'
 import { DEFAULT_THEME_PREFERENCE, THEME_PREFERENCES, type ThemePreference } from './theme.js'
-import { EFFORT_LABELS } from './composer.js'
+import { EFFORT_LABELS, PERMISSION_MODE_LABELS as COMPOSER_MODE_LABELS } from './composer.js'
 import { agentDescription } from './builtinLabels.js'
 import {
   VALID_EFFORT_LEVELS,
@@ -213,6 +215,12 @@ export interface SettingsState {
   readonly error?: string
   /** The rows the error is about, so the view can draw it under them. */
   readonly errorRows?: readonly string[]
+  /**
+   * The rows the last batch to land was about, for the 「已保存」 receipt.
+   * `seq` is that batch's first pending id, so saving the same row twice is two
+   * receipts rather than one that never restarts.
+   */
+  readonly savedRows?: { readonly seq: number; readonly ids: readonly string[] }
   /** Renderer-local theme preference; `app.ts` seeds it from `localStorage`. */
   readonly themePref: ThemePreference
   /** The search box. Filters the nav and the selected page; never the wire. */
@@ -252,6 +260,9 @@ export const CATEGORY_LABELS: Record<SettingsCategory, string> = {
 
 /** The `inherit` sentinel, spelled once. */
 export const INHERIT = 'inherit'
+
+/** The receipt beside a row whose change just landed. */
+export const SETTINGS_SAVED_TEXT = '已保存'
 
 export type SettingsGroup = 'personal' | 'integration' | 'coding'
 
@@ -376,6 +387,12 @@ export interface SettingsRow {
   readonly control: SettingsControl
   /** A change about this row is in flight; the view dims it and stops its controls. */
   readonly pending?: boolean
+  /**
+   * A change about this row just landed: the receipt's id (`savedRows.seq`).
+   * A dimmed row lightening again was the only sign a save had worked, and it
+   * looks the same as one that failed and rolled back.
+   */
+  readonly savedSeq?: number
 }
 
 export interface SettingsCard {
@@ -1025,10 +1042,13 @@ export function settingsView(state: SettingsState): SettingsViewModel {
   // The *projected* snapshot everywhere below, never `state.snapshot`: a click
   // draws its own outcome now and the host confirms it a round trip later.
   const projected = projectSnapshot(state.snapshot, state.pending)
-  const cards = markPending(
-    cardsFor(state.category, projected),
-    pendingRowIds(state.pending),
-    pendingKinds(state.pending),
+  const cards = markSaved(
+    markPending(
+      cardsFor(state.category, projected),
+      pendingRowIds(state.pending),
+      pendingKinds(state.pending),
+    ),
+    state.savedRows,
   )
 
   if (state.category === 'personalization') {
@@ -1099,6 +1119,16 @@ function markPending(
           ),
         }
       : {}),
+  }))
+}
+
+/** Marks the rows the last landed batch was about; a row in flight again shows no receipt. */
+function markSaved(cards: SettingsCard[], saved: SettingsState['savedRows']): SettingsCard[] {
+  if (saved === undefined || saved.ids.length === 0) return cards
+  const ids = new Set(saved.ids)
+  return cards.map((card) => ({
+    ...card,
+    rows: card.rows.map((row) => (ids.has(row.id) && row.pending !== true ? { ...row, savedSeq: saved.seq } : row)),
   }))
 }
 
@@ -1245,7 +1275,7 @@ function providersCard(snapshot: WireSettingsSnapshot): SettingsCard {
     id: 'providers',
     title: '服务商',
     note: 'API key 只在本机保存，界面上始终以掩码显示。',
-    empty: '还没有服务商。',
+    empty: '还没有服务商',
     rows,
     footerButtons: [{ label: '添加服务商', title: '添加服务商', icon: 'plus', intent: { kind: 'new-endpoint' } }],
   }
@@ -1369,13 +1399,17 @@ export function routingOptions(
 const BEHAVIOR_NOTES: Record<PermissionBehavior, string> = {
   allow: '匹配到的工具调用不再提示。',
   ask: '匹配到的工具调用一定提示，即使处于「必要时询问」模式。',
-  deny: '匹配到的工具调用直接拒绝，「跳过询问」模式也不例外。',
+  deny: '匹配到的工具调用直接拒绝，「绕过权限」模式也不例外。',
 }
 
+/**
+ * The composer pill's names, so a mode reads the same wherever it is picked;
+ * `bypass` only adds the caveat the startup select is the place to state.
+ */
 const PERMISSION_MODE_LABELS: Record<'default' | 'auto' | 'bypass', string> = {
-  default: '按规则询问',
-  auto: '必要时询问',
-  bypass: '跳过询问（仍遵守拒绝规则）',
+  default: COMPOSER_MODE_LABELS.default,
+  auto: COMPOSER_MODE_LABELS.auto,
+  bypass: `${COMPOSER_MODE_LABELS.bypass}（仍遵守拒绝规则）`,
 }
 
 /**
@@ -1464,7 +1498,7 @@ function permissionGroupCard(group: WirePermissionGroup, localPath: string): Set
     title: BEHAVIOR_LABELS[group.behavior],
     note: `${BEHAVIOR_NOTES[group.behavior]}新增的规则${SAVED_LOCAL}`,
     noteHint: localPath,
-    empty: '还没有规则。',
+    empty: '还没有规则',
     rows: [...local, ...inherited],
     footerButtons: [
       {
@@ -1488,7 +1522,7 @@ function agentCards(snapshot: WireSettingsSnapshot): SettingsCard[] {
       title: '子代理',
       note: '定义来自项目里的代理文件，这里只读；选用的模型保存在全局配置。',
       noteHint: `定义：.myagent/agents/*.md\n模型路由：${snapshot.saveTarget}`,
-      empty: '没有可用的子代理定义。',
+      empty: '没有可用的子代理定义',
       rows: snapshot.agents.map((agent) => ({
         id: `agent:${agent.type}`,
         label: agent.type,
@@ -1555,7 +1589,7 @@ function coordinationCard(snapshot: WireSettingsSnapshot): SettingsCard {
     },
     {
       id: `agent:coordination-${role}-effort`,
-      label: `${name}推理强度`,
+      label: `${name}思考强度`,
       control: {
         kind: 'select' as const,
         value: effort ?? INHERIT,
@@ -1588,8 +1622,8 @@ function coordinationCard(snapshot: WireSettingsSnapshot): SettingsCard {
 /** Every mode an agent file may name, not just the three the startup select offers. */
 const AGENT_PERMISSION_MODE_LABELS: Record<string, string> = {
   ...PERMISSION_MODE_LABELS,
-  plan: '计划模式',
-  readonly: '只读',
+  plan: COMPOSER_MODE_LABELS.plan,
+  readonly: COMPOSER_MODE_LABELS.readonly,
 }
 
 function agentDetail(agent: WireAgentDefinitionInfo): string {
@@ -1648,7 +1682,7 @@ function cacheCard(snapshot: WireSettingsSnapshot): SettingsCard {
         detail:
           general.thinking === false
             ? '关闭：请求不带 thinking 参数，模型直接作答。'
-            : '开启：模型按需思考，思考量由推理强度决定。',
+            : '开启：模型按需思考，思考量由思考强度决定。',
         control: {
           kind: 'toggle',
           value: general.thinking !== false,
@@ -1739,7 +1773,7 @@ function skillDetail(skill: WireSkillInfo): string {
   // Absent means every tool, the same asymmetry `agentDetail` spells out.
   parts.push(skill.allowedTools ? `工具：${skill.allowedTools.join('、')}` : '工具：全部')
   if (skill.model) parts.push(`模型：${skill.model}`)
-  if (skill.effort) parts.push(`推理强度：${skill.effort}`)
+  if (skill.effort) parts.push(`思考强度：${skill.effort}`)
   if (skill.hasHooks) parts.push('带 hooks')
   if (skill.attachments) parts.push(`${skill.attachments} 个附件`)
   if (!skill.enabled) parts.push('已关闭：不进提示词，斜杠命令也不注册')
@@ -1752,7 +1786,7 @@ function mcpCard(snapshot: WireSettingsSnapshot): SettingsCard {
     title: 'MCP 服务器',
     note: `信任${SAVED_LOCAL}上层设置里已经信任的服务器，在这里关不掉。`,
     noteHint: '信任写入本项目的 settings.local.json（在 ~/.myagent/projects/ 下）。各层的信任列表会合并，所以只能在授予信任的那一层撤销。',
-    empty: '没有配置 MCP 服务器。',
+    empty: '没有配置 MCP 服务器',
     rows: snapshot.mcpServers.map((server) => {
       const toggle = {
         value: server.trusted,
@@ -1973,7 +2007,7 @@ function providerForm(draft: EndpointDraft, snapshot: WireSettingsSnapshot, prob
       },
       {
         id: 'baseUrl',
-        label: 'Base URL',
+        label: '接口地址（Base URL）',
         value: draft.baseUrl,
         mono: true,
         placeholder: draft.isNew ? 'https://' : '留空使用官方地址',
@@ -2054,7 +2088,7 @@ function modelPicker(draft: EndpointDraft): SettingsModelPicker {
     ...(listed.length === 0
       ? { empty: '这个服务没有列出模型，用「添加模型」手动填写。' }
       : shown.length === 0
-        ? { empty: '没有匹配的模型。' }
+        ? { empty: '没有匹配的模型' }
         : {}),
   }
 }
@@ -2494,15 +2528,17 @@ export interface SettingsChord {
   readonly shiftKey?: boolean
   readonly ctrlKey?: boolean
   readonly metaKey?: boolean
+  readonly altKey?: boolean
 }
 
 /**
  * The *global* entry point, resolved before `resolveKey` — which is only safe
- * because it answers `'none'` unless ctrl or meta is held. The sidebar's chord
- * handler works exactly this way and for exactly this reason.
+ * because it answers `'none'` unless the platform's primary modifier is held
+ * (`isPrimaryModifier`). The sidebar's chord handler works exactly this way and
+ * for exactly this reason.
  */
-export function settingsChordToIntent(chord: SettingsChord): SettingsIntent {
-  if (!chord.ctrlKey && !chord.metaKey) return { kind: 'none' }
+export function settingsChordToIntent(chord: SettingsChord, platform: DesktopPlatform): SettingsIntent {
+  if (!isPrimaryModifier(chord, platform)) return { kind: 'none' }
   if (chord.key === ',') return { kind: 'open' }
   return { kind: 'none' }
 }
@@ -3161,7 +3197,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       const value = intent.value as EffortLevel | typeof INHERIT
       if (value !== INHERIT && !VALID_EFFORT_LEVELS.includes(value)) {
         return {
-          state: { ...state, error: '推理强度无效。', errorRows: [`agent:coordination-${intent.role}-effort`], openMenu: undefined },
+          state: { ...state, error: '思考强度无效。', errorRows: [`agent:coordination-${intent.role}-effort`], openMenu: undefined },
         }
       }
       return {
@@ -3361,7 +3397,7 @@ export async function runSettingsChanges(
 
   const projectRoot = state.projectRoot
   if (projectRoot === undefined) {
-    return { ...retire(state), busy: false, error: '还没有选定项目。' }
+    return { ...retire(state), busy: false, error: '还没有选定项目' }
   }
   let next = state
   const finish = (failure?: { error: string; change: SettingsChange }): SettingsState => {
@@ -3378,6 +3414,8 @@ export async function runSettingsChanges(
       busy: retired.pending.length > 0,
       error: failure?.error,
       errorRows: failure ? errorRowsOf(failure.change) : undefined,
+      // A failure clears the receipt too: the screen's last word is the error.
+      savedRows: failure ? undefined : { seq: batch[0]?.id ?? 0, ids: [...pendingRowIds(batch)] },
       ...(submitted ? (failure ? { draftSubmit: undefined, ...resumable(latest.draft, next.snapshot) } : NO_DRAFT) : {}),
     }
   }

@@ -140,7 +140,7 @@ export function applyAskIntent(state: AskState, intent: AskIntent): AskOutcome {
   const question = currentQuestion(state)
   if (!question) {
     // An empty request cannot be answered; rejecting is the only honest reply.
-    return { state, result: { kind: 'rejected', feedback: '没有提出任何问题。' } }
+    return { state, result: { kind: 'rejected', feedback: '没有提出任何问题' } }
   }
   const labels = optionLabels(question)
 

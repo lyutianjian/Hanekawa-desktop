@@ -73,6 +73,8 @@ test('windows goes through cmd.exe with the path quoted verbatim', async () => {
   assert.deepEqual(launches[0]!.command, 'cmd.exe')
   assert.deepEqual(launches[0]!.args, ['/c', 'code', '"C:\\repo\\a&b"'])
   assert.equal(launches[0]!.options.windowsVerbatimArguments, true)
+  // `cmd.exe` gets no console window of its own: it flashed black over the app.
+  assert.equal(launches[0]!.options.windowsHide, true)
 })
 
 test('a nonzero exit is reported as "code is not installed"', async () => {

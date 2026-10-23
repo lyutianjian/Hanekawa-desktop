@@ -73,7 +73,7 @@ export function createMergeBarView(
         { kind: 'merge', threadId: entry.threadId },
       ))
     }
-    children.push(button('merge-bar-dismiss', '×', '隐藏此提醒', () => onIntent({ kind: 'dismiss', threadId: entry.threadId })))
+    children.push(button('merge-bar-dismiss', '', '隐藏此提醒', () => onIntent({ kind: 'dismiss', threadId: entry.threadId }), { icon: 'close' }))
     const node = el('div', 'merge-bar-row', ...children)
     node.setAttribute('data-thread-id', entry.threadId)
     return node

@@ -1,6 +1,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { completionAcceptMode, resolveKey, type ShellState, type WindowLayers } from '../src/desktop/renderer/model/keymap.js'
+import {
+  completionAcceptMode,
+  ownedByTarget,
+  resolveKey,
+  type KeyTarget,
+  type ShellState,
+  type WindowLayers,
+} from '../src/desktop/renderer/model/keymap.js'
 import {
   classifyInput,
   commandEffectToIntent,
@@ -57,6 +64,36 @@ test('Escape answers an open dialog and never interrupts, even mid-turn', () => 
   assert.equal(resolveKey({ key: 'Enter' }, shell({ hasOverlay: true })), 'overlay')
   assert.equal(resolveKey({ key: 'y' }, shell({ hasOverlay: true })), 'overlay')
   assert.equal(resolveKey({ key: 'Tab' }, shell({ hasOverlay: true, completions: 'command' })), 'overlay')
+})
+
+const at = (where: Partial<KeyTarget>): KeyTarget => ({ composer: false, editable: false, pressable: false, inLayer: false, ...where })
+
+test('a waiting card takes keys from its own card and from nowhere-focus, never from another field', () => {
+  // Typing in the sidebar search while a permission card waited used to answer
+  // the card: `y` allowed, Escape denied. The field keeps its keys now.
+  for (const action of ['overlay', 'rewind'] as const) {
+    assert.equal(ownedByTarget('y', action, at({ editable: true })), true, `${action}: another field keeps its letters`)
+    assert.equal(ownedByTarget('Escape', action, at({ editable: true })), true, `${action}: another field keeps Escape`)
+    assert.equal(ownedByTarget('Enter', action, at({ pressable: true })), true, `${action}: a button elsewhere keeps Enter`)
+    assert.equal(ownedByTarget(' ', action, at({ pressable: true })), true, `${action}: a button elsewhere keeps Space`)
+    // Inside its own card the card's key map decides — the 「其他」 field and the
+    // plan's 修改… field included.
+    assert.equal(ownedByTarget('y', action, at({ editable: true, inLayer: true })), false)
+    assert.equal(ownedByTarget('Enter', action, at({ pressable: true, inLayer: true })), false)
+    // Focus a repaint dropped on the page, and the composer the card replaced,
+    // still reach it: the card stays answerable from anywhere focus is idle.
+    assert.equal(ownedByTarget('Escape', action, at({})), false)
+    assert.equal(ownedByTarget('y', action, at({ composer: true, editable: true })), false)
+  }
+})
+
+test('outside a waiting card, a focused field or button keeps what it answers itself', () => {
+  assert.equal(ownedByTarget('Escape', 'interrupt', at({ editable: true })), true, 'Escape in the search never stops the turn')
+  assert.equal(ownedByTarget('Enter', 'submit', at({ pressable: true })), true, 'Enter on a thumbnail never sends the draft')
+  assert.equal(ownedByTarget('Escape', 'interrupt', at({ pressable: true })), false, 'only Enter and Space belong to a button')
+  assert.equal(ownedByTarget('Enter', 'submit', at({ composer: true, editable: true })), false, 'the composer is the key map’s')
+  // `inLayer` means nothing to an action that has no layer.
+  assert.equal(ownedByTarget('Escape', 'interrupt', at({ editable: true, inLayer: true })), true)
 })
 
 test('Escape interrupts only when nothing is open and a turn is running', () => {

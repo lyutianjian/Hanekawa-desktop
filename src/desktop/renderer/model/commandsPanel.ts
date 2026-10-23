@@ -45,10 +45,11 @@ export function commandRows(tasks: readonly BackgroundTaskSnapshot[]): CommandRo
     })
 }
 
+/** 「1 分 15 秒」, in the same units as the transcript's 「用时」. */
 export function formatElapsed(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000))
-  if (seconds < 60) return `${seconds}s`
+  if (seconds < 60) return `${seconds} 秒`
   const minutes = Math.floor(seconds / 60)
-  if (minutes < 60) return `${minutes}m${seconds % 60}s`
-  return `${Math.floor(minutes / 60)}h${minutes % 60}m`
+  if (minutes < 60) return `${minutes} 分 ${seconds % 60} 秒`
+  return `${Math.floor(minutes / 60)} 小时 ${minutes % 60} 分`
 }

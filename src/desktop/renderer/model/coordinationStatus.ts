@@ -1,3 +1,4 @@
+import { relativeTime } from './timeLabel.js'
 import type { WireCoordinationThreads, WireThreadInfo, WireThreadStatus } from '../../shellProtocol.js'
 
 /**
@@ -77,19 +78,9 @@ export function coordinationCounts(threads: readonly WireThreadInfo[]): { runnin
   return { running, blocked }
 }
 
-const MINUTE = 60_000
-const HOUR = 60 * MINUTE
-const DAY = 24 * HOUR
-
-/** 刚刚 / N 分钟前 / N 小时前 / N 天前. An unreadable timestamp reads as empty. */
+/** The window's one time label (`timeLabel.ts`). An unreadable timestamp reads as empty. */
 export function formatLastActivity(iso: string, now: number): string {
-  const at = Date.parse(iso)
-  if (Number.isNaN(at)) return ''
-  const elapsed = Math.max(0, now - at)
-  if (elapsed < MINUTE) return '刚刚'
-  if (elapsed < HOUR) return `${Math.floor(elapsed / MINUTE)} 分钟前`
-  if (elapsed < DAY) return `${Math.floor(elapsed / HOUR)} 小时前`
-  return `${Math.floor(elapsed / DAY)} 天前`
+  return relativeTime(iso, now) ?? ''
 }
 
 export function threadBySession(

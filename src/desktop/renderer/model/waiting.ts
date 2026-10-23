@@ -79,19 +79,22 @@ export function waitingElapsedLabel(elapsedMs: number): string {
   return elapsedMs < WAITING_CLOCK_AFTER_MS ? '' : formatWorkedDuration(elapsedMs)
 }
 
-/** `['14s', '396 tokens']`: the seconds once they are worth showing, the tokens only beside them. */
+/** `['14 秒', '396 token']`: the seconds once they are worth showing, the tokens only beside them. */
 export function statusMeta(elapsedMs: number, tokens: number | undefined): string[] {
   const seconds = waitingElapsedLabel(elapsedMs)
   if (seconds === '') return []
-  return tokens !== undefined && tokens > 0 ? [seconds, `${formatTokens(tokens)} tokens`] : [seconds]
+  return tokens !== undefined && tokens > 0 ? [seconds, `${formatTokens(tokens)} token`] : [seconds]
 }
 
 function formatTokens(tokens: number): string {
   return tokens < 1000 ? String(tokens) : `${(tokens / 1000).toFixed(1).replace(/\.0$/, '')}k`
 }
 
+/**
+ * There is no last rung: 「快想好了」 promised an end the app cannot see, and
+ * a thought past a minute has no better claim to being nearly done.
+ */
 const THINKING_PHASES: readonly (readonly [number, string])[] = [
-  [60_000, '快想好了'],
   [45_000, '再想一会'],
   [30_000, '还在想'],
   [15_000, '仍在思考'],
@@ -130,14 +133,14 @@ export function turnActivity(entries: readonly TranscriptEntry[], input: Waiting
   if (last?.kind === 'item' && last.item.pending === true && isAgentCall(last.item) && last.item.turnId === input.turnId) {
     const step = toStep(last.item) as CallStep
     return step.tool.awaitingApproval === true
-      ? { row: row(`等待确认 · ${callPhrase(step)}`), mark: { body: 'default', state: 'blocked' } }
+      ? { row: row(`等待你确认 · ${callPhrase(step)}`), mark: { body: 'default', state: 'blocked' } }
       : { row: row(callPhrase(step)), mark: PLAIN }
   }
   const mark = markSpecFor(run ?? latestRun(entries, input.turnId), input.draftCall)
   if (run) {
     const calls = run.steps.filter(isRunningCall)
     const waiting = calls.filter((step) => step.tool.awaitingApproval === true).at(-1)
-    if (waiting) return { row: row(`等待确认 · ${callPhrase(waiting)}`), mark }
+    if (waiting) return { row: row(`等待你确认 · ${callPhrase(waiting)}`), mark }
     if (calls.length > 0) return { row: row(batchPhrase(calls)), mark }
     const thought = run.steps[run.steps.length - 1]
     if (thought?.kind === 'thinking' && thought.pending === true) {

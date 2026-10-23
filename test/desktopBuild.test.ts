@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
+import { runInNewContext } from 'node:vm'
 import { build } from 'esbuild'
 
 import { SHEETS } from '../src/desktop/renderer/model/workingMark.js'
@@ -95,6 +96,15 @@ before(async () => {
     alias: { 'node:crypto': './src/desktop/renderer/runtime/nodeCryptoShim.ts' },
     outfile: join(buildRoot, 'desktop', 'renderer', 'app.js'),
   })
+  await build({
+    absWorkingDir: repoRoot,
+    entryPoints: ['src/desktop/renderer/themeBoot.ts'],
+    bundle: true,
+    platform: 'browser',
+    format: 'iife',
+    target: 'chrome120',
+    outfile: join(buildRoot, 'desktop', 'renderer', 'theme-boot.js'),
+  })
 })
 
 test('main process bundle exists and is non-empty', () => {
@@ -156,6 +166,30 @@ test('the bundled renderer loads and fails only for want of a DOM', async () => 
     `expected the DOM global to be what is missing, got: ${error.message}`,
   )
   assert.notEqual(error.code, 'ERR_MODULE_NOT_FOUND', 'the bundle must not resolve anything at runtime')
+})
+
+test('theme-boot.js is a classic script that writes the first frame\'s attributes', () => {
+  // Loaded by a plain `<script src>` in `<head>`, so it must not be a module:
+  // an `import`/`export` left in it is a SyntaxError before the first paint,
+  // and the dark flash it exists to prevent comes straight back. Run here in a
+  // bare context with only the globals it reads, which also pins that a
+  // throwing `localStorage` costs the stored theme and nothing else.
+  const source = readFileSync(join(buildRoot, 'desktop', 'renderer', 'theme-boot.js'), 'utf8')
+  assert.doesNotMatch(source, /^\s*(import|export)\b/m)
+  const runWith = (storage: () => string | null, dark: boolean, platform?: string) => {
+    const dataset: Record<string, string> = {}
+    const window = {
+      localStorage: { getItem: storage },
+      matchMedia: () => ({ matches: dark }),
+      ...(platform === undefined ? {} : { hanekawa: { platform } }),
+    }
+    runInNewContext(source, { window, document: { documentElement: { dataset } } })
+    return dataset
+  }
+  assert.deepEqual(runWith(() => 'light', true, 'win32'), { theme: 'light', platform: 'win32' })
+  assert.deepEqual(runWith(() => 'system', false, 'darwin'), { theme: 'light', platform: 'darwin' })
+  assert.deepEqual(runWith(() => null, true), { theme: 'dark' }, 'no bridge: the platform waits for app.ts')
+  assert.deepEqual(runWith(() => { throw new Error('locked') }, false), { theme: 'light' })
 })
 
 test('copy-desktop-assets mirrors the renderer assets next to the bundle', async () => {

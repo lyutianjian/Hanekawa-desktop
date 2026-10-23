@@ -41,12 +41,22 @@ import { ShellClient } from './shellClient.js'
 import { SHELL_LANE } from '../shellProtocol.js'
 import { DEFAULT_PANE_LIMIT, selectEvictions, type PaneBudgetEntry } from '../paneBudget.js'
 import { createLaneMux } from '../../runtime/protocol/laneChannel.js'
-import { NO_LAYERS, resolveKey, type ShellState, type WindowLayers } from './model/keymap.js'
+import {
+  NO_LAYERS,
+  ownedByTarget,
+  resolveKey,
+  type KeyAction,
+  type KeyTarget,
+  type ShellState,
+  type WindowLayers,
+} from './model/keymap.js'
+import { desktopShortcut, isPrimaryModifier } from './model/desktopShortcuts.js'
 import {
   createSidebarState,
   moveSelection,
   newSessionIntent,
   nextCollapsePhase,
+  nextUnreadLanes,
   toggleProject,
   sidebarChordToIntent,
   sidebarKeyToIntent,
@@ -55,6 +65,7 @@ import {
   type SidebarIntent,
   type SidebarLaneStatus,
   type SidebarProjectSessions,
+  type SidebarListLoad,
   type SidebarState,
 } from './model/sidebar.js'
 import { rewindKeyToIntent } from './model/rewindPanel.js'
@@ -63,7 +74,10 @@ import {
   clampSidebarWidth,
   parseSidebarWidth,
   SIDEBAR_WIDTH_DEFAULT,
+  SIDEBAR_WIDTH_MAX,
+  SIDEBAR_WIDTH_MIN,
   SIDEBAR_WIDTH_VARIABLE,
+  resizerKeyWidth,
   sidebarWidthVariable,
 } from './model/sidebarWidth.js'
 import {
@@ -86,7 +100,7 @@ import {
   systemThemeFromMatches,
   type ThemePreference,
 } from './model/theme.js'
-import { canvasHeaderView, type CanvasHeaderMenuItem } from './model/canvasHeader.js'
+import { canvasHeaderView, canvasIsEmpty, composerLockReason, type CanvasHeaderMenuItem } from './model/canvasHeader.js'
 import { el, replace, required, show } from './dom/dom.js'
 import type { AttachedPath } from '../../media/attachedPaths.js'
 import { icon } from './dom/icons.js'
@@ -103,6 +117,7 @@ import { createPlanPanelView } from './dom/planPanelView.js'
 import { createChangesPanelView } from './dom/changesPanelView.js'
 import { createQuestionCardView } from './dom/questionCardView.js'
 import { createRewindView } from './dom/rewindView.js'
+import { createNoSessionView } from './dom/noSessionView.js'
 import { createSurfacePanel } from './dom/surfaceView.js'
 import { createProcessStripView } from './dom/processStripView.js'
 import { createComposerView } from './dom/composerView.js'
@@ -111,12 +126,14 @@ import { createStatusView } from './dom/statusView.js'
 import { createSuggestionsView } from './dom/suggestionsView.js'
 import { createSidebarView } from './dom/sidebarView.js'
 import { createTitleBarView } from './dom/titleBarView.js'
-import { sideRailView, titleBarMenus, type TitleBarAction } from './model/titleBar.js'
+import { NEEDS_PROJECT, sideRailView, titleBarMenus, type TitleBarAction } from './model/titleBar.js'
 import { createBrowserPanelView, browserPanelNodes } from './dom/browserPanelView.js'
 import { createSubagentPanelView } from './dom/subagentPanelView.js'
 import {
   SIDE_WIDTH_STORAGE_KEYS,
   SIDE_WIDTH_VARIABLES,
+  SIDE_WIDTH_MAX,
+  SIDE_WIDTH_MIN,
   newTabsForLane,
   clampSideWidth,
   parseSideWidth,
@@ -125,6 +142,7 @@ import {
 } from './model/browserPanel.js'
 import { bindWindowChrome, type WindowControlsOverlay } from './dom/windowChrome.js'
 import { REDUCED_MOTION_QUERY } from './model/reducedMotion.js'
+import { RELATIVE_TIME_REFRESH_MS } from './model/timeLabel.js'
 import { finishPresenceWithin } from './dom/presence.js'
 import type { WireCoordinationThreads, WireThreadMerge, WireThreadStatus } from '../shellProtocol.js'
 import { THREAD_STATUS_LABEL, coordinationCounts, threadBySession, threadFinished, threadTone } from './model/coordinationStatus.js'
@@ -168,6 +186,8 @@ if (!bridge) {
   document.body.textContent = '没有加载到预加载脚本，请重新安装应用。'
   throw new Error('Preload bridge is missing')
 }
+/** Held apart from `bridge` so hoisted functions below read it without a guard. */
+const platform = bridge.platform
 
 // Reserve native controls before any button is mounted, including while the
 // overlay API is still waiting for its first geometry notification.
@@ -175,6 +195,7 @@ const overlayApi = (window.navigator as Navigator & { windowControlsOverlay?: Wi
 const disposeWindowChrome = bindWindowChrome(document.documentElement, bridge.platform, window, overlayApi)
 window.addEventListener('pagehide', disposeWindowChrome, { once: true })
 const titleMenus = titleBarMenus(bridge.platform)
+const railChord = desktopShortcut(bridge.platform, 'toggle-sidebar')
 
 // One transport, many lanes: session traffic rides per-pane lanes untouched,
 // and the reserved `__shell` lane speaks for the window.
@@ -184,8 +205,10 @@ const shellClient = new ShellClient(mux.lane(SHELL_LANE))
 // Theme. The preference lives in localStorage; the resolved theme is written to
 // `documentElement.dataset.theme`, which the stylesheet reads. "Follow system"
 // is resolved here (in JS), so the sheet stays flat token blocks — see
-// `model/theme.ts`. A light-preference user sees a brief dark frame first (the
-// bare `:root` default): CSP forbids an inline pre-paint script.
+// `model/theme.ts`. The first frame is not this block's: `theme-boot.js`, a
+// same-origin script in `<head>`, writes the attribute before the stylesheet
+// paints (CSP forbids an *inline* one, not that), and `main.ts` opens the
+// window on the remembered theme's colours. This block takes over from there.
 //
 // This block must stay *after* the transport: `applyResolvedTheme` runs at
 // module top level and tells the main process to repaint the native overlay, so
@@ -200,8 +223,10 @@ function applyResolvedTheme(preference: ThemePreference): void {
   // The window's three buttons are painted by the OS into chrome the document
   // does not reach (5g), so the main process has to be told. Fire-and-forget:
   // a shell without an overlay answers `ok`, and there is nothing here for the
-  // user to act on if it does not.
-  void shellClient.setWindowTheme(theme).catch(() => {})
+  // user to act on if it does not. The preference goes too: main follows it
+  // with `nativeTheme.themeSource`, so a "follow system" switch can move this
+  // query again — the listener below answers that second change.
+  void shellClient.setWindowTheme(theme, preference).catch(() => {})
 }
 applyResolvedTheme(themePreference)
 darkQuery.addEventListener('change', () => {
@@ -223,6 +248,15 @@ function applySidebarWidth(px: number): void {
     SIDEBAR_WIDTH_VARIABLE,
     sidebarWidthVariable(sidebarWidth),
   )
+  markResizer(required('sidebar-resizer'), sidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX)
+}
+
+/** A drag handle's value, for the screen reader that hears it as a slider. */
+function markResizer(node: HTMLElement, now: number, min: number, max: number): void {
+  node.setAttribute('aria-valuenow', String(Math.round(now)))
+  node.setAttribute('aria-valuemin', String(min))
+  node.setAttribute('aria-valuemax', String(max))
+  node.setAttribute('aria-valuetext', `${Math.round(now)} 像素`)
 }
 applySidebarWidth(sidebarWidth)
 
@@ -240,7 +274,7 @@ const permissionRequest = createPermissionRequestView(composerDock, required('co
 })
 const questionCard = createQuestionCardView(composerDock, required('composer-request'), (intent) => {
   activePane()?.handleAskIntent(intent)
-})
+}, bridge.platform)
 const planCard = createPlanCardView(composerDock, required('composer-request'), {
   onEnterIntent: (intent) => activePane()?.handleEnterPlanIntent(intent),
   onExitIntent: (intent) => activePane()?.handleExitPlanIntent(intent),
@@ -251,7 +285,7 @@ const surface = createSurfacePanel(required('surface'), (action) => {
 })
 const suggestions = createSuggestionsView(required('suggestions'), (index) => {
   void activePane()?.acceptCompletionAt(index)
-})
+}, required('input'))
 const processStrip = createProcessStripView(required('process-strip'), () => showSideTab('commands'))
 const status = createStatusView({
   usage: required('status-usage'),
@@ -333,7 +367,17 @@ let activeLane: string | undefined
  * a real tie.
  */
 const lastActiveTick = new Map<string, number>()
+/** Lanes whose turn ended while another was on screen; `nextUnreadLanes` owns the rule. */
+let unreadLanes: ReadonlySet<string> = new Set()
+let laneWasStreaming: ReadonlyMap<string, boolean> = new Map()
 let tick = 0
+/** Whether any pane has attached yet; see `canvasIsEmpty`. */
+let hadPane = false
+// After the panes' mount, not inside it: a pane appends its own subtree there.
+const noSessionView = createNoSessionView(transcriptArea, {
+  onNewSession: () => runSidebarIntent(newSessionIntent(buildSidebarView(currentSidebarState()).activeProjectRoot)),
+  onOpenProject: () => runSidebarIntent({ kind: 'open-project' }),
+})
 /** Lanes already asked to close for budget reasons, so a repeat pass is a no-op. */
 const evicting = new Set<string>()
 
@@ -343,8 +387,10 @@ function activePane(): PaneSession | undefined {
 
 function attachPaneSession(lane: string): void {
   if (paneSessions.has(lane)) return
+  hadPane = true
   const session = createPaneSession({
     lane,
+    platform,
     channel: mux.lane(lane),
     mount: transcriptArea,
     permissionRequest,
@@ -374,6 +420,12 @@ function attachPaneSession(lane: string): void {
     // pull it triggers is what swaps「未命名会话」for the real first-message
     // title — the same trigger `turn-end` uses, one interaction earlier.
     onFirstContent: () => void refreshSessions(),
+    // A failed click in the pane — a picker, an attachment, a send — is said
+    // where `reportError` decides, never as a note in the conversation.
+    onActionError: (text) => toastHost.push('error', text),
+    // Any pane, not just the active one: a background session asking for
+    // permission is exactly the one the user is not looking at.
+    onAttentionNeeded: () => shellClient.requestAttention(),
     // A search result's path, clicked (§6.2 检索). The lane's project is read at
     // click time, not captured — a lane outlives any one `lanes` snapshot — and
     // the reply is awaited like the canvas header's "open location": "code is
@@ -538,9 +590,14 @@ function removePaneSession(lane: string): void {
 /** What each live lane contributes that no wire field carries. Built once per pass. */
 function laneStatuses(): Map<string, SidebarLaneStatus> {
   const statuses = new Map<string, SidebarLaneStatus>()
+  const streaming = new Map<string, boolean>()
+  for (const [lane, session] of paneSessions) streaming.set(lane, session.client.getSnapshot().isStreaming)
+  unreadLanes = nextUnreadLanes(unreadLanes, laneWasStreaming, streaming, activeLane)
+  laneWasStreaming = streaming
   for (const [lane, session] of paneSessions) {
     statuses.set(lane, {
-      streaming: session.client.getSnapshot().isStreaming,
+      streaming: streaming.get(lane) === true,
+      unread: unreadLanes.has(lane),
       // `hasOverlay` is "a blocking request is drawn *or* parked" — the pane
       // folds every request into its queue whether or not it is painting.
       blocked: session.shellState().hasOverlay,
@@ -635,7 +692,7 @@ function reportError(site: ErrorSite, error: unknown): void {
       return
     }
     case 'toast':
-      toastHost.push('error', text)
+      toastHost.push('error', text, site.retry ? { label: '重试', run: site.retry } : undefined)
   }
 }
 
@@ -670,6 +727,8 @@ let pendingRemoveProject: string | undefined
  * so a failure needs no rollback — the next `refreshSessions()` is the truth.
  */
 const deletingSessions = new Set<string>()
+/** See `SidebarState.openingSessions`. */
+const openingSessions = new Set<string>()
 const removingProjects = new Set<string>()
 let searchQuery = ''
 /** The workspaces folded shut in the sidebar. View state; nothing persists it. */
@@ -677,6 +736,8 @@ let collapsedProjects: ReadonlySet<string> = new Set()
 let helpOpen = false
 /** The「最近」filter: only the sessions that belong to no project. Not persisted. */
 let recentOnly = false
+/** Whether the history has been read yet; until it has, the rail draws skeleton rows. */
+let listLoad: SidebarListLoad = 'loading'
 /** The title bar's open menu, if any. Window-level, like the bar itself. */
 let titleBarMenu: string | undefined
 let sessionsInFlight = false
@@ -696,6 +757,7 @@ function currentSidebarState(): SidebarState {
     pendingRemoveProject,
     deletingSessions,
     removingProjects,
+    openingSessions,
     now: Date.now(),
     // Both buttons open something, which is wrong while a blocking dialog is up.
     canCreate: !(activePane()?.shellState().hasOverlay ?? false),
@@ -704,6 +766,7 @@ function currentSidebarState(): SidebarState {
     helpOpen,
     recentOnly,
     projectsOpen,
+    listLoad,
     coordination: coordinationByRoot,
   })
 }
@@ -717,6 +780,7 @@ function renderSidebar(): void {
   // drift apart — the bar's own signature guard absorbs the repaints.
   titleBar.render({
     menus: titleMenus,
+    railChord,
     openMenu: titleBarMenu,
     sidebarCollapsed: view.collapsed,
     side: sideRail(),
@@ -778,6 +842,7 @@ async function refreshSessions(): Promise<void> {
       sessionsAgain = false
       const result = await shellClient.listSessions()
       projects = result.projects
+      listLoad = 'ready'
       // A removed project takes its thread table, and so its pinned row and card, with it.
       for (const root of coordinationByRoot.keys()) {
         if (!projects.some((project) => project.projectRoot === root)) coordinationByRoot.delete(root)
@@ -794,8 +859,13 @@ async function refreshSessions(): Promise<void> {
     } while (sessionsAgain)
   } catch (error) {
     // Keep the last good list: a sidebar that empties itself on a transient
-    // failure looks like the sessions were deleted.
-    reportError({ action: '读取会话列表' }, error)
+    // failure looks like the sessions were deleted. With no list yet, the rail
+    // says the read failed and offers 重试 in place of its rows.
+    if (listLoad !== 'ready') {
+      listLoad = 'failed'
+      renderSidebar()
+    }
+    reportError({ action: '读取会话列表', retry: () => void refreshSessions() }, error)
   } finally {
     sessionsInFlight = false
   }
@@ -816,9 +886,17 @@ function runSidebarIntent(intent: SidebarIntent): void {
       activateLane(intent.lane)
       return
     case 'open':
+      // The second click on a row that is still opening is the same request.
+      if (openingSessions.has(intent.sessionId)) return
+      openingSessions.add(intent.sessionId)
+      renderSidebar()
       void shellClient
         .openSession({ sessionId: intent.sessionId, projectRoot: intent.projectRoot })
-        .catch((error) => reportError({ action: '打开会话' }, error))
+        .catch((error) => reportError({ action: '打开会话', retry: () => runSidebarIntent(intent) }, error))
+        .finally(() => {
+          openingSessions.delete(intent.sessionId)
+          renderSidebar()
+        })
       return
     case 'close':
       closeLane(intent.lane)
@@ -930,6 +1008,11 @@ function runSidebarIntent(intent: SidebarIntent): void {
     case 'toggle-help':
       helpOpen = !helpOpen
       renderSidebar()
+      return
+    case 'retry-load':
+      listLoad = 'loading'
+      renderSidebar()
+      void refreshSessions()
       return
     case 'toggle-projects':
       if (projectsOpen) leaveProjects()
@@ -1324,7 +1407,9 @@ function renderCanvasHeader(): void {
     // that answer — the lane list cannot tell a fresh session from an empty one.
     hasConversation: activePane()?.hasConversation() ?? false,
   }))
-  composer.setLocked(thread !== undefined && threadFinished(thread.status) ? '线程已完成，不能再发消息' : undefined)
+  const empty = canvasIsEmpty({ hadPane, hasActivePane: activePane() !== undefined })
+  noSessionView.set(empty)
+  composer.setLocked(composerLockReason({ empty, threadFinished: thread !== undefined && threadFinished(thread.status) }))
 }
 
 function closeHeaderMenu(): void {
@@ -1540,7 +1625,7 @@ async function runProbeNow({ seq, ...request }: SettingsProbeRequest): Promise<v
   let result: WireShellProbeEndpointResult
   try {
     const projectRoot = settingsState.projectRoot
-    if (projectRoot === undefined) throw new Error('No project is open.')
+    if (projectRoot === undefined) throw new Error('没有打开的项目')
     result = await shellClient.probeEndpoint({ projectRoot, ...request })
   } catch (error) {
     result = { ok: false, reason: 'other', detail: error instanceof Error ? error.message : String(error) }
@@ -1785,6 +1870,7 @@ function renderBrowser(): void {
 
 const sidePanel = required('browser-panel')
 const sideClose = required('side-close')
+sideClose.appendChild(icon('close'))
 sideClose.addEventListener('click', () => {
   setPanelOpen(false)
   renderSidebar()
@@ -2107,11 +2193,22 @@ function syncMotion(): void {
 }
 motionQuery.addEventListener('change', syncMotion)
 document.addEventListener('visibilitychange', syncMotion)
+
+// Relative stamps move on by the minute, or a 「刚刚」 stays up for as long as
+// nothing else repaints. Only what is on screen: the active pane, and the
+// projects page or thread list when one is open; a hidden window skips the tick.
+const timeTicker = setInterval(() => {
+  if (document.hidden) return
+  activePane()?.refreshTimes()
+  if (projectsOpen) renderProjects()
+  else renderSubagents()
+}, RELATIVE_TIME_REFRESH_MS)
 // Decoded once the window is idle, so the first turn's mark grows in rather than starting as a dot.
 sheetStore.prefetch()
 window.addEventListener('pagehide', () => {
   motionQuery.removeEventListener('change', syncMotion)
   document.removeEventListener('visibilitychange', syncMotion)
+  clearInterval(timeTicker)
   syncMotion()
   for (const pane of paneSessions.values()) pane.dispose()
 })
@@ -2166,6 +2263,21 @@ sidebarResizer.addEventListener('dblclick', () => {
   localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth))
 })
 
+// The keyboard's drag: the handle is in the tab order, and answers a slider's
+// keys (`resizerKeyWidth`). Enter puts the default back, as the double-click does.
+sidebarResizer.addEventListener('keydown', (event) => {
+  const next = event.key === 'Enter'
+    ? SIDEBAR_WIDTH_DEFAULT
+    : resizerKeyWidth(event.key, event.shiftKey, sidebarWidth, { min: SIDEBAR_WIDTH_MIN, max: SIDEBAR_WIDTH_MAX, grows: 'right' })
+  if (next === undefined) return
+  // Stopped here: with focus on a non-editable element, the window's keymap
+  // would also hand the arrows to a waiting card.
+  event.preventDefault()
+  event.stopPropagation()
+  applySidebarWidth(next)
+  localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth))
+})
+
 /**
  * The browser panel's drag handle — the rail's, mirrored.
  *
@@ -2205,7 +2317,14 @@ function endBrowserDrag(event: PointerEvent): void {
   browserResizer.releasePointerCapture(event.pointerId)
   document.body.classList.remove('resizing')
   localStorage.setItem(SIDE_WIDTH_STORAGE_KEYS[browserDragMode], String(browserDragWidth))
+  markBrowserResizer()
 }
+
+/** Measured: an unset width is a share of the window, not a stored number. */
+function markBrowserResizer(): void {
+  markResizer(browserResizer, sidePanel.getBoundingClientRect().width, SIDE_WIDTH_MIN, SIDE_WIDTH_MAX)
+}
+browserResizer.addEventListener('focus', markBrowserResizer)
 browserResizer.addEventListener('pointerup', endBrowserDrag)
 browserResizer.addEventListener('pointercancel', endBrowserDrag)
 
@@ -2214,6 +2333,28 @@ browserResizer.addEventListener('dblclick', () => {
   applySideWidth(mode, undefined)
   browserPanel.measure()
   localStorage.removeItem(SIDE_WIDTH_STORAGE_KEYS[mode])
+  markBrowserResizer()
+})
+
+browserResizer.addEventListener('keydown', (event) => {
+  const mode = sidePanelView(sidePanelInput()).mode
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    event.stopPropagation()
+    applySideWidth(mode, undefined)
+    localStorage.removeItem(SIDE_WIDTH_STORAGE_KEYS[mode])
+  } else {
+    const current = sidePanel.getBoundingClientRect().width
+    const next = resizerKeyWidth(event.key, event.shiftKey, current, { min: SIDE_WIDTH_MIN, max: SIDE_WIDTH_MAX, grows: 'left' })
+    if (next === undefined) return
+    event.preventDefault()
+    event.stopPropagation()
+    const width = clampSideWidth(next)
+    applySideWidth(mode, width)
+    localStorage.setItem(SIDE_WIDTH_STORAGE_KEYS[mode], String(width))
+  }
+  browserPanel.measure()
+  markBrowserResizer()
 })
 
 // --- the window's own dismissals ---------------------------------------------------
@@ -2272,17 +2413,20 @@ function windowLayers(): WindowLayers {
   }
 }
 
-/**
- * A key the focused control answers itself: anything typed into a field other
- * than the composer (the sidebar search, the browser's address bar), or Enter
- * on a button. Left to the key map, Escape in those fields stopped the turn and
- * Enter on a thumbnail or a browser-panel button sent the draft.
- */
-function ownedByTarget(event: KeyboardEvent): boolean {
+const requestCardHost = required('composer-request')
+const rewindLayer = required('rewind')
+
+/** Where focus sits, for `ownedByTarget` in `model/keymap.ts`; the decision is there. */
+function keyTarget(event: KeyboardEvent, action: KeyAction): KeyTarget {
   const target = event.target
-  if (!(target instanceof HTMLElement) || target === composerInput) return false
-  if (target.matches('input, textarea, select, [contenteditable]:not([contenteditable="false"])')) return true
-  return event.key === 'Enter' && target.matches('button, a[href], [role="button"]')
+  if (!(target instanceof HTMLElement)) return { composer: false, editable: false, pressable: false, inLayer: false }
+  const layer = action === 'overlay' ? requestCardHost : action === 'rewind' ? rewindLayer : undefined
+  return {
+    composer: target === composerInput,
+    editable: target.matches('input, textarea, select, [contenteditable]:not([contenteditable="false"])'),
+    pressable: target.matches('button, a[href], [role="button"]'),
+    inLayer: layer?.contains(target) === true,
+  }
 }
 
 document.addEventListener('keydown', (event) => {
@@ -2295,28 +2439,29 @@ document.addEventListener('keydown', (event) => {
     shiftKey: event.shiftKey,
     ctrlKey: event.ctrlKey,
     metaKey: event.metaKey,
+    altKey: event.altKey,
   }
 
   // Sidebar chords are checked before the global keymap: a Ctrl+T is always
   // "new session" regardless of the active dialog, mirroring the browser's tab
   // behavior. Only safe because `sidebarChordToIntent` answers `'none'` for
-  // anything without ctrl/meta — an unmodified key resolving there would shadow
-  // every dialog in the window.
+  // anything without the platform's primary modifier — an unmodified key
+  // resolving there would shadow every dialog in the window.
   //
   // That same modifier test is repeated here rather than left to the model, so a
   // plain keystroke never pays for `currentSidebarState()` — which walks every
   // pane and reads the composer draft once per pane, on every keypress while
   // typing.
-  if (chord.ctrlKey || chord.metaKey) {
-    // Settings first, and for the same reason: it answers `'none'` without
-    // ctrl/meta, so a bare comma still reaches the composer.
-    const settingsIntent = settingsChordToIntent(chord)
+  if (isPrimaryModifier(chord, bridge.platform)) {
+    // Settings first, and for the same reason: it answers `'none'` without the
+    // modifier, so a bare comma still reaches the composer.
+    const settingsIntent = settingsChordToIntent(chord, bridge.platform)
     if (settingsIntent.kind !== 'none') {
       event.preventDefault()
       runSettingsIntent(settingsIntent)
       return
     }
-    const sidebarIntent = sidebarChordToIntent(chord, currentSidebarState())
+    const sidebarIntent = sidebarChordToIntent(chord, currentSidebarState(), bridge.platform)
     if (sidebarIntent.kind !== 'none') {
       event.preventDefault()
       runSidebarIntent(sidebarIntent)
@@ -2326,11 +2471,13 @@ document.addEventListener('keydown', (event) => {
 
   const pane = activePane()
   const action = resolveKey(chord, pane?.shellState() ?? EMPTY_SHELL_STATE, chord.key === 'Escape' ? windowLayers() : NO_LAYERS)
-  // A blocking prompt and the rewind panel still take every key, wherever focus is.
-  if (action !== 'overlay' && action !== 'rewind' && ownedByTarget(event)) return
+  if (ownedByTarget(chord.key, action, keyTarget(event, action))) return
   switch (action) {
     case 'overlay':
       pane?.handleOverlayKey(event)
+      // The card replaces the composer's field; a key still landing there would
+      // type into a draft nobody can see.
+      if (event.target === composerInput) event.preventDefault()
       return
     case 'rewind':
       event.preventDefault()
@@ -2410,7 +2557,12 @@ document.addEventListener('keydown', (event) => {
   }
 })
 
-composerInput.addEventListener('input', () => {
+composerInput.addEventListener('input', (event) => {
+  activePane()?.onComposerInput((event as InputEvent).isComposing)
+})
+// Chromium fires the composition's last `input` before `compositionend`, still
+// flagged as composing, so the settled text is looked up from here.
+composerInput.addEventListener('compositionend', () => {
   activePane()?.onComposerInput()
 })
 
@@ -2504,6 +2656,26 @@ shellClient.onLanes((lanes) => {
 })
 
 shellClient.onActivate((lane) => activateLane(lane))
+
+// The macOS menu bar (`desktop/appMenu.ts`). Its items carry no accelerator of
+// their own — the chords stay this window's keydown handler's — so a click here
+// is the only way in, and it is gated exactly as the drawn menu's item is.
+shellClient.onMenuAction((action) => {
+  if (action === 'close-session') {
+    if (activeLane !== undefined) runSidebarIntent({ kind: 'close', lane: activeLane })
+    return
+  }
+  if (NEEDS_PROJECT.has(action) && !currentSidebarState().canCreate) return
+  runTitleBarAction(action)
+})
+
+// Inactive windows dim their chrome on both platforms; the stylesheet reads it.
+// Starts active: a push main sent before this listener existed was dropped, and
+// a window wrongly dimmed reads as broken where one wrongly lit does not.
+document.documentElement.dataset.windowActive = 'true'
+shellClient.onWindowFocus((focused) => {
+  document.documentElement.dataset.windowActive = String(focused)
+})
 
 shellClient.onBrowserState((tabs) => {
   // A *new* tab on the active lane raises the panel: the agent opening a page is

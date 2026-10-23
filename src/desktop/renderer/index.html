@@ -8,6 +8,13 @@
     />
     <title>Hanekawa</title>
     <!--
+      Synchronous and first, on purpose: it writes `data-theme` and
+      `data-platform` on <html> before the stylesheets below paint anything,
+      so a light-theme launch never shows a dark frame (see `themeBoot.ts`).
+      Same-origin, which is what the CSP's `script-src 'self'` allows.
+    -->
+    <script src="./theme-boot.js"></script>
+    <!--
       The bundled webfonts (see `fonts.css`): the two faces the first paint
       needs — the sans body and the serif display title — are preloaded so
       their bytes arrive beside the CSS rather than after it. `crossorigin` is
@@ -66,6 +73,7 @@
         role="separator"
         aria-orientation="vertical"
         aria-label="调整侧边栏宽度"
+        tabindex="0"
       ></div>
       <main id="canvas">
         <div id="transcript-area"></div>
@@ -94,7 +102,7 @@
             -->
             <div id="composer-popovers">
               <div id="surface" hidden></div>
-              <div id="suggestions" hidden role="listbox" aria-label="斜杠命令"></div>
+              <div id="suggestions" hidden role="listbox" aria-label="补全"></div>
             </div>
             <!-- Running background processes; empty (and not drawn) when there are none. -->
             <div id="process-strip"></div>
@@ -123,7 +131,7 @@
                 empties it whenever there is nothing to show.
               -->
               <div id="composer-attachments"></div>
-<textarea id="input" placeholder="随心输入，/ 调用命令，@ 引用文件" rows="1"></textarea>
+<textarea id="input" spellcheck="false" aria-label="消息" aria-autocomplete="list" aria-controls="suggestions" placeholder="随心输入，/ 调用命令，@ 引用文件" rows="1"></textarea>
               <div id="composer-bar">
                 <button id="composer-attach" type="button"></button>
                 <!--
@@ -209,6 +217,7 @@
         role="separator"
         aria-orientation="vertical"
         aria-label="调整浏览器面板宽度"
+        tabindex="0"
         hidden
       ></div>
       <!--
@@ -223,7 +232,7 @@
         the card's frame belongs to the panel around it.
       -->
       <aside id="browser-panel" hidden aria-label="侧栏">
-        <button type="button" id="side-close" class="side-close" title="关闭侧栏" aria-label="关闭侧栏" hidden>✕</button>
+        <button type="button" id="side-close" class="side-close" title="关闭侧栏" aria-label="关闭侧栏" hidden></button>
         <div id="browser-view">
           <div id="browser-tabs" role="tablist" aria-label="标签页"></div>
           <div id="browser-address"></div>

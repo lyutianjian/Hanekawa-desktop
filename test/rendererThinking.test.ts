@@ -67,7 +67,9 @@ test('a run folds to one line of counts, in the order each kind first appears', 
     tool('b1', 'Bash'), tool('b2', 'Bash'), thinking('t'), tool('r1', 'Read'), tool('r2', 'Read'),
     tool('g', 'Grep'), tool('w', 'WebFetch'), tool('mcp', 'mcp__x__y'),
   ]))
-  assert.equal(summary.text, '已运行 2 个命令，读取 2 个文件，搜索 1 次，浏览 1 个网页，已使用 1 个工具')
+  // No perfect tense: the line is drawn while the run is still going, and
+  // 「已运行」 beside 「读取」 read as done when it was not.
+  assert.equal(summary.text, '运行 2 个命令，读取 2 个文件，搜索 1 次，浏览 1 个网页，使用 1 个工具')
   assert.equal(summary.failed, 0)
   assert.equal(summary.aborted, false)
   assert.equal(summarizeRun(run([tool('a', 'Agent')])).text, '运行 1 个子代理')

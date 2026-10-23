@@ -99,3 +99,38 @@ export function usageCardView(
     footnote: `你用掉的 token 大约相当于 ${stats.books} 本《三体》`,
   }
 }
+
+/** What a heatmap day reads as to a screen reader, and on its keyboard tip. */
+export function heatCellLabel(cell: UsageHeatCellView): string {
+  return `${cell.day}：${cell.tokens} token，${cell.messages} 条消息`
+}
+
+/**
+ * Where an arrow key moves the heatmap's one focusable day.
+ *
+ * Columns are weeks and rows weekdays, so ←/→ step a week and ↑/↓ a day; Home
+ * and End go to the first and last day that happened. Days that have not
+ * happened (`null`) are skipped over, never landed on. `undefined` means the
+ * key is not the heatmap's, or there is nowhere to go.
+ */
+export function heatStep(
+  grid: readonly (readonly (UsageHeatCellView | null)[])[],
+  at: { col: number; row: number },
+  key: string,
+): { col: number; row: number } | undefined {
+  const days: { col: number; row: number }[] = []
+  grid.forEach((column, col) => column.forEach((cell, row) => { if (cell) days.push({ col, row }) }))
+  if (days.length === 0) return undefined
+  if (key === 'Home') return days[0]
+  if (key === 'End') return days[days.length - 1]
+  const delta = key === 'ArrowLeft' ? [-1, 0] : key === 'ArrowRight' ? [1, 0] : key === 'ArrowUp' ? [0, -1] : key === 'ArrowDown' ? [0, 1] : undefined
+  if (!delta) return undefined
+  let { col, row } = at
+  for (;;) {
+    col += delta[0]!
+    row += delta[1]!
+    const column = grid[col]
+    if (!column || row < 0 || row >= column.length) return undefined
+    if (column[row]) return { col, row }
+  }
+}

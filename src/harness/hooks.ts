@@ -200,6 +200,8 @@ function runHookCommand(options: {
       shell: true,
       signal,
       stdio: ['pipe', 'pipe', 'pipe'],
+      // No console window per hook run on Windows; the output is piped anyway.
+      windowsHide: true,
     })
 
     let stdout = ''

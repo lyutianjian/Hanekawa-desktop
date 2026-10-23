@@ -425,3 +425,34 @@ test('the banner shows while the agent drives the tab, and not once the user hol
   r.paint({ tabs: [tab({ tabId: 't1', lane: '1', agentActive: false, takenOver: true })] })
   assert.equal(r.stub.inspect(r.nodes.banner).hidden, true)
 })
+
+test('a title update repaints the row in place instead of rebuilding the strip', (t) => {
+  // A loading page reports its title many times a second. A rebuilt strip took
+  // the keyboard focus off the tab and restarted the spinner on every report.
+  const r = render(t)
+  r.paint({ tabs: [tab({ tabId: 't1', lane: '1', title: '一', loading: true })] })
+  const before = r.stub.inspect(r.nodes.tabs).children[0]!
+  const spinner = before.children.find((child) => child.classes.includes('browser-tab-icon'))!
+  r.paint({ tabs: [tab({ tabId: 't1', lane: '1', title: '一二', loading: true })] })
+  const after = r.stub.inspect(r.nodes.tabs).children[0]!
+  assert.equal(after.node, before.node, 'the same row')
+  assert.equal(after.children.find((child) => child.classes.includes('browser-tab-icon'))!.node, spinner.node, 'the same spinner')
+  assert.ok(after.text.includes('一二'))
+})
+
+test('the tab strip is one Tab stop and the arrows walk it', (t) => {
+  const r = render(t)
+  r.paint({
+    tabs: [tab({ tabId: 't1', lane: '1', title: '一' }), tab({ tabId: 't2', lane: '1', title: '二' })],
+    activeTabId: 't1',
+  })
+  const rows = r.stub.inspect(r.nodes.tabs).children.slice(0, 2)
+  assert.deepEqual(rows.map((row) => (row.node as unknown as { tabIndex: number }).tabIndex), [0, -1])
+  ;(rows[0]!.node as unknown as { focus(): void }).focus()
+  const event = r.stub.dispatch(r.nodes.tabs, 'keydown', { key: 'ArrowRight', target: rows[0]!.node })
+  assert.deepEqual(r.selected, ['t2'])
+  assert.equal(event.defaultPrevented, true)
+  ;(rows[1]!.node as unknown as { focus(): void }).focus()
+  r.stub.dispatch(r.nodes.tabs, 'keydown', { key: 'Delete', target: rows[1]!.node })
+  assert.deepEqual(r.closed, ['t2'])
+})

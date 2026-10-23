@@ -166,8 +166,30 @@ export type ShellCommand =
    * light. Carries the resolved theme, never a colour: colours belong to the
    * stylesheet, and a renderer that could name one would be painting chrome the
    * token test cannot see.
+   *
+   * `preference` rides along because the resolved theme alone cannot say
+   * "follow the system": the main process sets `nativeTheme.themeSource` from
+   * it, which is what turns the macOS traffic lights, native dialogs, a
+   * `<select>`'s popup and the embedded browser's `prefers-color-scheme` with
+   * the app — and it is remembered for the next launch's first frame, which
+   * paints before any renderer script has run.
    */
-  | { type: 'set-window-theme'; id: string; theme: 'dark' | 'light' }
+  | {
+      type: 'set-window-theme'
+      id: string
+      theme: 'dark' | 'light'
+      preference: 'system' | 'dark' | 'light'
+    }
+  /**
+   * Something in a pane now waits on the user (a permission, a question, a
+   * plan). The shell flashes the taskbar button (Windows) or bounces the Dock
+   * icon (macOS) — only while the window is not focused, so a prompt the user
+   * is already looking at does not nag.
+   *
+   * Fire-and-forget like `browser-set-bounds`: an attention cue is chrome, and
+   * a lost one has nothing for the user to act on.
+   */
+  | { type: 'request-attention'; id: string }
   /**
    * 「选择图片」 (S11): puts up the shell's image picker and answers the chosen
    * paths. `projectRoot`, when present, only anchors where the dialog opens —
@@ -690,8 +712,32 @@ export type ShellEvent =
    * coalesced per project on the host; only pushed for open projects.
    */
   | { type: 'coordination-threads'; state: WireCoordinationThreads }
+  /**
+   * A native application-menu item was clicked (the macOS menu bar). The
+   * renderer runs it exactly as it runs the title-bar menu of the same name:
+   * the menu only names the action, every decision (is a project open, which
+   * lane closes) stays in the renderer that owns them.
+   */
+  | { type: 'menu-action'; action: WireMenuAction }
+  /**
+   * The window gained or lost focus. The renderer dims its title bar and
+   * sidebar headings while inactive, which both platforms' own apps do.
+   */
+  | { type: 'window-focus'; focused: boolean }
   | { type: 'reply'; id: string; result: unknown }
   | { type: 'fail'; id: string; message: string }
+
+/**
+ * What a native menu item can ask the renderer to do. Every one has a renderer
+ * keyboard path too; the menu is a second way in, never the only one.
+ */
+export type WireMenuAction =
+  | 'new-session'
+  | 'open-project'
+  | 'open-settings'
+  | 'toggle-sidebar'
+  | 'toggle-browser'
+  | 'close-session'
 
 // --- reply payloads ----------------------------------------------------------
 

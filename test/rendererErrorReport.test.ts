@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { describeError, errorPlace, errorText, type ErrorPlace } from '../src/desktop/renderer/model/errorReport.js'
+import { describeError, errorDetailText, errorPlace, errorText, type ErrorPlace } from '../src/desktop/renderer/model/errorReport.js'
 import { dismissToast, emptyToasts, MAX_TOASTS, pushToast, TOAST_LIFETIME_MS } from '../src/desktop/renderer/model/toasts.js'
 
 const none: ReadonlySet<ErrorPlace> = new Set()
@@ -40,4 +40,31 @@ test('dismissing an id that is gone changes nothing; an error outlives a note', 
   assert.equal(dismissToast(state, 99), state)
   assert.deepEqual(dismissToast(state, state.toasts[0]!.id).toasts, [])
   assert.ok(TOAST_LIFETIME_MS.error > TOAST_LIFETIME_MS.info)
+})
+
+/**
+ * The main process and the host throw in English. Left alone, 「打开会话失败：」
+ * was followed by `ENOENT: no such file or directory, open '…'`. The system's
+ * own messages are worded in Chinese, keeping the path; anything unrecognised
+ * passes through rather than being guessed at.
+ */
+test('the system’s own English errors read in Chinese, keeping the path they name', () => {
+  assert.equal(errorDetailText("ENOENT: no such file or directory, open '/w/a.json'"), '文件或目录不存在：/w/a.json')
+  assert.equal(errorDetailText("EACCES: permission denied, mkdir '/root/x'"), '没有权限：/root/x')
+  assert.equal(errorDetailText('ENOSPC: no space left on device'), '磁盘空间不足')
+  assert.equal(errorDetailText('spawn code ENOENT'), '找不到命令 code')
+  assert.equal(errorDetailText('The shell host disconnected.'), '与应用后台的连接已断开')
+  assert.equal(errorDetailText('EWHATEVER: odd'), 'EWHATEVER: odd', 'an unknown code is left alone')
+  assert.equal(errorDetailText('模型不存在'), '模型不存在')
+  assert.equal(errorText({ action: '打开会话' }, "ENOENT: no such file or directory, open '/s.jsonl'"), '打开会话失败：文件或目录不存在：/s.jsonl')
+})
+
+test('a toast can carry one action, and a repeat rebinds it to the latest attempt', () => {
+  const first = () => {}
+  const second = () => {}
+  let state = pushToast(emptyToasts(), 'error', 'a', { label: '重试', run: first })
+  state = pushToast(state, 'error', 'a', { label: '重试', run: second })
+  assert.equal(state.toasts.length, 1)
+  assert.equal(state.toasts[0]!.action?.run, second)
+  assert.equal(pushToast(emptyToasts(), 'info', 'b').toasts[0]!.action, undefined)
 })

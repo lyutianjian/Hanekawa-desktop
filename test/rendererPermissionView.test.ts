@@ -169,7 +169,8 @@ test('also-waiting names a few and counts the rest', () => {
 
   assert.equal(view.alsoWaiting.length, ALSO_WAITING_LIMIT + 1)
   assert.equal(view.alsoWaiting[0], 'Agent:explore')
-  assert.equal(view.alsoWaiting.at(-1), '+2 more')
+  // The overflow is counted in Chinese like the names before it, not 「+2 more」.
+  assert.equal(view.alsoWaiting.at(-1), '另有 2 项')
 })
 
 test('keys map to movement, answers and request cycling', () => {

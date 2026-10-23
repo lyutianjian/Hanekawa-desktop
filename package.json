@@ -8,7 +8,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "build:desktop": "tsc -p tsconfig.build.json && esbuild src/desktop/preload.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/desktop/preload.js --external:electron && esbuild src/desktop/renderer/app.ts --bundle --platform=neutral --format=esm --target=chrome120 --main-fields= --alias:node:crypto=./src/desktop/renderer/runtime/nodeCryptoShim.ts --outfile=dist/desktop/renderer/app.js && node scripts/copy-desktop-assets.mjs",
+    "build:desktop": "tsc -p tsconfig.build.json && esbuild src/desktop/preload.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist/desktop/preload.js --external:electron && esbuild src/desktop/renderer/app.ts --bundle --platform=neutral --format=esm --target=chrome120 --main-fields= --alias:node:crypto=./src/desktop/renderer/runtime/nodeCryptoShim.ts --outfile=dist/desktop/renderer/app.js && esbuild src/desktop/renderer/themeBoot.ts --bundle --platform=browser --format=iife --target=chrome120 --outfile=dist/desktop/renderer/theme-boot.js && node scripts/copy-desktop-assets.mjs",
     "start:desktop": "electron .",
     "smoke:desktop": "node scripts/smoke-desktop.mjs",
     "smoke:browser": "npm run build && node scripts/smoke-browser.mjs",

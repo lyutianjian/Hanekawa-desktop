@@ -340,6 +340,44 @@ test('an error sits in the open form, under its row, or pins to the screen', (t)
   assert.ok(banner[0]!.classes.includes('banner'), 'a formless error must stay in view however far the page is scrolled')
 })
 
+test('the dialog is named by its title, an error is announced, and the nav says where you are', (t) => {
+  // A screen reader entering the dialog heard 「对话框」 and nothing else, a
+  // refused save was silent until the reader happened on it, and the selected
+  // category was only a fill.
+  const { view, apply } = mount(t)
+  const current = findAll(child(view(), 'settings-nav'), 'settings-nav-item')
+    .filter((item) => item.attributes.get('aria-current') === 'page')
+  assert.equal(current.length, 1)
+
+  apply({ kind: 'new-endpoint' })
+  const dialog = dialogOf(view())
+  const title = findOne(dialog, 'settings-dialog-title')
+  assert.equal(dialog.attributes.get('aria-labelledby'), title.attributes.get('id'))
+  assert.equal(dialog.attributes.has('aria-describedby'), false)
+
+  apply({ kind: 'submit-draft' })
+  const error = findOne(dialogOf(view()), 'settings-error')
+  assert.equal(error.attributes.get('role'), 'alert')
+  assert.equal(dialogOf(view()).attributes.get('aria-describedby'), error.attributes.get('id'))
+
+  const { view: anchored } = mount(t, stateOf({ category: 'general', error: '上下文窗口必须是数字。', errorRows: ['context:contextWindow'] }))
+  assert.equal(findOne(child(anchored(), 'settings-body'), 'settings-row-error').attributes.get('role'), 'alert')
+})
+
+test('a saved row says 已保存, and a repaint does not restart the receipt', (t) => {
+  // Keyed by the batch: the receipt fades once, then a later save is a new node.
+  const { view, render } = mount(t, stateOf({ category: 'general', savedRows: { seq: 3, ids: ['context:contextWindow'] } }))
+  const receipts = () => findAll(child(view(), 'settings-body'), 'settings-saved')
+  assert.equal(receipts().length, 1)
+  assert.equal(receipts()[0]!.text, '已保存')
+  assert.equal(receipts()[0]!.attributes.get('role'), 'status')
+  const first = receipts()[0]!.node
+  render(stateOf({ category: 'general', savedRows: { seq: 3, ids: ['context:contextWindow'] }, query: '' }))
+  assert.equal(receipts()[0]!.node, first, 'the same batch keeps the same node')
+  render(stateOf({ category: 'general', savedRows: { seq: 4, ids: ['context:contextWindow'] } }))
+  assert.notEqual(receipts()[0]!.node, first, 'a new save is a new receipt')
+})
+
 test('a model row opens to its switches, and the effort levels are one switch each', (t) => {
   const { view, apply, stub, intents } = mount(t)
   apply({ kind: 'edit-endpoint', name: 'main' })
@@ -986,3 +1024,22 @@ test('typing in mcp form fields keeps input nodes, preserving carets', (t) => {
   assert.equal(afterName?.node, nameInput.node, 'the name input element was kept across typing')
 })
 
+
+test('the nav keeps its buttons across renders and moves the selection on them', (t) => {
+  // Every keystroke in a field renders the screen, and the nav used to be
+  // rebuilt each time — the button just pressed was replaced under focus.
+  const { view, apply } = mount(t)
+  const items = () => findAll(child(view(), 'settings-nav'), 'settings-nav-item')
+  const selectedAt = () => items().findIndex((item) => item.attributes.get('aria-current') === 'page')
+  apply({ kind: 'select-category', category: 'general' })
+  const before = items().map((item) => item.node)
+  const was = selectedAt()
+
+  apply({ kind: 'select-category', category: 'provider' })
+  const after = items()
+  assert.deepEqual(after.map((item) => item.node), before, 'the buttons are kept')
+  assert.notEqual(selectedAt(), was)
+  assert.equal(after.filter((item) => item.attributes.get('aria-current') === 'page').length, 1)
+  assert.equal(after.filter((item) => item.classes.includes('selected')).length, 1)
+  assert.ok(after[selectedAt()]!.classes.includes('selected'))
+})

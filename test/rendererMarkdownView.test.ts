@@ -36,6 +36,24 @@ function find(view: StubView, className: string): StubView[] {
   return descendants(view).filter((node) => node.classes.includes(className))
 }
 
+/**
+ * A fence with no language has no label row, so its copy button floats over the
+ * first code line; the `bare` class is what lets the stylesheet clear room for it.
+ */
+test('a fence without a language marks its wrapper bare', () => {
+  const [bare] = find(render('```\nplain\n```'), 'md-code')
+  assert.deepEqual(bare!.classes, ['md-code', 'bare'])
+  const [labelled] = find(render('```ts\nlet a = 1\n```'), 'md-code')
+  assert.ok(!labelled!.classes.includes('bare'))
+})
+
+test('a task item draws its state as a named icon, not as `[x]` text', () => {
+  const marks = find(render('- [ ] todo\n- [x] done'), 'md-check')
+  assert.deepEqual(marks.map((mark) => mark.classes), [['md-check'], ['md-check', 'done']])
+  assert.deepEqual(marks.map((mark) => mark.attributes.get('aria-label')), ['未完成', '已完成'])
+  assert.ok(marks.every((mark) => mark.attributes.get('role') === 'img' && !mark.text.includes('[')))
+})
+
 for (const [name, growing, closed] of [
   ['fence', '```ts\nlet a =', '```ts\nlet a = 1\n```'],
   ['list', '- one\n- tw', '- one\n- two\n\nAfter'],

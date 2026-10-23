@@ -13,7 +13,6 @@ import {
   type RunSummary,
 } from '../model/thinking.js'
 import {
-  formatMessageTime,
   groupTranscript,
   isAgentCall,
   toStep,
@@ -29,7 +28,7 @@ import {
 } from '../model/transcript.js'
 import { absoluteTime, footerFacts, relativeTime, splitTurnFooters, type TurnFooter } from '../model/turnFooter.js'
 import { collectTurnEdits, type TurnEdits } from '../model/turnEdits.js'
-import { anchorPadding, anchorTopGap, TRANSCRIPT_PAD_VARIABLE, viewportPolicy } from '../model/transcriptAnchor.js'
+import { anchorPadding, anchorTopGap, readingCandidate, TRANSCRIPT_PAD_VARIABLE, viewportPolicy } from '../model/transcriptAnchor.js'
 import { PRESENCE_FALLBACK_MS } from '../model/presence.js'
 import { splitFileMentions } from '../model/userMessage.js'
 import { splitAttachedPaths } from '../../../media/attachedPaths.js'
@@ -49,10 +48,12 @@ import {
 import { callParts } from '../model/toolPhrases.js'
 import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
 import type { ThreadNoteCard } from '../model/threadNotes.js'
-import type { TurnFailureCard } from '../model/turnFailure.js'
+import { failureCopyText, failureDetailFolds, type TurnFailureCard } from '../model/turnFailure.js'
 import type { WireThreadStatus } from '../../shellProtocol.js'
 import { pausedTaskCard, TASK_LOCATE_FALLBACK_MS, type TaskCard, type TaskRowStatus } from '../model/tasks.js'
 import { button } from './controls.js'
+import { copyButton } from './copyButton.js'
+import { OUTPUT_FOLD_LINES, foldOutput } from '../model/outputFold.js'
 import { diffNode, diffStatNode, fileBadgeNode } from './diffView.js'
 import { append, el, reconcile, show, type Child } from './dom.js'
 import { icon, type IconName } from './icons.js'
@@ -166,6 +167,8 @@ export interface TranscriptHandlers {
   onOpenProviderSettings?(): void
   /** A failed turn's 「重试」: run the turn again on its own message. Absent draws no button. */
   onRetryTurn?(failureId: string): void
+  /** A context-overflow failure's 「压缩对话」: `/compact`. Absent draws no button. */
+  onCompactConversation?(): void
   /** A running `Bash` row's 转后台: stop blocking the turn on it. */
   onBackgroundTool?(toolUseId: string): void
   /** An edited-files card's row or 查看全部: the turn's changes in the side panel, `path` scrolled to. Absent draws no card. */
@@ -242,14 +245,13 @@ export function createTranscriptView(
     const viewport = box(container)
     if (!viewport) return undefined
     const candidates = [...column.querySelectorAll<HTMLElement>('.step-head, .run-line, p, .md-code, .item')]
-    const node = candidates.find((candidate) => {
-      const rect = box(candidate)
-      return rect && rect.top >= viewport.top && rect.top < viewport.bottom
-    }) ?? candidates.find((candidate) => {
-      const rect = box(candidate)
-      return rect && rect.bottom > viewport.top && rect.top < viewport.bottom
-    })
-    return positionOf(node)
+    const boxes = new Map<number, ReturnType<typeof box>>()
+    const boxAt = (index: number): ReturnType<typeof box> => {
+      if (!boxes.has(index)) boxes.set(index, box(candidates[index]!))
+      return boxes.get(index)
+    }
+    const index = readingCandidate(candidates.length, boxAt, viewport)
+    return positionOf(index === undefined ? undefined : candidates[index])
   }
 
   function keepReadingPosition(position: ReadingPosition | undefined): void {
@@ -587,7 +589,7 @@ export function createTranscriptView(
         observeOverflow: (node) => overflowObserver?.observe(node),
       })
       const edits = handlers.onViewEdits ? collectTurnEdits(entries, new Set(footers.keys())) : new Map<number, TurnEdits>()
-      // 撤销 rewinds to the turn's opening message, so only the newest settled turn offers it.
+      // 回退 rewinds to the turn's opening message, so only the newest settled turn offers it.
       const lastTurn = activity?.isStreaming === true ? undefined : Math.max(-1, ...footers.keys())
       const cards = new Map([...edits].map(([index, turn]) => [index, editsCardNode(painter, turn, index === lastTurn)]))
       const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index), activity !== undefined, cards.get(index)))
@@ -863,6 +865,7 @@ function createPainter(
     onOpenThread: handlers.onOpenThread,
     onOpenProviderSettings: handlers.onOpenProviderSettings,
     onRetryTurn: handlers.onRetryTurn,
+    onCompactConversation: handlers.onCompactConversation,
     onBackgroundTool: handlers.onBackgroundTool,
     onViewEdits: handlers.onViewEdits,
     node(key, className, signature, fill, create) {
@@ -1034,8 +1037,16 @@ function diffStat(added: number, deleted: number): Child[] {
 }
 
 /**
- * A thought: one line showing its first sentence, opening in place to the whole
- * text. While it arrives the line shimmers (`.live`) instead of following the stream.
+ * A thought: one line showing its first sentence, which opens to the whole text
+ * under it. While it arrives the line shimmers (`.live`) instead of following
+ * the stream.
+ *
+ * The whole text is a sibling of the line, not inside it. It used to replace
+ * the line's own text, which put paragraphs of prose inside a `<button>`: it
+ * could not be selected or copied (a drag on a button is a click), it was drawn
+ * as raw text with its markdown showing, and a screen reader heard it all as
+ * the button's name. The line is now only the toggle and keeps its first
+ * sentence; the body is markdown like an answer, and is absent while folded.
  */
 function thinkingLine(
   painter: Painter,
@@ -1049,20 +1060,22 @@ function thinkingLine(
     const headKey = `thinking-head:${step.id}`
     const ref = painter.ref(headKey, expanded)
     const label = step.pending === true ? thoughtLiveLabel(step.text) : thoughtLabel(step.text)
-    const shown = expanded ? step.text : label
     const head = painter.node(
       headKey,
       'run-line',
-      [shown, label, expanded],
+      [label, expanded],
       (node) => {
         node.title = label
         node.setAttribute('aria-label', label)
         node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
-        return [lineText(painter, headKey, shown, true)]
+        return [lineText(painter, headKey, label, true)]
       },
       () => button('run-line', '', label, () => painter.onToggle(step.id, ref.expanded)),
     )
-    return [head]
+    if (!expanded) return [head]
+    const body = painter.node(`thinking-body:${step.id}`, 'thinking-body md', [step.text], (node) =>
+      markdownChildren(step.text, node))
+    return [head, body]
   })
 }
 
@@ -1519,7 +1532,7 @@ function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => 
         'div',
         'step-command',
         el('pre', 'step-command-text', `$ ${command}`),
-        copyButton(painter, 'step-command-copy', '复制命令', command),
+        copyButton('step-command-copy', '复制命令', () => painter.onCopy(command)),
       )
     // Still running: the command alone, so the abbreviated row can always be opened.
     if (terminal === undefined) return () => el('div', 'step-body', bubble())
@@ -1533,16 +1546,25 @@ function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => 
       'step-body',
       bubble(),
       error === undefined ? undefined : el('div', 'step-error', error),
-      el('pre', 'step-terminal', terminal),
+      outputBlock(painter, 'step-terminal', terminal),
     )
   }
   if (family.rows !== undefined) {
-    return () => el('div', 'step-body', el('div', 'step-code', ...family.rows!.map((row) => el(
+    const rows = family.rows
+    const rowNode = (row: (typeof rows)[number]): HTMLElement => el(
       'div',
       'step-code-row',
       el('span', 'step-code-line', String(row.line)),
       el('span', 'step-code-text', row.text),
-    ))))
+    )
+    return () => {
+      const code = el('div', 'step-code', ...rows.slice(0, OUTPUT_FOLD_LINES).map(rowNode))
+      const more = rows.length > OUTPUT_FOLD_LINES
+        ? showAll(rows.length, () => append(code, rows.slice(OUTPUT_FOLD_LINES).map(rowNode)))
+        : undefined
+      const text = rows.map((row) => row.text).join('\n')
+      return el('div', 'step-body', el('div', 'step-output', code, outputCopy(painter, text), more))
+    }
   }
   if (isWebProse(step)) return () => webBody(step)
   const { resultSummary, detail, content } = step.tool
@@ -1554,8 +1576,33 @@ function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => 
     resultSummary === undefined ? undefined : el('div', 'step-body-head', resultSummary),
     // Clipping is the stylesheet's: `max-height` plus scrolling *inside* the
     // block, so a long output never turns the run card into a scroll window.
-    text === undefined || text.length === 0 ? undefined : el('pre', 'step-body-text', text),
+    text === undefined || text.length === 0 ? undefined : outputBlock(painter, 'step-body-text', text),
   )
+}
+
+/**
+ * A tool's output: the `<pre>`, a copy button over its corner, and past
+ * `OUTPUT_FOLD_LINES` lines a 「显示全部 N 行」 under it. The copy always takes
+ * the whole text, folded or not.
+ */
+function outputBlock(painter: Painter, className: string, text: string): HTMLElement {
+  const fold = foldOutput(text)
+  const pre = el('pre', className, fold?.head ?? text)
+  const more = fold === undefined ? undefined : showAll(fold.total, () => { pre.textContent = text })
+  return el('div', 'step-output', pre, outputCopy(painter, text), more)
+}
+
+function outputCopy(painter: Painter, text: string): HTMLButtonElement {
+  return copyButton('step-output-copy', '复制输出', () => painter.onCopy(text))
+}
+
+/** The fold's button; it removes itself once the rest is drawn. */
+function showAll(total: number, reveal: () => void): HTMLButtonElement {
+  const node = button('step-output-more', `显示全部 ${total} 行`, `显示全部 ${total} 行`, () => {
+    reveal()
+    node.remove()
+  })
+  return node
 }
 
 /**
@@ -1743,28 +1790,50 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
  * message has long since been answered or re-sent.
  */
 function turnFailureNode(painter: Painter, failure: TurnFailureCard, classes: string[], key: string): HTMLElement {
-  const { onRetryTurn, onOpenProviderSettings } = painter
+  const { onRetryTurn, onOpenProviderSettings, onCompactConversation } = painter
   const retry = failure.retryable && onRetryTurn !== undefined
+  // Compacting is the fix for this one failure, and only the newest failure's
+  // conversation is still the one it would compact.
+  const compact = failure.retryable && failure.kind === 'context' && onCompactConversation !== undefined
   return painter.node(
     key,
     classes.join(' '),
-    [failure.reason, failure.hint, failure.target, failure.detail, retry, onOpenProviderSettings !== undefined],
-    () => [
-      el('div', 'failure-reason', failure.reason),
-      failure.target === undefined ? undefined : el('div', 'failure-target', failure.target),
-      el('div', 'failure-hint', failure.hint),
-      failure.detail === '' ? undefined : el('div', 'failure-detail', failure.detail),
-      retry || onOpenProviderSettings !== undefined
-        ? el(
-          'div',
-          'failure-actions',
-          onOpenProviderSettings === undefined
-            ? undefined
-            : button('failure-action', '打开服务商设置', '打开服务商设置', () => onOpenProviderSettings()),
-          retry ? button('failure-action primary', '重试', '重新发送这次请求', () => onRetryTurn(failure.id)) : undefined,
-        )
-        : undefined,
-    ],
+    [failure.reason, failure.hint, failure.target, failure.detail, retry, compact, onOpenProviderSettings !== undefined],
+    () => {
+      const detail = failure.detail === '' ? undefined : el('div', 'failure-detail', failure.detail)
+      // Folded state lives on the node: the signature above keeps the card
+      // across repaints, so an opened detail stays open while the turn streams on.
+      const fold = detail !== undefined && failureDetailFolds(failure.detail)
+        ? button('failure-fold', '展开详情', '展开详情', () => {
+          const open = !detail.classList.contains('open')
+          detail.classList.toggle('open', open)
+          fold!.setAttribute('aria-expanded', String(open))
+          fold!.querySelector('.btn-label')!.textContent = open ? '收起' : '展开详情'
+        })
+        : undefined
+      fold?.setAttribute('aria-expanded', 'false')
+      return [
+        el('div', 'failure-head',
+          el('div', 'failure-reason', failure.reason),
+          detail === undefined ? undefined : copyButton('failure-copy', '复制错误', () => painter.onCopy(failureCopyText(failure))),
+        ),
+        failure.target === undefined ? undefined : el('div', 'failure-target', failure.target),
+        el('div', 'failure-hint', failure.hint),
+        detail,
+        fold,
+        retry || compact || onOpenProviderSettings !== undefined
+          ? el(
+            'div',
+            'failure-actions',
+            onOpenProviderSettings === undefined || failure.kind === 'context'
+              ? undefined
+              : button('failure-action', '打开服务商设置', '打开服务商设置', () => onOpenProviderSettings()),
+            compact ? button('failure-action', '压缩对话', '运行 /compact，把较早的对话压缩成摘要', () => onCompactConversation()) : undefined,
+            retry ? button('failure-action primary', '重试', '重新发送这次请求', () => onRetryTurn(failure.id)) : undefined,
+          )
+          : undefined,
+      ]
+    },
   )
 }
 
@@ -1799,25 +1868,15 @@ function threadNoteCard(painter: Painter, card: ThreadNoteCard): HTMLElement {
   )
 }
 
-/** A copy button whose glyph turns into a tick for a few seconds once the text is on the clipboard. */
-function copyButton(painter: Painter, className: string, title: string, text: string): HTMLButtonElement {
-  let reset: ReturnType<typeof setTimeout> | undefined
-  const node = button(className, '', title, () => {
-    void painter.onCopy(text).then((ok) => {
-      if (!ok) return
-      node.replaceChildren(icon('check'))
-      node.title = '已复制'
-      clearTimeout(reset)
-      reset = setTimeout(() => {
-        node.replaceChildren(icon('copy'))
-        node.title = title
-      }, COPIED_MS)
-    })
-  }, { icon: 'copy' })
-  return node
+/**
+ * A message's copy button. A user message copies the words they typed: the
+ * `<attached-paths>` block after them is drawn as tiles, not text, and pasting
+ * it elsewhere would paste markup the user never saw.
+ */
+function itemCopyButton(painter: Painter, item: TranscriptItem): HTMLButtonElement {
+  const text = item.kind === 'user' ? splitAttachedPaths(item.text).text : item.text
+  return copyButton('item-copy', '复制', () => painter.onCopy(text))
 }
-
-const COPIED_MS = 5000
 
 /**
  * A message's meta row: 复制 · which model wrote it · when it settled.
@@ -1841,11 +1900,11 @@ const COPIED_MS = 5000
  * the row's only real control, and it names itself.
  */
 function metaRow(painter: Painter, item: TranscriptItem, footer?: TurnFooter): HTMLElement | undefined {
-  const time = footer ? relativeTime(item.createdAt, Date.now()) : formatMessageTime(item.createdAt)
+  const time = relativeTime(item.createdAt, Date.now())
   const model = item.kind === 'assistant' ? item.model : undefined
   // A draft has no stamp of its own; copying half a sentence is not the offer.
   if (time === undefined && model === undefined) return undefined
-  const copy = copyButton(painter, 'item-copy', '复制', item.text)
+  const copy = itemCopyButton(painter, item)
   const onRewind = painter.onRewind
   const timeLabel = time === undefined ? undefined : timeNode(time, item.createdAt)
   // The user's row hangs off the bubble's right edge, read right to left: the controls end it.
@@ -1876,7 +1935,7 @@ const EDITS_CARD_ROWS = 5
 
 /**
  * 已编辑 N 个文件: one row per file with its counts, 查看全部 with the turn's
- * totals, and 撤销 on the newest turn. Every row opens the side panel's 改动 page.
+ * totals, and 回退 on the newest turn. Every row opens the side panel's 改动 page.
  */
 function editsCardNode(painter: Painter, turn: TurnEdits, undoable: boolean): HTMLElement {
   return painter.node(
@@ -1890,7 +1949,7 @@ function editsCardNode(painter: Painter, turn: TurnEdits, undoable: boolean): HT
       const rewind = painter.onRewind
       const messageId = turn.userMessageId
       const undo = undoable && messageId !== undefined && rewind
-        ? button('edits-undo', '撤销', '撤销本轮的文件改动', () => rewind(messageId))
+        ? button('edits-undo', '回退', '回退本回合的文件改动', () => rewind(messageId))
         : undefined
       const rows = shown.map((file) => {
         const row = button('edits-row', '', `查看 ${file.name} 的改动`, () => view(file.path))
@@ -1980,7 +2039,12 @@ function imageTileNode(painter: Painter, image: ImageAttachmentRef, index: numbe
   const open = () => painter.onViewImage(image)
   thumb.addEventListener('click', open)
   thumb.addEventListener('keydown', (event) => {
-    if ((event as KeyboardEvent).key !== 'Enter') return
+    const key = (event as KeyboardEvent).key
+    if (key !== 'Enter' && key !== ' ') return
+    // A `role="button"` answers Space as well as Enter. Either one's default
+    // must go: the viewer moves focus onto its close button, and the same
+    // Enter's keypress would press it and shut the viewer at once.
+    event.preventDefault()
     open()
   })
   return thumb

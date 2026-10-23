@@ -7,7 +7,7 @@ import type { WireRuntimeSnapshot } from '../../../runtime/protocol/wire.js'
  * Pure, like `model/composer.ts`: `dom/statusView.ts` and `dom/composerView.ts`
  * only turn what these return into nodes.
  *
- * The status line prints one count, not three: `总计 X tok · 本轮命中 Y%`. It
+ * The status line prints one count, not three: `总计 X token · 本轮命中 Y%`. It
  * carried a chip per direction for a while (`输入` / `缓存命中` / `输出`), which
  * is three figures to add up before the line answers the question it is actually
  * asked — how much this session has spent. The split survives in the hover for
@@ -168,11 +168,11 @@ export function statusUsageView(
   if (allTokens === 0) return EMPTY
 
   const metrics: UsageMetric[] = [
-    { kind: 'total', value: `${formatTokens(allTokens)} tok`, label: '总计' },
+    { kind: 'total', value: `${formatTokens(allTokens)} token`, label: '总计' },
   ]
   const cost = formatSessionCost(total.cost)
   const breakdown: UsageBreakdownRow[] = [
-    { label: '总计', value: `${formatExact(allTokens)} 标记` },
+    { label: '总计', value: `${formatExact(allTokens)} token` },
     ...(cost ? [{ label: '会话开销', value: cost }] : []),
     { label: '输入（未缓存）', value: formatExact(inputTokens) },
     { label: '缓存写入', value: formatExact(writes(total)) },
@@ -304,7 +304,7 @@ export function contextGaugeView(
     // `usableContextWindow`, and calling it the context window promises the
     // reserve back.
     `可用窗口：${percent} 已用（剩余 ${100 - Math.round(ratio * 100)}%）`,
-    `已用 ${usedText} 标记，共 ${usableText}（已预留自动压缩空间）`,
+    `已用 ${usedText} token，共 ${usableText}（已预留自动压缩空间）`,
   ]
   if (modelWindow) lines.push(`模型窗口 ${modelWindow}`)
 

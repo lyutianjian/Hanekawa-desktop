@@ -24,8 +24,7 @@ export function button(
 ): HTMLButtonElement {
   const node = el('button', className)
   node.type = 'button'
-  node.title = title
-  node.setAttribute('aria-label', title)
+  nameButton(node, label, title)
   // Built up rather than assigned as `textContent`, because an icon child would
   // be wiped by it. An icon-only button passes an empty label and relies on the
   // `aria-label` above for its name.
@@ -45,6 +44,24 @@ export function button(
     onClick()
   })
   return node
+}
+
+/**
+ * Names a button by its title unless the title only repeats the visible label.
+ *
+ * A repeat adds nothing but a native tooltip over words already on screen, and
+ * an `aria-label` equal to the text is noise; the text names the button. A title
+ * that says more (「编辑」 → 「编辑 main」, 「重试」 → 「重新读取会话列表」) stays
+ * as both: it is what tells one row's 「编辑」 from the next for a screen reader.
+ */
+export function nameButton(node: HTMLElement, label: string, title: string): void {
+  if (label && title === label) {
+    node.removeAttribute('title')
+    node.removeAttribute('aria-label')
+  } else {
+    node.title = title
+    node.setAttribute('aria-label', title)
+  }
 }
 
 /**

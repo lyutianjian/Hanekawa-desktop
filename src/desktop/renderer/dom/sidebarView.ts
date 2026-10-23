@@ -1,8 +1,10 @@
+import { relativeTime } from '../model/timeLabel.js'
 import {
   SIDEBAR_COLLAPSE_FALLBACK_MS,
   SIDEBAR_EMPTY_RECENT_TEXT,
   SIDEBAR_EMPTY_TEXT,
   sidebarHint,
+  SIDEBAR_LOAD_FAILED_TEXT,
   SIDEBAR_NO_MATCHES_TEXT,
   CREATE_BLOCKED_HINT,
   SIDEBAR_RECENT_LABEL,
@@ -89,8 +91,10 @@ export interface SidebarDom {
 
 const BADGE_LABELS = {
   running: '运行中',
-  'awaiting-input': '等待授权',
+  // One badge for an approval and a question alike, so the neutral verb.
+  'awaiting-input': '等待你处理',
   failed: '失败',
+  unread: '有新回复',
 } as const
 
 export function createSidebarView(
@@ -242,6 +246,10 @@ export function createSidebarView(
     readonly head: HTMLElement
     headSignature?: string
     heading?: HTMLButtonElement
+    /** The visible `⋯` that opens the menu a right press opens; absent on the global workspace. */
+    more?: HTMLButtonElement
+    /** Opened from the keyboard: the item takes focus once it is drawn. */
+    focusMenu?: boolean
     /**
      * The heading's context menu, kept across repaints and hidden when shut.
      *
@@ -362,7 +370,7 @@ export function createSidebarView(
   // left press there closes the menu and the swallowed click does not also fold
   // the group, and a right press closes it and the swallowed `contextmenu` does
   // not re-open it, which is what the toggle would have done.
-  dismissable(['.project-menu'], {
+  dismissable(['.project-menu', '.project-more'], {
     isOpen: () => asking.menu,
     close: () => onIntent({ kind: 'open-project-menu', projectRoot: undefined }),
   })
@@ -408,10 +416,13 @@ export function createSidebarView(
     if (selected) classes.push('selected')
     if (row.lane !== undefined) classes.push('open')
     if (row.confirmingDelete) classes.push('confirming')
+    if (row.opening) classes.push('opening')
 
     const node = el('div', classes.join(' '))
+    if (row.opening) node.setAttribute('aria-busy', 'true')
     node.dataset.sessionId = row.sessionId
     node.dataset.index = String(index)
+    node.id = sessionRowId(row.sessionId)
     node.setAttribute('role', 'option')
     node.setAttribute('aria-selected', String(row.active))
 
@@ -423,7 +434,14 @@ export function createSidebarView(
     const open = el('button', 'session-open')
     open.type = 'button'
     open.dataset.focusKey = `o:${row.sessionId}`
-    open.title = `${row.title} · ${row.messageCount} 条消息`
+    // The full name (a long one is cut to an ellipsis), its size and when it
+    // last moved. Written on arrival rather than at render, so 「N 分钟前」 is
+    // true when it is read: the row is not repainted as time passes.
+    const describe = (): void => {
+      const when = relativeTime(row.updatedAt, Date.now())
+      open.title = [row.title, `${row.messageCount} 条消息`, when].filter(Boolean).join(' · ')
+    }
+    describe()
     // The name is a box — the clipper, with the ellipsis — around a track that
     // travels inside it. Translating the clipper itself would slide the
     // already-truncated box out of view rather than reveal anything.
@@ -466,12 +484,16 @@ export function createSidebarView(
     // `:focus-within`, so a row arrived at by Tab has to have been measured too.
     node.addEventListener('mouseenter', () => {
       hovered = row.sessionId
+      describe()
       measure()
     })
     node.addEventListener('mouseleave', () => {
       if (hovered === row.sessionId) hovered = undefined
     })
-    node.addEventListener('focusin', measure)
+    node.addEventListener('focusin', () => {
+      describe()
+      measure()
+    })
     if (trailing) open.appendChild(trailing)
     if (row.badge !== 'none') {
       const badge = el('span', `session-badge ${row.badge}`)
@@ -553,17 +575,19 @@ export function createSidebarView(
     deleteTarget?: string,
   ): HTMLElement => {
     const signature = [
-      row.projectRoot, row.sessionId, row.lane ?? '', row.badge, row.active, row.confirmingDelete,
+      row.projectRoot, row.sessionId, row.lane ?? '', row.badge, row.active, row.confirmingDelete, row.opening,
       row.title, row.messageCount, row.roleMarker ?? '', index, selected, deleteTarget ?? '', trailing?.textContent ?? '',
     ].join('\u0000')
     rowsDrawn.add(row.sessionId)
     const kept = keptRows.get(row.sessionId)
     if (kept?.signature === signature) {
       measures.set(row.sessionId, kept.measure)
+      if (selected) cursorRow = kept.node
       return kept.node
     }
     const built = buildRow(row, index, selected, trailing, deleteTarget)
     keptRows.set(row.sessionId, { signature, ...built })
+    if (selected) cursorRow = built.node
     return built.node
   }
 
@@ -684,19 +708,44 @@ export function createSidebarView(
         actions.appendChild(add)
       }
       headingRow.appendChild(actions)
+      entry.more = undefined
 
       // The global workspace has no registry entry to forget, so it has no menu —
       // and `isGlobal` comes off the wire rather than from matching the display
       // name, which the renderer is not allowed to do.
+      //
+      // A right press was the only way in, which a keyboard, a trackpad without
+      // a secondary click, or anyone who never thought to try could not find.
+      // The `⋯` shows on hover and focus; Shift+F10 and the menu key are the
+      // platform's own keyboard route to a context menu.
       if (!group.isGlobal) {
+        const openMenu = (fromKeyboard: boolean): void => {
+          entry.focusMenu = fromKeyboard
+          onIntent({ kind: 'open-project-menu', projectRoot: group.projectRoot })
+        }
         headingRow.addEventListener('contextmenu', (event) => {
           event.preventDefault()
-          onIntent({ kind: 'open-project-menu', projectRoot: group.projectRoot })
+          openMenu(false)
         })
+        headingRow.addEventListener('keydown', (event) => {
+          if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
+          event.preventDefault()
+          event.stopPropagation()
+          openMenu(true)
+        })
+        const more = button('project-more', '', '项目操作', () => openMenu(entry.focusMenu === true), { icon: 'more' })
+        more.dataset.focusKey = `p:${group.projectRoot}`
+        more.setAttribute('aria-haspopup', 'menu')
+        more.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') entry.focusMenu = true
+        })
+        if (!group.confirmingRemove) actions.appendChild(more)
+        entry.more = more
       }
       replace(entry.head, headingRow)
     }
     projectHeadings.set(group.projectRoot, entry.heading!)
+    entry.more?.setAttribute('aria-expanded', String(group.menuOpen))
 
     // Only when the open state actually changes: this runs on every repaint, and
     // rebuilding the item under a menu the user is aiming at would take the
@@ -714,6 +763,8 @@ export function createSidebarView(
       // then drops the focus to `<body>` without a word: hand it to the heading.
       if (!group.menuOpen && entry.menu.contains(document.activeElement)) entry.heading?.focus()
       entry.menuPresence.set(group.menuOpen)
+      if (group.menuOpen && entry.focusMenu) (entry.menu.firstElementChild as HTMLElement | null)?.focus()
+      entry.focusMenu = false
     }
 
     // The class the fold transitions on, toggled on the surviving wrapper.
@@ -760,6 +811,10 @@ export function createSidebarView(
   let rowOrder: readonly string[] = []
   /** What was asking a question or showing a menu at the last paint, as the control focus goes to. */
   let askedKey: string | undefined
+  /** The cursor index last brought into view. */
+  let scrolledTo = -1
+  /** The row drawn with the cursor in the paint under way. */
+  let cursorRow: HTMLElement | undefined
 
   /**
    * Where focus goes when the control that held it was rebuilt away, best first.
@@ -807,6 +862,7 @@ export function createSidebarView(
       const signature = sidebarRenderSignature(view)
       if (signature === drawn) return
       drawn = signature
+      cursorRow = undefined
       const heldKey = heldFocusKey(container)
 
       // One index lookup built per render, so the row → cursor mapping is the
@@ -905,27 +961,26 @@ export function createSidebarView(
         pinned,
         [pinnedTitle, ...(view.isEmpty || view.noMatches ? [] : view.pinned.map((entry) => pinnedNode(entry, indexOf, view.selectedIndex)))],
       )
-      reconcile(
-        list,
-        view.isEmpty
-          ? [
-              el(
-                'div',
-                'sidebar-empty',
-                // The filter's own empty state: "还没有会话" under a「最近」that
-                // is switched on reads as every project having disappeared.
-                view.recentOnly ? SIDEBAR_EMPTY_RECENT_TEXT : SIDEBAR_EMPTY_TEXT,
-              ),
-            ]
-          : view.noMatches
-            ? [el('div', 'sidebar-empty', SIDEBAR_NO_MATCHES_TEXT)]
-            : [
-                ...(view.pinned.length === 0 ? [] : [pinned]),
-                ...view.groups.map((group) =>
-                  groupNode(group, indexOf, view.selectedIndex, view.canCreate),
-                ),
-              ],
-      )
+      // An empty list says why it is empty: still reading (skeleton rows, which
+      // hold the shape the rows will take), a first read that failed (with
+      // 重试), or genuinely nothing. Busy while reading, for a screen reader.
+      if (view.isEmpty && view.listLoad === 'loading') list.setAttribute('aria-busy', 'true')
+      else list.removeAttribute('aria-busy')
+      const listChildren = (): HTMLElement[] => {
+        if (view.noMatches) return [el('div', 'sidebar-empty', SIDEBAR_NO_MATCHES_TEXT)]
+        if (!view.isEmpty) {
+          return [
+            ...(view.pinned.length === 0 ? [] : [pinned]),
+            ...view.groups.map((group) => groupNode(group, indexOf, view.selectedIndex, view.canCreate)),
+          ]
+        }
+        if (view.listLoad === 'loading') return skeletonRows()
+        if (view.listLoad === 'failed') return [loadFailedNode(() => onIntent({ kind: 'retry-load' }))]
+        // The filter's own empty state: "还没有会话" under a「最近」that is
+        // switched on reads as every project having disappeared.
+        return [el('div', 'sidebar-empty', view.recentOnly ? SIDEBAR_EMPTY_RECENT_TEXT : SIDEBAR_EMPTY_TEXT)]
+      }
+      reconcile(list, listChildren())
 
       // Workspaces that are no longer listed. Their nodes are detached by the
       // `replace` above, but a pending fallback timer would still fire on them —
@@ -996,8 +1051,46 @@ export function createSidebarView(
       const wanted = newlyAsked !== undefined ? [newlyAsked] : lost ? successors(heldKey, view) : []
       if (!wanted.some((key) => focusByKey(container, key)) && lost) list.focus()
       rowOrder = view.rows.map((row) => row.sessionId)
+
+      // The arrows move a cursor, not focus, which stays on the list: the list
+      // names the cursor's row for a screen reader, and a cursor moved past the
+      // rail's edge is brought back on screen. Only when it moved — a repaint
+      // from a streamed token must not yank a list the user is scrolling.
+      // Written by `rowNode` during the paint above, which flow analysis cannot see.
+      const drawnCursor = cursorRow as HTMLElement | undefined
+      const cursorNode = drawnCursor !== undefined && list.contains(drawnCursor) ? drawnCursor : undefined
+      if (cursorNode) list.setAttribute('aria-activedescendant', cursorNode.id)
+      else list.removeAttribute('aria-activedescendant')
+      if (cursorNode && view.selectedIndex !== scrolledTo) cursorNode.scrollIntoView({ block: 'nearest' })
+      scrolledTo = view.selectedIndex
     },
   }
+}
+
+/** Three placeholder rows, drawn while the first history read is under way. */
+function skeletonRows(): HTMLElement[] {
+  return [0, 1, 2].map(() => {
+    const row = el('div', 'session-skeleton', el('span', 'session-skeleton-bar'))
+    row.setAttribute('aria-hidden', 'true')
+    return row
+  })
+}
+
+/** The rail's own failure, beside its source: the history could not be read. */
+function loadFailedNode(retry: () => void): HTMLElement {
+  const node = el(
+    'div',
+    'sidebar-empty sidebar-load-failed',
+    el('span', undefined, SIDEBAR_LOAD_FAILED_TEXT),
+    button('sidebar-load-retry', '重试', '再次读取会话列表', retry),
+  )
+  node.setAttribute('role', 'alert')
+  return node
+}
+
+/** A row's element id, for the list's `aria-activedescendant`. */
+function sessionRowId(sessionId: string): string {
+  return `session-row-${sessionId}`
 }
 
 function hintNode(platform: DesktopPlatform): HTMLElement {

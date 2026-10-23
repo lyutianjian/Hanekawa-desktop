@@ -437,15 +437,19 @@ test('the context indicator is independent of the chip, and is absent when there
     [r.els.contextIndicator, r.els.chipShell],
     'the visible indicator stays outside the chip',
   )
-  const [gauge, tooltip] = r.view('contextIndicator').children
+  const [trigger, tooltip] = r.view('contextIndicator').children
+  // A real button holds the ring: the shell also holds the popover and its own
+  // buttons, which a `role=button` shell would have nested inside a button.
+  assert.equal(trigger?.tagName, 'BUTTON')
+  assert.equal(r.view('contextIndicator').attributes.has('role'), false)
+  const gauge = trigger?.children[0]
   assert.equal(gauge?.className, 'context-gauge warn')
   // The ring is decoration; the figures reach the reader through the indicator's
   // own accessible name, which is why the level may be a colour at all.
   assert.equal(gauge?.attributes.get('aria-hidden'), 'true')
   assert.equal(gauge?.styleProperties.get(CONTEXT_RATIO_VARIABLE), '0.9')
-  assert.equal(r.view('contextIndicator').attributes.get('role'), 'button')
-  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'false')
-  assert.match(r.view('contextIndicator').attributes.get('aria-label') ?? '', /90% 已用/)
+  assert.equal(trigger?.attributes.get('aria-expanded'), 'false')
+  assert.match(trigger?.attributes.get('aria-label') ?? '', /90% 已用/)
   assert.equal((r.els.contextIndicator as { title: string }).title, '', 'the hover card is drawn by the renderer, not by the OS')
 
   assert.equal(tooltip?.classes.includes('hover-card'), true)
@@ -460,26 +464,43 @@ test('clicking the context indicator opens the breakdown, and clicking again or 
   const snapshot = runtime({ contextWindow: 200_000, usableContextWindow: 100_000 })
   r.composer.renderRuntime(snapshot, contextGaugeView(30_000, snapshot))
   const popover = () => r.view('contextIndicator').children.find((child) => child.classes.includes('context-popover'))
+  const trigger = () => r.view('contextIndicator').children[0]!
   assert.equal(popover()?.hidden, true)
 
-  r.stub.click(r.els.contextIndicator)
+  r.stub.click(trigger().node)
   await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(r.breakdownRequests, [1])
-  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'true')
+  assert.equal(trigger().attributes.get('aria-expanded'), 'true')
   assert.equal(popover()?.hidden, false)
   assert.match(popover()?.text ?? '', /已使用 30%/)
   assert.match(popover()?.text ?? '', /对话消息/)
   assert.match(popover()?.text ?? '', /压缩预留/)
   assert.equal(r.view('contextIndicator').children[1]?.hidden, true, 'the hover card stands down while the card is open')
 
-  r.stub.click(r.els.contextIndicator)
-  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'false')
+  r.stub.click(trigger().node)
+  assert.equal(trigger().attributes.get('aria-expanded'), 'false')
 
-  r.stub.click(r.els.contextIndicator)
+  r.stub.click(trigger().node)
   await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'true')
+  assert.equal(trigger().attributes.get('aria-expanded'), 'true')
   r.stub.dispatch(r.els.contextIndicator, 'keydown', { key: 'Escape' })
-  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'false')
+  assert.equal(trigger().attributes.get('aria-expanded'), 'false')
+})
+
+test('the context card offers 压缩上下文, which closes it and runs /compact', async (t) => {
+  const r = render(t)
+  const snapshot = runtime({ contextWindow: 200_000, usableContextWindow: 100_000 })
+  r.composer.renderRuntime(snapshot, contextGaugeView(80_000, snapshot))
+  const trigger = r.view('contextIndicator').children[0]!
+  r.stub.click(trigger.node)
+  await new Promise((resolve) => setImmediate(resolve))
+  const popover = r.view('contextIndicator').children.find((child) => child.classes.includes('context-popover'))!
+  const compact = popover.children.flatMap((child) => child.children).find((child) => child.classes.includes('ctx-compact'))
+  assert.equal(compact?.text, '压缩上下文')
+
+  r.stub.click(compact!.node)
+  assert.deepEqual(r.ran, [{ kind: 'run-command', line: '/compact' }])
+  assert.equal(r.view('contextIndicator').children[0]!.attributes.get('aria-expanded'), 'false')
 })
 
 test('clicking the chip asks the pane for the rows rather than opening anything', (t) => {
@@ -493,7 +514,7 @@ test('clicking the chip asks the pane for the rows rather than opening anything'
   r.composer.showRuntimeMenu(menuView())
   assert.deepEqual(r.chipRows().map((row) => row.text), [
     `模型claude-sonnet-5`,
-    `推理强度${EFFORT_LABELS.high}`,
+    `思考强度${EFFORT_LABELS.high}`,
   ])
   assert.equal(r.view('chipRuntime').attributes.get('aria-expanded'), 'true')
   // The popover opens as its two rows and nothing else. Focus lands on the first
@@ -684,6 +705,8 @@ test('mid-turn one button: stop while empty, lit send once something is typed', 
   r.composer.setStreaming(true)
   assert.equal(r.view('stop').hidden, false)
   assert.equal(r.view('submit').hidden, true, 'stop takes the send button’s place')
+  // Icon-only, so the name is all a screen reader or a hover has to go on.
+  assert.equal(r.view('stop').attributes.get('aria-label'), '停止（Esc）')
 
   input(r).value = 'next message'
   r.stub.dispatch(r.els.input, 'input')
@@ -968,7 +991,7 @@ test('an unchanged context gauge does not rebuild the hover card', (t) => {
     before,
   )
   assert.match(r.view('contextIndicator').text, /95%/)
-  assert.equal(r.view('contextIndicator').children[0]?.className, 'context-gauge critical')
+  assert.equal(r.view('contextIndicator').children[0]?.children[0]?.className, 'context-gauge critical')
 })
 
 test('the guard does not swallow the click that opens the permission menu', (t) => {
@@ -1038,6 +1061,11 @@ test('the + menu offers both entrances and keeps the @ path intact', (t) => {
   const r = render(t)
   r.stub.click(r.els.attach)
   assert.deepEqual(r.attachMenuItems().map((item) => item.text), ['选择图片', '引用项目文件（@）'])
+  // Two commands, so a menu: a listbox made each read as an unselected option.
+  assert.equal(r.view('attach').attributes.get('aria-haspopup'), 'menu')
+  assert.equal(r.view('attach').attributes.get('aria-expanded'), 'true')
+  assert.deepEqual(r.attachMenuItems().map((item) => item.attributes.get('role')), ['menuitem', 'menuitem'])
+  assert.ok(r.attachMenuItems().every((item) => !item.attributes.has('aria-selected')))
 
   r.stub.click(r.attachMenuItems()[1]!.node)
   assert.deepEqual(r.attaches, [1], 'the mention path still asks the pane to recompute completions')
@@ -1200,6 +1228,11 @@ test('a ready tile paints a thumbnail whose click opens the viewer', (t) => {
   r.stub.click(thumb.node)
   assert.deepEqual(r.previewedDrafts, ['d1'])
   assert.deepEqual(r.openedDrafts, [], 'the tile opens the viewer, not the system image viewer')
+  // The keyboard's two presses for a `role="button"`, each with its default
+  // taken so neither reaches the viewer's close button or scrolls the page.
+  assert.equal(r.stub.dispatch(thumb.node, 'keydown', { key: 'Enter' }).defaultPrevented, true)
+  assert.equal(r.stub.dispatch(thumb.node, 'keydown', { key: ' ' }).defaultPrevented, true)
+  assert.deepEqual(r.previewedDrafts, ['d1', 'd1', 'd1'])
 
   // A ready tile without a URL yet paints the thumbnail without a src — the
   // alt text carries the facts until the on-demand load settles.
@@ -1250,7 +1283,7 @@ function questionCard(t: { after(fn: () => void): void }) {
   const composer = stub.createContainer('composer')
   const container = stub.createContainer('composer-request')
   const intents: AskIntent[] = []
-  const view = createQuestionCardView(createDockedCard(composer, container), container, (intent) => intents.push(intent))
+  const view = createQuestionCardView(createDockedCard(composer, container), container, (intent) => intents.push(intent), 'darwin')
   const card = () => stub.inspect(container).children[0]!
   const find = (cls: string) => stub.inspect(container).children[0]!.children.find((child) => child.classes.includes(cls))!
   return { stub, composer, container, view, intents, card, find }
@@ -1291,6 +1324,41 @@ test('the card reports skip from the close button and the footer, and submit fro
   q.stub.click(footer.children.find((c) => c.text.startsWith('下一个'))!.node)
 
   assert.deepEqual(q.intents, [{ kind: 'skip' }, { kind: 'toggle-collapse' }, { kind: 'skip' }, { kind: 'commit' }])
+})
+
+test('the question card takes focus like the other cards, and keeps it across a rebuild', (t) => {
+  // It used to be the one docked card that left focus in the textarea, so a
+  // screen reader never heard the question. The options are a single stop that
+  // names the cursor row; they cannot be buttons, since 「其他」 holds an input.
+  const q = questionCard(t)
+  const fresh = askModel()
+  const model = { ...fresh, rows: fresh.rows.map((row, index) => ({ ...row, selected: index === 0 })) }
+  q.view.show(model)
+  const options = () => q.find('ask-options')
+  assert.equal(q.stub.activeElement(), options().node, 'opening focuses the options')
+  assert.equal(options().attributes.get('role'), 'listbox')
+  assert.equal(options().attributes.get('aria-multiselectable'), undefined)
+  const cursor = options().children.find((row) => row.classes.includes('selected'))!
+  assert.equal(options().attributes.get('aria-activedescendant'), cursor.attributes.get('id'))
+
+  // Tabbed to 跳过, then a repaint that rebuilds the card: focus stays on 跳过.
+  q.stub.focus(q.find('ask-footer').children.find((c) => c.text === '跳过')!.node)
+  q.view.show({ ...model, rows: model.rows.map((row, index) => ({ ...row, selected: index === 1 })) })
+  assert.equal(q.stub.activeElement(), q.find('ask-footer').children.find((c) => c.text === '跳过')!.node)
+
+  // Folded, the button that unfolds it is where focus goes.
+  q.view.show({ ...model, collapsed: true })
+  const collapse = q.find('ask-head').children.find((c) => c.attributes.get('aria-label') === '展开')!
+  assert.equal(q.stub.activeElement(), collapse.node)
+})
+
+test('a multi-select question says so, and its ticks are what is selected', (t) => {
+  const q = questionCard(t)
+  const model = askModel({ multiSelect: true })
+  q.view.show({ ...model, rows: model.rows.map((row, index) => ({ ...row, toggled: index === 1 })) })
+  const options = q.find('ask-options')
+  assert.equal(options.attributes.get('aria-multiselectable'), 'true')
+  assert.deepEqual(options.children.slice(0, 2).map((row) => row.attributes.get('aria-selected')), ['false', 'true'])
 })
 
 test('collapsed, the card is just its title row', (t) => {
@@ -1350,7 +1418,7 @@ const planState = () => createExitPlanState({ planContent: '# 计划\n- 做事',
 
 test('the enter-plan card is one question with 拒绝 and 允许', (t) => {
   const p = planCard(t)
-  p.view.showEnter(enterPlanViewModel())
+  p.view.showEnter(enterPlanViewModel('darwin'))
 
   assert.ok(p.stub.inspect(p.composer).classes.includes('request-open'))
   assert.equal(p.find('request-question').text, '先读代码、出方案，你确认前不会修改文件')
@@ -1363,14 +1431,14 @@ test('the enter-plan card is one question with 拒绝 and 允许', (t) => {
 
 test('the exit-plan card reports every button as the intent its key produces', (t) => {
   const p = planCard(t)
-  p.view.showExit(exitPlanViewModel(planState()))
+  p.view.showExit(exitPlanViewModel(planState(), 'darwin'))
 
   const head = p.find('request-head')
   assert.equal(head.children.find((c) => c.classes.includes('request-title'))?.text, '助手提出了一个计划')
   p.stub.click(head.children.find((c) => c.text === '打开计划')!.node)
   assert.equal(p.opened(), 1)
 
-  assert.deepEqual(p.buttons().map((b) => b.text), ['拒绝', '修改…Esc', '接受⌘⇧⏎', '接受并自动执行⌘⏎'])
+  assert.deepEqual(p.buttons().map((b) => b.text), ['拒绝', '修改…Esc', '接受⇧⌘⏎', '接受并自动执行⌘⏎'])
   for (const button of p.buttons()) p.stub.click(button.node)
   assert.deepEqual(p.exit, [
     { kind: 'reject' },
@@ -1382,9 +1450,9 @@ test('the exit-plan card reports every button as the intent its key produces', (
 
 test('修改… swaps the buttons, focuses the field, and typing only touches 发送', (t) => {
   const p = planCard(t)
-  p.view.showExit(exitPlanViewModel(planState()))
+  p.view.showExit(exitPlanViewModel(planState(), 'darwin'))
   const modifying = { ...planState(), modifying: true }
-  p.view.showExit(exitPlanViewModel(modifying))
+  p.view.showExit(exitPlanViewModel(modifying, 'darwin'))
 
   const input = p.stub.inspect(p.container).children[0]!.children.find((c) => c.classes.includes('plan-feedback-input'))!
   assert.equal(input.attributes.get('placeholder'), '告诉助手要怎么改')
@@ -1396,7 +1464,7 @@ test('修改… swaps the buttons, focuses the field, and typing only touches �
   p.stub.dispatch(input.node, 'input')
   assert.deepEqual(p.exit.at(-1), { kind: 'feedback-set', text: '先补测试' })
 
-  p.view.showExit(exitPlanViewModel({ ...modifying, feedback: '先补测试' }))
+  p.view.showExit(exitPlanViewModel({ ...modifying, feedback: '先补测试' }, 'darwin'))
   assert.equal(p.stub.inspect(p.container).children[0]!.node, card, 'nothing is rebuilt while typing')
   assert.equal(p.buttons().find((b) => b.text.startsWith('发送'))!.disabled, false)
   assert.equal(p.stub.activeElement(), input.node)
@@ -1404,7 +1472,7 @@ test('修改… swaps the buttons, focuses the field, and typing only touches �
 
 test('an empty plan card has only 拒绝 and 接受', (t) => {
   const p = planCard(t)
-  p.view.showExit(exitPlanViewModel(createExitPlanState({ planContent: ' ', planFilePath: '/tmp/plan.md' })))
+  p.view.showExit(exitPlanViewModel(createExitPlanState({ planContent: ' ', planFilePath: '/tmp/plan.md' }), 'darwin'))
   assert.deepEqual(p.buttons().map((b) => b.text), ['拒绝Esc', '接受⏎'])
 })
 

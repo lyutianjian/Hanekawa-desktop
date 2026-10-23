@@ -26,7 +26,7 @@ export type RuntimeMenuKey = 'model' | 'effort'
 
 export interface RuntimeMenuEntry {
   readonly key: RuntimeMenuKey
-  /** The field's name, as the row reads it: 「模型」/「推理强度」. */
+  /** The field's name, as the row reads it: 「模型」/「思考强度」. */
   readonly label: string
   /** Its current value, the same text the chip itself shows. */
   readonly value: string
@@ -98,7 +98,7 @@ export function runtimeMenuView(input: {
       },
       {
         key: 'effort',
-        label: '推理强度',
+        label: '思考强度',
         value: chip.effort,
         title: effort.title,
         rows: effort.rows,

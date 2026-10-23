@@ -246,12 +246,15 @@ test('routing options put inherit first and keep unresolvable keys, labelled', (
 
 // --- keys --------------------------------------------------------------------
 
-test('the global chord answers none unless ctrl or meta is held', () => {
-  assert.deepEqual(settingsChordToIntent({ key: ',' }), { kind: 'none' })
-  assert.deepEqual(settingsChordToIntent({ key: ',', shiftKey: true }), { kind: 'none' })
-  assert.deepEqual(settingsChordToIntent({ key: ',', ctrlKey: true }), { kind: 'open' })
-  assert.deepEqual(settingsChordToIntent({ key: ',', metaKey: true }), { kind: 'open' })
-  assert.deepEqual(settingsChordToIntent({ key: 'a', ctrlKey: true }), { kind: 'none' })
+test('the global chord answers none unless the platform’s primary modifier is held', () => {
+  assert.deepEqual(settingsChordToIntent({ key: ',' }, 'win32'), { kind: 'none' })
+  assert.deepEqual(settingsChordToIntent({ key: ',', shiftKey: true }, 'win32'), { kind: 'none' })
+  assert.deepEqual(settingsChordToIntent({ key: ',', ctrlKey: true }, 'win32'), { kind: 'open' })
+  assert.deepEqual(settingsChordToIntent({ key: ',', metaKey: true }, 'darwin'), { kind: 'open' })
+  assert.deepEqual(settingsChordToIntent({ key: 'a', ctrlKey: true }, 'win32'), { kind: 'none' })
+  // ⌘, is macOS's settings chord; ⌃, is not, and ⊞, is the system's on Windows.
+  assert.deepEqual(settingsChordToIntent({ key: ',', ctrlKey: true }, 'darwin'), { kind: 'none' })
+  assert.deepEqual(settingsChordToIntent({ key: ',', metaKey: true }, 'win32'), { kind: 'none' })
 })
 
 test('the scoped handler ignores modified keys so the global chords still land', () => {
@@ -1295,7 +1298,7 @@ test('the skills card lists every skill, switched-off ones included', () => {
   assert.match(review.detail ?? '', /匹配 src\/\*\*/)
   assert.match(review.detail ?? '', /工具：Read、Grep/)
   assert.match(review.detail ?? '', /模型：claude-big/)
-  assert.match(review.detail ?? '', /推理强度：high/)
+  assert.match(review.detail ?? '', /思考强度：high/)
   assert.match(review.detail ?? '', /带 hooks/)
   assert.match(review.detail ?? '', /2 个附件/)
   assert.match(review.detail ?? '', /已关闭/)
@@ -1511,6 +1514,27 @@ test('a failed change keeps the snapshot on screen', async () => {
   assert.match(state.error ?? '', /still referenced/)
   assert.equal(state.snapshot, before.snapshot, 'an error must not blank the screen')
   assert.equal(state.busy, false)
+})
+
+test('a landed change leaves a 「已保存」 on its row; a failed one leaves only the error', async () => {
+  // A row lightening from its pending dim was the only sign a save had worked,
+  // and a failure that rolled back lightened it the same way.
+  const batch = pendingOf({ scope: 'provider', kind: 'set-default-model', key: 'broken' })
+  const saved = await runSettingsChanges(fakeClient(), openState(), batch)
+  assert.deepEqual(saved.savedRows, { seq: 0, ids: ['routing:default'] })
+  const row = (state: typeof saved) =>
+    settingsView(state).cards.find((card) => card.id === 'routing')?.rows.find((entry) => entry.id === 'routing:default')
+  assert.equal(row(saved)?.savedSeq, 0)
+  // In flight again, the row is waiting, not saved.
+  assert.equal(row({ ...saved, pending: batch })?.savedSeq, undefined)
+
+  const failed = await runSettingsChanges(
+    fakeClient({ changeSettings: async () => { throw new Error('nope') } }),
+    saved,
+    batch,
+  )
+  assert.equal(failed.savedRows, undefined, 'the screen’s last word is the error')
+  assert.equal(row(failed)?.savedSeq, undefined)
 })
 
 test('changes run in order and the last reply wins', async () => {

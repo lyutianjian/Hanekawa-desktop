@@ -5,6 +5,7 @@ import { installDomStub, type DomStub, type StubView } from './helpers/domStub.j
 import { trackAnimationStarts, trackIdentity } from './helpers/motion.js'
 import { createCanvasHeaderView, type CanvasHeaderDom } from '../src/desktop/renderer/dom/canvasHeaderView.js'
 import { closeTopDismissable } from '../src/desktop/renderer/dom/dismiss.js'
+import { createNoSessionView } from '../src/desktop/renderer/dom/noSessionView.js'
 import {
   canvasHeaderView,
   type CanvasHeaderMenuItem,
@@ -80,6 +81,7 @@ interface Rendered {
   identity(): StubView
   titleNode(): StubView | undefined
   menuItems(): StubView[]
+  menuHeading(): StubView | undefined
   openLocation(): StubView | undefined
   crumb(): StubView | undefined
 }
@@ -136,8 +138,10 @@ function render(t: { after(fn: () => void): void }): Rendered {
     menuItems: () => {
       const shell = find(identity(), 'canvas-menu-shell')
       const menu = find(shell, 'canvas-menu')
-      return [...(menu?.children ?? [])]
+      // The heading that names the session is not an item.
+      return [...(menu?.children ?? [])].filter((child) => !child.classes.includes('canvas-menu-heading'))
     },
+    menuHeading: () => find(find(find(identity(), 'canvas-menu-shell'), 'canvas-menu'), 'canvas-menu-heading'),
     openLocation: () =>
       find(rightControls(), 'canvas-open-location'),
     crumb: () => find(identity(), 'canvas-breadcrumb'),
@@ -461,4 +465,40 @@ test('renaming a thread session keeps the crumb under the field, and back', (t) 
   assert.equal(r.crumb()?.node, crumb)
   r.paint({ role: 'thread', thread })
   assert.equal(r.titleNode()?.node, crumb)
+})
+
+test('the empty canvas says so and offers the two ways out', (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const mount = stub.createContainer('transcript-area')
+  const calls: string[] = []
+  const view = createNoSessionView(mount, {
+    onNewSession: () => calls.push('new'),
+    onOpenProject: () => calls.push('open'),
+  })
+  const node = stub.inspect(mount).children[0]!
+  assert.equal(node.hidden, true, 'built hidden: a launching window is not an empty one')
+  view.set(true)
+  const shown = stub.inspect(mount).children[0]!
+  assert.equal(shown.hidden, false)
+  assert.equal(shown.children[0]!.text, '没有打开的会话')
+  const [create, open] = shown.children[1]!.children
+  assert.ok(create!.classes.includes('primary'), 'a new session is the way out most people want')
+  stub.click(create!.node)
+  stub.click(open!.node)
+  assert.deepEqual(calls, ['new', 'open'])
+})
+
+/**
+ * The header's title is cut to an ellipsis and sits in the window's drag strip,
+ * which takes no hover on Windows, so a long name could not be read anywhere.
+ * The menu now opens on it, whole; it is not an item, so the arrows skip it.
+ */
+test('the open menu heads its items with the full session title', (t) => {
+  const r = render(t)
+  r.paint({ menuOpen: true })
+  assert.equal(r.menuHeading()?.text, '原标题')
+  assert.equal(r.menuHeading()?.attributes.get('role'), 'none')
+  assert.ok(r.menuItems().length > 0)
+  assert.ok(r.menuItems().every((item) => item.classes.includes('canvas-menu-item')))
 })

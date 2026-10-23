@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import type { ActivityStep, TranscriptEntry } from '../src/desktop/renderer/model/transcript.js'
-import { collectTurnEdits, fileBadge, folderOf, markChangedWords } from '../src/desktop/renderer/model/turnEdits.js'
+import { baseName, collectTurnEdits, fileBadge, folderOf, markChangedWords } from '../src/desktop/renderer/model/turnEdits.js'
 
 function patch(path: string, body: string[]): string {
   return [`--- a/${path}`, `+++ b/${path}`, ...body].join('\n')
@@ -79,4 +79,22 @@ test('folder and badge', () => {
   assert.equal(fileBadge('loop.ts'), 'TS')
   assert.equal(fileBadge('Makefile'), '')
   assert.equal(fileBadge('.env'), '')
+})
+
+test('Windows paths: either separator, compared as one, shown as written', () => {
+  // The project key and a tool's reported path need not agree on `\` vs `/`
+  // on Windows; when they did not, every file in the changes panel showed its
+  // full absolute folder. Comparison folds both separators and case; the text
+  // shown is the path's own.
+  assert.equal(folderOf('C:\\Users\\me\\proj\\src\\loop.ts', 'c:/users/me/proj'), 'src')
+  assert.equal(folderOf('C:\\Users\\me\\proj\\src\\loop.ts', 'C:\\Users\\me\\proj\\'), 'src')
+  assert.equal(folderOf('C:/Users/me/proj/a/b.ts', 'C:\\Users\\me\\proj'), 'a')
+  assert.equal(folderOf('C:\\Users\\me\\proj\\README.md', 'c:/users/me/proj'), '')
+  assert.equal(folderOf('D:\\other\\x.ts', 'C:\\Users\\me\\proj'), 'D:\\other')
+  // A sibling sharing the prefix is outside, not a subfolder.
+  assert.equal(folderOf('C:\\Users\\me\\project2\\x.ts', 'C:\\Users\\me\\proj'), 'C:\\Users\\me\\project2')
+  assert.equal(folderOf('C:\\proj\\src\\a.ts', 'C:\\proj'), 'src')
+  assert.equal(baseName('C:\\proj\\src\\loop.ts'), 'loop.ts')
+  assert.equal(baseName('C:\\proj/src\\mixed.ts'), 'mixed.ts')
+  assert.equal(baseName('/usr/lib/x.so'), 'x.so')
 })

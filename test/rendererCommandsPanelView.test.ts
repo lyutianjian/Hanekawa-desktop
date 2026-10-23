@@ -29,7 +29,7 @@ test('a row unfolds into its output and only a running one can be stopped', asyn
 
   const rows = () => stub.inspect(container).children
   assert.equal(rows().length, 2)
-  assert.equal(byClass(byClass(byClass(rows()[1], 'command-head'), 'command-meta'), 'command-time')?.text, '1m15s')
+  assert.equal(byClass(byClass(byClass(rows()[1], 'command-head'), 'command-meta'), 'command-time')?.text, '1 分 15 秒')
   assert.equal(byClass(rows()[1], 'command-stop'), undefined, 'a finished process has nothing to stop')
   stub.click(byClass(rows()[0], 'command-stop')!.node)
   assert.deepEqual(stopped, ['t1'])
@@ -44,4 +44,37 @@ test('a row unfolds into its output and only a running one can be stopped', asyn
   const before = byClass(rows()[1], 'command-output')!.node
   view.render([live, done])
   assert.equal(byClass(rows()[1], 'command-output')?.node, before)
+})
+
+/**
+ * A failed read used to be swallowed, leaving 还没有输出 under a process that
+ * had plenty — indistinguishable from a quiet one. It now says so, with 重试.
+ */
+test('a failed output read says so and offers 重试, which clears it once a read lands', async (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('commands')
+  let fail = true
+  const view = createCommandsPanelView(container, {
+    loadOutput: async () => {
+      if (fail) throw new Error('host gone')
+      return 'ok'
+    },
+    onStop: () => {},
+  })
+  t.after(() => view.render(undefined))
+  view.render([done])
+  const row = () => stub.inspect(container).children[0]
+  const settle = () => new Promise((resolve) => setImmediate(resolve))
+
+  stub.click(byClass(row(), 'command-head')!.node)
+  await settle()
+  const failure = byClass(row(), 'load-error')
+  assert.equal(failure?.text.includes('无法读取输出：host gone'), true)
+
+  fail = false
+  stub.click(byClass(failure, 'load-retry')!.node)
+  await settle()
+  assert.equal(byClass(row(), 'load-error'), undefined)
+  assert.equal(byClass(row(), 'command-output')?.text, 'ok')
 })

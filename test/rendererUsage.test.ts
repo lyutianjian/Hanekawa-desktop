@@ -64,12 +64,12 @@ test('the status line sums every count into one total', () => {
   // One chip on screen; its label lives in the accessible name beside it. Cache
   // writes are in the total — they were billed like any other input.
   assert.deepEqual(view.metrics.map((metric) => [metric.kind, metric.value]), [
-    ['total', '108k tok'],
+    ['total', '108k token'],
   ])
   // The rate is the one field written out on screen — no glyph explains a ratio
   // — and it is the last request's, not the session's.
   assert.deepEqual(view.rate, { label: '本轮命中', percent: '98.0%' })
-  assert.equal(view.text, '总计 108k tok · 本轮命中 98.0%')
+  assert.equal(view.text, '总计 108k token · 本轮命中 98.0%')
   // The hover card carries the split unabbreviated, and the cumulative rate
   // beside it; `title` is the same rows joined, for the accessible name only.
   assert.deepEqual(view.breakdown.map((row) => row.label), [
@@ -114,7 +114,7 @@ test('a session with no request behind it yet shows the count and no rate', () =
   // request, and there is none until one lands.
   const view = statusUsageView(usage({ inputTokens: 100, outputTokens: 500 }))
   assert.equal(view.rate, undefined)
-  assert.equal(view.text, '总计 600 tok')
+  assert.equal(view.text, '总计 600 token')
 })
 
 test('a session that never touched the cache shows no rate', () => {
@@ -125,14 +125,14 @@ test('a session that never touched the cache shows no rate', () => {
     usage({ inputTokens: 2_000, outputTokens: 200 }),
   )
   assert.equal(view.rate, undefined)
-  assert.equal(view.text, '总计 5.5k tok')
+  assert.equal(view.text, '总计 5.5k token')
   assert.ok(!view.breakdown.some((row) => row.label === '会话累计命中'))
 })
 
 test('a turn with no input side reports no rate at all', () => {
   const view = statusUsageView(usage({ outputTokens: 500 }), usage({ outputTokens: 500 }))
   assert.equal(view.rate, undefined)
-  assert.equal(view.text, '总计 500 tok')
+  assert.equal(view.text, '总计 500 token')
 })
 
 test('the gauge is absent, not empty, when either number is missing', () => {
@@ -168,7 +168,7 @@ test('the gauge measures against the usable window, not the raw one', () => {
   // window would hand the reserve back in the one line a screen reader gets.
   assert.match(view.title, /^可用窗口：10% 已用（剩余 90%）/)
   assert.doesNotMatch(view.title, /上下文窗口/)
-  assert.match(view.title, /已用 17k 标记，共 167k/)
+  assert.match(view.title, /已用 17k token，共 167k/)
   assert.match(view.title, /模型窗口 200k/)
 })
 

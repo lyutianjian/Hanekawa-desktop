@@ -1,7 +1,7 @@
 import type { WireCoordinationThreads, WireLaneInfo, WireSessionSummary } from '../../shellProtocol.js'
 import type { DesktopPlatform } from '../../types.js'
 import { coordinationCounts, isCoordinationProject } from './coordinationStatus.js'
-import { desktopShortcut } from './desktopShortcuts.js'
+import { desktopShortcut, isPrimaryModifier } from './desktopShortcuts.js'
 
 /**
  * The sidebar as data: every session this process can reach, grouped by
@@ -52,10 +52,22 @@ export const CREATE_BLOCKED_HINT = '先回应当前会话里的授权请求或�
 /** The nav row that turns the「最近」filter on and off. */
 export const SIDEBAR_RECENT_LABEL = '最近'
 /** The three things the list can say when it has no rows to draw. */
-export const SIDEBAR_EMPTY_TEXT = '还没有会话。'
+export const SIDEBAR_EMPTY_TEXT = '还没有会话'
 /** The「最近」filter is on and the global workspace has no history yet. */
-export const SIDEBAR_EMPTY_RECENT_TEXT = '还没有无项目会话。'
-export const SIDEBAR_NO_MATCHES_TEXT = '没有匹配的会话。'
+export const SIDEBAR_EMPTY_RECENT_TEXT = '还没有无项目会话'
+export const SIDEBAR_NO_MATCHES_TEXT = '没有匹配的会话'
+/** The first read of the history failed and there is nothing older to show. */
+export const SIDEBAR_LOAD_FAILED_TEXT = '读取会话失败'
+
+/**
+ * Where the history read stands. Only an *empty* list shows it: before the
+ * first read lands the rail is skeleton rows rather than 「还没有会话」, which
+ * read as every session having been deleted; and a first read that failed says
+ * so with 重试 in its place. Once a list has been drawn a later failure keeps
+ * it — the shell reports that one — because a rail that empties itself on a
+ * transient error looks like a deletion too.
+ */
+export type SidebarListLoad = 'loading' | 'ready' | 'failed'
 
 /** The `?` panel's rows: what each chord does, and the chord. */
 export function sidebarHint(platform: DesktopPlatform): Array<{ label: string; chord: string }> {
@@ -72,7 +84,7 @@ export function sidebarHint(platform: DesktopPlatform): Array<{ label: string; c
 // --- the view ----------------------------------------------------------------
 
 /** What a row says about the pane behind it, if there is one. */
-export type SidebarBadge = 'none' | 'running' | 'awaiting-input' | 'failed'
+export type SidebarBadge = 'none' | 'running' | 'awaiting-input' | 'failed' | 'unread'
 
 export interface SidebarRow {
   readonly sessionId: string
@@ -89,6 +101,8 @@ export interface SidebarRow {
   readonly messageCount: number
   /** This row is asking "delete?" and has replaced its actions with the answer. */
   readonly confirmingDelete: boolean
+  /** Clicked from history and still on its way to a lane; see `SidebarState.openingSessions`. */
+  readonly opening: boolean
 }
 
 /**
@@ -271,6 +285,8 @@ export interface SidebarView {
   readonly recentOnly: boolean
   /** The projects page is up, so the nav's「项目」item wears its on-state. */
   readonly projectsOpen: boolean
+  /** Whether the history has been read yet; see {@link SidebarListLoad}. */
+  readonly listLoad: SidebarListLoad
   /**
    * Whether the `?` panel is showing {@link sidebarHint}.
    *
@@ -311,6 +327,30 @@ export interface SidebarLaneStatus {
    * invisible until its first input or output.
    */
   readonly hasConversation: boolean
+  /** A turn finished here while another session was on screen; see {@link nextUnreadLanes}. */
+  readonly unread?: boolean
+}
+
+/**
+ * The lanes with a reply the user has not seen yet.
+ *
+ * A lane turns unread when its turn ends (streaming → not) while it is not the
+ * active one, and turns read the moment it becomes active. Lanes that are gone
+ * drop out. Without it a background session that finished looked exactly like
+ * one that never ran, and the user had to open each to find the answer.
+ */
+export function nextUnreadLanes(
+  unread: ReadonlySet<string>,
+  wasStreaming: ReadonlyMap<string, boolean>,
+  streaming: ReadonlyMap<string, boolean>,
+  activeLane: string | undefined,
+): Set<string> {
+  const next = new Set<string>()
+  for (const [lane, now] of streaming) {
+    if (lane === activeLane) continue
+    if (unread.has(lane) || (wasStreaming.get(lane) === true && !now)) next.add(lane)
+  }
+  return next
 }
 
 export interface SidebarState {
@@ -350,6 +390,13 @@ export interface SidebarState {
    */
   readonly deletingSessions: ReadonlySet<string>
   readonly removingProjects: ReadonlySet<string>
+  /**
+   * History rows clicked and not yet open. Opening one loads its transcript and
+   * builds a runtime; a row that showed nothing meanwhile read as a click that
+   * missed, and a second click was the usual answer. Cleared when the open
+   * settles, either way.
+   */
+  readonly openingSessions: ReadonlySet<string>
   /** Milliseconds, injected so a draft's synthesized timestamp is testable. */
   readonly now: number
   /** False while a blocking dialog is up: both buttons open something. */
@@ -375,6 +422,7 @@ export interface SidebarState {
    */
   readonly recentOnly: boolean
   readonly projectsOpen: boolean
+  readonly listLoad: SidebarListLoad
   /**
    * Each project's thread table, by project root. Sessions named here (the
    * coordinator and every thread) are drawn in the pinned section and left out
@@ -397,6 +445,7 @@ export function createSidebarState(overrides: Partial<SidebarState> = {}): Sideb
     pendingRemoveProject: undefined,
     deletingSessions: new Set(),
     removingProjects: new Set(),
+    openingSessions: new Set(),
     now: Date.UTC(2026, 7, 20, 12, 0, 0),
     canCreate: true,
     searchQuery: '',
@@ -404,6 +453,7 @@ export function createSidebarState(overrides: Partial<SidebarState> = {}): Sideb
     helpOpen: false,
     recentOnly: false,
     projectsOpen: false,
+    listLoad: 'ready',
     coordination: new Map(),
     ...overrides,
   }
@@ -431,7 +481,8 @@ function badgeFor(lane: string | undefined, state: SidebarState, failed: boolean
   // "Running" is the agent loop *or* a process it left behind — a backgrounded
   // command keeps the session busy after the turn ends.
   if (status?.streaming || status?.processes) return 'running'
-  return failed ? 'failed' : 'none'
+  if (failed) return 'failed'
+  return status?.unread ? 'unread' : 'none'
 }
 
 /**
@@ -621,6 +672,7 @@ export function sidebarView(state: SidebarState): SidebarView {
     helpOpen: state.helpOpen,
     recentOnly: state.recentOnly,
     projectsOpen: state.projectsOpen,
+    listLoad: state.listLoad,
   }
 }
 
@@ -714,6 +766,8 @@ function rowFor(
     updatedAt: session.updatedAt,
     messageCount: session.messageCount,
     confirmingDelete: state.pendingDelete === session.id,
+    // A row that already has a lane is open, whatever a late settle says.
+    opening: lane === undefined && state.openingSessions.has(session.id),
   }
 }
 
@@ -797,6 +851,8 @@ export type SidebarIntent =
   | { kind: 'request-delete'; sessionId: string }
   | { kind: 'confirm-delete'; projectRoot: string; sessionId: string }
   | { kind: 'cancel-delete' }
+  /** Read the history again after a first read that failed. */
+  | { kind: 'retry-load' }
   | { kind: 'move'; direction: 'up' | 'down' }
   | { kind: 'none' }
 
@@ -805,18 +861,20 @@ export interface SidebarChord {
   readonly shiftKey?: boolean
   readonly ctrlKey?: boolean
   readonly metaKey?: boolean
+  readonly altKey?: boolean
 }
 
 /**
  * The **global** chords, resolved before `resolveKey`.
  *
- * Everything here requires ctrl or meta, and the early return is what makes the
- * ordering safe: an unmodified key that resolved to an intent would shadow every
- * dialog, panel and composer keystroke in the window. The tab bar this replaced had the
+ * Everything here requires the platform's primary modifier (`isPrimaryModifier`:
+ * ⌘ on macOS, Ctrl elsewhere), and the early return is what makes the ordering
+ * safe: an unmodified key that resolved to an intent would shadow every dialog,
+ * panel and composer keystroke in the window. The tab bar this replaced had the
  * same rule and the same reason.
  */
-export function sidebarChordToIntent(chord: SidebarChord, state: SidebarState): SidebarIntent {
-  if (chord.ctrlKey !== true && chord.metaKey !== true) return { kind: 'none' }
+export function sidebarChordToIntent(chord: SidebarChord, state: SidebarState, platform: DesktopPlatform): SidebarIntent {
+  if (!isPrimaryModifier(chord, platform)) return { kind: 'none' }
 
   // `Ctrl+1`–`9` over the *live* rows in visual order, so the nth chord and the
   // nth open session on screen are the same pane. The view is built inside this
@@ -1000,13 +1058,14 @@ export function sidebarRenderSignature(view: SidebarView): string {
     // empty text it produces is different from the plain one.
     view.recentOnly ? 'r' : '-',
     view.projectsOpen ? 'o' : '-',
+    `l:${view.listLoad}`,
     String(view.selectedIndex),
     `q:${view.searchQuery}`,
   ]
   for (const entry of view.pinned) {
     parts.push(`k:${entry.projectRoot}${entry.projectName}${entry.running}/${entry.blocked}`)
     const row = entry.coordinator
-    if (row) parts.push(`${row.sessionId}${row.lane ?? ''}${row.badge}${row.active ? '1' : '0'}${row.confirmingDelete ? '1' : '0'}`)
+    if (row) parts.push(`${row.sessionId}${row.lane ?? ''}${row.badge}${row.active ? '1' : '0'}${row.confirmingDelete ? '1' : '0'}${row.opening ? 'o' : '-'}`)
   }
   for (const group of view.groups) {
     // The menu and the confirmation are drawn on the heading, a collapsed
@@ -1022,7 +1081,7 @@ export function sidebarRenderSignature(view: SidebarView): string {
     for (const row of group.rows) {
       parts.push(
         `r:${row.sessionId}${row.lane ?? ''}${row.badge}${row.active ? '1' : '0'}`
-          + `${row.confirmingDelete ? '1' : '0'}${row.title}${row.messageCount}`
+          + `${row.confirmingDelete ? '1' : '0'}${row.opening ? 'o' : '-'}${row.title}${row.messageCount}`
           + `${row.roleMarker ?? ''}`,
       )
     }

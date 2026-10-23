@@ -19,7 +19,7 @@
  * Decisions live in `model/browserPanel.ts`; this file turns them into nodes.
  */
 
-import { el, replace, required, show } from './dom.js'
+import { el, reconcile, replace, required, show } from './dom.js'
 import { button } from './controls.js'
 import { icon } from './icons.js'
 import type { WireBrowserRect, WireBrowserTabInfo } from '../../shellProtocol.js'
@@ -96,9 +96,9 @@ export function createBrowserPanelView(
   // rename field: rebuilding an input on every repaint would drop the caret
   // mid-word, and this row repaints on every title change of a loading page.
 
-  const back = button('browser-nav', '←', '后退', () => withActive(handlers.onBack))
-  const forward = button('browser-nav', '→', '前进', () => withActive(handlers.onForward))
-  const reload = button('browser-nav', '↻', '重新加载', () => withActive(handlers.onReload))
+  const back = button('browser-nav', '', '后退', () => withActive(handlers.onBack), { icon: 'arrow-left' })
+  const forward = button('browser-nav', '', '前进', () => withActive(handlers.onForward), { icon: 'arrow-right' })
+  const reload = button('browser-nav', '', '重新加载', () => withActive(handlers.onReload), { icon: 'rotate-cw' })
   const url = el('input', 'browser-url')
   url.id = 'browser-url'
   url.type = 'text'
@@ -258,6 +258,45 @@ export function createBrowserPanelView(
       : undefined
   observer?.observe(nodes.hole)
 
+  interface TabRow {
+    node: HTMLElement
+    label: HTMLElement
+    icon?: HTMLElement | SVGSVGElement
+    iconKey?: string
+  }
+  const tabRows = new Map<string, TabRow>()
+  const newTab = button('browser-tab-new', '', '新建标签页', () => handlers.onNewTab(), { icon: 'plus' })
+
+  function createTabRow(tabId: string): TabRow {
+    const node = el('div', 'browser-tab')
+    node.setAttribute('role', 'tab')
+    const label = el('span', 'browser-tab-label')
+    node.appendChild(label)
+    node.appendChild(button('browser-tab-close', '', '关闭标签页', () => handlers.onCloseTab(tabId), { icon: 'close' }))
+    node.addEventListener('click', () => handlers.onSelectTab(tabId))
+    const row: TabRow = { node, label }
+    tabRows.set(tabId, row)
+    return row
+  }
+
+  // The tablist's keys: arrows, Home and End select (and so focus) a neighbour,
+  // Enter and Space select the focused tab, Delete closes it.
+  nodes.tabs.addEventListener('keydown', (event) => {
+    const ids = tabsForLane(model.tabs, model.lane).map((tab) => tab.tabId)
+    const focused = [...tabRows].find(([, row]) => row.node === document.activeElement)?.[0]
+    if (focused === undefined) return
+    const target = tabKeyTarget(event.key, ids, focused)
+    if (target === undefined) return
+    event.preventDefault()
+    event.stopPropagation()
+    if (target.kind === 'close') {
+      handlers.onCloseTab(target.tabId)
+      return
+    }
+    handlers.onSelectTab(target.tabId)
+    tabRows.get(target.tabId)?.node.focus()
+  })
+
   // --- rendering ---------------------------------------------------------------------
 
   function render(next: BrowserPanelViewModel): void {
@@ -268,19 +307,32 @@ export function createBrowserPanelView(
 
     show(nodes.panel, panelVisible)
 
+    // Keyed: a loading page reports its title, favicon and progress many times a
+    // second, and rebuilding the strip for each one dropped the keyboard focus
+    // off the tab and restarted the spinner. A row is built once per tab and
+    // only its changed parts are touched after that.
+    const live = new Set(own.map((tab) => tab.tabId))
+    for (const id of [...tabRows.keys()]) if (!live.has(id)) tabRows.delete(id)
     const rows = own.map((tab) => {
-      const row = el('div', tabClass(tab, next.activeTabId))
-      row.setAttribute('role', 'tab')
-      row.setAttribute('aria-selected', String(tab.tabId === next.activeTabId))
-      row.appendChild(tabIcon(tab))
-      row.appendChild(el('span', 'browser-tab-label', tabLabel(tab)))
-      row.appendChild(
-        button('browser-tab-close', '✕', '关闭标签页', () => handlers.onCloseTab(tab.tabId)),
-      )
-      row.addEventListener('click', () => handlers.onSelectTab(tab.tabId))
-      return row
+      const row = tabRows.get(tab.tabId) ?? createTabRow(tab.tabId)
+      const selected = tab.tabId === next.activeTabId
+      row.node.className = tabClass(tab, next.activeTabId)
+      row.node.setAttribute('aria-selected', String(selected))
+      // Roving: Tab enters the strip on the selected tab, arrows move within it.
+      row.node.tabIndex = selected ? 0 : -1
+      const key = tabIconKey(tab)
+      if (row.iconKey !== key) {
+        const fresh = tabIcon(tab)
+        row.icon?.remove()
+        row.node.insertBefore(fresh, row.label)
+        row.icon = fresh
+        row.iconKey = key
+      }
+      const label = tabLabel(tab)
+      if (row.label.textContent !== label) row.label.textContent = label
+      return row.node
     })
-    replace(nodes.tabs, ...rows, button('browser-tab-new', '＋', '新建标签页', handlers.onNewTab))
+    reconcile(nodes.tabs, [...rows, newTab])
 
     const tab = activeTab()
     back.disabled = tab === undefined || !tab.canGoBack
@@ -360,6 +412,30 @@ function tabIcon(tab: WireBrowserTabInfo): HTMLElement | SVGSVGElement {
   // Decoration beside a label that already names the site.
   image.setAttribute('alt', '')
   return image
+}
+
+function tabIconKey(tab: WireBrowserTabInfo): string {
+  return tab.loading ? 'loading' : (tab.favicon ?? '')
+}
+
+/** Which tab a key in the strip acts on, or nothing for keys the strip leaves alone. */
+export function tabKeyTarget(
+  key: string,
+  ids: readonly string[],
+  focused: string,
+): { kind: 'select' | 'close'; tabId: string } | undefined {
+  const index = ids.indexOf(focused)
+  if (index < 0) return undefined
+  const last = ids.length - 1
+  if (key === 'Enter' || key === ' ') return { kind: 'select', tabId: focused }
+  if (key === 'Delete') return { kind: 'close', tabId: focused }
+  const to =
+    key === 'ArrowRight' ? (index === last ? 0 : index + 1)
+      : key === 'ArrowLeft' ? (index === 0 ? last : index - 1)
+        : key === 'Home' ? 0
+          : key === 'End' ? last
+            : undefined
+  return to === undefined ? undefined : { kind: 'select', tabId: ids[to]! }
 }
 
 function tabClass(tab: WireBrowserTabInfo, activeTabId: string | undefined): string {

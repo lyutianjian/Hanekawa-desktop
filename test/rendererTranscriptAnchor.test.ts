@@ -8,6 +8,7 @@ import {
   ANCHOR_REST_PX,
   ANCHOR_TOP_FIRST_PX,
   ANCHOR_TOP_PX,
+  readingCandidate,
   TRANSCRIPT_PAD_VARIABLE,
   viewportPolicy,
   type ViewportEvent,
@@ -111,4 +112,44 @@ test('the pad travels as a custom property the stylesheet declares', () => {
   // Paired with `:root`'s declaration and `.transcript-column`'s use of it in
   // `rendererStyleTokens.test.ts`; this end is what keeps the name from drifting.
   assert.equal(TRANSCRIPT_PAD_VARIABLE, '--transcript-pad')
+})
+
+/**
+ * The reading anchor is found by binary search, because a linear scan read the
+ * layout of every candidate in a long session on every scroll event. These
+ * pin the old scan's answers, and that the search reads O(log n) boxes.
+ */
+const rows = (tops: Array<number | undefined>, height = 20) => (index: number) => {
+  const top = tops[index]
+  return top === undefined ? undefined : { top, bottom: top + height }
+}
+
+test('the reading candidate is the first line that starts inside the viewport', () => {
+  const tops = [0, 20, 40, 60, 80, 100, 120]
+  assert.equal(readingCandidate(tops.length, rows(tops), { top: 50, bottom: 110 }), 3)
+  assert.equal(readingCandidate(tops.length, rows(tops), { top: 60, bottom: 110 }), 3, 'a top on the edge is inside')
+  assert.equal(readingCandidate(tops.length, rows(tops), { top: -10, bottom: 30 }), 0)
+})
+
+test('boxless candidates are skipped, never compared', () => {
+  const tops = [0, undefined, undefined, 60, undefined, 100]
+  assert.equal(readingCandidate(tops.length, rows(tops), { top: 50, bottom: 110 }), 3)
+  assert.equal(readingCandidate(tops.length, rows(tops), { top: 61, bottom: 110 }), 5)
+  assert.equal(readingCandidate(3, () => undefined, { top: 0, bottom: 100 }), undefined)
+})
+
+test('with no line starting on screen, the first block straddling it holds the place', () => {
+  // One code block taller than the viewport, inside its message item.
+  const boxes = [{ top: 0, bottom: 2000 }, { top: 10, bottom: 1990 }, { top: 2000, bottom: 2020 }]
+  assert.equal(readingCandidate(boxes.length, (i) => boxes[i], { top: 500, bottom: 900 }), 0)
+  assert.equal(readingCandidate(boxes.length, (i) => boxes[i], { top: 3000, bottom: 3400 }), undefined, 'past the end')
+})
+
+test('the search reads a logarithmic number of boxes', () => {
+  const tops = Array.from({ length: 4096 }, (_, index) => index * 20)
+  let reads = 0
+  const at = rows(tops)
+  const index = readingCandidate(tops.length, (i) => { reads++; return at(i) }, { top: 40_010, bottom: 40_400 })
+  assert.equal(index, 2001)
+  assert.ok(reads < 40, `${reads} reads`)
 })

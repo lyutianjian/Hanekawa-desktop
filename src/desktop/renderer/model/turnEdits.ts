@@ -31,7 +31,7 @@ export interface EditedFile {
 export interface TurnEdits {
   /** Stable across repaints: the first editing step's id. */
   readonly key: string
-  /** The message that opened the turn — the checkpoint 撤销 rewinds to. */
+  /** The message that opened the turn — the checkpoint 回退 rewinds to. */
   readonly userMessageId?: string
   readonly files: readonly EditedFile[]
   readonly added?: number
@@ -118,21 +118,36 @@ function elidedText(text: string, cut: boolean): string {
   return cut ? `另有 ${count} 行未显示` : `${count} 行未修改`
 }
 
+/** Either separator: a Windows path arrives with `\`, and a path a tool echoed may mix both. */
+function lastSeparator(path: string): number {
+  return Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+}
+
+/** How two paths are compared: one separator, one case. The displayed text is always sliced from the original. */
+function comparable(path: string): string {
+  return path.replace(/\\/g, '/').toLowerCase()
+}
+
 export function baseName(path: string): string {
-  return path.slice(path.lastIndexOf('/') + 1)
+  return path.slice(lastSeparator(path) + 1)
 }
 
 /**
  * The folder a file sits in, said relative to the project when it is inside it.
  * `root` is the normalized project key, which may differ from the path in case
  * only; outside the project the full folder is the honest answer.
+ *
+ * Separators are compared as one: on Windows the root key and the path a tool
+ * reported need not agree on `\` versus `/`, and when they did not every file
+ * showed its full absolute folder. The result keeps the path's own spelling.
  */
 export function folderOf(path: string, root: string | undefined): string {
-  const folder = path.slice(0, Math.max(0, path.lastIndexOf('/')))
+  const folder = path.slice(0, Math.max(0, lastSeparator(path)))
   if (root === undefined) return folder
-  const prefix = root.endsWith('/') ? root : `${root}/`
-  if (folder.toLowerCase() === root.toLowerCase().replace(/\/$/, '')) return ''
-  return folder.toLowerCase().startsWith(prefix.toLowerCase()) ? folder.slice(prefix.length) : folder
+  const base = comparable(root).replace(/\/$/, '')
+  const target = comparable(folder)
+  if (target === base) return ''
+  return target.startsWith(`${base}/`) ? folder.slice(base.length + 1) : folder
 }
 
 /** `TS`, `CSS`, `MD`: the extension a file badge prints, at most four letters. */

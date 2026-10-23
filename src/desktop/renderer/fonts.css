@@ -1,10 +1,26 @@
 /*
- * The renderer's bundled webfonts: 8 woff2 files checked in under `./fonts/`,
- * copied once from the matching `@fontsource*` devDependencies — Inter
+ * The renderer's bundled webfonts: 10 woff2 files checked in under `./fonts/`,
+ * eight copied once from the matching `@fontsource*` devDependencies — Inter
  * Variable and Source Serif 4 Variable cover the design's 400/500/600 via a
  * `font-weight: 400 600` range; JetBrains Mono ships static 400 and 500.
  * Only the `latin` and `latin-ext` subsets are carried: CJK text falls
  * through the stacks to the platform fonts, and the woff2 stay small.
+ *
+ * The other two are JetBrains Mono's arrows, box drawing, block elements and
+ * geometric shapes, which no fontsource subset carries. Without them `tree`
+ * output and box-drawn tables fell through to the platform's next mono —
+ * Consolas on Windows, whose glyphs are 0.55em wide against JetBrains Mono's
+ * 0.6em — and every line with a `├──` drifted out of its column. Cut from the
+ * upstream v2.304 release (same 600-unit advance and vertical metrics as the
+ * fontsource v2.211 faces) with
+ *
+ *   pyftsubset JetBrainsMono-{Regular,Medium}.ttf \
+ *     --unicodes=U+2190-21FF,U+2500-259F,U+25A0-25FF --flavor=woff2 \
+ *     --layout-features='*' --no-hinting --desubroutinize
+ *
+ * and each `unicode-range` below lists only the code points the cut actually
+ * holds, so a character the face lacks never fetches it. The ranges stay
+ * disjoint from the `latin` faces' (which already carry U+2191 and U+2193).
  *
  * To upgrade a family, reinstall its fontsource package, re-copy the files
  * below (names are kept verbatim so a diff shows exactly what changed), and
@@ -97,4 +113,22 @@
   font-weight: 500;
   src: url('./fonts/jetbrains-mono-latin-ext-500-normal.woff2') format('woff2');
   unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* JetBrains Mono — 400, symbols (see the note at the top) */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('./fonts/jetbrains-mono-symbols-400-normal.woff2') format('woff2');
+  unicode-range: U+2190, U+2192, U+2194-2199, U+219D-219E, U+21A0, U+21A2-21A3, U+21A5-21A7, U+21A9-21AA, U+21AD, U+21BE, U+21C9, U+21D0-21D4, U+21DB, U+21DE-21DF, U+21E5, U+21E7-21E8, U+21EA, U+2500-25A1, U+25AA-25AB, U+25B2-25CC, U+25CE-25CF, U+25D4-25D5, U+25E6-25EB, U+25EF, U+25F6;
+}
+/* JetBrains Mono — 500, symbols (see the note at the top) */
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('./fonts/jetbrains-mono-symbols-500-normal.woff2') format('woff2');
+  unicode-range: U+2190, U+2192, U+2194-2199, U+219D-219E, U+21A0, U+21A2-21A3, U+21A5-21A7, U+21A9-21AA, U+21AD, U+21BE, U+21C9, U+21D0-21D4, U+21DB, U+21DE-21DF, U+21E5, U+21E7-21E8, U+21EA, U+2500-25A1, U+25AA-25AB, U+25B2-25CC, U+25CE-25CF, U+25D4-25D5, U+25E6-25EB, U+25EF, U+25F6;
 }

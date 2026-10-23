@@ -4,6 +4,8 @@ import {
   isEmptyPlan,
 } from '../../../runtime/planPresentation.js'
 import type { ExitDialogInput, ExitPlanDecision } from '../../../harness/planModeManager.js'
+import type { DesktopPlatform } from '../../types.js'
+import { enterChordLabel } from './desktopShortcuts.js'
 import { UI_LOCALE } from './locale.js'
 
 /**
@@ -13,6 +15,10 @@ import { UI_LOCALE } from './locale.js'
  * `runtime/planPresentation.ts`, so the terminal and the desktop cannot offer
  * different choices. What lives here is the part that is per-view: the button
  * layout, the 修改… state, and how a keystroke maps onto them.
+ *
+ * The key hints take the platform because they are read, not pressed: `⌘⏎` on
+ * a Windows button names a key that keyboard does not have. The key map itself
+ * accepts either modifier, so a hint can only ever under-promise.
  *
  * DOM-free on purpose; see `diffRows.ts`.
  */
@@ -39,13 +45,13 @@ export type EnterPlanIntent =
   | { kind: 'answer'; approved: boolean }
   | { kind: 'none' }
 
-export function enterPlanViewModel(): EnterPlanViewModel {
+export function enterPlanViewModel(platform: DesktopPlatform): EnterPlanViewModel {
   return {
     title: '助手想先进入计划模式',
     body: '先读代码、出方案，你确认前不会修改文件',
     buttons: [
       { label: '拒绝', shortcut: 'Esc', primary: false, side: 'end', enabled: true, intent: { kind: 'answer', approved: false } },
-      { label: '允许', shortcut: '⏎', primary: true, side: 'end', enabled: true, intent: { kind: 'answer', approved: true } },
+      { label: '允许', shortcut: enterChordLabel(platform), primary: true, side: 'end', enabled: true, intent: { kind: 'answer', approved: true } },
     ],
   }
 }
@@ -97,7 +103,7 @@ export function createExitPlanState(input: ExitDialogInput): ExitPlanState {
   return { input, modifying: false, feedback: '' }
 }
 
-export function exitPlanViewModel(state: ExitPlanState): ExitPlanViewModel {
+export function exitPlanViewModel(state: ExitPlanState, platform: DesktopPlatform): ExitPlanViewModel {
   const empty = isEmptyPlan(state.input.planContent)
   const base = { planFilePath: state.input.planFilePath, isEmptyPlan: empty, modifying: state.modifying, feedback: state.feedback }
   const entry = (
@@ -120,7 +126,7 @@ export function exitPlanViewModel(state: ExitPlanState): ExitPlanViewModel {
       title: '助手希望退出计划模式',
       buttons: [
         entry('拒绝', 'start', { kind: 'reject' }, { shortcut: 'Esc' }),
-        entry('接受', 'end', { kind: 'approve', slot: 0 }, { shortcut: '⏎', primary: true }),
+        entry('接受', 'end', { kind: 'approve', slot: 0 }, { shortcut: enterChordLabel(platform), primary: true }),
       ],
     }
   }
@@ -131,7 +137,7 @@ export function exitPlanViewModel(state: ExitPlanState): ExitPlanViewModel {
       buttons: [
         entry('取消', 'start', { kind: 'cancel-modify' }, { shortcut: 'Esc' }),
         entry('发送', 'end', { kind: 'send-feedback' }, {
-          shortcut: '⏎',
+          shortcut: enterChordLabel(platform),
           primary: true,
           enabled: state.feedback.trim().length > 0,
         }),
@@ -149,12 +155,12 @@ export function exitPlanViewModel(state: ExitPlanState): ExitPlanViewModel {
     buttons: [
       entry('拒绝', 'start', { kind: 'reject' }),
       entry('修改…', 'start', { kind: 'modify' }, { shortcut: 'Esc' }),
-      entry('接受', 'end', { kind: 'approve', slot: 1 }, { shortcut: '⌘⇧⏎' }),
+      entry('接受', 'end', { kind: 'approve', slot: 1 }, { shortcut: enterChordLabel(platform, { primary: true, shift: true }) }),
       entry(
         elevated?.kind === 'approve_bypass_keep' ? '接受并绕过权限' : '接受并自动执行',
         'end',
         { kind: 'approve', slot: 0 },
-        { shortcut: '⌘⏎', primary: true },
+        { shortcut: enterChordLabel(platform, { primary: true }), primary: true },
       ),
     ],
   }
@@ -163,7 +169,7 @@ export function exitPlanViewModel(state: ExitPlanState): ExitPlanViewModel {
 /**
  * Keys for the card. While the 修改… field is open only Enter and Escape are
  * ours; everything else is typing. Otherwise Enter and ⌘⏎ take the primary
- * button, ⌘⇧⏎ the manual accept, Escape opens 修改… (or rejects an empty plan),
+ * button, ⇧⌘⏎ the manual accept, Escape opens 修改… (or rejects an empty plan),
  * and the digits count the buttons in reading order.
  */
 export function exitPlanKeyToIntent(

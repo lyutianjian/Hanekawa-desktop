@@ -15,6 +15,11 @@ import { SIDE_MODE_LABELS, type SideMode } from './sidePanel.js'
  * 编辑 menu — cut/copy/paste in a textarea are the platform's own accelerators,
  * and a renderer-drawn 编辑 would either duplicate them or lie about them.
  *
+ * macOS gets none of this: its menus live in the system menu bar
+ * (`desktop/appMenu.ts`), which carries the same items and reaches the same
+ * actions through a `menu-action` event. A second 文件 / 视图 beside the traffic
+ * lights would be the Windows idiom painted onto a Mac.
+ *
  * DOM-free, like every other `model/` module: decisions here, nodes in
  * `dom/titleBarView.ts`.
  */
@@ -45,7 +50,14 @@ export interface TitleBarMenu {
   readonly items: readonly TitleBarItem[]
 }
 
+/**
+ * The actions that open something, greyed — and refused from the native menu —
+ * while a blocking dialog is up.
+ */
+export const NEEDS_PROJECT: ReadonlySet<TitleBarAction> = new Set<TitleBarAction>(['new-session', 'open-project'])
+
 export function titleBarMenus(platform: DesktopPlatform): readonly TitleBarMenu[] {
+  if (platform === 'darwin') return []
   return [
     {
       id: 'file',
@@ -72,6 +84,11 @@ export function titleBarMenus(platform: DesktopPlatform): readonly TitleBarMenu[
 
 export interface TitleBarView {
   readonly menus: readonly TitleBarMenu[]
+  /**
+   * The sidebar toggle's chord, for the rail button's tooltip. Its own field
+   * rather than read off 视图's item, because macOS has no drawn menus to read.
+   */
+  readonly railChord: string
   /** The open menu's id, or `undefined`. At most one is open. */
   readonly openMenu: string | undefined
   readonly sidebarCollapsed: boolean
@@ -138,6 +155,7 @@ export function itemEnabled(item: TitleBarItem, view: TitleBarView): boolean {
 export function titleBarRenderSignature(view: TitleBarView): string {
   return [
     view.openMenu ?? '-',
+    view.railChord,
     view.sidebarCollapsed ? 'c' : '-',
     view.side.modes.join(','),
     view.side.open ?? '-',

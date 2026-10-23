@@ -29,6 +29,8 @@ export function createCommandsPanelView(container: HTMLElement, handlers: Comman
   const expanded = new Set<string>()
   const outputs = new Map<string, string>()
   const outputNodes = new Map<string, HTMLElement>()
+  /** Rows whose last output read failed, with the reason; 重试 sits under the output. */
+  const failures = new Map<string, string>()
   let clocks: Array<{ node: HTMLElement; startedAt: number }> = []
   let timer: ReturnType<typeof setInterval> | undefined
 
@@ -38,7 +40,16 @@ export function createCommandsPanelView(container: HTMLElement, handlers: Comman
       outputs.set(id, text)
       const pre = outputNodes.get(id)
       if (pre) pre.textContent = text.length > 0 ? text : EMPTY_OUTPUT
-    }).catch(() => {})
+    }).then(() => {
+      if (failures.delete(id)) paint()
+    }, (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error)
+      // A running row re-reads every second; the same failure again must not
+      // rebuild the button under the pointer.
+      if (failures.get(id) === message) return
+      failures.set(id, message)
+      paint()
+    })
   }
 
   function tick(): void {
@@ -69,12 +80,17 @@ export function createCommandsPanelView(container: HTMLElement, handlers: Comman
     )
     const output = open ? el('pre', 'command-output', outputs.get(row.id) || EMPTY_OUTPUT) : undefined
     if (output) outputNodes.set(row.id, output)
+    const failed = open ? failures.get(row.id) : undefined
+    const failure = failed === undefined
+      ? undefined
+      : el('div', 'load-error', el('span', 'load-error-text', `无法读取输出：${failed}`), button('load-retry', '重试', '重新读取输出', () => load(row.id)))
     return el(
       'div',
       'command-row',
       head,
       row.running ? button('command-stop', '停止', '停止这个进程', () => handlers.onStop(row.id)) : undefined,
       output,
+      failure,
     )
   }
 
@@ -101,6 +117,7 @@ export function createCommandsPanelView(container: HTMLElement, handlers: Comman
       }
       rows = next
       for (const id of expanded) if (!next.some((row) => row.id === id)) expanded.delete(id)
+      for (const id of failures.keys()) if (!next.some((row) => row.id === id)) failures.delete(id)
       const signature = JSON.stringify(next)
       if (signature === drawn) return
       drawn = signature

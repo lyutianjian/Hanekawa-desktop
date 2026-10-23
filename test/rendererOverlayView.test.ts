@@ -93,6 +93,69 @@ test('the rewind panel ends with the same bar, and its decisions are its buttons
   )
 })
 
+test('the rewind panel takes focus on open, keeps it across repaints and hands it back', (t) => {
+  // It used to open with focus still in the composer behind the scrim: a screen
+  // reader announced nothing and Tab walked the page under the modal. The keys
+  // still arrive through the window keymap, which gives a layer the keys whose
+  // target is inside it, so moving focus in does not change what a key does.
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('rewind')
+  const panel = stub.createContainer('rewind-panel')
+  const composer = stub.createContainer('input')
+  const view = createRewindView(container, panel, () => {})
+  stub.focus(composer)
+
+  const checkpoint = (messageId: string, messageContent: string) => ({
+    messageId,
+    messageContent,
+    timestamp: '2026-05-19T10:00:00.000Z',
+    turnDiff: { fileCount: 0, additions: 0, deletions: 0, hasChanges: false },
+    restoreDiff: { fileCount: 0, additions: 0, deletions: 0, hasChanges: false },
+    isCurrent: false,
+  })
+  const state = createRewindState([checkpoint('m1', 'add the parser'), checkpoint('m2', 'fix the lexer')])
+  view.render(rewindViewModel(state))
+
+  // The title is a heading, and the list is the one stop, naming its cursor row.
+  const panelView = stub.inspect(panel)
+  assert.equal(panelView.children[0]!.tagName.toLowerCase(), 'h2')
+  const list = panelView.children.find((child) => child.attributes.get('role') === 'listbox')
+  assert.ok(list, 'the select screen has a listbox')
+  assert.equal(stub.activeElement(), list.node, 'focus moved onto the list')
+  const cursor = list.children.find((row) => row.classes.includes('selected'))
+  assert.ok(cursor)
+  assert.equal(list.attributes.get('aria-activedescendant'), cursor.attributes.get('id'))
+
+  // A repaint keeps focus on the list, not on <body>.
+  view.render(rewindViewModel(state))
+  const again = stub.inspect(panel).children.find((child) => child.attributes.get('role') === 'listbox')
+  assert.equal(stub.activeElement(), again!.node)
+
+  // Moving the cursor keeps the rows and moves the mark: the panel used to be
+  // rebuilt per arrow press.
+  const before = again!.children.map((row) => row.node)
+  const otherIndex = before.findIndex((node) => node !== cursor.node)
+  view.render(rewindViewModel({ ...state, checkpointIndex: otherIndex }))
+  const moved = stub.inspect(panel).children.find((child) => child.attributes.get('role') === 'listbox')!
+  assert.equal(moved.node, again!.node, 'the list is kept')
+  assert.deepEqual(moved.children.map((row) => row.node), before, 'and so are its rows')
+  const movedCursor = moved.children.find((row) => row.classes.includes('selected'))
+  assert.equal(movedCursor?.node, before[otherIndex])
+  assert.equal(movedCursor?.attributes.get('aria-selected'), 'true')
+  assert.equal(moved.children.filter((row) => row.classes.includes('selected')).length, 1)
+  assert.equal(moved.attributes.get('aria-activedescendant'), movedCursor?.attributes.get('id'))
+  assert.equal(stub.activeElement(), moved.node)
+
+  // The confirm screen has no list: focus falls back to the panel itself.
+  view.render(rewindViewModel({ ...state, screen: 'confirm' }))
+  assert.equal(stub.activeElement(), panel)
+
+  // Closing hands focus back to where it was before the panel opened.
+  view.hide()
+  assert.equal(stub.activeElement(), composer)
+})
+
 test('a press on the rewind scrim closes it, unless a decision is running', (t) => {
   // Escape with a mouse.
   const stub = installDomStub()
@@ -193,6 +256,87 @@ test('an empty completion state leaves nothing to click', (t) => {
   assert.equal(stub.inspect(container).hidden, true)
   assert.equal(stub.inspect(container).children.length, 0)
   assert.deepEqual(picked, [])
+})
+
+test('the highlighted completion is scrolled into view and named on the field', (t) => {
+  // The arrows move a highlight, not focus: without these two, arrowing past
+  // the list's edge hid the highlight, and a screen reader heard nothing move.
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('suggestions')
+  const field = stub.createContainer('input')
+  const view = createSuggestionsView(container, () => {}, field)
+  view.render(commandState())
+  const proto = Object.getPrototypeOf(stub.inspect(container).children[0]!.node) as { scrollIntoView(options?: unknown): void }
+  const scrolled: Array<[string, unknown]> = []
+  t.mock.method(proto, 'scrollIntoView', function (this: HTMLElement, options?: unknown) {
+    scrolled.push([this.id, options])
+  })
+
+  view.render({ ...commandState(), selectedIndex: 1, seq: 2 } as CompletionState)
+  assert.deepEqual(scrolled, [['suggestion-1', { block: 'nearest' }]])
+  assert.equal(stub.inspect(field).attributes.get('aria-activedescendant'), 'suggestion-1')
+
+  view.render({ kind: 'none', seq: 3 })
+  assert.equal(stub.inspect(field).attributes.has('aria-activedescendant'), false, 'a closed list names nothing')
+})
+
+test('arrowing through completions keeps the rows; new rows rebuild them', (t) => {
+  // The list was rebuilt on every arrow press. Same rows → same nodes, with the
+  // highlight moved; a different list (typing narrowed it) is painted afresh.
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('suggestions')
+  const picked: number[] = []
+  const view = createSuggestionsView(container, (index) => picked.push(index))
+  view.render(commandState())
+  const first = stub.inspect(container).children.map((row) => row.node)
+
+  view.render({ ...commandState(), selectedIndex: 1, seq: 2 } as CompletionState)
+  const rows = stub.inspect(container).children
+  assert.deepEqual(rows.map((row) => row.node), first)
+  assert.deepEqual(rows.map((row) => row.classes.includes('selected')), [false, true])
+  assert.deepEqual(rows.map((row) => row.attributes.get('aria-selected')), ['false', 'true'])
+  stub.dispatch(rows[1]!.node, 'mousedown')
+  assert.deepEqual(picked, [1])
+
+  const narrowed = commandState() as Extract<CompletionState, { kind: 'command' }>
+  view.render({ ...narrowed, items: narrowed.items.slice(1), seq: 3 })
+  const after = stub.inspect(container).children
+  assert.equal(after.length, 1)
+  assert.notEqual(after[0]!.node, first[1], 'a changed list is rebuilt')
+})
+
+test('arrowing through a picker keeps its rows, and a click runs the current action', (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('surface')
+  const ran: unknown[] = []
+  const view = createSurfacePanel(container, (action) => ran.push(action))
+  const surface = (line: string) => ({
+    surface: 'effort-picker' as const,
+    title: '选择思考强度',
+    emptyMessage: '没有可选项',
+    rows: [
+      { id: 'low', label: '低', detail: '', action: { kind: 'run-command' as const, line: `${line} low` } },
+      { id: 'high', label: '高', detail: '', action: { kind: 'run-command' as const, line: `${line} high` } },
+    ],
+  })
+  view.showSurface(surface('/effort'), 0)
+  const rowsOf = () => stub.inspect(container).children.filter((child) => child.classes.includes('row'))
+  const first = rowsOf().map((row) => row.node)
+
+  view.showSurface(surface('/effort'), 1)
+  assert.deepEqual(rowsOf().map((row) => row.node), first)
+  assert.deepEqual(rowsOf().map((row) => row.classes.includes('selected')), [false, true])
+
+  // Same rows, a fresh action object: a kept row runs what the last render gave it.
+  view.showSurface({ ...surface('/effort'), rows: surface('/effort').rows.map((row) => ({ ...row, action: { kind: 'run-command' as const, line: `/again ${row.id}` } })) }, 1)
+  stub.dispatch(rowsOf()[1]!.node, 'click')
+  assert.deepEqual(ran, [{ kind: 'run-command', line: '/again high' }])
+
+  view.showSurface({ ...surface('/effort'), title: '另一个' }, 1)
+  assert.notEqual(rowsOf()[0]!.node, first[0], 'a changed panel is rebuilt')
 })
 
 // --- the picker's "in force" mark --------------------------------------------
@@ -319,11 +463,17 @@ test('the scrims are positioned against the canvas and stack above every popover
   )
 
   // The ordering is these numbers now: before S6 the two scrims won by being
-  // last in the body, and every popover in the app sits at 5–6.
+  // last in the body, and every popover in the app sits at 5–6. Each layer is
+  // a rung of the `--z-` ladder in `:root`, so a value resolves through it.
+  const root = blocks.find((block) => block.selector === ':root')
+  const rung = (value: string) => {
+    const name = /^var\((--z-[a-z]+)\)$/.exec(value)?.[1]
+    return Number(name === undefined ? value : root?.decls.find((d) => d.prop === name)?.value)
+  }
   const layers = blocks.flatMap((block) =>
     block.decls
       .filter((d) => d.prop === 'z-index')
-      .map((d) => ({ selector: block.selector, value: Number(d.value) })),
+      .map((d) => ({ selector: block.selector, value: rung(d.value) })),
   )
   assert.ok(layers.length >= 3, `the sheet still declares layers: ${layers.length}`)
   const at = (selector: string) => layers.find((layer) => layer.selector === selector)?.value

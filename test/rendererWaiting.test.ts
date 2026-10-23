@@ -74,7 +74,7 @@ test('what the status reads, by priority', () => {
     ['one tool in parallel is counted', '读取 3 个文件', turn([read('r1', 'a.ts'), read('r2', 'b.ts'), read('r3', 'c.ts')])],
     ['a mix names the last', '读取 a.ts 等 2 项', turn([RUNNING_BASH, read('r1', 'a.ts')])],
     ['an unknown tool falls back to its name', '调用 x - y', turn([mcp])],
-    ['an approval outranks running calls', '等待确认 · 写入 a.ts', turn([asking, RUNNING_BASH])],
+    ['an approval outranks running calls', '等待你确认 · 写入 a.ts', turn([asking, RUNNING_BASH])],
     ['a question outranks an approval', '正在提问 · 数据库', turn([asking]), { asking: '数据库' }],
     ['a compaction outranks a question', '正在压缩上下文', turn([RUNNING_BASH]), { asking: '数据库', phase: { kind: 'compacting' } }],
     ['a retry names its ordinal', '服务过载 · 第 2 次重试', turn([RUNNING_BASH]), { phase: { kind: 'retrying', attempt: 2, reason: 'overload' } }],
@@ -146,11 +146,13 @@ test('a thought escalates from its own start, else from the turn’s', () => {
   assert.equal(rowLabel(running, STARTED_AT + 90_000), '跑测试')
 })
 
-test('the thinking words climb at 15, 30, 45 and 60 seconds', () => {
+// The ladder stops at 45s: 「快想好了」 at a minute promised an end the app
+// cannot see, so a long thought keeps the last honest wording.
+test('the thinking words climb at 15, 30 and 45 seconds, and stop there', () => {
   const cases: Array<[number, string]> = [
     [0, '正在思考'], [14_999, '正在思考'], [15_000, '仍在思考'], [29_999, '仍在思考'],
     [30_000, '还在想'], [44_999, '还在想'], [45_000, '再想一会'], [59_999, '再想一会'],
-    [60_000, '快想好了'], [600_000, '快想好了'],
+    [60_000, '再想一会'], [600_000, '再想一会'],
   ]
   for (const [ms, want] of cases) assert.equal(thinkingPhaseLabel(ms), want, `${ms}ms`)
 })
@@ -158,17 +160,17 @@ test('the thinking words climb at 15, 30, 45 and 60 seconds', () => {
 test('the counter stays empty until the wait is worth timing', () => {
   assert.equal(waitingElapsedLabel(0), '')
   assert.equal(waitingElapsedLabel(WAITING_CLOCK_AFTER_MS - 1), '')
-  assert.equal(waitingElapsedLabel(WAITING_CLOCK_AFTER_MS), '2s')
-  assert.equal(waitingElapsedLabel(63_000), '1m 3s')
+  assert.equal(waitingElapsedLabel(WAITING_CLOCK_AFTER_MS), '2 秒')
+  assert.equal(waitingElapsedLabel(63_000), '1 分 3 秒')
 })
 
 test('the meta is seconds, then tokens beside them', () => {
   assert.deepEqual(statusMeta(1_999, 396), [])
-  assert.deepEqual(statusMeta(2_000, undefined), ['2s'])
-  assert.deepEqual(statusMeta(2_000, 0), ['2s'])
-  assert.deepEqual(statusMeta(14_000, 396), ['14s', '396 tokens'])
-  assert.deepEqual(statusMeta(14_000, 3_200), ['14s', '3.2k tokens'])
-  assert.deepEqual(statusMeta(14_000, 2_000), ['14s', '2k tokens'])
+  assert.deepEqual(statusMeta(2_000, undefined), ['2 秒'])
+  assert.deepEqual(statusMeta(2_000, 0), ['2 秒'])
+  assert.deepEqual(statusMeta(14_000, 396), ['14 秒', '396 token'])
+  assert.deepEqual(statusMeta(14_000, 3_200), ['14 秒', '3.2k token'])
+  assert.deepEqual(statusMeta(14_000, 2_000), ['14 秒', '2k token'])
 })
 
 test('the working mark follows what the status is about', () => {
@@ -248,5 +250,5 @@ test('a running sub-agent names the status, though it is no run’s step', () =>
   }
   assert.equal(activity(turn([agent]))?.row?.label, '子代理 · 扫一遍 tools/')
   const asking = { ...agent, tool: { ...agent.tool!, awaitingApproval: true } }
-  assert.equal(activity(turn([asking]))?.row?.label, '等待确认 · 子代理 · 扫一遍 tools/')
+  assert.equal(activity(turn([asking]))?.row?.label, '等待你确认 · 子代理 · 扫一遍 tools/')
 })

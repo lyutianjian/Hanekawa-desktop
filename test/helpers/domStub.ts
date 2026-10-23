@@ -18,7 +18,7 @@
  * here are unguarded and the list keeps growing: `scrollTop`/`scrollHeight`/
  * `clientHeight`/`scrollTo`/`scrollIntoView`/`getBoundingClientRect()`/
  * `style.height`/`selectionStart`/
- * `setSelectionRange`/`dispatch`/`focus`/`blur`/`contains()`/`closest()`/`dataset`/
+ * `setSelectionRange`/`dispatch`/`focus`/`blur`/`contains()`/`closest()`/`dataset`/`id`/
  * `insertBefore()`/`parentElement`.
  * Add to that list rather than starting a second one.
  *
@@ -298,6 +298,15 @@ class StubElement {
   set textContent(value: string) {
     this.replaceChildren()
     if (value !== '') this.appendChild(new StubText(value))
+  }
+
+  /** Reflects the `id` attribute, as in the real DOM: views write `node.id`, tests read the attribute. */
+  get id(): string {
+    return this.attributes.get('id') ?? ''
+  }
+
+  set id(value: string) {
+    this.setAttribute('id', value)
   }
 
   setAttribute(name: string, value: string): void {

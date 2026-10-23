@@ -174,19 +174,29 @@ test('a finished turn stays folded, however it was read', (t) => {
   assert.equal(runOf(view).children.length, 1, 'only the summary line')
 })
 
-test('a thought opens in place: the whole text on the line, no body, focus stays', (t) => {
+test('a thought opens to a body under its line, and focus stays on the line', (t) => {
+  // The whole text is a sibling of the toggle, not the toggle's own text: prose
+  // inside a <button> could not be selected, showed its markdown raw, and was
+  // the button's accessible name in full.
   const view = mount(t)
-  const item: TranscriptItem = { id: 'a', kind: 'thinking', text: '首句。\n后文。', turnId: 't1' }
+  const item: TranscriptItem = { id: 'a', kind: 'thinking', text: '首句。\n\n**后文**。', turnId: 't1' }
   const paint = (open: boolean) => view.render(transcript([item]), new Map([['a', open]]))
   paint(false)
   const head = runOf(view).children[0]!.children[0]!.node as HTMLElement
   view.stub.focus(head)
   paint(true)
-  assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '首句。\n后文。')
-  assert.equal(runOf(view).children[0]!.children.length, 1)
+  const line = runOf(view).children[0]!
+  assert.equal(line.children.length, 2, 'the line, then the body')
+  assert.equal(line.children[0]!.node, head, 'the line is kept, not rebuilt')
+  assert.equal(line.children[0]!.children[0]!.text, '首句。', 'the line keeps its first sentence')
+  const body = line.children[1]!
+  assert.deepEqual(body.classes, ['thinking-body', 'md'])
+  assert.notEqual(body.tagName, 'BUTTON')
+  assert.ok(body.children.length >= 2, 'rendered as markdown blocks')
+  assert.ok(body.children.some((child) => child.children.some((part) => part.tagName === 'STRONG')), 'markdown, not raw text')
   assert.equal(view.stub.activeElement(), head)
   paint(false)
-  assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '首句。')
+  assert.equal(runOf(view).children[0]!.children.length, 1, 'folded: the body is absent, not hidden')
   assert.equal(view.stub.activeElement(), head)
 })
 
@@ -225,16 +235,15 @@ test('a live thought shimmers on its first sentence, and opens to the whole text
   view.render(transcript([item]), new Map([['s', true]]), RUNNING_T1)
   const open = runOf(view).children[0]!
   assert.equal(open.classes.includes('open'), true)
-  assert.equal(open.children.length, 1, 'no body node: the line itself opens')
-  assert.equal(open.children[0]!.children[0]!.text, '第一行。\n第二行。\n第三行。', 'the whole text, not the sentence')
+  assert.equal(open.children.length, 2, 'the line, and the body that streams under it')
+  assert.equal(open.children[0]!.children[0]!.text, '第一行。', 'the line stays one sentence')
+  assert.match(open.children[1]!.text, /第三行/, 'the body holds the whole text')
 
-  // Sealed: the line says the first sentence.
+  // Sealed: the shimmer stops; the body stays while the thought is open.
   const { pending: _pending, ...sealed } = item
   view.render(transcript([sealed]), new Map([['s', true]]))
-  const done = runOf(view).children[0]!.children[0]!
   assert.equal(runOf(view).children[0]!.classes.includes('live'), false, 'sealed: the shimmer stops')
-  assert.deepEqual(done.children.map((part) => part.classes.join(' ')), ['line-text'])
-  assert.equal(done.children[0]!.text, '第一行。\n第二行。\n第三行。')
+  assert.match(runOf(view).children[0]!.children[1]!.text, /第三行/)
   view.render(transcript([sealed]), NO_DISCLOSURE)
   assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '第一行。')
 })
@@ -489,7 +498,7 @@ test('loose items paint as items: messages, notices and 已中断; the duration 
     { id: 'a', kind: 'user', text: 'hi' },
     { id: 'b', kind: 'notice', text: '上下文已压缩' },
     { id: 'c', kind: 'error', text: 'boom', failed: true },
-    { id: 'd', kind: 'duration', text: '已处理 1s', durationMs: 1000, turnId: 't1' },
+    { id: 'd', kind: 'duration', text: '已处理 1 秒', durationMs: 1000, turnId: 't1' },
     { id: 'e', kind: 'notice', text: 'Interrupted.', interrupt: true },
   ]), NO_DISCLOSURE, IDLE_ACTIVITY)
 
@@ -500,7 +509,7 @@ test('loose items paint as items: messages, notices and 已中断; the duration 
     ['item-meta', 'turn-foot'],
     ['item', 'notice', 'interrupt'],
   ])
-  assert.deepEqual(items().map((item) => item.text), ['hi显示更多', '上下文已压缩', 'boom', '用时 1s', '已中断'])
+  assert.deepEqual(items().map((item) => item.text), ['hi显示更多', '上下文已压缩', 'boom', '用时 1 秒', '已中断'])
 })
 
 test('a duration made from a streaming turn’s records is not drawn until the turn ends', (t) => {
@@ -515,7 +524,7 @@ test('a duration made from a streaming turn’s records is not drawn until the t
   assert.equal(items().some((item) => item.classes.includes('duration')), false)
   render(transcript(turn), NO_DISCLOSURE, IDLE_ACTIVITY)
   assert.equal(items().some((item) => item.classes.includes('duration')), false, 'never a row')
-  assert.deepEqual(factsOf(items().at(-1)!), ['用时 5s'], 'settled: the span of the records, as replay has no measured time')
+  assert.deepEqual(factsOf(items().at(-1)!), ['用时 5 秒'], 'settled: the span of the records, as replay has no measured time')
 })
 
 // --- the thinking line -------------------------------------------------------
@@ -546,8 +555,8 @@ test('the pane’s absolute answer outranks the default, both ways', (t) => {
 
   render(transcript([sealedThinking]), new Map([['thinking-0', true]]))
   assert.equal(line().classes.includes('open'), true)
-  assert.equal(line().children.length, 1)
-  assert.equal(line().children[0]!.children[0]!.text, '推理。然后呢。')
+  assert.equal(line().children.length, 2)
+  assert.match(line().children[1]!.text, /推理。然后呢。/)
 
   render(transcript([sealedThinking]), new Map([['thinking-0', false]]))
   assert.equal(line().classes.includes('open'), false)
@@ -604,6 +613,15 @@ const runOf = (rendered: Rendered): StubView => {
 }
 
 /** The first row of the first run's card. */
+/**
+ * A body's parts with each tool output unwrapped to its block: the output's
+ * copy button and 「显示全部」 ride in a `.step-output` wrapper, and these tests
+ * are about the block inside it.
+ */
+function parts(view: StubView | undefined): StubView[] {
+  return (view?.children ?? []).map((child) => (child.classes.includes('step-output') ? child.children[0]! : child))
+}
+
 const rowOf = (rendered: Rendered): StubView => {
   const row = runOf(rendered).children[1]?.children[0]
   assert.ok(row, 'the run is folded, or has no rows')
@@ -692,7 +710,7 @@ test('a tool row is a button whose body exists only while it is open', (t) => {
   assert.equal(head?.attributes.get('aria-label'), '读取 a.ts · 完成')
   // 兜底 body: the result's own summary over `detail ?? content` (§6.2).
   assert.deepEqual(
-    tool.children[1]?.children.map((part) => [part.className, part.text]),
+    parts(tool.children[1]).map((part) => [part.className, part.text]),
     [['step-body-head', 'Read 240 lines'], ['step-body-text', 'line one']],
   )
 
@@ -914,8 +932,8 @@ test('an edit step carries its patch counts in the head and a real diff below', 
   // paints — the result summary is not repeated over it.
   const body = step?.children[1]
   assert.equal(body?.classes.includes('step-body'), true)
-  assert.deepEqual(body?.children.map((child) => [child.className, child.className === 'diff' ? '' : child.text]), [['step-path', 'a.ts'], ['diff', '']])
-  const diff = body?.children[1]
+  assert.deepEqual(parts(body).map((child) => [child.className, child.className === 'diff' ? '' : child.text]), [['step-path', 'a.ts'], ['diff', '']])
+  const diff = parts(body)[1]
   assert.equal(diff?.className, 'diff')
   assert.deepEqual(diff?.children.map((row) => row.classes), [
     ['diff-row', 'ctx'],
@@ -925,7 +943,9 @@ test('an edit step carries its patch counts in the head and a real diff below', 
     ['diff-row', 'ctx'],
   ])
   assert.deepEqual(diff?.children[2]?.children.map((part) => [part.className, part.text]), [
-    ['gutter', '  3     -'],
+    // Line numbers pad to the widest one in the hunk (here one digit), not a
+    // fixed three, so a short diff does not open with a wide blank margin.
+    ['gutter', '3   -'],
     ['text', 'three'],
   ])
 })
@@ -949,7 +969,7 @@ test('an edit record without a patch falls back to the plain body, without error
   assert.equal(step?.children[0]?.children.some((part) => part.classes.includes('step-right')), false)
   // And the body is the fallback family (§6.2 兜底): the summary over `content`.
   const body = step?.children[1]
-  assert.deepEqual(body?.children.map((part) => [part.className, part.text]), [
+  assert.deepEqual(parts(body).map((part) => [part.className, part.text]), [
     ['step-body-head', 'Edited a.ts'],
     ['step-body-text', 'Edited a.ts'],
   ])
@@ -967,8 +987,8 @@ test("a Bash output that happens to be a patch stays a terminal block, not a dif
 
   const body = rowOf(view)?.children[1]
   assert.equal(body?.children.some((child) => child.classes.includes('diff')), false)
-  assert.equal(body?.children[0]?.className, 'step-terminal')
-  assert.equal(body?.children[0]?.text, EDIT_PATCH)
+  assert.equal(parts(body)[0]?.className, 'step-terminal')
+  assert.equal(parts(body)[0]?.text, EDIT_PATCH)
 })
 
 test('skipped lines draw as dashed rules with the count, never as glyphs', (t) => {
@@ -1025,6 +1045,30 @@ function bashStep(overrides: {
   }
 }
 
+test('a long output draws its first 200 lines, unfolds on request, and copies whole', async (t) => {
+  // The block already scrolled inside its height; the fold is about layout: a
+  // build log of thousands of lines was laid out in full the moment it opened.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const view = mount(t)
+  const output = Array.from({ length: 250 }, (_, i) => `line ${i + 1}`).join('\n')
+  view.render(transcript([bashStep({ content: output })]), opened('bash-1'))
+
+  const wrap = rowOf(view)?.children[1]?.children.find((child) => child.classes.includes('step-output'))
+  assert.ok(wrap)
+  const [pre, copy, more] = wrap.children
+  assert.equal(pre?.text.split('\n').length, 200)
+  assert.equal(more?.text, '显示全部 250 行')
+
+  view.stub.click(copy!.node)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(view.copied, [output], 'the copy takes what was folded away too')
+
+  view.stub.click(more!.node)
+  const after = rowOf(view)?.children[1]?.children.find((child) => child.classes.includes('step-output'))
+  assert.equal(after?.children[0]?.text, output)
+  assert.equal(after?.children.some((child) => child.classes.includes('step-output-more')), false)
+})
+
 test('a Bash step opens into a terminal block with its output ANSI-stripped', (t) => {
   const view = mount(t)
   view.render(transcript([bashStep()]), opened('bash-1'))
@@ -1035,11 +1079,11 @@ test('a Bash step opens into a terminal block with its output ANSI-stripped', (t
   // said what ran and how long, so there is no summary line above it (§6.2).
   const body = step?.children[1]
   assert.equal(body?.classes.includes('step-body'), true)
-  assert.deepEqual(body?.children.map((child) => child.className), ['step-terminal'])
-  assert.equal(body?.children[0]?.tagName, 'PRE')
+  assert.deepEqual(parts(body).map((child) => child.className), ['step-terminal'])
+  assert.equal(parts(body)[0]?.tagName, 'PRE')
   // §6.4: the sequences are stripped, not printed — a real `npm test` line, not
   // the `[32m` garbage the raw string would show.
-  assert.equal(body?.children[0]?.text, 'ok 42 passed\n3 failed')
+  assert.equal(parts(body)[0]?.text, 'ok 42 passed\n3 failed')
   assert.equal(body?.text.includes('\x1b'), false)
 })
 
@@ -1057,7 +1101,7 @@ test('a failed Bash step names its error code on its own line and reddens the wh
   assert.deepEqual(step?.classes, ['step', 'tool', 'failed'])
   const body = step?.children[1]
   assert.deepEqual(
-    body?.children.map((child) => [child.className, child.text]),
+    parts(body).map((child) => [child.className, child.text]),
     [['step-error', '命令失败（非零退出）'], ['step-terminal', 'ok 42 passed\n3 failed']],
   )
 })
@@ -1071,7 +1115,7 @@ test('a failed Bash step with no output is one line, not an empty terminal', (t)
 
   const body = rowOf(view)?.children[1]
   assert.deepEqual(
-    body?.children.map((child) => [child.className, child.text]),
+    parts(body).map((child) => [child.className, child.text]),
     [['step-error', '命令失败（非零退出），无输出']],
   )
 })
@@ -1086,10 +1130,10 @@ test('a described Bash step puts the full command in its own bubble above the ou
   )
 
   const body = rowOf(view)?.children[1]
-  assert.deepEqual(body?.children.map((child) => child.className), ['step-command', 'step-error', 'step-terminal'])
-  const bubble = body!.children[0]!
+  assert.deepEqual(parts(body).map((child) => child.className), ['step-command', 'step-error', 'step-terminal'])
+  const bubble = parts(body)[0]!
   assert.equal(bubble.children[0]?.text, `$ ${command}`)
-  assert.equal(body!.children[2]?.text, 'ok 42 passed\n3 failed')
+  assert.equal(parts(body)[2]?.text, 'ok 42 passed\n3 failed')
   view.stub.click(bubble.children[1]!.node)
   assert.deepEqual(view.copied, [command])
   await Promise.resolve()
@@ -1101,7 +1145,7 @@ test('an undescribed Bash step names only its first word; the bubble holds the c
   view.render(transcript([bashStep({ command: 'npm test' })]), opened('bash-1'))
   const step = rowOf(view)
   assert.equal(step?.children[0]?.children[0]?.text, '运行 npm…')
-  assert.deepEqual(step?.children[1]?.children.map((child) => child.className), ['step-command', 'step-terminal'])
+  assert.deepEqual(parts(step?.children[1]).map((child) => child.className), ['step-command', 'step-terminal'])
 
   const running = bashStep({ command: 'npm test' })
   view.render(transcript([{ ...running, pending: true, tool: { ...running.tool!, content: undefined } }]), opened('bash-1'))
@@ -1128,8 +1172,8 @@ test('the terminal shows what the command printed, not the collapsed line’s ex
   )
 
   const body = rowOf(view)?.children[1]
-  assert.equal(body?.children[0]?.className, 'step-terminal')
-  assert.equal(body?.children[0]?.text, 'Task ID: bg-1\nPID: 123')
+  assert.equal(parts(body)[0]?.className, 'step-terminal')
+  assert.equal(parts(body)[0]?.text, 'Task ID: bg-1\nPID: 123')
 })
 
 // --- the search family's grouped list (T15) ---------------------------------
@@ -1277,7 +1321,7 @@ test('an unparseable search payload falls back to the plain body, without errori
   const step = rowOf(view)
   assert.equal(step?.children[1]?.children.some((child) => child.classes.includes('step-search')), false)
   assert.deepEqual(
-    step?.children[1]?.children.map((part) => [part.className, part.text]),
+    parts(step?.children[1]).map((part) => [part.className, part.text]),
     [
       ['step-body-head', 'Found 3 matches across 2 files'],
       ['step-body-text', 'Error: Invalid regular expression pattern.'],
@@ -1325,7 +1369,7 @@ test('a Read step opens into the file as a line-numbered code block', (t) => {
   // no highlighting of any kind: the row is exactly the text the tool read.
   const body = step?.children[1]
   assert.equal(body?.classes.includes('step-body'), true)
-  const block = body?.children[0]
+  const block = parts(body)[0]
   assert.equal(block?.className, 'step-code')
   // A trailing newline is the last line's terminator, not an extra empty row:
   // the tool counts `one\ntwo\n` as 2 lines, and so does the block.
@@ -1344,7 +1388,7 @@ test('a Read step numbers its rows from the tool’s own prefix, offset included
   const content = '    20\tone\n    21\ttwo\n\n[Showing lines 20-21 of 40. Use offset/limit to read another range.]'
   view.render(transcript([readStep({ content })]), opened('read-1'))
 
-  const block = rowOf(view)?.children[1]?.children[0]
+  const block = parts(rowOf(view)?.children[1])[0]
   assert.deepEqual(
     block?.children.map((row) => [row.children[0]?.text, row.children[1]?.text]),
     [['20', 'one'], ['21', 'two']],
@@ -1508,10 +1552,10 @@ test('a WebFetch step opens into the page as the markdown the tool made of it', 
   // as markers instead of the heading and emphasis they are.
   const body = step?.children[1]
   assert.deepEqual(
-    body?.children.map((part) => part.className),
+    parts(body).map((part) => part.className),
     ['step-body-head', 'step-web md'],
   )
-  const article = body?.children[1]
+  const article = parts(body)[1]
   assert.equal(article?.children[0]?.tagName, 'H1')
   assert.equal(article?.children[0]?.text, 'Title')
   assert.equal(article?.children[1]?.tagName, 'P')
@@ -1530,7 +1574,7 @@ test('the fallback body still serves the new families when their data is absent'
   const failedBody = rowOf(view)?.children[1]
   assert.equal(failedBody?.children.some((child) => child.classes.includes('step-web')), false)
   assert.deepEqual(
-    failedBody?.children.map((part) => [part.className, part.text]),
+    parts(failedBody).map((part) => [part.className, part.text]),
     [['step-body-head', 'Fetched example.com (24.3KB)'], ['step-body-text', '# Title\n\nsome prose']],
   )
 
@@ -1710,8 +1754,9 @@ test('a message carries a meta row: 复制, its model, its time — and a draft 
   const { render, items, copied, rewound, stub } = mount(t)
   const meta = (item: StubView): StubView | undefined =>
     item.children.find((child) => child.classes.includes('item-meta'))
-  // Local time, so the expectation is derived the same way the view derives it.
-  const at = new Date(2026, 4, 7, 14, 32).toISOString()
+  // Five minutes ago: the stamp reads the window's one time label, which counts
+  // up for the first hour.
+  const at = new Date(Date.now() - 5 * 60_000).toISOString()
 
   // The streaming draft has neither a model nor a stamp, so there is no row at
   // all — an empty one would reserve height under a message that is still
@@ -1724,7 +1769,7 @@ test('a message carries a meta row: 复制, its model, its time — and a draft 
   assert.ok(row, 'the committed answer draws its meta row')
   assert.deepEqual(
     row.children.map((child) => [child.classes.join(' '), child.text]),
-    [['item-copy', ''], ['item-model', 'glm-5.3'], ['item-time', '14:32']],
+    [['item-copy', ''], ['item-model', 'glm-5.3'], ['item-time', '5 分钟前']],
     '复制 first, the model in the middle, the time last',
   )
   // The transcript is `aria-live="polite"`: the labels are not what a reader
@@ -1737,10 +1782,13 @@ test('a message carries a meta row: 复制, its model, its time — and a draft 
 
   stub.click(row.children[0]!.node)
   assert.deepEqual(copied, ['part done'], 'the pane is handed the message, not the rendered markdown')
-  // A successful copy turns the glyph into a tick for five seconds.
+  // A successful copy turns the glyph into a tick for one glance — the same
+  // 1.2s receipt as a code block's, where it had been five seconds here — and
+  // names the button 已复制 for a screen reader too, not only in its title.
   await Promise.resolve()
   assert.equal((row.children[0]!.node as HTMLButtonElement).title, '已复制')
-  t.mock.timers.tick(5000)
+  assert.equal((row.children[0]!.node as HTMLButtonElement).getAttribute('aria-label'), '已复制')
+  t.mock.timers.tick(1200)
   assert.equal((row.children[0]!.node as HTMLButtonElement).title, '复制')
 
   // The user's bubble has a time and a copy button, and no model to name.
@@ -1756,15 +1804,27 @@ test('a message carries a meta row: 复制, its model, its time — and a draft 
   // At the bubble's right edge, the time first and the controls ending the row.
   assert.deepEqual(
     userRow.children.map((child) => [child.classes.join(' '), child.text]),
-    [['item-time', '14:32'], ['item-copy', ''], ['item-rewind', '']],
+    [['item-time', '5 分钟前'], ['item-copy', ''], ['item-rewind', '']],
   )
   stub.click(userRow.children[1]!.node)
   assert.deepEqual(copied, ['part done', 'go'])
   await Promise.resolve()
-  t.mock.timers.tick(5000)
+  t.mock.timers.tick(1200)
   // 回退 addresses the checkpoint by the user record's id.
   stub.click(userRow.children[2]!.node)
   assert.deepEqual(rewound, ['u1'])
+})
+
+test('copying a user message copies their words, not the attached-paths block', async (t) => {
+  // The paths after the words are drawn as tiles; pasting the raw block
+  // elsewhere pasted markup the user never saw.
+  const { render, items, copied, stub } = mount(t)
+  const at = new Date(2026, 4, 7, 14, 32).toISOString()
+  render(transcript([{ id: 'u1', kind: 'user', text: 'look\n\n<attached-paths>\nfile: /p/a.ts\n</attached-paths>', createdAt: at }]))
+  const row = items()[0]!.children.find((child) => child.classes.includes('item-meta'))!
+  stub.click(row.children.find((child) => child.classes.includes('item-copy'))!.node)
+  await Promise.resolve()
+  assert.deepEqual(copied, ['look'])
 })
 
 test('the stub carries every document member the dom helpers reach for', (t) => {
@@ -1809,7 +1869,7 @@ test('before the first step the status is a line of its own, at the tail', (t) =
     ['line-mark', 'line-meta line-elapsed', 'line-text'],
     'mark, counter, words — and the clock is painted on the first frame',
   )
-  assert.deepEqual(statusText(row), { label: '处理中', meta: ['5s', '·', '1.2k tokens', '·'] })
+  assert.deepEqual(statusText(row), { label: '处理中', meta: ['5 秒', '·', '1.2k token', '·'] })
   // `.transcript` is `aria-live="polite"`: the words may be announced, the
   // counter must not be (it changes ten times a second), and neither is the mark.
   assert.equal(row.children[0]!.attributes.get('aria-hidden'), 'true')
@@ -1823,7 +1883,7 @@ test('the counter is empty on a short wait, and tokens come only beside the seco
   render(state, NO_DISCLOSURE, waiting(state, Date.now() - 500, 90))
   assert.deepEqual(statusText(items().at(-1)!).meta, [])
   render(state, NO_DISCLOSURE, waiting(state, Date.now() - 3_000))
-  assert.deepEqual(statusText(items().at(-1)!).meta, ['3s', '·'], 'no tokens reported yet')
+  assert.deepEqual(statusText(items().at(-1)!).meta, ['3 秒', '·'], 'no tokens reported yet')
 })
 
 test('the status line stays last while a run works, and its pieces survive the step settling', (t) => {
@@ -1880,7 +1940,7 @@ test('M18 keeps the mark and clock mounted across tool handoffs and unchanged pa
     assert.deepEqual(row.classes, ['waiting'])
     pieces ??= row.children
     for (const index of [0, 1, 2]) assert.equal(row.children[index]!.node, pieces[index]!.node)
-    assert.deepEqual(statusText(row).meta.slice(0, 2), ['6s', '·'])
+    assert.deepEqual(statusText(row).meta.slice(0, 2), ['6 秒', '·'])
   }
   assert.equal(starts.starts, 0, 'label updates never detach or restart the mark')
 })
@@ -2363,8 +2423,15 @@ test('the images a user message carried draw as clickable thumbnails above the b
   assert.deepEqual(viewedImages, [['img-1', 'shot.png'], ['img-2', 'loop.gif']])
 
   // Enter works too — the tile is a real control, not a mouse-only affordance.
-  stub.dispatch(tiles[0]!.node, 'keydown', { key: 'Enter' })
+  // Its default is taken: the viewer focuses its close button, and the same
+  // Enter's keypress would press it and shut the viewer at once.
+  assert.equal(stub.dispatch(tiles[0]!.node, 'keydown', { key: 'Enter' }).defaultPrevented, true)
   assert.deepEqual(viewedImages.length, 3)
+  // And Space, as every `role="button"` answers, without scrolling the page.
+  assert.equal(stub.dispatch(tiles[1]!.node, 'keydown', { key: ' ' }).defaultPrevented, true)
+  assert.deepEqual(viewedImages.length, 4)
+  assert.equal(stub.dispatch(tiles[1]!.node, 'keydown', { key: 'a' }).defaultPrevented, false)
+  assert.deepEqual(viewedImages.length, 4)
 
   // The item's own node is refilled rather than replaced — it is what the
   // scroll anchor points at — so the repaint discipline is asserted one level
@@ -2479,6 +2546,59 @@ test('a failed turn draws a card: reason, target, hint, the provider\'s words, a
   assert.deepEqual(find('failure-action').map((action) => action.text), ['打开服务商设置'])
 })
 
+test('a context failure offers 压缩对话 in place of the provider settings, and a long message unfolds', async (t) => {
+  let compacted = 0
+  const copied: string[] = []
+  const stub = installDomStub()
+  const container = stub.createContainer('transcript')
+  const host = stub.createContainer('pane')
+  const real = createTranscriptView(container, host, {
+    onToggle: () => {}, onOpenPlan: () => {}, onOpenSubagent: () => {}, onOpenPath: () => {},
+    onViewImage: () => {}, imageThumbUrl: () => undefined,
+    onCopy: async (text) => { copied.push(text); return true },
+    onOpenProviderSettings: () => {},
+    onRetryTurn: () => {},
+    onCompactConversation: () => { compacted += 1 },
+  })
+  t.after(() => {
+    real.dispose()
+    stub.uninstall()
+  })
+  const detail = Array.from({ length: 6 }, (_, i) => `line ${i}`).join('\n')
+  const find = (cls: string): StubView[] => (function walk(n: StubView): StubView[] {
+    return [...(n.classes.includes(cls) ? [n] : []), ...n.children.flatMap(walk)]
+  })(stub.inspect(container))
+  real.render({
+    ...createTranscriptState(),
+    items: [{
+      id: 'f1', kind: 'turn-failure', text: '对话超出了模型的上下文',
+      failure: {
+        id: 'f1', kind: 'context', reason: '对话超出了模型的上下文', hint: '压缩。', detail, userMessageId: 'u1', retryable: true,
+      },
+    }],
+  }, NO_DISCLOSURE)
+
+  // Provider settings cannot fix an overflow; compacting can.
+  const actions = find('failure-action')
+  assert.deepEqual(actions.map((action) => action.text), ['压缩对话', '重试'])
+  stub.dispatch(actions[0]!.node, 'click', {})
+  assert.equal(compacted, 1)
+
+  const fold = find('failure-fold')[0]!
+  assert.equal(fold.attributes.get('aria-expanded'), 'false')
+  stub.dispatch(fold.node, 'click', {})
+  assert.equal(find('failure-fold')[0]!.attributes.get('aria-expanded'), 'true')
+  assert.equal(find('failure-fold')[0]!.text, '收起')
+  assert.ok(find('failure-detail')[0]!.classes.includes('open'))
+
+  // The receipt's reset is a timer; held, so it cannot fire after the stub is gone.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  stub.dispatch(find('failure-copy')[0]!.node, 'click', {})
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(copied, [`对话超出了模型的上下文\n${detail}`])
+  assert.equal(find('failure-copy')[0]!.attributes.get('aria-label'), '已复制')
+})
+
 test('receipts: a question card lists asks and answers, a plan card opens the plan', (t) => {
   const view = mount(t)
   const ask: TranscriptItem = {
@@ -2512,19 +2632,19 @@ test('the turn footer rides on the answer: 复制 · 刚刚 · 用时 · tokens,
   const turn: TranscriptItem[] = [
     { id: 'u', kind: 'user', text: 'go', turnId: 't1' },
     { id: 'a', kind: 'assistant', text: 'done', turnId: 't1', createdAt: at },
-    { id: 'd', kind: 'duration', text: '已处理 24m 0s', durationMs: 1_440_000, turnId: 't1' },
+    { id: 'd', kind: 'duration', text: '已处理 24 分 0 秒', durationMs: 1_440_000, turnId: 't1' },
   ]
   render(transcript(turn), NO_DISCLOSURE, { ...IDLE_ACTIVITY, outputTokens: 3200 })
   assert.deepEqual(items().map((item) => item.classes[1]), ['user', 'assistant'])
   const row = items()[1]!.children.find((child) => child.classes.includes('item-meta'))!
-  assert.deepEqual(row.children.map((child) => child.text), ['', '刚刚', '用时 24m 0s', '3.2k tokens'])
+  assert.deepEqual(row.children.map((child) => child.text), ['', '刚刚', '用时 24 分 0 秒', '3.2k token'])
   assert.match(row.children[1]!.attributes.get('title') ?? '', /^\d{4}-\d\d-\d\d \d\d:\d\d$/)
 
   // No count for a replayed turn, and none while another turn streams.
   render(transcript(turn), NO_DISCLOSURE, IDLE_ACTIVITY)
-  assert.deepEqual(factsOf(items()[1]!), ['用时 24m 0s'])
+  assert.deepEqual(factsOf(items()[1]!), ['用时 24 分 0 秒'])
   render(transcript(turn), NO_DISCLOSURE, { ...IDLE_ACTIVITY, isStreaming: true, turnId: 't2', startedAt: Date.now(), outputTokens: 90 })
-  assert.deepEqual(factsOf(items()[1]!), ['用时 24m 0s'])
+  assert.deepEqual(factsOf(items()[1]!), ['用时 24 分 0 秒'])
 })
 
 test('prose between tool calls carries no meta row; only the settled turn\'s answer does', (t) => {
@@ -2542,7 +2662,7 @@ test('prose between tool calls carries no meta row; only the settled turn\'s ans
   render(transcript([
     ...running,
     { id: 'a2', kind: 'assistant', text: 'done', model: 'm', turnId: 't1', createdAt: at },
-    { id: 'd', kind: 'duration', text: '已处理 5s', durationMs: 5000, turnId: 't1' },
+    { id: 'd', kind: 'duration', text: '已处理 5 秒', durationMs: 5000, turnId: 't1' },
   ]), NO_DISCLOSURE, IDLE_ACTIVITY)
   const assistants = items().filter((item) => item.classes.includes('assistant'))
   assert.deepEqual(assistants.map(meta), [false, true])
@@ -2553,11 +2673,11 @@ test('a turn with no answer hangs its footer under its last entry; side views dr
   const turn: TranscriptItem[] = [
     { id: 'u', kind: 'user', text: 'go', turnId: 't1' },
     { id: 'e', kind: 'error', text: 'boom', failed: true, turnId: 't1' },
-    { id: 'd', kind: 'duration', text: '已处理 3s', durationMs: 3000, turnId: 't1' },
+    { id: 'd', kind: 'duration', text: '已处理 3 秒', durationMs: 3000, turnId: 't1' },
   ]
   render(transcript(turn), NO_DISCLOSURE, IDLE_ACTIVITY)
   assert.deepEqual(items().map((item) => item.classes.join(' ')), ['item user', 'item error failed', 'item-meta turn-foot'])
-  assert.deepEqual(factsOf(items()[2]!), ['用时 3s'])
+  assert.deepEqual(factsOf(items()[2]!), ['用时 3 秒'])
 
   // The subagent panel and the thread detail render without an activity.
   render(transcript(turn))

@@ -1,4 +1,4 @@
-import type { DiffRow, PreviewView } from '../model/diffRows.js'
+import { gutterWidth, type DiffRow, type PreviewView } from '../model/diffRows.js'
 import { fileBadge } from '../model/turnEdits.js'
 import { el, replace } from './dom.js'
 import { icon } from './icons.js'
@@ -21,11 +21,12 @@ export function previewNode(view: PreviewView): HTMLElement {
  */
 export function diffNode(rows: readonly DiffRow[]): HTMLElement {
   const diff = el('div', 'diff')
-  replace(diff, ...rows.map(rowNode))
+  const width = gutterWidth(rows)
+  replace(diff, ...rows.map((row) => rowNode(row, width)))
   return diff
 }
 
-function rowNode(row: DiffRow): HTMLElement {
+function rowNode(row: DiffRow, width: number): HTMLElement {
   const node = el('div', `diff-row ${row.kind}`)
   // An elided row is not a line of the file: no gutter, and the elision itself
   // is a CSS dashed rule rather than a `⋯` glyph (§3 — no character states).
@@ -34,16 +35,16 @@ function rowNode(row: DiffRow): HTMLElement {
     node.appendChild(el('span', 'text', row.text))
     return node
   }
-  node.appendChild(el('span', 'gutter', gutter(row)))
+  node.appendChild(el('span', 'gutter', gutter(row, width)))
   node.appendChild(el('span', 'text', row.text))
   return node
 }
 
-function gutter(row: DiffRow): string {
+function gutter(row: DiffRow, width: number): string {
   const left = row.oldLine === undefined ? '' : String(row.oldLine)
   const right = row.newLine === undefined ? '' : String(row.newLine)
   const sign = row.kind === 'add' ? '+' : row.kind === 'del' ? '-' : ' '
-  return `${left.padStart(3)} ${right.padStart(3)} ${sign}`
+  return `${left.padStart(width)} ${right.padStart(width)} ${sign}`
 }
 
 /** The little extension tile in front of a file name: `TS`, `CSS`, or a page outline when there is none. */

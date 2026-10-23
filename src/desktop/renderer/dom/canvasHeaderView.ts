@@ -59,7 +59,7 @@ export function createCanvasHeaderView(
   const rightControls = el('div', 'canvas-header-controls')
   append(container, [identity, rightControls])
   const title = el('span', 'canvas-title')
-  const trigger = button('canvas-menu-trigger', '⋯', '会话操作', actions.onToggleMenu)
+  const trigger = button('canvas-menu-trigger', '', '会话操作', actions.onToggleMenu, { icon: 'more' })
   trigger.setAttribute('aria-haspopup', 'menu')
   const menu = el('div', 'canvas-menu')
   menu.setAttribute('role', 'menu')
@@ -68,6 +68,12 @@ export function createCanvasHeaderView(
   const menuPresence = createPresence(menu, { direction: 'drop' })
   const menuShell = el('div', 'canvas-menu-shell', trigger, menu)
   const menuItems = new Map<CanvasHeaderMenuItem['id'], { node: HTMLButtonElement; label: HTMLElement }>()
+  // The session's full name, heading the menu. The title beside the trigger is
+  // cut to an ellipsis and sits in the window's drag strip, which takes no
+  // hover on Windows — a `title` tooltip there never shows — so the menu is the
+  // one place a long name can be read whole.
+  const menuHeading = el('div', 'canvas-menu-heading')
+  menuHeading.setAttribute('role', 'none')
   const locationLabel = el('span', 'btn-label')
   const openLocation = button('canvas-open-location', '', '', actions.onOpenLocation, { icon: 'external' })
   openLocation.appendChild(locationLabel)
@@ -128,7 +134,7 @@ export function createCanvasHeaderView(
   })
   menuShell.addEventListener('keydown', (event) => rovingFocus(
     event,
-    Array.from(menu.children) as HTMLElement[],
+    Array.from(menu.children).filter((child) => child !== menuHeading) as HTMLElement[],
     menuWasOpen,
     actions.onToggleMenu,
   ))
@@ -189,7 +195,7 @@ export function createCanvasHeaderView(
 
       trigger.setAttribute('aria-expanded', view.menuOpen ? 'true' : 'false')
       const heldMenuFocus = view.menuOpen && menu.contains(document.activeElement)
-      if (view.menuOpen) updateMenu(view.menuItems)
+      if (view.menuOpen) updateMenu(view.menuItems, view.title)
       const lostMenuFocus = heldMenuFocus && !menu.contains(document.activeElement)
       const returnFocus = !view.menuOpen && menu.contains(document.activeElement)
       menuPresence.set(view.menuOpen)
@@ -250,7 +256,8 @@ export function createCanvasHeaderView(
     },
   }
 
-  function updateMenu(items: readonly CanvasHeaderMenuItem[]): void {
+  function updateMenu(items: readonly CanvasHeaderMenuItem[], fullTitle: string): void {
+    if (menuHeading.textContent !== fullTitle) menuHeading.textContent = fullTitle
     firstMenuItem = undefined
     safeMenuItem = undefined
     const nodes = items.map((item) => {
@@ -271,7 +278,7 @@ export function createCanvasHeaderView(
       if (item.danger !== true) safeMenuItem ??= kept.node
       return kept.node
     })
-    reconcile(menu, nodes)
+    reconcile(menu, [menuHeading, ...nodes])
     for (const id of menuItems.keys()) {
       if (!items.some((item) => item.id === id)) menuItems.delete(id)
     }

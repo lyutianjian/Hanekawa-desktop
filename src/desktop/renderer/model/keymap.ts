@@ -101,6 +101,48 @@ export type KeyAction =
   | 'none'
 
 /**
+ * Where focus sat when a key arrived — the one input to the key map that is
+ * not pane state. Structural for the same reason {@link KeyChord} is: `app.ts`
+ * reads it off `event.target`, and this module never sees a DOM node.
+ */
+export interface KeyTarget {
+  /** The composer's own field. The key map decides for it, always. */
+  readonly composer: boolean
+  /** A text field: `input`, `textarea`, `select`, or an editable region. */
+  readonly editable: boolean
+  /** A control that presses itself on Enter and Space: a button or a link. */
+  readonly pressable: boolean
+  /**
+   * Inside the layer the action routes to: the docked request card for
+   * `'overlay'`, the rewind panel for `'rewind'`. False for every other action.
+   */
+  readonly inLayer: boolean
+}
+
+/**
+ * Whether the focused control answers this key itself, so the key map must
+ * leave it alone.
+ *
+ * A field other than the composer keeps what is typed into it (the sidebar
+ * search, a settings input, the browser's address bar), and a button or link
+ * keeps the Enter and Space that press it. Left to the key map, Escape in
+ * those fields stopped the turn and Enter on a thumbnail sent the draft.
+ *
+ * A blocking request and the rewind panel used to be exempt and take every key
+ * wherever focus was, so typing in the sidebar search while a permission card
+ * waited answered the card — `y` allowed, Escape denied. They now take only
+ * keys from their own card, and keys focus has no use for (the page itself, a
+ * row with no keyboard meaning, the composer the card has replaced). That is
+ * still enough to answer them from anywhere a stray repaint drops focus.
+ */
+export function ownedByTarget(key: string, action: KeyAction, target: KeyTarget): boolean {
+  if (target.composer) return false
+  if ((action === 'overlay' || action === 'rewind') && target.inLayer) return false
+  if (target.editable) return true
+  return target.pressable && (key === 'Enter' || key === ' ')
+}
+
+/**
  * Whether accepting a completion should also send it.
  *
  * Shared by Enter and by a click on the row, so the mouse cannot end up

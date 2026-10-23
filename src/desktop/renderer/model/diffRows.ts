@@ -342,3 +342,17 @@ function splitLines(value: string): string[] {
   if (lines.length > 1 && lines[lines.length - 1] === '') lines.pop()
   return lines
 }
+
+/**
+ * Digits in the widest line number, so both columns line up on every row of a
+ * diff. A fixed 3 pushed the text right by one column on each row past line 999
+ * and left the rest where they were.
+ */
+export function gutterWidth(rows: readonly DiffRow[]): number {
+  let widest = 1
+  for (const row of rows) {
+    if (row.kind === 'elided') continue
+    widest = Math.max(widest, String(row.oldLine ?? '').length, String(row.newLine ?? '').length)
+  }
+  return widest
+}

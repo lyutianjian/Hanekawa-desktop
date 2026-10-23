@@ -1,4 +1,4 @@
-import { dismissToast, emptyToasts, pushToast, TOAST_LIFETIME_MS, type Toast, type ToastLevel } from '../model/toasts.js'
+import { dismissToast, emptyToasts, pushToast, TOAST_LIFETIME_MS, type Toast, type ToastAction, type ToastLevel } from '../model/toasts.js'
 import { button } from './controls.js'
 import { el } from './dom.js'
 import { icon } from './icons.js'
@@ -18,7 +18,7 @@ import { createPresence, type Presence } from './presence.js'
  */
 
 export interface ToastHost {
-  push(level: ToastLevel, text: string): void
+  push(level: ToastLevel, text: string, action?: ToastAction): void
   dispose(): void
 }
 
@@ -67,7 +67,15 @@ export function createToastHost(container: HTMLElement): ToastHost {
     const textNode = el('span', 'toast-text', toast.text)
     const repeatsNode = el('span', 'toast-repeats')
     const close = button('toast-close', '', '关闭', () => dismiss(toast.id), { icon: 'close' })
-    const node = el('div', `toast ${toast.level}`, textNode, repeatsNode, close)
+    // Read from the entry at press time: a repeat of the message rebinds it.
+    const action = toast.action
+      ? button('toast-action', toast.action.label, toast.action.label, () => {
+          const run = entry.toast.action?.run
+          dismiss(entry.toast.id)
+          run?.()
+        })
+      : undefined
+    const node = el('div', `toast ${toast.level}`, textNode, repeatsNode, action, close)
     node.setAttribute('role', toast.level === 'error' ? 'alert' : 'status')
     const presence = createPresence(node, { direction: 'drop', onClosed: () => node.remove() })
     const entry: Entry = {
@@ -123,8 +131,8 @@ export function createToastHost(container: HTMLElement): ToastHost {
   }
 
   return {
-    push(level, text) {
-      state = pushToast(state, level, text)
+    push(level, text, action) {
+      state = pushToast(state, level, text, action)
       sync()
     },
     dispose() {

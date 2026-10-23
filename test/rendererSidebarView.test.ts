@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
 import { createSidebarView } from '../src/desktop/renderer/dom/sidebarView.js'
+import { button } from '../src/desktop/renderer/dom/controls.js'
 import {
   SIDEBAR_COLLAPSE_FALLBACK_MS,
   sidebarHint,
@@ -329,6 +330,59 @@ test('a folding group paints no row as the cursor', (t) => {
     [],
     'the folding rows took the cursor with them',
   )
+})
+
+test('the cursor row is named on the list and brought into view when it moves', (t) => {
+  // Focus stays on the list while the arrows move a cursor, so the list has to
+  // say which row that is, and a cursor moved past the rail's edge used to
+  // leave the visible part of the list. Only a *move* scrolls: a repaint from a
+  // streamed token must not yank a list the user is scrolling by hand.
+  const { render, root } = mount(t)
+  render(viewOf(tieredState()))
+  const proto = Object.getPrototypeOf(sessionRows(root())[0]!.node) as { scrollIntoView(options?: unknown): void }
+  const scrolled: string[] = []
+  t.mock.method(proto, 'scrollIntoView', function (this: HTMLElement) { scrolled.push(this.id) })
+  const list = (): StubView => region(root(), 'sidebar-list')
+
+  render(viewOf({ ...tieredState(), selectedIndex: 2 }))
+  assert.equal(list().attributes.get('aria-activedescendant'), 'session-row-history')
+  assert.deepEqual(scrolled, ['session-row-history'])
+
+  // The same cursor, a different badge: no scroll.
+  render(viewOf({ ...tieredState(), selectedIndex: 2, pendingDelete: 'shown' }))
+  assert.deepEqual(scrolled, ['session-row-history'])
+
+  render(viewOf({ ...tieredState(), selectedIndex: -1 }))
+  assert.equal(list().attributes.has('aria-activedescendant'), false)
+})
+
+test('an empty list says why: still reading, a read that failed, or nothing at all', (t) => {
+  // Before the first read landed the rail said 「还没有会话」, and after a failed
+  // first read it said the same — both read as every session having been
+  // deleted. A list that has been drawn keeps its rows on a later failure.
+  const { stub, render, root, intents } = mount(t)
+  const list = (): StubView => region(root(), 'sidebar-list')
+
+  render(viewOf({ listLoad: 'loading' }))
+  assert.deepEqual(list().children.map((child) => child.className), ['session-skeleton', 'session-skeleton', 'session-skeleton'])
+  assert.equal(list().children[0]!.attributes.get('aria-hidden'), 'true')
+  assert.equal(list().attributes.get('aria-busy'), 'true')
+
+  render(viewOf({ listLoad: 'failed' }))
+  const failed = list().children[0]!
+  assert.deepEqual(failed.classes, ['sidebar-empty', 'sidebar-load-failed'])
+  assert.equal(failed.attributes.get('role'), 'alert')
+  assert.equal(list().attributes.has('aria-busy'), false)
+  const retry = find(failed, 'sidebar-load-retry')!
+  assert.equal(retry.text, '重试')
+  stub.click(retry.node)
+  assert.deepEqual(intents.at(-1), { kind: 'retry-load' })
+
+  render(viewOf({ listLoad: 'ready' }))
+  assert.equal(list().children[0]!.text, '还没有会话')
+
+  render(viewOf({ ...tieredState(), listLoad: 'failed' }))
+  assert.equal(sessionRows(root()).length, 3, 'drawn rows outlive a later failure')
 })
 
 test('the heading + creates a session in *its own* project', (t) => {
@@ -910,10 +964,10 @@ test('a session waiting for approval says so in words; a running one does not', 
   assert.ok(waiting.classes.includes('awaiting-input'))
   const label = find(waiting, 'session-badge-label')
   assert.ok(label, 'a parked request names itself on the row')
-  assert.equal(label.text, '等待授权')
+  assert.equal(label.text, '等待你处理')
   // The label is the visible half of what `aria-label` already said; both stay,
   // because the badge is still the thing being described.
-  assert.equal(waiting.attributes.get('aria-label'), '等待授权')
+  assert.equal(waiting.attributes.get('aria-label'), '等待你处理')
 })
 
 test('a session whose last turn failed names it in words, like a parked request', (t) => {
@@ -987,4 +1041,81 @@ test('a started project with no coordinator row is pinned as a button that reope
   assert.equal(open.text, 'app')
   stub.click(open.node)
   assert.deepEqual(intents, [{ kind: 'open-coordinator', projectRoot: '/w/app' }])
+})
+
+/**
+ * `button()` is shared by every view; it sits here beside the sidebar's retry
+ * button, the case that motivated the rule. A title that only repeats the visible
+ * text was a native tooltip over words already on screen; one that says more is
+ * the name a screen reader needs to tell this row's button from the next.
+ */
+test('a text button keeps a title only when it says more than the label', () => {
+  const stub = installDomStub()
+  try {
+    const titleOf = (view: StubView): string => (view.node as unknown as { title: string }).title
+    const plain = stub.inspect(button('dialog-btn', '跳过', '跳过', () => {}))
+    assert.equal(titleOf(plain), '')
+    assert.equal(plain.attributes.get('aria-label'), undefined)
+    const more = stub.inspect(button('sidebar-load-retry', '重试', '再次读取会话列表', () => {}))
+    assert.equal(titleOf(more), '再次读取会话列表')
+    assert.equal(more.attributes.get('aria-label'), '再次读取会话列表')
+    const iconOnly = stub.inspect(button('icon-btn', '', '关闭', () => {}))
+    assert.equal(iconOnly.attributes.get('aria-label'), '关闭')
+  } finally {
+    stub.uninstall()
+  }
+})
+
+/**
+ * The hover says when a session last moved, and says it when it is read: the
+ * row is not repainted as time passes, so the words are written on arrival.
+ * A background lane that finished carries the thread panel's blue dot.
+ */
+test('a session row says its age on hover, and an unread one carries a named dot', (t) => {
+  const { render, root, stub } = mount(t)
+  const minutesAgo = new Date(Date.now() - 5 * 60_000).toISOString()
+  const base = tieredState()
+  render(viewOf({
+    ...base,
+    projects: base.projects!.map((project) => ({
+      ...project,
+      sessions: project.sessions.map((session) => (session.id === 'background' ? { ...session, updatedAt: minutesAgo } : session)),
+    })),
+    laneStatus: new Map([['l2', { streaming: false, blocked: false, processes: false, hasConversation: true, unread: true }]]),
+  }))
+
+  const row = rowTitled(root(), '后台 lane')
+  stub.dispatch(row.node, 'mouseenter')
+  assert.equal((find(row, 'session-open')!.node as unknown as { title: string }).title, '后台 lane · 2 条消息 · 5 分钟前')
+  const badge = find(row, 'session-badge')
+  assert.ok(badge && badge.classes.includes('unread'))
+  assert.equal(badge.attributes.get('aria-label'), '有新回复')
+})
+
+/**
+ * A right press was the only way into a project's menu: nothing a keyboard, a
+ * one-button trackpad or a first-time user could find. The `⋯` is the visible
+ * route, and Shift+F10 is the platform's keyboard one, which also moves focus
+ * into the menu once it is drawn.
+ */
+test('a project menu opens from a visible ⋯ and from Shift+F10, and the keyboard lands in it', (t) => {
+  const { render, root, stub, intents } = mount(t)
+  render(viewOf(tieredState()))
+
+  const more = find(root(), 'project-more')
+  assert.ok(more, 'the heading carries a ⋯')
+  assert.equal(more.attributes.get('aria-haspopup'), 'menu')
+  assert.equal(more.attributes.get('aria-expanded'), 'false')
+  assert.equal(more.attributes.get('aria-label'), '项目操作')
+  stub.click(more.node)
+  assert.deepEqual(intents, [{ kind: 'open-project-menu', projectRoot: '/w/app' }])
+
+  intents.length = 0
+  const event = stub.dispatch(find(root(), 'project-row')!.node, 'keydown', { key: 'F10', shiftKey: true })
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(intents, [{ kind: 'open-project-menu', projectRoot: '/w/app' }])
+  render(viewOf({ ...tieredState(), projectMenu: '/w/app' }))
+  const item = find(root(), 'project-menu-item')!
+  assert.equal(document.activeElement, item.node, 'Shift+F10 puts focus on the item')
+  assert.equal(find(root(), 'project-more')?.attributes.get('aria-expanded'), 'true')
 })

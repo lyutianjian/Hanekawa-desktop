@@ -188,7 +188,7 @@ function localizedPreview(view: PreviewView): PreviewView {
 function alsoWaitingLabels(others: readonly PermissionRequestDto[]): string[] {
   const labels = others.slice(0, ALSO_WAITING_LIMIT).map(formatPermissionRequestLabel)
   const rest = others.length - labels.length
-  return rest > 0 ? [...labels, `+${rest} more`] : labels
+  return rest > 0 ? [...labels, `另有 ${rest} 项`] : labels
 }
 
 /**

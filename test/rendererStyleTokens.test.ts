@@ -41,7 +41,10 @@ const MOTION_TOKENS = {
   "--motion-scrim-out": "120ms",
   "--motion-running": "2000ms",
   "--motion-locate": "600ms",
-  "--motion-hover-delay": "500ms"
+  "--motion-hover-delay": "500ms",
+  // Batch 5: the settings row's 「已保存」, held then faded — longer than the
+  // copy button's 1200ms tick because it fades out rather than snapping back.
+  "--motion-receipt": "1600ms"
 }
 
 const htmlPath = path.join(rendererRoot, 'index.html')
@@ -120,6 +123,12 @@ const declarations = blocks.flatMap((block) => block.decls)
  */
 const LIGHT_SELECTOR = ':root[data-theme="light"]'
 const TOKEN_SELECTORS = new Set([':root', LIGHT_SELECTOR])
+/**
+ * The per-OS font stacks: `:root` narrowed by the `[data-platform]` that
+ * `dom/windowChrome.ts` writes. Fonts only — "the platform blocks narrow the
+ * font stacks and nothing else" below holds them to that.
+ */
+const PLATFORM_SELECTORS = [':root[data-platform="darwin"]', ':root[data-platform="win32"]'] as const
 
 function tokensForSelector(selector: string): Map<string, string> {
   return new Map(
@@ -189,7 +198,7 @@ test('the page links the stylesheet and carries no CSS of its own', () => {
 test('title bar uses measured native insets and keeps entire menus clickable', () => {
   const bar = blocks.find((block) => block.selector === '#titlebar')
   assert.ok(bar)
-  assert.ok(bar.decls.some((decl) => decl.prop === 'height' && decl.value === '40px'))
+  assert.ok(bar.decls.some((decl) => decl.prop === 'height' && decl.value === 'var(--titlebar-height)'))
   assert.ok(bar.decls.some((decl) => decl.prop === '-webkit-app-region' && decl.value === 'drag'))
   const padding = bar.decls.find((decl) => decl.prop === 'padding')?.value ?? ''
   assert.match(padding, /var\(--titlebar-inset-left\)/)
@@ -342,10 +351,12 @@ test('the palette is the one that was agreed, value for value', () => {
       '--surface-scrim-strong': 'rgba(0, 0, 0, 0.88)',
       '--text-primary': '#ebebea',
       '--text-secondary': '#a6a6a5',
-      '--text-tertiary': '#858584',
-      '--link': 'var(--accent-brand-strong)',
+      '--text-tertiary': '#8e8e8d',
+      '--link': 'var(--accent-brand-text)',
       '--accent-brand': '#d97757',
       '--accent-brand-strong': '#d97757',
+      '--accent-brand-text': 'var(--accent-brand-strong)',
+      '--selection-bg': 'color-mix(in srgb, var(--accent-brand) 32%, transparent)',
       '--on-brand': '#1c1c1c',
       '--accent-info': '#6fa5dc',
       '--accent-tool': '#a690d8',
@@ -368,10 +379,28 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-6': '32px',
       '--space-7': '48px',
       '--radius-lg': '20px',
-      '--radius-bubble': '13px',
       '--radius-md': '12px',
       '--radius-sm': '8px',
+      '--radius-xs': '4px',
+      '--radius-mark': '2px',
       '--radius-pill': '9999px',
+      '--opacity-disabled': '0.45',
+      '--menu-row-padding': '6px var(--space-2)',
+      '--control-xs': '20px',
+      '--control-sm': '24px',
+      '--control-md': '28px',
+      '--control-lg': '32px',
+      '--z-under': '-1',
+      '--z-raised': '1',
+      '--z-pinned': '2',
+      '--z-composer': '4',
+      '--z-popover': '5',
+      '--z-flyout': '6',
+      '--z-dialog': '7',
+      '--z-settings': '8',
+      '--z-rewind': '9',
+      '--z-toast': '10',
+      '--z-viewer': '11',
       ...MOTION_TOKENS,
     '--presence-x': '0px',
     '--presence-y': '8px',
@@ -397,6 +426,9 @@ test('the palette is the one that was agreed, value for value', () => {
       '--changes-panel-width': 'clamp(300px, (100vw - var(--sidebar-width)) * 0.45, 640px)',
       '--titlebar-inset-left': '0px',
       '--titlebar-inset-right': '138px',
+      // The caption band, `TITLEBAR_HEIGHT` in `src/desktop/main.ts`. One number
+      // the bar, the browser card's top and the settings screen all read.
+      '--titlebar-height': '40px',
       // How far the transcript scroller reaches up under the title bar.
       '--transcript-tuck': '8px',
       // The sidebar seam, and the 7px slice its scrollbar overhangs (2px of air
@@ -436,17 +468,24 @@ test('the palette is the one that was agreed, value for value', () => {
       '--font-ui':
         '"Inter Variable", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, "PingFang SC", "Microsoft YaHei UI", sans-serif',
       '--font-mono':
-        '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace',
+        '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, Consolas, "Cascadia Mono", "PingFang SC", "Microsoft YaHei UI", "Noto Sans Mono CJK SC", monospace',
       '--font-serif':
-        '"Source Serif 4 Variable", Georgia, "Songti SC", "Noto Serif CJK SC", serif',
+        '"Source Serif 4 Variable", Georgia, "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", serif',
       '--type-display': '28px',
       '--type-title': '20px',
+      '--type-heading': '17px',
       '--type-body': '15px',
       '--type-reading': '14px',
       '--type-ui': '14px',
-      '--type-meta': '12.5px',
+      '--type-dense': '13px',
+      '--type-meta': '12px',
       '--type-micro': '11px',
       '--type-code': '13px',
+      '--leading-tight': '1.25',
+      '--leading-heading': '1.35',
+      '--leading-ui': '1.5',
+      '--leading-dense': '1.6',
+      '--leading-prose': '1.7',
     },
   )
 
@@ -472,10 +511,12 @@ test('the palette is the one that was agreed, value for value', () => {
       '--surface-scrim-strong': 'rgba(26, 26, 26, 0.92)',
       '--text-primary': '#1a1a1a',
       '--text-secondary': '#575756',
-      '--text-tertiary': '#777776',
-      '--link': 'var(--accent-brand-strong)',
+      '--text-tertiary': '#6b6b6a',
+      '--link': 'var(--accent-brand-text)',
       '--accent-brand': '#d97757',
       '--accent-brand-strong': '#d97757',
+      '--accent-brand-text': '#ad5234',
+      '--selection-bg': 'color-mix(in srgb, var(--accent-brand) 24%, transparent)',
       '--on-brand': '#ffffff',
       '--accent-info': '#33689f',
       '--accent-tool': '#6e4fa3',
@@ -498,10 +539,28 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-6': '32px',
       '--space-7': '48px',
       '--radius-lg': '20px',
-      '--radius-bubble': '13px',
       '--radius-md': '12px',
       '--radius-sm': '8px',
+      '--radius-xs': '4px',
+      '--radius-mark': '2px',
       '--radius-pill': '9999px',
+      '--opacity-disabled': '0.45',
+      '--menu-row-padding': '6px var(--space-2)',
+      '--control-xs': '20px',
+      '--control-sm': '24px',
+      '--control-md': '28px',
+      '--control-lg': '32px',
+      '--z-under': '-1',
+      '--z-raised': '1',
+      '--z-pinned': '2',
+      '--z-composer': '4',
+      '--z-popover': '5',
+      '--z-flyout': '6',
+      '--z-dialog': '7',
+      '--z-settings': '8',
+      '--z-rewind': '9',
+      '--z-toast': '10',
+      '--z-viewer': '11',
       ...MOTION_TOKENS,
     '--presence-x': '0px',
     '--presence-y': '8px',
@@ -527,6 +586,9 @@ test('the palette is the one that was agreed, value for value', () => {
       '--changes-panel-width': 'clamp(300px, (100vw - var(--sidebar-width)) * 0.45, 640px)',
       '--titlebar-inset-left': '0px',
       '--titlebar-inset-right': '138px',
+      // The caption band, `TITLEBAR_HEIGHT` in `src/desktop/main.ts`. One number
+      // the bar, the browser card's top and the settings screen all read.
+      '--titlebar-height': '40px',
       // How far the transcript scroller reaches up under the title bar.
       '--transcript-tuck': '8px',
       // The sidebar seam, and the 7px slice its scrollbar overhangs (2px of air
@@ -566,17 +628,24 @@ test('the palette is the one that was agreed, value for value', () => {
       '--font-ui':
         '"Inter Variable", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, "PingFang SC", "Microsoft YaHei UI", sans-serif',
       '--font-mono':
-        '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace',
+        '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, Consolas, "Cascadia Mono", "PingFang SC", "Microsoft YaHei UI", "Noto Sans Mono CJK SC", monospace',
       '--font-serif':
-        '"Source Serif 4 Variable", Georgia, "Songti SC", "Noto Serif CJK SC", serif',
+        '"Source Serif 4 Variable", Georgia, "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", serif',
       '--type-display': '28px',
       '--type-title': '20px',
+      '--type-heading': '17px',
       '--type-body': '15px',
       '--type-reading': '14px',
       '--type-ui': '14px',
-      '--type-meta': '12.5px',
+      '--type-dense': '13px',
+      '--type-meta': '12px',
       '--type-micro': '11px',
       '--type-code': '13px',
+      '--leading-tight': '1.25',
+      '--leading-heading': '1.35',
+      '--leading-ui': '1.5',
+      '--leading-dense': '1.6',
+      '--leading-prose': '1.7',
     },
   )
 })
@@ -607,10 +676,28 @@ test('the light block overrides only colours, and adds no token the dark palette
     '--space-6',
     '--space-7',
     '--radius-lg',
-    '--radius-bubble',
     '--radius-md',
     '--radius-sm',
+    '--radius-xs',
+    '--radius-mark',
     '--radius-pill',
+    '--opacity-disabled',
+    '--menu-row-padding',
+    '--control-xs',
+    '--control-sm',
+    '--control-md',
+    '--control-lg',
+    '--z-under',
+    '--z-raised',
+    '--z-pinned',
+    '--z-composer',
+    '--z-popover',
+    '--z-flyout',
+    '--z-dialog',
+    '--z-settings',
+    '--z-rewind',
+    '--z-toast',
+    '--z-viewer',
     ...Object.keys(MOTION_TOKENS),
     '--ease-out',
     '--ease-snap',
@@ -622,12 +709,19 @@ test('the light block overrides only colours, and adds no token the dark palette
     '--font-serif',
     '--type-display',
     '--type-title',
+    '--type-heading',
     '--type-body',
     '--type-reading',
     '--type-ui',
+    '--type-dense',
     '--type-meta',
     '--type-micro',
     '--type-code',
+    '--leading-tight',
+    '--leading-heading',
+    '--leading-ui',
+    '--leading-dense',
+    '--leading-prose',
   ]
   for (const name of THEME_INDEPENDENT) {
     assert.ok(
@@ -808,6 +902,13 @@ test('accents are for icons and state rules, never for fills', () => {
     { selector: '.ctx-swatch-skills', prop: 'background' },
     { selector: '.ctx-swatch-tools', prop: 'background' },
     { selector: '.ctx-swatch-memory', prop: 'background' },
+    // Selected text: a wash of the brand behind characters the reader chose,
+    // in place of Chromium's blue. A transient mark, not a surface.
+    { selector: ':root', prop: '--selection-bg' },
+    { selector: LIGHT_SELECTOR, prop: '--selection-bg' },
+    // The brand's text rung, an accent by family: `color` is where it goes,
+    // and the alias in the dark block is what names it.
+    { selector: ':root', prop: '--accent-brand-text' },
   ]
 
   let seen = 0
@@ -937,7 +1038,7 @@ test('everything read character by character stays monospaced', () => {
     // the sheet to one spelling per stack.
     if (prop.startsWith('--font-')) {
       assert.ok(
-        TOKEN_SELECTORS.has(selector),
+        TOKEN_SELECTORS.has(selector) || (PLATFORM_SELECTORS as readonly string[]).includes(selector),
         `${selector} declares ${prop} outside the token blocks; a font stack belongs to :root`,
       )
     }
@@ -973,6 +1074,225 @@ test('the serif is display-only, and only in the whitelisted spots', () => {
   for (const selector of SERIF_WHITELIST) {
     assert.ok(seen.has(selector), `${selector} no longer uses the serif; drop it from the whitelist`)
   }
+})
+
+test('the platform blocks narrow the font stacks and nothing else', () => {
+  // Each OS gets its own faces so a Windows machine with PingFang installed
+  // still sets Chinese in YaHei and a Mac with YaHei still uses PingFang — the
+  // cross-platform stack in `:root` would hand either to whichever it reached
+  // first. Pinned value for value like the palette: a stack is a decision.
+  assert.deepEqual(Object.fromEntries(tokensForSelector(PLATFORM_SELECTORS[0])), {
+    '--font-ui': '"Inter Variable", -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif',
+    '--font-mono': '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, "PingFang SC", monospace',
+    '--font-serif': '"Source Serif 4 Variable", Georgia, "PingFang SC", "Hiragino Sans GB", serif',
+  })
+  assert.deepEqual(Object.fromEntries(tokensForSelector(PLATFORM_SELECTORS[1])), {
+    '--font-ui':
+      '"Inter Variable", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif',
+    '--font-mono': '"JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace',
+    '--font-serif': '"Source Serif 4 Variable", Georgia, "Microsoft YaHei UI", "Microsoft YaHei", serif',
+  })
+
+  // Fonts only. Sizes stay one ladder on both platforms, so a layout measured on
+  // one is the layout on the other, and colour belongs to the theme blocks.
+  for (const selector of PLATFORM_SELECTORS) {
+    for (const block of blocks.filter((candidate) => candidate.selector === selector)) {
+      for (const { prop } of block.decls) {
+        assert.ok(prop.startsWith('--font-'), `${selector} declares ${prop}; the platform blocks carry fonts only`)
+      }
+    }
+  }
+
+  // Every stack, the defaults included, names a CJK face before its generic. A
+  // Chinese run walks the list past each Latin-only face; reaching the generic
+  // first hands it to whatever the OS maps that to — SimSun under `serif`,
+  // NSimSun under `monospace` on Windows, Songti on macOS.
+  const CJK_FACE = /"(?:PingFang SC|Hiragino Sans GB|Microsoft YaHei(?: UI)?|Noto Sans(?: Mono)? CJK SC)"/
+  for (const selector of [':root', ...PLATFORM_SELECTORS]) {
+    for (const [name, stack] of tokensForSelector(selector)) {
+      if (!name.startsWith('--font-')) continue
+      const families = stack.split(',').map((family) => family.trim())
+      const generic = families.at(-1)
+      assert.ok(generic === 'sans-serif' || generic === 'serif' || generic === 'monospace', `${selector} ${name} ends in a generic`)
+      assert.ok(
+        families.slice(0, -1).some((family) => CJK_FACE.test(family)),
+        `${selector} ${name} reaches ${generic} with no CJK face before it`,
+      )
+      // The serif's Chinese is the platform sans, never a Song: a heading that
+      // breaks into Song strokes mid-line reads as two typefaces.
+      assert.doesNotMatch(stack, /Songti|SimSun|Serif CJK/, `${selector} ${name} falls back to a Song face`)
+    }
+  }
+
+  // Each platform's stacks name none of the other's faces.
+  const MAC_ONLY = /PingFang|Hiragino|-apple-system|SF Mono|SFMono|Menlo/
+  const WINDOWS_ONLY = /YaHei|Segoe|Consolas|Cascadia/
+  for (const [name, stack] of tokensForSelector(PLATFORM_SELECTORS[0])) {
+    assert.doesNotMatch(stack, WINDOWS_ONLY, `the macOS ${name} names a Windows face`)
+  }
+  for (const [name, stack] of tokensForSelector(PLATFORM_SELECTORS[1])) {
+    assert.doesNotMatch(stack, MAC_ONLY, `the Windows ${name} names a macOS face`)
+  }
+
+  // Greyscale antialiasing on macOS only — what AppKit draws with; Chromium's
+  // default there thickens light-on-dark text. Windows ignores the property, so
+  // an unscoped rule would only be a claim it never honours.
+  const smoothing = declarations.filter((decl) => decl.prop === '-webkit-font-smoothing')
+  assert.deepEqual(
+    smoothing.map(({ selector, value }) => `${selector} ${value}`),
+    [':root[data-platform="darwin"] body antialiased'],
+  )
+})
+
+/**
+ * The rules allowed `--type-micro`, the 11px rung. Each shows figures, Latin or
+ * a key cap and nothing else: 12px is the floor for Chinese, below which
+ * Microsoft YaHei's strokes close up at 100% scaling. A rule whose text can
+ * carry Chinese takes `--type-meta`. Add to this list only after tracing every
+ * string the rule's element can show.
+ */
+const MICRO_TEXT = [
+  '.titlebar-side-badge', // a thread count
+  '.titlebar-menu-chord', // Ctrl+B, ⌘B
+  '.sidebar-hint-chord',
+  '#rewind-panel .kbd, #composer-request .kbd',
+  '.step-tag', // a subagent's type name
+  '.ctx-num', // token counts and percentages
+  '.ask-chip', // "2/3"
+  '.md .md-code-lang', // a fence's language tag
+  '.settings-provider-badge', // the provider protocol name
+  '.toast-repeats', // ×3
+]
+
+test('sizes come from the ladder, and the 11px rung carries no Chinese', () => {
+  // Whole pixels only: at 100% scaling Windows hints YaHei to the pixel grid,
+  // and the old 12.5px rung had no grid to snap to.
+  const LADDER = [...tokens].filter(([name]) => name.startsWith('--type-'))
+  assert.equal(LADDER.length, 10)
+  for (const [name, value] of LADDER) assert.match(value, /^\d+px$/, `${name} is not a whole pixel`)
+
+  // Every size names a rung. `inherit` lets a button take its row's size;
+  // `calc(1em - 1px)` is inline code one pixel under the prose around it, which
+  // stays a whole pixel because the prose is. `.file-badge` is the one literal:
+  // its type is a pictogram sized to its tile (see its rule).
+  const SIZE = /^(?:var\(--type-[a-z]+\)|inherit|calc\(1em - 1px\))$/
+  const micro = new Set<string>()
+  for (const { selector, prop, value } of declarations) {
+    if (prop === 'font-size') {
+      assert.ok(
+        SIZE.test(value) || (selector === '.file-badge' && value === '10px'),
+        `${selector} { font-size: ${value} } is off the ladder`,
+      )
+    }
+    if (prop === 'font' && value !== 'inherit' && selector !== ':root') {
+      assert.match(value, /var\(--type-[a-z]+\)\s*\//, `${selector} { font: ${value} } must take its size from the ladder`)
+    }
+    if ((prop === 'font-size' || prop === 'font') && value.includes('var(--type-micro)')) micro.add(selector)
+  }
+  assert.deepEqual([...micro].sort(), [...MICRO_TEXT].sort(), 'the 11px rung is for figures, Latin and key caps only')
+
+  // The conversation steps its chrome and code down one rung, and is the only
+  // rule that re-points a rung. Code drops to 12px there to stay one step under
+  // the 13px rows around it.
+  const transcript = blockFor('.transcript')
+  assert.ok(declares(transcript, '--type-ui', 'var(--type-dense)'))
+  assert.ok(declares(transcript, '--type-code', '12px'))
+  for (const { selector, prop } of declarations) {
+    if (!prop.startsWith('--type-') || selector === ':root') continue
+    assert.equal(selector, '.transcript', `${selector} re-points ${prop}; only the conversation steps the ladder down`)
+  }
+
+  // Markdown headings climb one rung each. The old 1.35/1.2/1.08em steps sat so
+  // close that h2 and h3 were indistinguishable at 14px.
+  assert.ok(declares(blockFor('.md h1'), 'font-size', 'var(--type-title)'))
+  assert.ok(declares(blockFor('.md h2'), 'font-size', 'var(--type-heading)'))
+  assert.ok(declares(blockFor('.md h3'), 'font-size', 'var(--type-body)'))
+  assert.ok(declares(blockFor('.md h4, .md h5, .md h6'), 'font-size', 'var(--type-reading)'))
+})
+
+test('weights are 400 and 600, and mono stays on the weights it ships', () => {
+  // Microsoft YaHei has no Medium: a 500 label set Inter in Medium and its
+  // Chinese in Regular, two weights in one word on Windows. 500 survives only
+  // where no Chinese can appear — the usage card's figures — and on the
+  // JetBrains Mono badge, whose bundled faces are 400 and 500 (a mono 600 would
+  // be Chromium's synthetic bold).
+  const MEDIUM = ['.usage-cell .usage-value', '.file-badge']
+  const medium: string[] = []
+  for (const { selector, prop, value } of declarations) {
+    if (prop === 'font-weight') {
+      assert.ok(['400', '500', '600'].includes(value), `${selector} { font-weight: ${value} }`)
+      if (value === '500') medium.push(selector)
+    }
+    if (prop === 'font' && /^\d/.test(value)) {
+      assert.match(value, /^(?:400|600) /, `${selector} { font: ${value} } takes a weight off the pair`)
+    }
+  }
+  assert.deepEqual(medium.sort(), MEDIUM.sort(), '500 is for figures and the mono badge only')
+
+  for (const block of blocks) {
+    if (!declares(block, 'font-family', 'var(--font-mono)')) continue
+    assert.ok(!declares(block, 'font-weight', '600'), `${block.selector} sets mono at 600, which is synthesized`)
+  }
+})
+
+test('line heights are a leading token or a box height', () => {
+  // Five leadings, chosen by what the text does (see the tokens' comment). A
+  // bare number would be a sixth nobody chose; `1` is a glyph box (a key cap, a
+  // ✕), and a pixel value is a row height, not a leading.
+  for (const { selector, prop, value } of declarations) {
+    if (prop !== 'line-height') continue
+    assert.ok(
+      /^var\(--leading-[a-z]+\)$/.test(value) || value === '1' || /^\d+px$/.test(value),
+      `${selector} { line-height: ${value} } is neither a leading token nor a box height`,
+    )
+  }
+
+  // Chinese has no ascenders or descenders to open the gap between lines, so a
+  // paragraph of it under 1.6 reads as a block. These are the surfaces that
+  // wrap several lines of it.
+  const WRAPS = {
+    '.transcript .item': 'prose',
+    '.coordinator-welcome': 'prose',
+    '.toast': 'dense',
+    '.transcript .item.receipt': 'dense',
+    '.transcript .item.turn-failure': 'dense',
+    '#composer-request': 'dense',
+    '.plan-panel-body': 'dense',
+    '#rewind-panel': 'dense',
+    '.md .md-code': 'dense',
+    '.command-output': 'dense',
+  }
+  for (const [selector, leading] of Object.entries(WRAPS)) {
+    assert.ok(
+      declares(blockFor(selector), 'line-height', `var(--leading-${leading})`),
+      `${selector} must take --leading-${leading}`,
+    )
+  }
+})
+
+test('no tracking on Chinese, and autospace where prose mixes scripts', () => {
+  // Letter-spacing opens Chinese into a row of separate characters; the three
+  // headings that carried 0.02em lost it. The badge's negative tracking is its
+  // pictogram's fit (four mono capitals in a 24px tile), never Chinese.
+  assert.deepEqual(
+    declarations.filter((decl) => decl.prop === 'letter-spacing').map(({ selector, value }) => `${selector} ${value}`),
+    ['.file-badge -0.02em'],
+  )
+
+  // `text-autospace` adds the gap between Chinese and Latin that copy written
+  // without spaces lacks, on the surfaces that read as prose; text that already
+  // has the space gains nothing extra. Code turns it back off: an inserted gap
+  // would push a mono column out of line.
+  const autospace = Object.fromEntries(
+    declarations.filter((decl) => decl.prop === 'text-autospace').map(({ selector, value }) => [selector, value]),
+  )
+  assert.deepEqual(autospace, {
+    '.md': 'normal',
+    '#composer-request': 'normal',
+    '#rewind-panel': 'normal',
+    '.md .md-inline-code': 'no-autospace',
+    '.md .md-code': 'no-autospace',
+  })
 })
 
 test('the canvas is a flush clipped pane divided by a hairline', () => {
@@ -1354,8 +1674,8 @@ test('the readouts draw their own rounded hover card with measured typography', 
     'aligned figures keep the key-value rows readable',
   )
   assert.ok(
-    declares(blockFor('.hover-card-note'), 'font-size', 'var(--type-micro)'),
-    'the reserve note stays metadata-sized',
+    declares(blockFor('.hover-card-note'), 'font-size', 'var(--type-meta)'),
+    'the reserve note stays metadata-sized — meta, not micro: it is a Chinese sentence',
   )
 })
 
@@ -1479,7 +1799,7 @@ test('a collapsed sidebar is gone, and the column inside it does not resize with
   )
   // The rail's own slider is read against the sash, so it hugs the scroller's
   // right edge instead of stopping at the global thumb's 3px inset.
-  const thumb = blockFor('.sidebar-list::-webkit-scrollbar-thumb')
+  const thumb = blockFor(':root:not([data-platform="darwin"]) .sidebar-list::-webkit-scrollbar-thumb')
   assert.ok(
     declares(thumb, 'border-right-width', '0'),
     "the rail's thumb must reach its column's edge",
@@ -1544,12 +1864,12 @@ test('the composer raises its panels, and they no longer span the canvas', () =>
   for (const selector of ['#surface', '#suggestions']) {
     const panel = blockFor(selector)
     assert.ok(
-      declares(panel, 'border-radius', 'var(--radius-lg)'),
-      `${selector} is a floating panel now, not a strip ruled off the canvas`,
+      declares(panel, 'border-radius', 'var(--radius-md)'),
+      `${selector} is a menu card like the pickers beside it: the menu radius, not the panel one`,
     )
     assert.ok(
-      declares(panel, 'border', '1px solid var(--border-subtle)'),
-      `${selector} needs the hairline that separates it from the transcript behind it`,
+      declares(panel, 'border', '1px solid var(--border-strong)'),
+      `${selector} needs the menu cards' hairline to separate it from the transcript behind it`,
     )
     assert.ok(
       declares(panel, 'box-shadow', 'var(--shadow-float)'),
@@ -1600,13 +1920,11 @@ test('activity lines carry one running mark, which moves and stays readable', ()
     }
   }
   const source = stripComments(css)
-  for (const name of ['breathe', 'blink']) {
-    const frame = source.match(new RegExp(`@keyframes ${name} \\{ 50% \\{ ([^}]+)`))?.[1]
-    if (name === 'breathe') {
-      assert.ok(frame)
-      assert.match(frame, /opacity: 0\.65;/)
-    }
-  }
+  const frame = source.match(/@keyframes breathe \{ 50% \{ ([^}]+)/)?.[1]
+  assert.ok(frame)
+  assert.match(frame, /opacity: 0\.65;/)
+  // `blink` was `breathe` under a second name, keyframe for keyframe; one loop.
+  assert.doesNotMatch(source, /@keyframes blink\b/)
   for (const block of blocks) {
     for (const decl of block.decls) {
       if (decl.prop === 'animation' && /^spin /.test(decl.value)) assert.match(decl.value, /linear infinite$/)
@@ -1766,16 +2084,25 @@ test('depth is two steps: menus float, modals sit deeper, and the composer joins
   // The layering the popovers were built against: composer stack under every
   // menu, menus under the modal layer.
   for (const [selector, z] of [
-    ['#composer-popovers', '4'],
-    ['.composer-menu', '5'],
-    ['.chip-menu', '5'],
-    ['.hover-card', '5'],
-    ['.settings-menu', '5'],
-    ['.canvas-menu', '5'],
-    ['.chip-flyout', '6'],
-    ['#rewind', '9'],
+    ['#composer-popovers', 'composer'],
+    ['.composer-menu', 'popover'],
+    ['.chip-menu', 'popover'],
+    ['.hover-card', 'popover'],
+    ['.settings-menu', 'popover'],
+    ['.canvas-menu', 'popover'],
+    // The title bar's menus were a rung above the canvas's for no reason but
+    // the number that was free; both are one press away, so both are popovers.
+    ['.titlebar-menu', 'popover'],
+    // The welcome pickers sat on layer 1 — under a hover card that happened to
+    // overlap them. They are menus like the rest.
+    ['.branch-picker, .project-picker', 'popover'],
+    ['.chip-flyout', 'flyout'],
+    ['.context-popover', 'flyout'],
+    ['#rewind', 'rewind'],
+    ['#toasts', 'toast'],
+    ['#lightbox', 'viewer'],
   ] as const) {
-    assert.ok(declares(blockFor(selector), 'z-index', z), `${selector} belongs on layer ${z}`)
+    assert.ok(declares(blockFor(selector), 'z-index', `var(--z-${z})`), `${selector} belongs on layer --z-${z}`)
   }
 
   // Every popover here is absolute against one of these shells; an `overflow`
@@ -1852,10 +2179,11 @@ test('motion comes from the tokens, and the things that rebuild themselves have 
     )
   }
 
-  // The three entrance keyframes travel one distance and arrive from one scale.
-  // The parser flattens `@keyframes`, so its `from` steps come through as blocks
-  // named `from` — every one of them that moves is one of these three. The
-  // looping sweeps (the sheens) start at `0%` so they stay out of this count.
+  // No entrance keyframe moves any more. `drop-in`, `rise-in` and `slide-in`
+  // outlived the presence transitions that replaced them, referenced by no
+  // rule; they are deleted, and a moving `from` step is a new one. The parser
+  // flattens `@keyframes`, so its `from` steps come through as blocks named
+  // `from`. The looping sweeps (the sheens) start at `0%` and are not counted.
   let entranceSteps = 0
   for (const block of blocks) {
     if (block.selector !== 'from') continue
@@ -1869,7 +2197,7 @@ test('motion comes from the tokens, and the things that rebuild themselves have 
       )
     }
   }
-  assert.equal(entranceSteps, 3, 'expected drop-in, rise-in and slide-in to move')
+  assert.equal(entranceSteps, 0, 'presence transitions own every entrance path')
 
   // The reduced-motion override. `1ms` rather than `0s`: a zero-length
   // transition never fires `transitionend`, and no listener should have to know
@@ -2160,4 +2488,297 @@ test('a diff is the only block in a turn that scrolls sideways', () => {
     assert.ok(declares(body, 'overflow-y', 'auto'), `${selector} keeps its vertical cap`)
     assert.ok(declares(body, 'overflow-x', 'clip'), `${selector} must not grow a horizontal scrollbar`)
   }
+})
+
+test('the token blocks carry one non-custom property: the color-scheme that themes native widgets', () => {
+  // Scrollbars, a `<select>`'s popup and the form controls are painted by
+  // Chromium, not by any rule here; `color-scheme` is the only way to tell it
+  // which theme it is drawing for. Without it a dark window opened a white
+  // dropdown. It rides on the token blocks because it is a theme decision like
+  // the palette — and nothing else may: the light block is colours only.
+  for (const [selector, scheme] of [[':root', 'dark'], [LIGHT_SELECTOR, 'light']] as const) {
+    const plain = declarations.filter((d) => d.selector === selector && !d.prop.startsWith('--'))
+    assert.deepEqual(
+      plain.map((d) => `${d.prop}: ${d.value}`),
+      [`color-scheme: ${scheme}`],
+      `${selector} declares only tokens plus its color-scheme`,
+    )
+  }
+})
+
+test('a background window dims its caption and column heads, and nothing it is reading', () => {
+  // Both systems draw an inactive window's title text a rung down; without it
+  // two Hanekawa windows (or Hanekawa beside the editor) looked equally focused.
+  // Hover and an open menu are excluded so pointing at a background window still
+  // answers. The transcript and rows are left alone — they are still content.
+  const dimmed = blocks.filter((block) => block.selector.includes('[data-window-active="false"]'))
+  assert.equal(dimmed.length, 1, 'one rule owns the inactive look')
+  const rule = dimmed[0]!
+  assert.deepEqual(rule.decls.map((d) => `${d.prop}: ${d.value}`), ['color: var(--text-tertiary)'])
+  for (const part of ['.titlebar-rail', '.titlebar-menu-trigger', '.canvas-title', '.side-section-head', '.project-heading']) {
+    assert.ok(rule.selector.includes(part), `${part} dims with the window`)
+  }
+  for (const content of ['.transcript', '.session-row', '#input']) {
+    assert.ok(!rule.selector.includes(content), `${content} is content and keeps its colour`)
+  }
+})
+
+test('every stacking order comes from the layer ladder', () => {
+  // Twenty-eight bare numbers had drifted into an order nobody had chosen: the
+  // welcome pickers under a hover card, the title bar's menus a rung above the
+  // canvas's, the drop hint sharing a number with menus. The ladder names what
+  // each rung covers; a rule picks a rung, never a number.
+  for (const { selector, prop, value } of declarations) {
+    if (prop !== 'z-index' || TOKEN_SELECTORS.has(selector)) continue
+    assert.match(value, /^var\(--z-[a-z]+\)$/, `${selector} { z-index: ${value} } must name a --z- rung`)
+  }
+  // The rungs climb strictly in the order the token block lists them.
+  const ladder = [...tokens].filter(([name]) => name.startsWith('--z-')).map(([, value]) => Number(value))
+  assert.ok(ladder.length >= 10)
+  for (let i = 1; i < ladder.length; i += 1) assert.ok(ladder[i]! > ladder[i - 1]!, 'the layer tokens climb in order')
+})
+
+test('every corner comes from the shape ladder', () => {
+  // Seventeen literals had grown between the rungs: 2, 3, 4, 5, 6, 13 and 999px.
+  // Each one now names what it rounds — a key cap or badge is xs, a swatch or a
+  // word highlight is mark, a capsule is pill. Only the geometric keywords stay
+  // literal: 50% is a circle, 0 is square, `inherit` follows the parent.
+  for (const { selector, prop, value } of declarations) {
+    if (!prop.endsWith('radius') || TOKEN_SELECTORS.has(selector)) continue
+    if (['50%', '0', 'inherit'].includes(value)) continue
+    assert.match(value, /var\(--radius-[a-z]+\)/, `${selector} { ${prop}: ${value} } must use a --radius- rung`)
+    assert.doesNotMatch(value.replace(/var\([^)]*\)/g, ''), /\d{2,}px|[3-9]px/, `${selector} mixes a literal into its radius`)
+  }
+})
+
+test('every icon-only button is one of four squares', () => {
+  // Eight sizes, 18 to 36px, had grown a pixel or two apart: a 26px title-bar
+  // rail beside a 28px settings close, a 30px send next to a 36px viewer close.
+  // A square button now takes the rung for where it sits (xs on a tile, sm in a
+  // card or row, md in a bar, lg for a surface's one action), and the rungs
+  // climb by 4px so neighbours on different rungs read as different on purpose.
+  const rungs = ['xs', 'sm', 'md', 'lg'].map((name) => Number.parseInt(tokenValue(`--control-${name}`), 10))
+  assert.deepEqual(rungs, [20, 24, 28, 32])
+  const squares = blocks.filter((block) => {
+    const width = block.decls.find((d) => d.prop === 'width')?.value
+    return width !== undefined && width === block.decls.find((d) => d.prop === 'height')?.value && /var\(--control-/.test(width)
+  })
+  assert.ok(squares.length >= 18, `found ${squares.length} sized icon buttons`)
+  for (const selector of ['#submit, #stop', '.scroll-bottom', '.lightbox-close', '.titlebar-rail', '#composer-attach', '.toast-close', '.attachment-remove']) {
+    assert.ok(squares.some((block) => block.selector === selector), `${selector} takes a --control- rung`)
+  }
+})
+
+test('a ghost icon button shows the press', () => {
+  // Only send and stop had an :active state; every other icon button looked
+  // the same pressed as hovered, so a click on a slow action seemed lost.
+  const press = blocks.find((block) => block.selector.startsWith(':is(.titlebar-rail') && block.selector.endsWith(':active:enabled'))
+  assert.ok(press, 'one shared press rule')
+  assert.ok(declares(press, 'background', 'var(--surface-active)'))
+  assert.ok(declares(press, 'transition-duration', 'var(--motion-press)'))
+})
+
+test('a disabled control looks the same everywhere: faded whole, no pointer', () => {
+  // Five opacities, two kinds of greyed label and two `not-allowed` cursors
+  // had made "disabled" look like a different state on every screen. One fade,
+  // applied to the whole control so label, icon and fill dim together.
+  const disabled = blocks.filter((block) => /:disabled|\[disabled\]|\.disabled\b/.test(block.selector))
+    .filter((block) => !/:not\((:disabled|\[disabled\])\)/.test(block.selector))
+  assert.ok(disabled.length >= 20, `found ${disabled.length} disabled rules`)
+  for (const block of disabled) {
+    assert.ok(declares(block, 'opacity', 'var(--opacity-disabled)'), `${block.selector} fades by --opacity-disabled`)
+    assert.ok(declares(block, 'cursor', 'default'), `${block.selector} stops promising a click`)
+    assert.ok(!block.decls.some((d) => d.prop === 'color' || d.prop === 'background'), `${block.selector} fades, it does not recolour`)
+  }
+})
+
+test('one placeholder colour and one selection colour, both from the palette', () => {
+  // Four fields had no placeholder rule and showed Chromium's own grey, the
+  // sidebar search had its own secondary, and selected text was stock blue —
+  // the one colour on screen from outside the palette.
+  assert.ok(declares(blockFor(':where(input, textarea)::placeholder'), 'color', 'var(--text-tertiary)'))
+  assert.ok(declares(blockFor('::selection'), 'background', 'var(--selection-bg)'))
+  const others = blocks.filter((b) => b.selector.includes('::placeholder') && b.selector !== ':where(input, textarea)::placeholder')
+  for (const block of others) {
+    assert.ok(!block.decls.some((d) => d.prop === 'color'), `${block.selector} recolours the shared placeholder`)
+  }
+})
+
+test('every menu is one card and every menu row one height', () => {
+  // Thirteen menus had been written one at a time: the same card with 4px
+  // literal padding here, an 8px inset there, the composer's two lists on the
+  // panel radius and a fainter hairline than the pickers right beside them,
+  // and rows 4, 6 or 8px tall in padding. One card, one row.
+  const CARDS = [
+    '.titlebar-menu', '.canvas-menu', '.project-menu', '.thread-menu', '.chip-menu', '.chip-flyout',
+    '.composer-menu', '.settings-menu', '.branch-picker, .project-picker', '#surface', '#suggestions',
+  ]
+  for (const selector of CARDS) {
+    const card = blockFor(selector)
+    for (const [prop, value] of [
+      ['background', 'var(--surface-card)'],
+      ['border', '1px solid var(--border-strong)'],
+      ['border-radius', 'var(--radius-md)'],
+      ['box-shadow', 'var(--shadow-float)'],
+    ] as const) {
+      assert.ok(declares(card, prop, value), `${selector} { ${prop}: ${value} }`)
+    }
+  }
+  const ROWS = [
+    '.titlebar-menu-item', '.canvas-menu-item', '.project-menu-item', '.thread-menu-item', '.chip-flyout-item',
+    '.composer-menu-item', '.settings-menu-item', '.branch-picker-row, .project-picker-row',
+  ]
+  for (const selector of ROWS) {
+    const row = blockFor(selector)
+    assert.ok(declares(row, 'padding', 'var(--menu-row-padding)'), `${selector} takes the shared row padding`)
+    assert.ok(declares(row, 'font-size', 'var(--type-ui)'), `${selector} is set at the UI size`)
+    assert.ok(declares(row, 'border-radius', 'var(--radius-sm)'), `${selector} rounds as a row inside a card`)
+    assert.ok(declares(row, 'color', 'var(--text-primary)'), `${selector} rests on primary text, like a native menu`)
+  }
+})
+
+test('buttons answer the pointer and the keyboard, and there is one primary', () => {
+  // The docked card's secondary buttons rested on the hover fill and hovered to
+  // the same fill: no answer at all. They hover one rung further now.
+  assert.ok(declares(blockFor('#composer-request .dialog-btn:not(.primary):hover:enabled'), 'background', 'var(--surface-active)'))
+  // One primary, the inverted fill: the rewind panel's and the failure card's
+  // were two more versions of it. The empty canvas's 「新建会话」 joins the
+  // dialog list rather than starting a sixth.
+  for (const selector of ['#rewind-panel .dialog-btn.primary, .no-session .dialog-btn.primary, #composer-request .dialog-btn.primary', '.failure-action.primary']) {
+    const primary = blockFor(selector)
+    assert.ok(declares(primary, 'background', 'var(--text-primary)'), `${selector} is the inverted fill`)
+    assert.ok(declares(primary, 'color', 'var(--surface-base)'), `${selector} is the inverted fill`)
+  }
+  // The thread menu's rows were the only menu rows with no hover and no
+  // keyboard highlight.
+  assert.ok(declares(blockFor('.thread-menu-item:hover:enabled'), 'background', 'var(--surface-hover)'))
+  assert.ok(css.includes('.thread-menu-item:focus-visible'), 'the thread menu joins the menu rows’ focus fill')
+  // Tab reached the session's delete button while it was still invisible.
+  assert.ok(
+    blocks.some((block) => block.selector.includes('.session-actions:focus-within') && declares(block, 'opacity', '1')),
+    'a focused session action is shown',
+  )
+  // Four retry/back buttons reset `font` and never set a size, so they were the
+  // inherited UI size beside their meta-sized neighbours.
+  for (const selector of ['.usage-retry', '.canvas-back-coordinator', '.thread-detail-retry, .load-retry', '.startup-failure-retry']) {
+    assert.ok(declares(blockFor(selector), 'font-size', 'var(--type-meta)'), `${selector} names its size`)
+  }
+})
+
+test('no control is left in the platform’s own dress', () => {
+  // The viewer's zoom steps had no border or background reset and showed as
+  // raised grey system buttons in the capsule; selects drew a macOS stepper or
+  // a Windows box beside the sheet's own inputs.
+  for (const selector of ['.lightbox-zoom-step', '.lightbox-close']) {
+    const button = blockFor(selector)
+    assert.ok(declares(button, 'font', 'inherit'), `${selector} resets its font`)
+    assert.ok(declares(button, 'cursor', 'pointer'), `${selector} reads as clickable`)
+  }
+  assert.ok(declares(blockFor('.lightbox-zoom-step'), 'border', '0'))
+  const select = blockFor('.settings-select')
+  assert.ok(declares(select, 'appearance', 'none'), 'the select is drawn by the sheet')
+  assert.ok(select.decls.some((d) => d.prop === 'background-image' && d.value.includes('var(--text-secondary)')), 'its chevron follows the theme')
+  // Anything that recolours a select must not use the shorthand, which would wipe the chevron.
+  for (const block of blocks.filter((b) => b.selector.includes('.settings-select'))) {
+    assert.ok(!block.decls.some((d) => d.prop === 'background'), `${block.selector} sets background-color, not background`)
+  }
+})
+
+test('hiding is the one global [hidden] rule, not a copy per element', () => {
+  // `[hidden] { display: none !important }` covers every element; twenty-six
+  // per-element copies had accumulated beside it, each one a place a future
+  // `display` change would look for and find nothing to edit.
+  const copies = blocks.filter((block) =>
+    block.selector !== '[hidden]' &&
+    block.selector.split(',').every((part) => part.trim().endsWith('[hidden]')) &&
+    block.decls.length === 1 && block.decls[0]!.prop === 'display' && block.decls[0]!.value === 'none')
+  assert.deepEqual(copies.map((block) => block.selector), [])
+  assert.ok(declares(blockFor('[hidden]'), 'display', 'none !important'))
+})
+
+test('brand text and metadata clear 4.5:1 on every surface they sit on', () => {
+  // The clay is ~3.1:1 on light paper: right for the spinner and the send
+  // button, too thin for a link or a running label, so light deepens a text rung
+  // of its own. Tertiary text was lifted in both themes for the same reason —
+  // it met 4.5 on the canvas and fell under it on a card or the frame.
+  for (const { name, tokens: palette } of THEMES) {
+    for (const surface of ['--surface-canvas', '--surface-card', '--surface-base']) {
+      for (const text of ['--accent-brand-text', '--text-tertiary']) {
+        const resolve = (token: string): string => {
+          const value = tokenValue(token, palette)
+          const alias = /^var\((--[a-z-]+)\)$/.exec(value)
+          return alias ? resolve(alias[1]!) : value
+        }
+        const ratio = contrast(resolve(text), resolve(surface))
+        assert.ok(ratio >= 4.5, `${name}: ${text} on ${surface} reads ${ratio.toFixed(2)}:1`)
+      }
+    }
+  }
+})
+
+test('scrollbars: drawn on Windows and Linux, the system’s own overlay on macOS', () => {
+  // Chromium 121+ ignores `::-webkit-scrollbar` on any element with
+  // `scrollbar-width` or `scrollbar-color` set, and a blanket `*` rule set both,
+  // so the drawn thumb was dead and the bar was not the width the sidebar's
+  // overhang is cut to. macOS keeps its overlay bars: any webkit style would
+  // force always-on classic ones.
+  assert.ok(!declarations.some((d) => d.prop === 'scrollbar-width' || d.prop === 'scrollbar-color'),
+    'a standard scrollbar property would switch the drawn thumb off')
+  const webkit = blocks.filter((block) => block.selector.includes('::-webkit-scrollbar'))
+  assert.ok(webkit.length >= 5)
+  for (const block of webkit) {
+    assert.ok(block.selector.startsWith(':root:not([data-platform="darwin"]) '), `${block.selector} must leave macOS's overlay bars alone`)
+  }
+  assert.ok(declares(blockFor(':root:not([data-platform="darwin"]) ::-webkit-scrollbar'), 'width', '10px'),
+    'the gutter --sidebar-scrollbar-overhang is measured against')
+  assert.ok(declares(blockFor(':root:not([data-platform="darwin"]) .transcript'), 'scrollbar-gutter', 'stable both-edges'),
+    'the reading column does not jump when its bar appears')
+})
+
+test('an empty list says so in one voice', () => {
+  // Nine "nothing here yet" lines in three colours and two sizes. They are all
+  // the same statement — metadata about a list — so they take metadata's rung
+  // and size; only the padding follows where each one sits.
+  for (const selector of [
+    '#tasks-empty', '.subagent-empty', '.sidebar-empty', '.project-empty', '.usage-empty',
+    '.branch-picker-empty, .project-picker-empty', '.plan-panel-empty', '.settings-empty', '.settings-model-empty',
+  ]) {
+    const block = blockFor(selector)
+    assert.ok(declares(block, 'color', 'var(--text-tertiary)'), `${selector} is tertiary`)
+    assert.ok(declares(block, 'font-size', 'var(--type-meta)'), `${selector} is meta-sized`)
+  }
+})
+
+test('a settings field is findable at rest', () => {
+  // In light the field's fill is one rung off the page; with the subtle hairline
+  // the edge was ~1.05:1 and the field all but vanished until focused.
+  assert.ok(declares(blockFor('.settings-input, .settings-select'), 'border', '1px solid var(--border-strong)'))
+})
+
+test('a focused drag handle lights its sash in the focus colour', () => {
+  // The two column handles joined the tab order; an outline round a 3px sliver
+  // read as a stray box, so focus draws the sash itself instead.
+  for (const side of ['sidebar', 'browser']) {
+    assert.ok(declares(blockFor(`#${side}-resizer:focus-visible`), 'outline', 'none'), `${side} drops the box outline`)
+    const sash = blockFor(`#${side}-resizer:focus-visible::after`)
+    assert.ok(declares(sash, 'opacity', '1'), `${side} shows its sash`)
+    assert.ok(declares(sash, 'background', 'var(--focus-ring)'), `${side} sash takes the ring colour`)
+  }
+})
+
+/**
+ * Glyphs are not icons. A ✕ or ← drawn as text takes the font's metrics, so it
+ * sat off-centre, changed weight between Inter and the CJK fallback, and
+ * differed between Windows and macOS. Every icon button draws `icons.ts`'s SVG
+ * now; this catches a text glyph handed to `button()` or written into the HTML.
+ */
+test('no button draws a text glyph where an icon belongs', () => {
+  const glyphs = /['"`][✕×←→↻＋⋯]['"`]/
+  for (const file of rendererFiles()) {
+    const source = stripComments(readFileSync(file, 'utf8'))
+    for (const call of source.matchAll(/button\(\s*'[^']*',\s*([^,]+),/g)) {
+      assert.doesNotMatch(call[1]!, glyphs, `${path.relative(rendererRoot, file)}: ${call[0]}`)
+    }
+  }
+  assert.doesNotMatch(html, /<button[^>]*>\s*[✕×←→↻＋⋯]\s*<\/button>/)
 })

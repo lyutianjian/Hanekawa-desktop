@@ -142,7 +142,7 @@ export function createTitleBarView(
         reconcile(lead, [rail, ...menus.map((entry) => entry.shell)])
         reconcile(container, [lead, center, sideGroup])
       }
-      const chord = view.menus.flatMap((menu) => menu.items).find((item) => item.action === 'toggle-sidebar')?.chord
+      const chord = view.railChord
       rail.title = `${view.sidebarCollapsed ? '展开侧栏' : '收起侧栏'}${chord ? `（${chord}）` : ''}`
       rail.setAttribute('aria-label', rail.title)
       reconcile(sideGroup, view.side.modes.map((mode) => sideButtons[mode]))
