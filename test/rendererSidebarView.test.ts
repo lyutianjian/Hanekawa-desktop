@@ -3,6 +3,7 @@ import test from 'node:test'
 
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
 import { createSidebarView } from '../src/desktop/renderer/dom/sidebarView.js'
+import { button } from '../src/desktop/renderer/dom/controls.js'
 import {
   SIDEBAR_COLLAPSE_FALLBACK_MS,
   sidebarHint,
@@ -1040,4 +1041,27 @@ test('a started project with no coordinator row is pinned as a button that reope
   assert.equal(open.text, 'app')
   stub.click(open.node)
   assert.deepEqual(intents, [{ kind: 'open-coordinator', projectRoot: '/w/app' }])
+})
+
+/**
+ * `button()` is shared by every view; it sits here beside the sidebar's retry
+ * button, the case that motivated the rule. A title that only repeats the visible
+ * text was a native tooltip over words already on screen; one that says more is
+ * the name a screen reader needs to tell this row's button from the next.
+ */
+test('a text button keeps a title only when it says more than the label', () => {
+  const stub = installDomStub()
+  try {
+    const titleOf = (view: StubView): string => (view.node as unknown as { title: string }).title
+    const plain = stub.inspect(button('dialog-btn', '跳过', '跳过', () => {}))
+    assert.equal(titleOf(plain), '')
+    assert.equal(plain.attributes.get('aria-label'), undefined)
+    const more = stub.inspect(button('sidebar-load-retry', '重试', '再次读取会话列表', () => {}))
+    assert.equal(titleOf(more), '再次读取会话列表')
+    assert.equal(more.attributes.get('aria-label'), '再次读取会话列表')
+    const iconOnly = stub.inspect(button('icon-btn', '', '关闭', () => {}))
+    assert.equal(iconOnly.attributes.get('aria-label'), '关闭')
+  } finally {
+    stub.uninstall()
+  }
 })

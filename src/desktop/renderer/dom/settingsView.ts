@@ -1,5 +1,5 @@
 import { el, reconcile, replace, show } from './dom.js'
-import { button, multiSelectField, pillSelect, selectField, textField, toggleField, updateToggleField, type ToggleOptions } from './controls.js'
+import { button, multiSelectField, nameButton, pillSelect, selectField, textField, toggleField, updateToggleField, type ToggleOptions } from './controls.js'
 import { icon, type IconName } from './icons.js'
 import { onPressOutside } from './dismiss.js'
 import { trapTab } from './focus.js'
@@ -313,8 +313,7 @@ export function createSettingsView(
     made.className = className
     const text = made.querySelector('.btn-label')
     if (text && text.textContent !== label) text.textContent = label
-    made.title = options.title ?? label
-    made.setAttribute('aria-label', made.title)
+    nameButton(made, label, options.title ?? label)
     made.disabled = options.enabled === false
     return made
   }

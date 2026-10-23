@@ -934,7 +934,9 @@ test('an edit step carries its patch counts in the head and a real diff below', 
     ['diff-row', 'ctx'],
   ])
   assert.deepEqual(diff?.children[2]?.children.map((part) => [part.className, part.text]), [
-    ['gutter', '  3     -'],
+    // Line numbers pad to the widest one in the hunk (here one digit), not a
+    // fixed three, so a short diff does not open with a wide blank margin.
+    ['gutter', '3   -'],
     ['text', 'three'],
   ])
 })
