@@ -31,9 +31,20 @@ export type SurfaceActivate = (action: SurfaceAction) => void
 
 export function createSurfacePanel(container: HTMLElement, onActivate: SurfaceActivate): SurfacePanel {
   let open = false
-  const presence = createPresence(container, { onClosed: () => replace(container) })
+  // The surface rows as last painted. Arrowing through a picker changes only
+  // the highlight, so rows that read the same keep their nodes; a click reads
+  // its action from `actions`, which every render refreshes.
+  let painted: { signature: string; nodes: HTMLElement[] } | undefined
+  let actions: Array<SurfaceAction | undefined> = []
+  const presence = createPresence(container, {
+    onClosed: () => {
+      replace(container)
+      painted = undefined
+    },
+  })
 
   const paint = (title: string, children: HTMLElement[], surface?: string) => {
+    painted = undefined
     if (surface) container.dataset.surface = surface
     else delete container.dataset.surface
     replace(container, el('h2', undefined, title), ...children)
@@ -43,6 +54,22 @@ export function createSurfacePanel(container: HTMLElement, onActivate: SurfaceAc
 
   return {
     showSurface(view, selectedIndex) {
+      actions = view.rows.map((row) => row.action)
+      const signature = JSON.stringify([
+        view.title, view.surface, view.emptyMessage,
+        view.rows.map((row) => [row.id, row.label, row.disabledReason ?? row.detail, row.current, row.disabled, row.action !== undefined]),
+      ])
+      if (painted?.signature === signature) {
+        painted.nodes.forEach((node, index) => {
+          if (!actions[index]) return
+          node.classList.toggle('selected', index === selectedIndex)
+          node.setAttribute('aria-selected', String(index === selectedIndex))
+        })
+        presence.set(true)
+        open = true
+        painted.nodes[selectedIndex]?.scrollIntoView({ block: 'nearest' })
+        return
+      }
       const rows = view.rows.map((row, index) => {
         const classes = ['row']
         if (row.current) classes.push('current')
@@ -63,7 +90,10 @@ export function createSurfacePanel(container: HTMLElement, onActivate: SurfaceAc
         if (action) {
           node.setAttribute('role', 'option')
           node.setAttribute('aria-selected', String(index === selectedIndex))
-          node.addEventListener('click', () => onActivate(action))
+          node.addEventListener('click', () => {
+            const current = actions[index]
+            if (current) onActivate(current)
+          })
         }
         return node
       })
@@ -72,6 +102,7 @@ export function createSurfacePanel(container: HTMLElement, onActivate: SurfaceAc
         rows.length > 0 ? rows : [el('div', 'row', el('span', 'value', view.emptyMessage))],
         view.surface,
       )
+      painted = { signature, nodes: rows }
       // Arrowing past the panel's edge kept the highlight moving out of sight.
       rows.find((node) => node.classList.contains('selected'))?.scrollIntoView({ block: 'nearest' })
     },

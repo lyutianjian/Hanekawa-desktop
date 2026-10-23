@@ -28,7 +28,7 @@ import {
 } from '../model/transcript.js'
 import { absoluteTime, footerFacts, relativeTime, splitTurnFooters, type TurnFooter } from '../model/turnFooter.js'
 import { collectTurnEdits, type TurnEdits } from '../model/turnEdits.js'
-import { anchorPadding, anchorTopGap, TRANSCRIPT_PAD_VARIABLE, viewportPolicy } from '../model/transcriptAnchor.js'
+import { anchorPadding, anchorTopGap, readingCandidate, TRANSCRIPT_PAD_VARIABLE, viewportPolicy } from '../model/transcriptAnchor.js'
 import { PRESENCE_FALLBACK_MS } from '../model/presence.js'
 import { splitFileMentions } from '../model/userMessage.js'
 import { splitAttachedPaths } from '../../../media/attachedPaths.js'
@@ -245,14 +245,13 @@ export function createTranscriptView(
     const viewport = box(container)
     if (!viewport) return undefined
     const candidates = [...column.querySelectorAll<HTMLElement>('.step-head, .run-line, p, .md-code, .item')]
-    const node = candidates.find((candidate) => {
-      const rect = box(candidate)
-      return rect && rect.top >= viewport.top && rect.top < viewport.bottom
-    }) ?? candidates.find((candidate) => {
-      const rect = box(candidate)
-      return rect && rect.bottom > viewport.top && rect.top < viewport.bottom
-    })
-    return positionOf(node)
+    const boxes = new Map<number, ReturnType<typeof box>>()
+    const boxAt = (index: number): ReturnType<typeof box> => {
+      if (!boxes.has(index)) boxes.set(index, box(candidates[index]!))
+      return boxes.get(index)
+    }
+    const index = readingCandidate(candidates.length, boxAt, viewport)
+    return positionOf(index === undefined ? undefined : candidates[index])
   }
 
   function keepReadingPosition(position: ReadingPosition | undefined): void {

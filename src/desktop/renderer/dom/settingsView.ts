@@ -123,6 +123,14 @@ export function createSettingsView(
   const nav = el('div', 'settings-nav')
   nav.id = 'settings-nav'
   const navList = el('div', 'settings-nav-list')
+  /**
+   * The nav as last painted. Every keystroke in a field renders the screen, and
+   * the nav used to be rebuilt each time; now it is rebuilt only when its
+   * groups or labels change, and a category switch moves `.selected` and
+   * `aria-current` on the kept buttons — which also keeps focus on the one
+   * just pressed.
+   */
+  let navPainted: { signature: string; items: Array<{ node: HTMLElement; category: SettingsNavItem['category'] }> } | undefined
   const close = button('settings-nav-close', '返回会话', '关闭设置（Esc）', () =>
     onIntent({ kind: 'close' }),
     { icon: 'arrow-left' },
@@ -686,17 +694,29 @@ export function createSettingsView(
       // Read before the column is rebuilt: the button that opened a form may not survive it.
       const activeLabel = document.activeElement?.getAttribute('aria-label') ?? undefined
 
-      replace(
-        navList,
-        ...view.navGroups.map((group) =>
-          el(
-            'div',
-            'settings-nav-group',
-            el('div', 'settings-nav-group-label', group.label),
-            ...group.items.map((item) => navItemNode(item, onIntent)),
+      const navSignature = JSON.stringify(view.navGroups.map((group) => [group.label, group.items.map((item) => [item.category, item.label])]))
+      if (navPainted?.signature === navSignature) {
+        const selected = new Set(view.navGroups.flatMap((group) => group.items.filter((item) => item.selected).map((item) => item.category)))
+        for (const { node, category } of navPainted.items) markNavItem(node, selected.has(category))
+      } else {
+        const items: Array<{ node: HTMLElement; category: SettingsNavItem['category'] }> = []
+        replace(
+          navList,
+          ...view.navGroups.map((group) =>
+            el(
+              'div',
+              'settings-nav-group',
+              el('div', 'settings-nav-group-label', group.label),
+              ...group.items.map((item) => {
+                const node = navItemNode(item, onIntent)
+                items.push({ node, category: item.category })
+                return node
+              }),
+            ),
           ),
-        ),
-      )
+        )
+        navPainted = { signature: navSignature, items }
+      }
 
       // A confirmation is drawn inside the card that owns it, so the answer to a
       // click appears where the click was. One whose card the search filtered
@@ -856,14 +876,20 @@ function navItemNode(
   onIntent: (intent: SettingsIntent) => void,
 ): HTMLButtonElement {
   const node = button(
-    item.selected ? 'settings-nav-item selected' : 'settings-nav-item',
+    'settings-nav-item',
     item.label,
     item.label,
     () => onIntent({ kind: 'select-category', category: item.category }),
   )
-  // The selected category is said, not only drawn: `.selected` is a fill.
-  if (item.selected) node.setAttribute('aria-current', 'page')
+  markNavItem(node, item.selected)
   return node
+}
+
+/** The selected category is said, not only drawn: `.selected` is a fill. */
+function markNavItem(node: HTMLElement, selected: boolean): void {
+  node.classList.toggle('selected', selected)
+  if (selected) node.setAttribute('aria-current', 'page')
+  else node.removeAttribute('aria-current')
 }
 
 const DIALOG_TITLE_ID = 'settings-dialog-title'

@@ -154,3 +154,51 @@ export function viewportPolicy(input: {
       return 'preserve-anchor'
   }
 }
+
+export interface VerticalBox {
+  readonly top: number
+  readonly bottom: number
+}
+
+/**
+ * Which reading candidate holds the reader's place: the first whose top lies
+ * inside the viewport, else the first that straddles it.
+ *
+ * Candidates come in document order, so their tops only grow, and the first
+ * case is a binary search: a long session used to pay one layout read per
+ * candidate on every scroll event. `boxAt` is undefined for a node with no box
+ * (hidden, or a test without layout); those are skipped, never compared. The
+ * straddling fallback stays a scan — it only runs when no line starts on
+ * screen, which takes one block taller than the viewport.
+ */
+export function readingCandidate(
+  count: number,
+  boxAt: (index: number) => VerticalBox | undefined,
+  viewport: VerticalBox,
+): number | undefined {
+  const boxed = (from: number, to: number): number | undefined => {
+    for (let index = from; index < to; index++) if (boxAt(index)) return index
+    return undefined
+  }
+  // Invariant: every boxed index below `low` starts above the viewport, and
+  // every boxed index from `high` on starts at or below its top.
+  let low = 0
+  let high = count
+  while (low < high) {
+    const middle = (low + high) >>> 1
+    const probe = boxed(middle, high)
+    if (probe === undefined) {
+      high = middle
+      continue
+    }
+    if (boxAt(probe)!.top < viewport.top) low = probe + 1
+    else high = middle
+  }
+  const first = boxed(low, count)
+  if (first !== undefined && boxAt(first)!.top < viewport.bottom) return first
+  for (let index = 0; index < count; index++) {
+    const rect = boxAt(index)
+    if (rect && rect.bottom > viewport.top && rect.top < viewport.bottom) return index
+  }
+  return undefined
+}

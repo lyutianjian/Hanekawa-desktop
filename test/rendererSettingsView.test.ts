@@ -1024,3 +1024,22 @@ test('typing in mcp form fields keeps input nodes, preserving carets', (t) => {
   assert.equal(afterName?.node, nameInput.node, 'the name input element was kept across typing')
 })
 
+
+test('the nav keeps its buttons across renders and moves the selection on them', (t) => {
+  // Every keystroke in a field renders the screen, and the nav used to be
+  // rebuilt each time — the button just pressed was replaced under focus.
+  const { view, apply } = mount(t)
+  const items = () => findAll(child(view(), 'settings-nav'), 'settings-nav-item')
+  const selectedAt = () => items().findIndex((item) => item.attributes.get('aria-current') === 'page')
+  apply({ kind: 'select-category', category: 'general' })
+  const before = items().map((item) => item.node)
+  const was = selectedAt()
+
+  apply({ kind: 'select-category', category: 'provider' })
+  const after = items()
+  assert.deepEqual(after.map((item) => item.node), before, 'the buttons are kept')
+  assert.notEqual(selectedAt(), was)
+  assert.equal(after.filter((item) => item.attributes.get('aria-current') === 'page').length, 1)
+  assert.equal(after.filter((item) => item.classes.includes('selected')).length, 1)
+  assert.ok(after[selectedAt()]!.classes.includes('selected'))
+})

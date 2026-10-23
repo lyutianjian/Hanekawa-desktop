@@ -42,7 +42,10 @@ export function createRewindView(
   panel: HTMLElement,
   onIntent: RewindActivate,
 ): RewindPanel {
-  const presence = createModalPresence(container, panel, () => replace(panel))
+  const presence = createModalPresence(container, panel, () => {
+    replace(panel)
+    painted = undefined
+  })
   panel.setAttribute('tabindex', '-1')
   container.addEventListener('keydown', (event) => trapTab(panel, event))
   let open = false
@@ -50,6 +53,12 @@ export function createRewindView(
   let returnTo: HTMLElement | undefined
   /** Mid-decision: files are being reverted or a summary generated. */
   let busy = false
+  /**
+   * The checkpoint list as last painted, keyed by everything but the cursor.
+   * Arrowing moves only the cursor, so it moves two classes on kept nodes
+   * rather than rebuilding the panel per key press.
+   */
+  let painted: { signature: string; list: HTMLElement; rows: HTMLElement[] } | undefined
 
   // The scrim, and only the scrim: `event.target === container` is what tells a
   // press on the backdrop from one that started inside the card and bubbled.
@@ -72,9 +81,17 @@ export function createRewindView(
       }
       // A repaint replaces the focused list; put focus back on its successor,
       // or on the panel when the screen it lived on is gone.
+      const signature = view.screen === 'select'
+        ? JSON.stringify({ ...view, rows: view.rows.map(({ selected: _selected, ...row }) => row) })
+        : undefined
+      if (!opening && painted !== undefined && signature === painted.signature) {
+        moveCursor(painted, view)
+        return
+      }
       const held = heldFocusKey(panel)
       const holding = opening || held !== undefined || document.activeElement === panel
       const rows = view.screen === 'select' ? selectScreen(view, onIntent) : undefined
+      painted = rows && signature !== undefined ? { signature, list: rows.list, rows: rows.nodes } : undefined
       replace(
         panel,
         el('h2', 'title', view.title),
@@ -123,16 +140,31 @@ export function createRewindView(
 
 const ROWS_FOCUS_KEY = 'rewind-rows'
 
+function moveCursor(painted: { list: HTMLElement; rows: readonly HTMLElement[] }, view: RewindViewModel): void {
+  let cursor: HTMLElement | undefined
+  for (const [index, row] of view.rows.entries()) {
+    const node = painted.rows[index]
+    if (!node) continue
+    node.classList.toggle('selected', row.selected)
+    node.setAttribute('aria-selected', String(row.selected))
+    if (row.selected) cursor = node
+  }
+  if (cursor) painted.list.setAttribute('aria-activedescendant', cursor.id)
+  else painted.list.removeAttribute('aria-activedescendant')
+  cursor?.scrollIntoView({ block: 'nearest' })
+}
+
 function selectScreen(
   view: RewindViewModel,
   onIntent: RewindActivate,
-): { list: HTMLElement; cursor: HTMLElement | undefined } {
+): { list: HTMLElement; cursor: HTMLElement | undefined; nodes: HTMLElement[] } {
   const list = el('div', 'rows')
   list.setAttribute('role', 'listbox')
   list.setAttribute('aria-label', '检查点')
   list.setAttribute('tabindex', '0')
   list.dataset.focusKey = ROWS_FOCUS_KEY
   let cursor: HTMLElement | undefined
+  const nodes: HTMLElement[] = []
   for (const [index, row] of view.rows.entries()) {
     const node = el('div', `row${row.selected ? ' selected' : ''}${row.isCurrent ? ' current' : ''}`)
     node.id = `rewind-row-${index}`
@@ -147,8 +179,9 @@ function selectScreen(
     if (row.detail.length > 0) node.appendChild(el('span', 'value', row.detail))
     node.addEventListener('click', () => onIntent({ kind: 'select-row', id: row.id }))
     list.appendChild(node)
+    nodes.push(node)
   }
-  return { list, cursor }
+  return { list, cursor, nodes }
 }
 
 function confirmScreen(view: RewindViewModel): HTMLElement {

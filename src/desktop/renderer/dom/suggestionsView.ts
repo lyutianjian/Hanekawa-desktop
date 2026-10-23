@@ -28,23 +28,47 @@ export function createSuggestionsView(
   onSelect: SuggestionSelect,
   field?: HTMLElement,
 ): SuggestionsView {
-  const presence = createPresence(container, { onClosed: () => replace(container) })
+  // The rows as last painted. Arrowing changes only the highlight, so a list
+  // whose rows read the same keeps its nodes and moves two classes, instead
+  // of rebuilding every row per key press.
+  let painted: { signature: string; nodes: HTMLElement[] } | undefined
+  const presence = createPresence(container, {
+    onClosed: () => {
+      replace(container)
+      painted = undefined
+    },
+  })
   const point = (id: string | undefined): void => {
     if (!field) return
     if (id === undefined) field.removeAttribute('aria-activedescendant')
     else field.setAttribute('aria-activedescendant', id)
+  }
+  const highlight = (nodes: readonly HTMLElement[], selectedIndex: number): HTMLElement | undefined => {
+    nodes.forEach((node, index) => {
+      node.classList.toggle('selected', index === selectedIndex)
+      node.setAttribute('aria-selected', String(index === selectedIndex))
+    })
+    return nodes[selectedIndex]
   }
   return {
     render(state) {
       const rows = completionRows(state)
       if (rows.length === 0) {
         point(undefined)
+        painted = undefined
         presence.set(false)
         return
       }
       const selectedIndex = state.kind === 'none' ? -1 : state.selectedIndex
+      const signature = JSON.stringify(rows.map((row) => [row.displayText, row.description ?? '']))
+      if (painted?.signature === signature) {
+        const selected = highlight(painted.nodes, selectedIndex)
+        point(selected?.id)
+        selected?.scrollIntoView({ block: 'nearest' })
+        return
+      }
       let selected: HTMLElement | undefined
-      replace(container, ...rows.map((row, index) => {
+      const nodes = rows.map((row, index) => {
         const node = el('div', `suggestion${index === selectedIndex ? ' selected' : ''}`)
         node.id = `suggestion-${index}`
         if (index === selectedIndex) selected = node
@@ -61,7 +85,9 @@ export function createSuggestionsView(
           onSelect(index)
         })
         return node
-      }))
+      })
+      replace(container, ...nodes)
+      painted = { signature, nodes }
       presence.set(true)
       point(selected?.id)
       // The list scrolls inside a fixed height; arrowing past its edge used to
