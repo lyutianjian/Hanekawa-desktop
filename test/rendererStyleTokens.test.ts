@@ -120,6 +120,12 @@ const declarations = blocks.flatMap((block) => block.decls)
  */
 const LIGHT_SELECTOR = ':root[data-theme="light"]'
 const TOKEN_SELECTORS = new Set([':root', LIGHT_SELECTOR])
+/**
+ * The per-OS font stacks: `:root` narrowed by the `[data-platform]` that
+ * `dom/windowChrome.ts` writes. Fonts only — "the platform blocks narrow the
+ * font stacks and nothing else" below holds them to that.
+ */
+const PLATFORM_SELECTORS = [':root[data-platform="darwin"]', ':root[data-platform="win32"]'] as const
 
 function tokensForSelector(selector: string): Map<string, string> {
   return new Map(
@@ -439,17 +445,24 @@ test('the palette is the one that was agreed, value for value', () => {
       '--font-ui':
         '"Inter Variable", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, "PingFang SC", "Microsoft YaHei UI", sans-serif',
       '--font-mono':
-        '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace',
+        '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, Consolas, "Cascadia Mono", "PingFang SC", "Microsoft YaHei UI", "Noto Sans Mono CJK SC", monospace',
       '--font-serif':
-        '"Source Serif 4 Variable", Georgia, "Songti SC", "Noto Serif CJK SC", serif',
+        '"Source Serif 4 Variable", Georgia, "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", serif',
       '--type-display': '28px',
       '--type-title': '20px',
+      '--type-heading': '17px',
       '--type-body': '15px',
       '--type-reading': '14px',
       '--type-ui': '14px',
-      '--type-meta': '12.5px',
+      '--type-dense': '13px',
+      '--type-meta': '12px',
       '--type-micro': '11px',
       '--type-code': '13px',
+      '--leading-tight': '1.25',
+      '--leading-heading': '1.35',
+      '--leading-ui': '1.5',
+      '--leading-dense': '1.6',
+      '--leading-prose': '1.7',
     },
   )
 
@@ -572,17 +585,24 @@ test('the palette is the one that was agreed, value for value', () => {
       '--font-ui':
         '"Inter Variable", "Segoe UI Variable Text", "Segoe UI", -apple-system, system-ui, "PingFang SC", "Microsoft YaHei UI", sans-serif',
       '--font-mono':
-        '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Cascadia Mono", monospace',
+        '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, Consolas, "Cascadia Mono", "PingFang SC", "Microsoft YaHei UI", "Noto Sans Mono CJK SC", monospace',
       '--font-serif':
-        '"Source Serif 4 Variable", Georgia, "Songti SC", "Noto Serif CJK SC", serif',
+        '"Source Serif 4 Variable", Georgia, "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", serif',
       '--type-display': '28px',
       '--type-title': '20px',
+      '--type-heading': '17px',
       '--type-body': '15px',
       '--type-reading': '14px',
       '--type-ui': '14px',
-      '--type-meta': '12.5px',
+      '--type-dense': '13px',
+      '--type-meta': '12px',
       '--type-micro': '11px',
       '--type-code': '13px',
+      '--leading-tight': '1.25',
+      '--leading-heading': '1.35',
+      '--leading-ui': '1.5',
+      '--leading-dense': '1.6',
+      '--leading-prose': '1.7',
     },
   )
 })
@@ -628,12 +648,19 @@ test('the light block overrides only colours, and adds no token the dark palette
     '--font-serif',
     '--type-display',
     '--type-title',
+    '--type-heading',
     '--type-body',
     '--type-reading',
     '--type-ui',
+    '--type-dense',
     '--type-meta',
     '--type-micro',
     '--type-code',
+    '--leading-tight',
+    '--leading-heading',
+    '--leading-ui',
+    '--leading-dense',
+    '--leading-prose',
   ]
   for (const name of THEME_INDEPENDENT) {
     assert.ok(
@@ -943,7 +970,7 @@ test('everything read character by character stays monospaced', () => {
     // the sheet to one spelling per stack.
     if (prop.startsWith('--font-')) {
       assert.ok(
-        TOKEN_SELECTORS.has(selector),
+        TOKEN_SELECTORS.has(selector) || (PLATFORM_SELECTORS as readonly string[]).includes(selector),
         `${selector} declares ${prop} outside the token blocks; a font stack belongs to :root`,
       )
     }
@@ -979,6 +1006,226 @@ test('the serif is display-only, and only in the whitelisted spots', () => {
   for (const selector of SERIF_WHITELIST) {
     assert.ok(seen.has(selector), `${selector} no longer uses the serif; drop it from the whitelist`)
   }
+})
+
+test('the platform blocks narrow the font stacks and nothing else', () => {
+  // Each OS gets its own faces so a Windows machine with PingFang installed
+  // still sets Chinese in YaHei and a Mac with YaHei still uses PingFang — the
+  // cross-platform stack in `:root` would hand either to whichever it reached
+  // first. Pinned value for value like the palette: a stack is a decision.
+  assert.deepEqual(Object.fromEntries(tokensForSelector(PLATFORM_SELECTORS[0])), {
+    '--font-ui': '"Inter Variable", -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif',
+    '--font-mono': '"JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, "PingFang SC", monospace',
+    '--font-serif': '"Source Serif 4 Variable", Georgia, "PingFang SC", "Hiragino Sans GB", serif',
+  })
+  assert.deepEqual(Object.fromEntries(tokensForSelector(PLATFORM_SELECTORS[1])), {
+    '--font-ui':
+      '"Inter Variable", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif',
+    '--font-mono': '"JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace',
+    '--font-serif': '"Source Serif 4 Variable", Georgia, "Microsoft YaHei UI", "Microsoft YaHei", serif',
+  })
+
+  // Fonts only. Sizes stay one ladder on both platforms, so a layout measured on
+  // one is the layout on the other, and colour belongs to the theme blocks.
+  for (const selector of PLATFORM_SELECTORS) {
+    for (const block of blocks.filter((candidate) => candidate.selector === selector)) {
+      for (const { prop } of block.decls) {
+        assert.ok(prop.startsWith('--font-'), `${selector} declares ${prop}; the platform blocks carry fonts only`)
+      }
+    }
+  }
+
+  // Every stack, the defaults included, names a CJK face before its generic. A
+  // Chinese run walks the list past each Latin-only face; reaching the generic
+  // first hands it to whatever the OS maps that to — SimSun under `serif`,
+  // NSimSun under `monospace` on Windows, Songti on macOS.
+  const CJK_FACE = /"(?:PingFang SC|Hiragino Sans GB|Microsoft YaHei(?: UI)?|Noto Sans(?: Mono)? CJK SC)"/
+  for (const selector of [':root', ...PLATFORM_SELECTORS]) {
+    for (const [name, stack] of tokensForSelector(selector)) {
+      if (!name.startsWith('--font-')) continue
+      const families = stack.split(',').map((family) => family.trim())
+      const generic = families.at(-1)
+      assert.ok(generic === 'sans-serif' || generic === 'serif' || generic === 'monospace', `${selector} ${name} ends in a generic`)
+      assert.ok(
+        families.slice(0, -1).some((family) => CJK_FACE.test(family)),
+        `${selector} ${name} reaches ${generic} with no CJK face before it`,
+      )
+      // The serif's Chinese is the platform sans, never a Song: a heading that
+      // breaks into Song strokes mid-line reads as two typefaces.
+      assert.doesNotMatch(stack, /Songti|SimSun|Serif CJK/, `${selector} ${name} falls back to a Song face`)
+    }
+  }
+
+  // Each platform's stacks name none of the other's faces.
+  const MAC_ONLY = /PingFang|Hiragino|-apple-system|SF Mono|SFMono|Menlo/
+  const WINDOWS_ONLY = /YaHei|Segoe|Consolas|Cascadia/
+  for (const [name, stack] of tokensForSelector(PLATFORM_SELECTORS[0])) {
+    assert.doesNotMatch(stack, WINDOWS_ONLY, `the macOS ${name} names a Windows face`)
+  }
+  for (const [name, stack] of tokensForSelector(PLATFORM_SELECTORS[1])) {
+    assert.doesNotMatch(stack, MAC_ONLY, `the Windows ${name} names a macOS face`)
+  }
+
+  // Greyscale antialiasing on macOS only — what AppKit draws with; Chromium's
+  // default there thickens light-on-dark text. Windows ignores the property, so
+  // an unscoped rule would only be a claim it never honours.
+  const smoothing = declarations.filter((decl) => decl.prop === '-webkit-font-smoothing')
+  assert.deepEqual(
+    smoothing.map(({ selector, value }) => `${selector} ${value}`),
+    [':root[data-platform="darwin"] body antialiased'],
+  )
+})
+
+/**
+ * The rules allowed `--type-micro`, the 11px rung. Each shows figures, Latin or
+ * a key cap and nothing else: 12px is the floor for Chinese, below which
+ * Microsoft YaHei's strokes close up at 100% scaling. A rule whose text can
+ * carry Chinese takes `--type-meta`. Add to this list only after tracing every
+ * string the rule's element can show.
+ */
+const MICRO_TEXT = [
+  '.titlebar-side-badge', // a thread count
+  '.titlebar-menu-chord', // Ctrl+B, ⌘B
+  '.sidebar-hint-chord',
+  '#rewind-panel .kbd, #composer-request .kbd',
+  '.step-tag', // a subagent's type name
+  '.attachment-remove', // the ✕ glyph
+  '.ctx-num', // token counts and percentages
+  '.ask-chip', // "2/3"
+  '.md .md-code-lang', // a fence's language tag
+  '.settings-provider-badge', // the provider protocol name
+  '.toast-repeats', // ×3
+]
+
+test('sizes come from the ladder, and the 11px rung carries no Chinese', () => {
+  // Whole pixels only: at 100% scaling Windows hints YaHei to the pixel grid,
+  // and the old 12.5px rung had no grid to snap to.
+  const LADDER = [...tokens].filter(([name]) => name.startsWith('--type-'))
+  assert.equal(LADDER.length, 10)
+  for (const [name, value] of LADDER) assert.match(value, /^\d+px$/, `${name} is not a whole pixel`)
+
+  // Every size names a rung. `inherit` lets a button take its row's size;
+  // `calc(1em - 1px)` is inline code one pixel under the prose around it, which
+  // stays a whole pixel because the prose is. `.file-badge` is the one literal:
+  // its type is a pictogram sized to its tile (see its rule).
+  const SIZE = /^(?:var\(--type-[a-z]+\)|inherit|calc\(1em - 1px\))$/
+  const micro = new Set<string>()
+  for (const { selector, prop, value } of declarations) {
+    if (prop === 'font-size') {
+      assert.ok(
+        SIZE.test(value) || (selector === '.file-badge' && value === '10px'),
+        `${selector} { font-size: ${value} } is off the ladder`,
+      )
+    }
+    if (prop === 'font' && value !== 'inherit' && selector !== ':root') {
+      assert.match(value, /var\(--type-[a-z]+\)\s*\//, `${selector} { font: ${value} } must take its size from the ladder`)
+    }
+    if ((prop === 'font-size' || prop === 'font') && value.includes('var(--type-micro)')) micro.add(selector)
+  }
+  assert.deepEqual([...micro].sort(), [...MICRO_TEXT].sort(), 'the 11px rung is for figures, Latin and key caps only')
+
+  // The conversation steps its chrome and code down one rung, and is the only
+  // rule that re-points a rung. Code drops to 12px there to stay one step under
+  // the 13px rows around it.
+  const transcript = blockFor('.transcript')
+  assert.ok(declares(transcript, '--type-ui', 'var(--type-dense)'))
+  assert.ok(declares(transcript, '--type-code', '12px'))
+  for (const { selector, prop } of declarations) {
+    if (!prop.startsWith('--type-') || selector === ':root') continue
+    assert.equal(selector, '.transcript', `${selector} re-points ${prop}; only the conversation steps the ladder down`)
+  }
+
+  // Markdown headings climb one rung each. The old 1.35/1.2/1.08em steps sat so
+  // close that h2 and h3 were indistinguishable at 14px.
+  assert.ok(declares(blockFor('.md h1'), 'font-size', 'var(--type-title)'))
+  assert.ok(declares(blockFor('.md h2'), 'font-size', 'var(--type-heading)'))
+  assert.ok(declares(blockFor('.md h3'), 'font-size', 'var(--type-body)'))
+  assert.ok(declares(blockFor('.md h4, .md h5, .md h6'), 'font-size', 'var(--type-reading)'))
+})
+
+test('weights are 400 and 600, and mono stays on the weights it ships', () => {
+  // Microsoft YaHei has no Medium: a 500 label set Inter in Medium and its
+  // Chinese in Regular, two weights in one word on Windows. 500 survives only
+  // where no Chinese can appear — the usage card's figures — and on the
+  // JetBrains Mono badge, whose bundled faces are 400 and 500 (a mono 600 would
+  // be Chromium's synthetic bold).
+  const MEDIUM = ['.usage-cell .usage-value', '.file-badge']
+  const medium: string[] = []
+  for (const { selector, prop, value } of declarations) {
+    if (prop === 'font-weight') {
+      assert.ok(['400', '500', '600'].includes(value), `${selector} { font-weight: ${value} }`)
+      if (value === '500') medium.push(selector)
+    }
+    if (prop === 'font' && /^\d/.test(value)) {
+      assert.match(value, /^(?:400|600) /, `${selector} { font: ${value} } takes a weight off the pair`)
+    }
+  }
+  assert.deepEqual(medium.sort(), MEDIUM.sort(), '500 is for figures and the mono badge only')
+
+  for (const block of blocks) {
+    if (!declares(block, 'font-family', 'var(--font-mono)')) continue
+    assert.ok(!declares(block, 'font-weight', '600'), `${block.selector} sets mono at 600, which is synthesized`)
+  }
+})
+
+test('line heights are a leading token or a box height', () => {
+  // Five leadings, chosen by what the text does (see the tokens' comment). A
+  // bare number would be a sixth nobody chose; `1` is a glyph box (a key cap, a
+  // ✕), and a pixel value is a row height, not a leading.
+  for (const { selector, prop, value } of declarations) {
+    if (prop !== 'line-height') continue
+    assert.ok(
+      /^var\(--leading-[a-z]+\)$/.test(value) || value === '1' || /^\d+px$/.test(value),
+      `${selector} { line-height: ${value} } is neither a leading token nor a box height`,
+    )
+  }
+
+  // Chinese has no ascenders or descenders to open the gap between lines, so a
+  // paragraph of it under 1.6 reads as a block. These are the surfaces that
+  // wrap several lines of it.
+  const WRAPS = {
+    '.transcript .item': 'prose',
+    '.coordinator-welcome': 'prose',
+    '.toast': 'dense',
+    '.transcript .item.receipt': 'dense',
+    '.transcript .item.turn-failure': 'dense',
+    '#composer-request': 'dense',
+    '.plan-panel-body': 'dense',
+    '#rewind-panel': 'dense',
+    '.md .md-code': 'dense',
+    '.command-output': 'dense',
+  }
+  for (const [selector, leading] of Object.entries(WRAPS)) {
+    assert.ok(
+      declares(blockFor(selector), 'line-height', `var(--leading-${leading})`),
+      `${selector} must take --leading-${leading}`,
+    )
+  }
+})
+
+test('no tracking on Chinese, and autospace where prose mixes scripts', () => {
+  // Letter-spacing opens Chinese into a row of separate characters; the three
+  // headings that carried 0.02em lost it. The badge's negative tracking is its
+  // pictogram's fit (four mono capitals in a 24px tile), never Chinese.
+  assert.deepEqual(
+    declarations.filter((decl) => decl.prop === 'letter-spacing').map(({ selector, value }) => `${selector} ${value}`),
+    ['.file-badge -0.02em'],
+  )
+
+  // `text-autospace` adds the gap between Chinese and Latin that copy written
+  // without spaces lacks, on the surfaces that read as prose; text that already
+  // has the space gains nothing extra. Code turns it back off: an inserted gap
+  // would push a mono column out of line.
+  const autospace = Object.fromEntries(
+    declarations.filter((decl) => decl.prop === 'text-autospace').map(({ selector, value }) => [selector, value]),
+  )
+  assert.deepEqual(autospace, {
+    '.md': 'normal',
+    '#composer-request': 'normal',
+    '#rewind-panel': 'normal',
+    '.md .md-inline-code': 'no-autospace',
+    '.md .md-code': 'no-autospace',
+  })
 })
 
 test('the canvas is a flush clipped pane divided by a hairline', () => {
@@ -1360,8 +1607,8 @@ test('the readouts draw their own rounded hover card with measured typography', 
     'aligned figures keep the key-value rows readable',
   )
   assert.ok(
-    declares(blockFor('.hover-card-note'), 'font-size', 'var(--type-micro)'),
-    'the reserve note stays metadata-sized',
+    declares(blockFor('.hover-card-note'), 'font-size', 'var(--type-meta)'),
+    'the reserve note stays metadata-sized — meta, not micro: it is a Chinese sentence',
   )
 })
 

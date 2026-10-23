@@ -294,34 +294,66 @@
      each platform's own best answer, so Latin runs in Inter and Chinese in the
      system font by decision, not by omission. The family names are the ones
      `fonts.css` registers — fontsource's variable faces are named "… Variable",
-     not the upstream family name. */
+     not the upstream family name.
+
+     These three are the cross-platform defaults: Linux, and a document not yet
+     told its platform. `:root[data-platform]` below narrows each to one OS's
+     own faces. Every stack names a CJK face *before* its generic family: a
+     Chinese run walks the list past every Latin-only face, and a generic
+     reached first hands it to whatever the OS maps that generic to — SimSun
+     under `serif`, NSimSun under `monospace` on Windows. */
   --font-ui: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", -apple-system,
              system-ui, "PingFang SC", "Microsoft YaHei UI", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas,
-               "Cascadia Mono", monospace;
-  /* Display serif, whitelisted to two kinds of spot — the
-     settings section titles, the two dialog titles (design_guidance 三.4) —
-     everything else stays sans so mixed CJK never drops into a Songti. The
-     family name is the one `fonts.css` registers: fontsource's variable faces
-     are named "… Variable", not the upstream family name. */
-  --font-serif: "Source Serif 4 Variable", Georgia, "Songti SC", "Noto Serif CJK SC", serif;
+  /* `ui-monospace` is gone: Chromium does not implement it, so it only ever
+     cost a lookup. */
+  --font-mono: "JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, Consolas, "Cascadia Mono",
+               "PingFang SC", "Microsoft YaHei UI", "Noto Sans Mono CJK SC", monospace;
+  /* Display serif, whitelisted to a handful of headings (design_guidance 三.4).
+     Its Chinese falls to the platform *sans*, not to a Songti: the serif is a
+     Latin voice, and a heading that breaks into Song strokes mid-line reads as
+     two typefaces. The family name is the one `fonts.css` registers. */
+  --font-serif: "Source Serif 4 Variable", Georgia, "PingFang SC", "Microsoft YaHei UI",
+                "Noto Sans CJK SC", serif;
 
-  /* The size ladder (design_guidance 三.3), seven rungs replacing the scatter of
-     11/12/13/14px this sheet accumulated. Named `--type-*` and not `--text-*`
-     on purpose: `--text-` is already the neutral *colour* prefix that
+  /* The size ladder (design_guidance 三.3): eight sizes under ten names (a
+     role, not a number, is what a rule asks for), replacing the scatter of
+     9/10/11/12/12.5/13px literals this sheet accumulated. Named `--type-*` and not
+     `--text-*` on purpose: `--text-` is already the neutral *colour* prefix that
      `rendererStyleTokens` classifies by, and one prefix must not mean two
-     things. Sizes only — each rung's paired line-height stays on the rule that
-     uses it, because the same size runs at 1.7 in the transcript and at 1.5 in
-     the chrome. The pairs the design fixes: display 1.25, title 1.35, body 1.7,
-     ui 1.5, meta 1.45, micro 1.4, code 1.6. */
+     things.
+
+     Whole pixels only. At 100% scaling Windows hints Microsoft YaHei to the
+     pixel grid, and a 12.5px rung has no grid to snap to — it rendered softer
+     than the 12px and 13px text either side of it. `--type-micro` is for
+     figures, Latin and key caps alone: 12px is the floor for Chinese, below
+     which YaHei's strokes close up. The test holds the list of what may use it.
+
+     `--type-dense` is the 13px of the docked cards, the rewind panel, the
+     viewer's labels and the transcript's own chrome — the one step under the
+     chrome that a long run of Chinese still reads comfortably at. */
   --type-display: 28px;
   --type-title: 20px;
+  --type-heading: 17px;
   --type-body: 15px;
   --type-reading: 14px;
   --type-ui: 14px;
-  --type-meta: 12.5px;
+  --type-dense: 13px;
+  --type-meta: 12px;
   --type-micro: 11px;
   --type-code: 13px;
+
+  /* Line heights, five. Each rule picks the one for what its text *does*:
+     tight for a display line, heading for titles, ui for the chrome's single
+     lines, dense for cards, code and anything that wraps at 12–13px, prose for
+     the conversation. Chinese has no ascenders or descenders to open the gaps
+     between lines, so a paragraph of it under 1.6 reads as a block: anything
+     that can wrap into several lines of Chinese takes dense or prose. A fixed
+     pixel line-height is a box height, not a leading, and stays on its rule. */
+  --leading-tight: 1.25;
+  --leading-heading: 1.35;
+  --leading-ui: 1.5;
+  --leading-dense: 1.6;
+  --leading-prose: 1.7;
 
   /* --- diff ---
      Content colours, not interface colours, and exempt from the neutrality rule
@@ -386,6 +418,26 @@
   --diff-del-fg: #a3283f;
   --diff-del-bg: #f7e8e8;
 }
+
+/* --- platform ---
+   Each font stack narrowed to one OS's own faces, so a Windows machine that
+   happens to have PingFang installed still sets its Chinese in YaHei, and a Mac
+   with YaHei in its font book still uses PingFang. `dom/windowChrome.ts`
+   writes `documentElement[data-platform]` before the first pane mounts — an
+   attribute, like the theme, because the platform is a fact and not a query.
+   Fonts only: sizes are one ladder on both, so a layout measured on one is the
+   layout on the other. */
+:root[data-platform="darwin"] {
+  --font-ui: "Inter Variable", -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", SFMono-Regular, Menlo, "PingFang SC", monospace;
+  --font-serif: "Source Serif 4 Variable", Georgia, "PingFang SC", "Hiragino Sans GB", serif;
+}
+:root[data-platform="win32"] {
+  --font-ui: "Inter Variable", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI",
+             "Microsoft YaHei", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", Consolas, "Microsoft YaHei UI", monospace;
+  --font-serif: "Source Serif 4 Variable", Georgia, "Microsoft YaHei UI", "Microsoft YaHei", serif;
+}
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -398,7 +450,7 @@ body {
      and the ladder — not pigment drift — is what does the work now. */
   background: var(--surface-base);
   color: var(--text-primary);
-  font: var(--type-ui)/1.5 var(--font-ui);
+  font: var(--type-ui)/var(--leading-ui) var(--font-ui);
   /* Inter's tailed lowercase l (design_guidance 三.3): the straight l reads as
      a 1 or an I beside digits and capitals. It must come *after* the `font`
      shorthand — that shorthand resets every font longhand it does not spell, so
@@ -410,6 +462,12 @@ body {
   height: 100vh;
   overflow: hidden;
 }
+/* Chromium's default on macOS still thickens every stem — the dilation that
+   used to accompany subpixel rendering, which macOS itself dropped in Mojave —
+   so light text on the dark theme came out heavy and soft beside native apps.
+   Greyscale antialiasing is what AppKit draws with. Windows ignores the
+   property, so it is scoped to the one platform it means anything on. */
+:root[data-platform="darwin"] body { -webkit-font-smoothing: antialiased; }
 /* The left column — title bar over sidebar and canvas. The side panel sits
    beside it rather than under the title bar, so its card runs full height. */
 #frame {
@@ -617,7 +675,7 @@ body.resizing #frame::after { transition: none; }
   border-radius: var(--radius-pill);
   background: var(--surface-active);
   color: var(--text-warn);
-  font-size: 10px;
+  font-size: var(--type-micro);
   font-weight: 600;
   line-height: 14px;
   text-align: center;
@@ -863,7 +921,7 @@ body.resizing #frame::after { transition: none; }
    name is a rung quieter and a size smaller than its figure: it is there to be
    read once, not on every glance. */
 .usage-label {
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   color: var(--text-tertiary);
 }
 .usage-metric.rate .usage-value { color: var(--text-secondary); }
@@ -1327,7 +1385,7 @@ body.settings-open #browser-resizer { display: none; }
 }
 /* The panel's ✕ is laid over this row. */
 #changes-view .changes-head { padding-right: 40px; }
-.changes-title { color: var(--text-primary); font-size: var(--type-ui); font-weight: 500; }
+.changes-title { color: var(--text-primary); font-size: var(--type-ui); font-weight: 600; }
 .changes-scroll {
   position: relative;
   flex: 1 1 auto;
@@ -1387,7 +1445,7 @@ body.settings-open #browser-resizer { display: none; }
   transition: transform var(--motion-micro) var(--ease-out);
 }
 .changes-file-toggle[aria-expanded="false"] > .icon { transform: rotate(-90deg); }
-.changes-file-name { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.changes-file-name { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .changes-file-dir {
   flex: 0 1 auto;
   min-width: 0;
@@ -1421,7 +1479,7 @@ body.settings-open #browser-resizer { display: none; }
 .changes-diff {
   padding: var(--space-1) 0;
   font-family: var(--font-mono);
-  font-size: var(--type-meta);
+  font-size: var(--type-code);
   line-height: 20px;
 }
 .changes-diff[hidden] { display: none; }
@@ -1474,7 +1532,7 @@ body.settings-open #browser-resizer { display: none; }
 .changes-row.elided .changes-text {
   color: var(--text-tertiary);
   font-family: var(--font-ui);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
 }
 .changes-row.elided:first-child { margin-top: 0; }
 .changes-row.elided:last-child { margin-bottom: 0; }
@@ -1504,7 +1562,7 @@ body.settings-open #browser-resizer { display: none; }
   color: var(--text-primary);
   font: inherit;
   font-size: var(--type-ui);
-  font-weight: 500;
+  font-weight: 600;
   text-align: left;
   cursor: pointer;
 }
@@ -1588,7 +1646,7 @@ body.settings-open #browser-resizer { display: none; }
   gap: var(--space-2);
   padding-left: calc(7px + var(--space-2));
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   font-variant-numeric: tabular-nums;
 }
 .command-stop {
@@ -1614,8 +1672,8 @@ body.settings-open #browser-resizer { display: none; }
   background: var(--surface-hover);
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: var(--type-micro);
-  line-height: 1.5;
+  font-size: var(--type-code);
+  line-height: var(--leading-dense);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1673,7 +1731,7 @@ body.settings-open #browser-resizer { display: none; }
   flex-wrap: wrap;
   gap: var(--space-2);
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   font-variant-numeric: tabular-nums;
 }
 .subagent-page-bar {
@@ -1698,13 +1756,13 @@ body.settings-open #browser-resizer { display: none; }
 .subagent-label {
   margin-bottom: var(--space-1);
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
 }
 /* What the result told the model about the run (truncated, ran in a worktree). */
 .subagent-notes {
   margin-top: var(--space-1);
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
 }
 .thread-detail-actions { display: flex; gap: var(--space-1); }
 .thread-detail-needs-you {
@@ -1858,7 +1916,7 @@ body.settings-open #browser-resizer { display: none; }
   box-shadow: var(--shadow-float);
   font-size: var(--type-meta);
 }
-.sidebar-hint-title { padding: 0 var(--space-1) var(--space-1); color: var(--text-tertiary); font-size: var(--type-micro); }
+.sidebar-hint-title { padding: 0 var(--space-1) var(--space-1); color: var(--text-tertiary); font-size: var(--type-meta); }
 .sidebar-hint-row {
   display: flex;
   align-items: center;
@@ -1950,7 +2008,6 @@ body.settings-open #browser-resizer { display: none; }
   /* The one label in the column that is read as a *name* rather than as running
      text: a hair of tracking separates it from the session titles under it
      without reaching for a second colour or weight (design_guidance 六.2). */
-  letter-spacing: 0.02em;
   text-align: left;
   cursor: pointer;
 }
@@ -2271,7 +2328,7 @@ body.settings-open #browser-resizer { display: none; }
   border-radius: var(--radius-pill);
   padding: 1px var(--space-2);
   font: inherit;
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   cursor: pointer;
 }
 .session-confirm-yes { color: var(--text-danger); border-color: var(--text-danger); }
@@ -2314,7 +2371,7 @@ body.settings-open #browser-resizer { display: none; }
      the one surface read in long stretches, and its rows, code and tool output
      step down with the prose. */
   font-size: var(--type-reading);
-  --type-ui: 13px;
+  --type-ui: var(--type-dense);
   --type-code: 12px;
   /* A flex column, and **not** `justify-content: flex-end`: in a scroll
      container that makes the top of overflowing content unreachable. Nothing
@@ -2401,7 +2458,7 @@ body.settings-open #browser-resizer { display: none; }
    rhythm half of design_guidance 四.3 — the old 10px/1.5 ran the assistant's
    answer and the next question together, and 16px still read as one block once
    the body size went up. 1.7 is the pairing `--type-body` is specified at. */
-.transcript .item { margin-bottom: var(--space-5); line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
+.transcript .item { margin-bottom: var(--space-5); line-height: var(--leading-prose); white-space: pre-wrap; word-break: break-word; }
 /*
   Markdown items are real block elements, so the pre-wrap above would turn
   every newline between blocks into a blank line. Only the code inside a
@@ -2445,7 +2502,7 @@ body.settings-open #browser-resizer { display: none; }
   color: var(--text-secondary);
   font: inherit;
   font-size: var(--type-meta);
-  line-height: 1.45;
+  line-height: var(--leading-ui);
   cursor: pointer;
 }
 .user-more:hover { color: var(--text-primary); }
@@ -2495,7 +2552,7 @@ body.settings-open #browser-resizer { display: none; }
   gap: var(--space-2);
   margin-top: var(--space-1);
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   /* The times line up under one another down the column. */
   font-variant-numeric: tabular-nums;
   user-select: none;
@@ -2511,7 +2568,7 @@ body.settings-open #browser-resizer { display: none; }
   gap: var(--space-2);
   margin: calc(-1 * var(--space-1)) 0 var(--space-4);
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   font-variant-numeric: tabular-nums;
   user-select: none;
   opacity: 0;
@@ -2580,7 +2637,7 @@ body.settings-open #browser-resizer { display: none; }
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  line-height: 1.6;
+  line-height: var(--leading-dense);
   font-variant-numeric: tabular-nums;
 }
 .run-line {
@@ -2701,7 +2758,7 @@ body.settings-open #browser-resizer { display: none; }
   color: var(--text-tertiary);
   font: inherit;
   font-size: var(--type-ui);
-  line-height: 1.5;
+  line-height: var(--leading-ui);
   font-variant-numeric: tabular-nums;
   text-align: left;
   cursor: pointer;
@@ -2717,7 +2774,7 @@ body.settings-open #browser-resizer { display: none; }
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.step-label strong { font-weight: 500; color: var(--text-secondary); }
+.step-label strong { font-weight: 600; color: var(--text-secondary); }
 .step-head .icon {
   width: 11px;
   height: 11px;
@@ -2755,7 +2812,7 @@ body.settings-open #browser-resizer { display: none; }
   align-self: flex-start;
   padding: 0;
   font-size: inherit;
-  line-height: 1.6;
+  line-height: var(--leading-dense);
 }
 .agent-entry .step-head:hover { background: none; color: var(--text-secondary); }
 .agent-entry .step-head.agent-chip {
@@ -2781,7 +2838,7 @@ body.settings-open #browser-resizer { display: none; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   text-overflow: clip;
-  line-height: 1.75;
+  line-height: var(--leading-prose);
 }
 /* The sub-agent panel's status dot and type tag. The transcript's own rows say
    their state in words; the panel's rows keep the dot, in one colour per state. */
@@ -3074,7 +3131,7 @@ body.settings-open #browser-resizer { display: none; }
   align-items: center;
   gap: 6px;
   margin-bottom: var(--space-3);
-  line-height: 1.6;
+  line-height: var(--leading-dense);
   color: var(--text-tertiary);
   user-select: none;
 }
@@ -3090,8 +3147,8 @@ body.settings-open #browser-resizer { display: none; }
   padding: var(--space-3);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--type-dense);
+  line-height: var(--leading-dense);
 }
 .failure-reason { color: var(--text-danger); font-weight: 600; overflow-wrap: anywhere; }
 .failure-target { color: var(--text-tertiary); font-size: var(--type-meta); overflow-wrap: anywhere; }
@@ -3132,8 +3189,8 @@ body.settings-open #browser-resizer { display: none; }
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: var(--type-dense);
+  line-height: var(--leading-dense);
 }
 .receipt-row { display: flex; flex-direction: column; min-width: 0; }
 .receipt-question { color: var(--text-tertiary); overflow-wrap: anywhere; }
@@ -3178,7 +3235,7 @@ body.settings-open #browser-resizer { display: none; }
   padding: 7px var(--space-3);
   font-family: var(--font-mono);
   font-size: var(--type-ui);
-  line-height: 1.5;
+  line-height: var(--leading-dense);
 }
 .transcript .item.tool.failed { color: var(--text-danger); }
 /* A streaming item carries no caret: the composer below already owns the only
@@ -3248,7 +3305,7 @@ body.settings-open #browser-resizer { display: none; }
   font-family: var(--font-serif);
   font-size: var(--type-display);
   font-weight: 400;
-  line-height: 1.3;
+  line-height: var(--leading-tight);
   color: var(--text-primary);
 }
 /* The usage card: one row of three figures over a heatmap. */
@@ -3281,11 +3338,11 @@ body.settings-open #browser-resizer { display: none; }
 .usage-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
 .usage-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .usage-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.usage-cell .usage-label { order: -1; font-size: var(--type-micro); color: var(--text-tertiary); }
+.usage-cell .usage-label { order: -1; font-size: var(--type-meta); color: var(--text-tertiary); }
 .usage-cell .usage-value {
   font-size: var(--type-body);
   font-weight: 500;
-  line-height: 1.4;
+  line-height: var(--leading-ui);
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
@@ -3302,7 +3359,7 @@ body.settings-open #browser-resizer { display: none; }
 .usage-heat.level-2 { background: color-mix(in srgb, var(--accent-info) 50%, transparent); }
 .usage-heat.level-3 { background: color-mix(in srgb, var(--accent-info) 70%, transparent); }
 .usage-heat.level-4 { background: color-mix(in srgb, var(--accent-info) 90%, transparent); }
-.usage-footnote { font-size: var(--type-micro); color: var(--text-tertiary); }
+.usage-footnote { font-size: var(--type-meta); color: var(--text-tertiary); }
 .usage-tip {
   position: absolute;
   z-index: 5;
@@ -3314,8 +3371,8 @@ body.settings-open #browser-resizer { display: none; }
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-float);
-  font-size: var(--type-micro);
-  line-height: 1.4;
+  font-size: var(--type-meta);
+  line-height: var(--leading-ui);
   white-space: nowrap;
   left: var(--usage-tip-x);
   top: var(--usage-tip-y);
@@ -3515,7 +3572,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 #surface .row.tone-success .value { color: var(--text-success); }
 #surface .row.tone-warning .value { color: var(--text-warn); }
 #surface .row.tone-error .value { color: var(--text-danger); }
-#surface .hint { color: var(--text-secondary); font-size: var(--type-micro); margin-top: var(--space-1); }
+#surface .hint { color: var(--text-secondary); font-size: var(--type-meta); margin-top: var(--space-1); }
 
 /* --- completions --- */
 #suggestions {
@@ -3635,7 +3692,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border-radius: var(--radius-sm);
   font: inherit;
   font-size: var(--type-ui);
-  line-height: 1.4;
+  line-height: var(--leading-ui);
   cursor: pointer;
 }
 .thread-chip:hover { color: var(--text-primary); background: var(--surface-hover); }
@@ -3655,7 +3712,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
-  line-height: 1.6;
+  line-height: var(--leading-dense);
   animation: fade-in var(--motion-panel-in) var(--ease-out);
 }
 /* The one-shot outline pulse a `TodoWrite` row asks for. A pseudo-element, so
@@ -3681,7 +3738,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border-radius: var(--radius-md);
   overflow: hidden;
   font-size: var(--type-ui);
-  line-height: 1.5;
+  line-height: var(--leading-ui);
   animation: fade-in var(--motion-panel-in) var(--ease-out);
 }
 .edits-head {
@@ -3694,7 +3751,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-primary);
 }
-.edits-title { font-weight: 500; }
+.edits-title { font-weight: 600; }
 .edits-undo {
   border: 0;
   border-radius: var(--radius-sm);
@@ -3743,7 +3800,15 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 .diff-stat-add { color: var(--diff-add-fg); }
 .diff-stat-del { color: var(--diff-del-fg); }
-/* A file's extension as a small tile, tinted by its family. */
+/* A file's extension as a small tile, tinted by its family.
+
+   The one font size off the ladder, and on purpose: the tile is a pictogram
+   (`aria-hidden`; the file's name is the text beside it), so its type is sized
+   to the tile the way an icon's stroke is. Four capitals — `JSON`, `YAML` — must
+   fit the 24px wide tile, and at `--type-micro` they measure 26px. 10px is the
+   largest size that fits, up from a 9px that closed up at 100% scaling. 500,
+   not 700: `fonts.css` bundles JetBrains Mono at 400 and 500 only, and a
+   heavier weight was Chromium smearing the 500 outward. */
 .file-badge {
   flex: none;
   display: inline-flex;
@@ -3755,8 +3820,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: color-mix(in srgb, currentColor 16%, transparent);
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: 9px;
-  font-weight: 700;
+  font-size: 10px;
+  font-weight: 500;
   letter-spacing: -0.02em;
   line-height: 1;
 }
@@ -3922,7 +3987,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   max-width: 28em;
   color: var(--text-danger);
   font-size: var(--type-meta);
-  line-height: 1.5;
+  line-height: var(--leading-ui);
   overflow-wrap: anywhere;
 }
 /* A dropped file or folder: the whole path, wrapped and clamped, with its kind
@@ -3948,7 +4013,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--type-meta);
-  line-height: 1.4;
+  line-height: var(--leading-ui);
   word-break: break-all;
 }
 .path-tile-badge {
@@ -3957,8 +4022,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border-radius: 5px;
   border: 1px solid var(--border-strong);
   color: var(--text-secondary);
-  font-size: var(--type-micro);
-  line-height: 1.5;
+  font-size: var(--type-meta);
+  line-height: var(--leading-ui);
 }
 .user-paths {
   display: flex;
@@ -3998,7 +4063,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .attachment-retry {
   position: absolute;
   inset: auto var(--space-1) var(--space-1) var(--space-1);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   padding: 2px 0;
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
@@ -4039,7 +4104,14 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    said by the glyph before the title and by the primary button instead. */
 #composer-request {
   padding: 2px 0;
-  font-size: 13px;
+  font-size: var(--type-dense);
+  /* A request card's prose (a command, a question, a plan's summary) wraps
+     into several lines of Chinese; dense leading keeps them apart. */
+  line-height: var(--leading-dense);
+  /* The space a typesetter puts between Chinese and a Latin word or a figure
+     (「运行 npm test」), so copy does not have to type it — and copy that
+     already has one is left as it is. Inherited by every card in the dock. */
+  text-autospace: normal;
 }
 #composer-request.tone-danger .request-head .icon { color: var(--text-danger); }
 #composer-request.tone-caution .request-head .icon { color: var(--text-warn); }
@@ -4283,7 +4355,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   box-shadow: var(--shadow-float);
   color: var(--text-primary);
   font-size: var(--type-meta);
-  line-height: 1.5;
+  line-height: var(--leading-ui);
   text-align: left;
   white-space: nowrap;
   pointer-events: none;
@@ -4296,14 +4368,13 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 .hover-card-title {
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
-  font-weight: 500;
-  letter-spacing: 0.02em;
+  font-size: var(--type-meta);
+  font-weight: 600;
 }
 .hover-card-lead {
   font-size: var(--type-ui);
   font-weight: 600;
-  line-height: 1.4;
+  line-height: var(--leading-ui);
 }
 .hover-card-rows {
   display: grid;
@@ -4318,15 +4389,15 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 .hover-card-label {
   color: var(--text-secondary);
-  font-size: var(--type-micro);
-  line-height: 1.4;
+  font-size: var(--type-meta);
+  line-height: var(--leading-ui);
 }
 .hover-card-value {
   margin: 0;
   color: var(--text-primary);
   font-family: var(--font-mono);
   font-size: var(--type-meta);
-  line-height: 1.45;
+  line-height: var(--leading-ui);
   font-variant-numeric: tabular-nums;
 }
 .hover-card-note {
@@ -4334,10 +4405,10 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   padding-top: var(--space-2);
   border-top: 1px solid var(--border-subtle);
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   /* The note is the only line allowed to wrap: it is a sentence, not a figure. */
   white-space: normal;
-  line-height: 1.4;
+  line-height: var(--leading-ui);
 }
 /* The context indicator's click-open card (`dom/contextPopover.ts`): what the
    context is made of. Anchored like the hover card above, but it takes the
@@ -4362,15 +4433,14 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   box-shadow: var(--shadow-float);
   color: var(--text-primary);
   font-size: var(--type-meta);
-  line-height: 1.5;
+  line-height: var(--leading-ui);
   text-align: left;
   cursor: default;
 }
 .ctx-title {
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
-  font-weight: 500;
-  letter-spacing: 0.02em;
+  font-size: var(--type-meta);
+  font-weight: 600;
 }
 .ctx-status { margin: var(--space-2) 0 0; color: var(--text-secondary); }
 .ctx-summary {
@@ -4477,7 +4547,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   overflow: hidden;
   color: var(--text-secondary);
   font-family: var(--font-mono);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -4486,7 +4556,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .ctx-note {
   margin: var(--space-2) 0 0;
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
 }
 /* One status label for both fields, and the shell its popover is drawn into —
    the same construction `#composer-permission` uses. This was two buttons split
@@ -4642,7 +4712,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   cursor: pointer;
 }
 .chip-flyout-item .btn-label { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.chip-flyout-note { flex: 0 0 auto; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-micro); }
+.chip-flyout-note { flex: 0 0 auto; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-meta); }
 .chip-flyout-item .icon { color: var(--text-primary); width: 14px; height: 14px; }
 .chip-flyout-item:hover:enabled { background: var(--surface-hover); }
 .chip-flyout-item.disabled { opacity: 0.55; cursor: default; }
@@ -4747,7 +4817,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .lightbox-status {
   position: absolute;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--type-dense);
   text-align: center;
   max-width: 32rem;
 }
@@ -4766,7 +4836,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   top: calc(var(--titlebar-height) + var(--space-4));
   left: var(--space-6);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--type-dense);
   max-width: 50%;
   overflow: hidden;
   white-space: nowrap;
@@ -4808,7 +4878,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   min-width: 3.5rem;
   text-align: center;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: var(--type-dense);
   font-variant-numeric: tabular-nums;
 }
 .lightbox-close {
@@ -4857,7 +4927,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: var(--surface-card);
   color: var(--text-secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--type-meta);
   cursor: pointer;
 }
 #rewind-panel .dialog-btn.primary,
@@ -4895,14 +4965,14 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: transparent;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: var(--type-micro);
   line-height: 1;
 }
 
 /* --- the docked question card ---
    Rides in the composer's dock beside the permission card. Rows are the only
    coloured-on-hover surface; the one raised control is 提交, as in the shared bar. */
-.ask-card { font-size: 13px; }
+.ask-card { font-size: var(--type-dense); }
 .ask-head {
   display: flex;
   align-items: center;
@@ -4917,8 +4987,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--accent-warn) 16%, transparent);
   color: var(--text-warn);
-  font-size: 11px;
-  font-weight: 500;
+  font-size: var(--type-micro);
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
 .ask-title { flex: 1 1 auto; min-width: 0; }
@@ -4957,7 +5027,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .ask-option.selected { background: var(--surface-active); }
 .ask-option-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .ask-option-label { color: var(--text-primary); }
-.ask-option-desc { color: var(--text-secondary); font-size: 12px; }
+.ask-option-desc { color: var(--text-secondary); font-size: var(--type-meta); }
 .ask-option > .kbd { align-self: center; }
 .ask-tick {
   flex: 0 0 auto;
@@ -4988,7 +5058,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    The card is the question card's sibling: a head, an optional field and the
    shared button bar, split so the declining pair sits left and the accepting
    pair right. The full plan is read in the side panel, never in the card. */
-.plan-card { font-size: 13px; }
+.plan-card { font-size: var(--type-dense); }
 .plan-head-spacer { flex: 1 1 auto; }
 .plan-open-link {
   flex: 0 0 auto;
@@ -5032,9 +5102,10 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   min-height: 0;
   overflow-y: auto;
   padding: var(--space-3) var(--space-4);
-  font-size: 13px;
+  font-size: var(--type-dense);
+  line-height: var(--leading-dense);
 }
-.plan-panel-empty { padding: var(--space-4); color: var(--text-tertiary); font-size: 13px; }
+.plan-panel-empty { padding: var(--space-4); color: var(--text-tertiary); font-size: var(--type-dense); }
 .plan-panel-foot {
   flex: none;
   display: flex;
@@ -5064,7 +5135,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: var(--surface-card);
   color: var(--text-secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--type-meta);
   cursor: pointer;
   transition: background-color var(--motion-micro) var(--ease-out), color var(--motion-micro) var(--ease-out);
 }
@@ -5106,7 +5177,9 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   max-height: 100%;
   overflow-y: auto;
   padding: 16px 20px;
-  font-size: 13px;
+  font-size: var(--type-dense);
+  line-height: var(--leading-dense);
+  text-autospace: normal;
 }
 #rewind-panel .title {
   font-family: var(--font-serif);
@@ -5115,7 +5188,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   color: var(--text-warn);
   margin-bottom: 2px;
 }
-#rewind-panel .subtitle { color: var(--text-secondary); font-size: 12px; }
+#rewind-panel .subtitle { color: var(--text-secondary); font-size: var(--type-meta); }
 #rewind-panel .error { color: var(--text-danger); margin: 8px 0; }
 #rewind-panel .rows { margin: 10px 0 6px; }
 #rewind-panel .row { display: flex; gap: 10px; padding: 4px 8px; margin: 0 -8px; border-radius: var(--radius-sm); cursor: pointer; }
@@ -5138,6 +5211,10 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 #rewind-panel .warning { color: var(--text-danger); margin-top: 8px; }
 
 /* --- markdown (assistant messages and plan bodies) --- */
+/* See `#composer-request`: the space between Chinese and Latin, set by the
+   type rather than by the writer. Code turns it off again below — a space the
+   source does not have would shift its columns. */
+.md { text-autospace: normal; }
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0 0 8px; }
@@ -5145,16 +5222,22 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    one; `markdownView.ts` unwraps the span on `animationend`. */
 .md-fade { animation: md-fade-in var(--motion-text-in) var(--ease-out); }
 @keyframes md-fade-in { from { color: var(--text-secondary); } }
+/* Headings sit on the ladder, not on `em`: 1.35/1.2/1.08em of 14px came to
+   18.9/16.8/15.1px, three steps too close to tell apart and none of them a
+   whole pixel. The margins stay in `em` so a bigger heading gets more air
+   above it than below — it belongs to what follows. */
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 {
-  margin: 12px 0 6px;
+  margin: 1.2em 0 0.5em;
   color: var(--text-primary);
   font-weight: 600;
-  line-height: 1.3;
+  line-height: var(--leading-heading);
 }
-.md h1 { font-size: 1.35em; }
-.md h2 { font-size: 1.2em; }
-.md h3 { font-size: 1.08em; }
-.md h4, .md h5, .md h6 { font-size: 1em; }
+.md h1 { font-size: var(--type-title); }
+.md h2 { font-size: var(--type-heading); }
+.md h3 { font-size: var(--type-body); }
+.md h4, .md h5, .md h6 { font-size: var(--type-reading); }
+/* Below h4 size cannot step down any further, so colour does. */
+.md h5, .md h6 { color: var(--text-secondary); }
 .md ul, .md ol { margin: 0 0 8px; padding-left: 1.4rem; }
 .md li { margin: 2px 0; }
 .md li > ul, .md li > ol { margin-bottom: 0; }
@@ -5176,7 +5259,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   padding: 0 4px;
   color: var(--text-primary);
   font-family: var(--font-mono);
-  font-size: 0.92em;
+  font-size: calc(1em - 1px);
+  text-autospace: no-autospace;
 }
 .md .md-code {
   position: relative;
@@ -5186,7 +5270,10 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   margin: 0 0 8px;
   overflow: hidden;
   font-family: var(--font-mono);
-  font-size: 0.92em;
+  font-size: calc(1em - 1px);
+  /* The prose's 1.7 is too open for code, whose lines are read as rows. */
+  line-height: var(--leading-dense);
+  text-autospace: no-autospace;
 }
 .md .md-code-lang {
   color: var(--text-tertiary);
@@ -5284,7 +5371,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    code face, so a typo in one formula does not blank the answer around it. */
 .md .md-math-raw {
   font-family: var(--font-mono);
-  font-size: 0.92em;
+  font-size: calc(1em - 1px);
   color: var(--text-secondary);
 }
 /* --- diff ---
@@ -5682,7 +5769,7 @@ body.projects-open #browser-resizer,
   background: var(--surface-base);
   color: var(--text-primary);
   font: inherit;
-  line-height: 1.6;
+  line-height: var(--leading-dense);
   resize: none;
 }
 
@@ -6082,7 +6169,7 @@ body.projects-open #browser-resizer,
 .mcp-form-label {
   color: var(--text-primary);
   font-size: var(--type-meta);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .settings-field-note {
@@ -6335,7 +6422,7 @@ body.projects-open #browser-resizer,
 .settings-models-title {
   color: var(--text-primary);
   font-size: var(--type-meta);
-  font-weight: 500;
+  font-weight: 600;
 }
 
 .settings-models-count {
@@ -6367,7 +6454,7 @@ body.projects-open #browser-resizer,
 .settings-model-head {
   height: 30px;
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
 }
 
 .settings-model-item { border-top: 1px solid var(--border-subtle); }
@@ -6575,7 +6662,7 @@ body.projects-open #browser-resizer,
   min-width: 0;
   overflow: hidden;
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6843,7 +6930,7 @@ body.projects-open #browser-resizer,
   flex: 0 0 auto;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   white-space: nowrap;
 }
 
@@ -6911,7 +6998,7 @@ body.projects-open #browser-resizer,
 .overview-title {
   margin: 0;
   padding-right: 40px;
-  font: 500 var(--type-title)/1.3 var(--font-serif);
+  font: 600 var(--type-title)/var(--leading-heading) var(--font-serif);
   color: var(--text-primary);
 }
 .overview-summary-row {
@@ -6985,10 +7072,10 @@ body.projects-open #browser-resizer,
 }
 .thread-panel-empty-title {
   margin: 0 0 var(--space-2);
-  font: 500 var(--type-display)/1.3 var(--font-serif);
+  font: 400 var(--type-display)/var(--leading-tight) var(--font-serif);
   color: var(--text-primary);
 }
-.thread-panel-empty-lead { margin: 0; color: var(--text-secondary); font-size: var(--type-meta); line-height: 1.6; }
+.thread-panel-empty-lead { margin: 0; color: var(--text-secondary); font-size: var(--type-meta); line-height: var(--leading-dense); }
 .thread-panel-empty-hint {
   display: flex;
   flex: 1;
@@ -7018,13 +7105,13 @@ body.projects-open #browser-resizer,
   background: color-mix(in srgb, var(--text-primary) 4%, var(--surface-card));
   color: var(--text-tertiary);
   font: inherit;
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   text-align: left;
   cursor: pointer;
 }
 .thread-group-head:hover { color: var(--text-secondary); }
 .thread-group-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.thread-group-label { color: var(--text-secondary); font-weight: 500; }
+.thread-group-label { color: var(--text-secondary); font-weight: 600; }
 .thread-group-count { font-variant-numeric: tabular-nums; }
 .thread-group-head .icon { width: 12px; height: 12px; transition: transform var(--motion-micro) var(--ease-out); }
 .thread-group-head[aria-expanded="false"] .icon { transform: rotate(-90deg); }
@@ -7093,7 +7180,7 @@ body.projects-open #browser-resizer,
   min-width: 28px;
   padding-right: var(--space-2);
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
@@ -7260,7 +7347,7 @@ body.projects-open #browser-resizer,
   box-shadow: var(--shadow-float);
   color: var(--text-primary);
   font-size: var(--type-meta);
-  line-height: 1.5;
+  line-height: var(--leading-dense);
   pointer-events: auto;
 }
 .toast.error .toast-text { color: var(--text-danger); }
@@ -7291,7 +7378,7 @@ body.projects-open #browser-resizer,
 .toast-close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 
 /* The coordinator's fixed welcome above the first entry. */
-.coordinator-welcome { margin-bottom: var(--space-5); color: var(--text-primary); line-height: 1.7; }
+.coordinator-welcome { margin-bottom: var(--space-5); color: var(--text-primary); line-height: var(--leading-prose); }
 .coordinator-welcome p { margin: 0 0 var(--space-3); }
 .coordinator-welcome p:last-child { margin-bottom: 0; }
 /* 「概览」 as an inline chip, the way the header button reads. */
@@ -7306,7 +7393,7 @@ body.projects-open #browser-resizer,
   background: var(--surface-hover);
   color: var(--link);
   font: inherit;
-  line-height: 1.5;
+  line-height: var(--leading-ui);
   vertical-align: baseline;
   cursor: pointer;
 }
@@ -7342,7 +7429,7 @@ body.projects-open #browser-resizer,
 .thread-note-status {
   justify-self: end;
   color: var(--text-secondary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   white-space: nowrap;
 }
 .thread-note-report {
@@ -7421,7 +7508,7 @@ body.projects-open #browser-resizer,
 .project-card-path {
   color: var(--text-tertiary);
   font-family: var(--font-mono);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -7430,14 +7517,14 @@ body.projects-open #browser-resizer,
 .project-card-time { color: var(--text-tertiary); }
 .projects-empty { display: flex; flex-direction: column; gap: var(--space-2); padding: var(--space-5) 0; text-align: center; }
 .projects-empty-title { margin: 0; color: var(--text-primary); font-size: var(--type-ui); font-weight: 600; }
-.projects-empty-text { margin: 0 auto; max-width: 36em; color: var(--text-secondary); font-size: var(--type-meta); line-height: 1.6; }
+.projects-empty-text { margin: 0 auto; max-width: 36em; color: var(--text-secondary); font-size: var(--type-meta); line-height: var(--leading-dense); }
 
 /* The pinned coordination projects, above the workspace groups. */
 .sidebar-pinned { display: flex; flex-direction: column; gap: 2px; margin-bottom: var(--space-3); }
 .sidebar-pinned-title {
   padding: var(--space-1) var(--space-3);
   color: var(--text-tertiary);
-  font-size: var(--type-micro);
+  font-size: var(--type-meta);
 }
 
 .projects-empty .projects-new { align-self: center; }
@@ -7460,7 +7547,7 @@ body.projects-open #browser-resizer,
   text-align: center;
 }
 .startup-failure-title { margin: 0; font-size: var(--type-title); font-weight: 600; }
-.startup-failure-detail { margin: 0; max-width: 36em; color: var(--text-secondary); font-size: var(--type-ui); line-height: 1.6; overflow-wrap: anywhere; }
+.startup-failure-detail { margin: 0; max-width: 36em; color: var(--text-secondary); font-size: var(--type-ui); line-height: var(--leading-dense); overflow-wrap: anywhere; }
 .startup-failure-retry {
   padding: var(--space-1) var(--space-4);
   border: 1px solid var(--border-strong);
