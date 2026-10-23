@@ -54,7 +54,8 @@ test('a single row reads project, branch, stat, merge and dismiss', (t) => {
   assert.equal(row.children.find((c) => c.classes.includes('merge-bar-branch'))!.text, 'thread/t1')
   assert.equal(row.children.find((c) => c.classes.includes('merge-bar-stat'))!.text, '+12 −3')
   assert.equal(buttonIn(row, 'merge-bar-merge').text, '合并')
-  assert.equal(buttonIn(row, 'merge-bar-dismiss').text, '×')
+  assert.equal(buttonIn(row, 'merge-bar-dismiss').text, '', 'an SVG close icon, not a text glyph')
+  assert.equal(buttonIn(row, 'merge-bar-dismiss').attributes.get('aria-label'), '隐藏此提醒')
 })
 
 test('a click on merge and on dismiss reports the thread', (t) => {

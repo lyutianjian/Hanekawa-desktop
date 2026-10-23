@@ -1157,7 +1157,6 @@ const MICRO_TEXT = [
   '.sidebar-hint-chord',
   '#rewind-panel .kbd, #composer-request .kbd',
   '.step-tag', // a subagent's type name
-  '.attachment-remove', // the ✕ glyph
   '.ctx-num', // token counts and percentages
   '.ask-chip', // "2/3"
   '.md .md-code-lang', // a fence's language tag
@@ -2765,4 +2764,21 @@ test('a focused drag handle lights its sash in the focus colour', () => {
     assert.ok(declares(sash, 'opacity', '1'), `${side} shows its sash`)
     assert.ok(declares(sash, 'background', 'var(--focus-ring)'), `${side} sash takes the ring colour`)
   }
+})
+
+/**
+ * Glyphs are not icons. A ✕ or ← drawn as text takes the font's metrics, so it
+ * sat off-centre, changed weight between Inter and the CJK fallback, and
+ * differed between Windows and macOS. Every icon button draws `icons.ts`'s SVG
+ * now; this catches a text glyph handed to `button()` or written into the HTML.
+ */
+test('no button draws a text glyph where an icon belongs', () => {
+  const glyphs = /['"`][✕×←→↻＋⋯]['"`]/
+  for (const file of rendererFiles()) {
+    const source = stripComments(readFileSync(file, 'utf8'))
+    for (const call of source.matchAll(/button\(\s*'[^']*',\s*([^,]+),/g)) {
+      assert.doesNotMatch(call[1]!, glyphs, `${path.relative(rendererRoot, file)}: ${call[0]}`)
+    }
+  }
+  assert.doesNotMatch(html, /<button[^>]*>\s*[✕×←→↻＋⋯]\s*<\/button>/)
 })

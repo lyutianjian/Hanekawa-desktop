@@ -59,7 +59,7 @@ export function createCanvasHeaderView(
   const rightControls = el('div', 'canvas-header-controls')
   append(container, [identity, rightControls])
   const title = el('span', 'canvas-title')
-  const trigger = button('canvas-menu-trigger', '⋯', '会话操作', actions.onToggleMenu)
+  const trigger = button('canvas-menu-trigger', '', '会话操作', actions.onToggleMenu, { icon: 'more' })
   trigger.setAttribute('aria-haspopup', 'menu')
   const menu = el('div', 'canvas-menu')
   menu.setAttribute('role', 'menu')

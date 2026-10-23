@@ -352,7 +352,7 @@ export function createComposerView(els: {
     els.attachStrip.setAttribute('aria-label', '待发送附件')
     for (const entry of paths) {
       const tile = pathTileNode(entry)
-      tile.appendChild(button('attachment-remove', '✕', `移除 ${entry.path}`, () => actions.onRemovePath(entry.path)))
+      tile.appendChild(button('attachment-remove', '', `移除 ${entry.path}`, () => actions.onRemovePath(entry.path), { icon: 'close' }))
       els.attachStrip.appendChild(tile)
     }
     for (const row of view.rows) {
@@ -423,9 +423,9 @@ export function createComposerView(els: {
     }
     // The corner ✕, over the picture rather than after it: the tile is the
     // whole row now, so the remove has nowhere else to sit.
-    const remove = button('attachment-remove', '✕', `移除 ${row.label}`, () => {
+    const remove = button('attachment-remove', '', `移除 ${row.label}`, () => {
       actions.onRemoveAttachment(row.draftId)
-    })
+    }, { icon: 'close' })
     picture.appendChild(remove)
     if (picture !== item) {
       item.appendChild(picture)

@@ -1861,6 +1861,7 @@ function renderBrowser(): void {
 
 const sidePanel = required('browser-panel')
 const sideClose = required('side-close')
+sideClose.appendChild(icon('close'))
 sideClose.addEventListener('click', () => {
   setPanelOpen(false)
   renderSidebar()

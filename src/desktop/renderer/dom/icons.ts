@@ -35,6 +35,8 @@ export type IconName =
   | 'chevron-down'
   | 'arrow-down'
   | 'arrow-left'
+  | 'arrow-right'
+  | 'rotate-cw'
   | 'dot'
   | 'check'
   | 'clock'
@@ -135,6 +137,8 @@ const ICONS = {
   // that means "go to the end", and a bare chevron there reads as "collapse".
   'arrow-down': ['M12 5v14', 'm19 12-7 7-7-7'],
   'arrow-left': ['m12 19-7-7 7-7', 'M19 12H5'],
+  'arrow-right': ['M5 12h14', 'm12 5 7 7-7 7'],
+  'rotate-cw': ['M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8', 'M21 3v5h-5'],
   dot: [DOT],
   check: ['M20 6 9 17l-5-5'],
   // The「最近」filter. A folder would say "project", which is the one thing the
