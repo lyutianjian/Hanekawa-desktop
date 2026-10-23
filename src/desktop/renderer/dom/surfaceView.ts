@@ -72,6 +72,8 @@ export function createSurfacePanel(container: HTMLElement, onActivate: SurfaceAc
         rows.length > 0 ? rows : [el('div', 'row', el('span', 'value', view.emptyMessage))],
         view.surface,
       )
+      // Arrowing past the panel's edge kept the highlight moving out of sight.
+      rows.find((node) => node.classList.contains('selected'))?.scrollIntoView({ block: 'nearest' })
     },
 
     showCommandView(title, rows) {

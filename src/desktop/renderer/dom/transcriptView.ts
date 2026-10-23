@@ -1035,8 +1035,16 @@ function diffStat(added: number, deleted: number): Child[] {
 }
 
 /**
- * A thought: one line showing its first sentence, opening in place to the whole
- * text. While it arrives the line shimmers (`.live`) instead of following the stream.
+ * A thought: one line showing its first sentence, which opens to the whole text
+ * under it. While it arrives the line shimmers (`.live`) instead of following
+ * the stream.
+ *
+ * The whole text is a sibling of the line, not inside it. It used to replace
+ * the line's own text, which put paragraphs of prose inside a `<button>`: it
+ * could not be selected or copied (a drag on a button is a click), it was drawn
+ * as raw text with its markdown showing, and a screen reader heard it all as
+ * the button's name. The line is now only the toggle and keeps its first
+ * sentence; the body is markdown like an answer, and is absent while folded.
  */
 function thinkingLine(
   painter: Painter,
@@ -1050,20 +1058,22 @@ function thinkingLine(
     const headKey = `thinking-head:${step.id}`
     const ref = painter.ref(headKey, expanded)
     const label = step.pending === true ? thoughtLiveLabel(step.text) : thoughtLabel(step.text)
-    const shown = expanded ? step.text : label
     const head = painter.node(
       headKey,
       'run-line',
-      [shown, label, expanded],
+      [label, expanded],
       (node) => {
         node.title = label
         node.setAttribute('aria-label', label)
         node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
-        return [lineText(painter, headKey, shown, true)]
+        return [lineText(painter, headKey, label, true)]
       },
       () => button('run-line', '', label, () => painter.onToggle(step.id, ref.expanded)),
     )
-    return [head]
+    if (!expanded) return [head]
+    const body = painter.node(`thinking-body:${step.id}`, 'thinking-body md', [step.text], (node) =>
+      markdownChildren(step.text, node))
+    return [head, body]
   })
 }
 

@@ -195,6 +195,29 @@ test('an empty completion state leaves nothing to click', (t) => {
   assert.deepEqual(picked, [])
 })
 
+test('the highlighted completion is scrolled into view and named on the field', (t) => {
+  // The arrows move a highlight, not focus: without these two, arrowing past
+  // the list's edge hid the highlight, and a screen reader heard nothing move.
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('suggestions')
+  const field = stub.createContainer('input')
+  const view = createSuggestionsView(container, () => {}, field)
+  view.render(commandState())
+  const proto = Object.getPrototypeOf(stub.inspect(container).children[0]!.node) as { scrollIntoView(options?: unknown): void }
+  const scrolled: Array<[string, unknown]> = []
+  t.mock.method(proto, 'scrollIntoView', function (this: HTMLElement, options?: unknown) {
+    scrolled.push([this.id, options])
+  })
+
+  view.render({ ...commandState(), selectedIndex: 1, seq: 2 } as CompletionState)
+  assert.deepEqual(scrolled, [['suggestion-1', { block: 'nearest' }]])
+  assert.equal(stub.inspect(field).attributes.get('aria-activedescendant'), 'suggestion-1')
+
+  view.render({ kind: 'none', seq: 3 })
+  assert.equal(stub.inspect(field).attributes.has('aria-activedescendant'), false, 'a closed list names nothing')
+})
+
 // --- the picker's "in force" mark --------------------------------------------
 
 test('the row in force is marked with a glyph, not with a terminal bullet', (t) => {

@@ -17,21 +17,37 @@ export interface SuggestionsView {
 /** A row was picked with the mouse; the index is its slot in `completionRows`. */
 export type SuggestionSelect = (index: number) => void
 
+/**
+ * `field` is the text field the list completes. It is told which option is
+ * the current one (`aria-activedescendant`), because focus never leaves it: the
+ * arrows move a highlight, not focus, and without this a screen reader heard
+ * nothing as the highlight moved.
+ */
 export function createSuggestionsView(
   container: HTMLElement,
   onSelect: SuggestionSelect,
+  field?: HTMLElement,
 ): SuggestionsView {
   const presence = createPresence(container, { onClosed: () => replace(container) })
+  const point = (id: string | undefined): void => {
+    if (!field) return
+    if (id === undefined) field.removeAttribute('aria-activedescendant')
+    else field.setAttribute('aria-activedescendant', id)
+  }
   return {
     render(state) {
       const rows = completionRows(state)
       if (rows.length === 0) {
+        point(undefined)
         presence.set(false)
         return
       }
       const selectedIndex = state.kind === 'none' ? -1 : state.selectedIndex
+      let selected: HTMLElement | undefined
       replace(container, ...rows.map((row, index) => {
         const node = el('div', `suggestion${index === selectedIndex ? ' selected' : ''}`)
+        node.id = `suggestion-${index}`
+        if (index === selectedIndex) selected = node
         node.setAttribute('role', 'option')
         node.setAttribute('aria-selected', String(index === selectedIndex))
         node.appendChild(el('span', 'name', row.displayText))
@@ -47,6 +63,10 @@ export function createSuggestionsView(
         return node
       }))
       presence.set(true)
+      point(selected?.id)
+      // The list scrolls inside a fixed height; arrowing past its edge used to
+      // move the highlight out of sight. `nearest` scrolls only when it must.
+      selected?.scrollIntoView({ block: 'nearest' })
     },
   }
 }

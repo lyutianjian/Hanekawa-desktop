@@ -412,6 +412,7 @@ export function createSidebarView(
     const node = el('div', classes.join(' '))
     node.dataset.sessionId = row.sessionId
     node.dataset.index = String(index)
+    node.id = sessionRowId(row.sessionId)
     node.setAttribute('role', 'option')
     node.setAttribute('aria-selected', String(row.active))
 
@@ -560,10 +561,12 @@ export function createSidebarView(
     const kept = keptRows.get(row.sessionId)
     if (kept?.signature === signature) {
       measures.set(row.sessionId, kept.measure)
+      if (selected) cursorRow = kept.node
       return kept.node
     }
     const built = buildRow(row, index, selected, trailing, deleteTarget)
     keptRows.set(row.sessionId, { signature, ...built })
+    if (selected) cursorRow = built.node
     return built.node
   }
 
@@ -760,6 +763,10 @@ export function createSidebarView(
   let rowOrder: readonly string[] = []
   /** What was asking a question or showing a menu at the last paint, as the control focus goes to. */
   let askedKey: string | undefined
+  /** The cursor index last brought into view. */
+  let scrolledTo = -1
+  /** The row drawn with the cursor in the paint under way. */
+  let cursorRow: HTMLElement | undefined
 
   /**
    * Where focus goes when the control that held it was rebuilt away, best first.
@@ -807,6 +814,7 @@ export function createSidebarView(
       const signature = sidebarRenderSignature(view)
       if (signature === drawn) return
       drawn = signature
+      cursorRow = undefined
       const heldKey = heldFocusKey(container)
 
       // One index lookup built per render, so the row → cursor mapping is the
@@ -996,8 +1004,25 @@ export function createSidebarView(
       const wanted = newlyAsked !== undefined ? [newlyAsked] : lost ? successors(heldKey, view) : []
       if (!wanted.some((key) => focusByKey(container, key)) && lost) list.focus()
       rowOrder = view.rows.map((row) => row.sessionId)
+
+      // The arrows move a cursor, not focus, which stays on the list: the list
+      // names the cursor's row for a screen reader, and a cursor moved past the
+      // rail's edge is brought back on screen. Only when it moved — a repaint
+      // from a streamed token must not yank a list the user is scrolling.
+      // Written by `rowNode` during the paint above, which flow analysis cannot see.
+      const drawnCursor = cursorRow as HTMLElement | undefined
+      const cursorNode = drawnCursor !== undefined && list.contains(drawnCursor) ? drawnCursor : undefined
+      if (cursorNode) list.setAttribute('aria-activedescendant', cursorNode.id)
+      else list.removeAttribute('aria-activedescendant')
+      if (cursorNode && view.selectedIndex !== scrolledTo) cursorNode.scrollIntoView({ block: 'nearest' })
+      scrolledTo = view.selectedIndex
     },
   }
+}
+
+/** A row's element id, for the list's `aria-activedescendant`. */
+function sessionRowId(sessionId: string): string {
+  return `session-row-${sessionId}`
 }
 
 function hintNode(platform: DesktopPlatform): HTMLElement {

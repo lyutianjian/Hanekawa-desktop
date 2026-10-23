@@ -331,6 +331,30 @@ test('a folding group paints no row as the cursor', (t) => {
   )
 })
 
+test('the cursor row is named on the list and brought into view when it moves', (t) => {
+  // Focus stays on the list while the arrows move a cursor, so the list has to
+  // say which row that is, and a cursor moved past the rail's edge used to
+  // leave the visible part of the list. Only a *move* scrolls: a repaint from a
+  // streamed token must not yank a list the user is scrolling by hand.
+  const { render, root } = mount(t)
+  render(viewOf(tieredState()))
+  const proto = Object.getPrototypeOf(sessionRows(root())[0]!.node) as { scrollIntoView(options?: unknown): void }
+  const scrolled: string[] = []
+  t.mock.method(proto, 'scrollIntoView', function (this: HTMLElement) { scrolled.push(this.id) })
+  const list = (): StubView => region(root(), 'sidebar-list')
+
+  render(viewOf({ ...tieredState(), selectedIndex: 2 }))
+  assert.equal(list().attributes.get('aria-activedescendant'), 'session-row-history')
+  assert.deepEqual(scrolled, ['session-row-history'])
+
+  // The same cursor, a different badge: no scroll.
+  render(viewOf({ ...tieredState(), selectedIndex: 2, pendingDelete: 'shown' }))
+  assert.deepEqual(scrolled, ['session-row-history'])
+
+  render(viewOf({ ...tieredState(), selectedIndex: -1 }))
+  assert.equal(list().attributes.has('aria-activedescendant'), false)
+})
+
 test('the heading + creates a session in *its own* project', (t) => {
   // The reason `newSessionIntent` is reached through the model rather than
   // spelled here: `Ctrl+T` resolves the active project and this resolves the one

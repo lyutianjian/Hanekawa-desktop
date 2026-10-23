@@ -174,19 +174,29 @@ test('a finished turn stays folded, however it was read', (t) => {
   assert.equal(runOf(view).children.length, 1, 'only the summary line')
 })
 
-test('a thought opens in place: the whole text on the line, no body, focus stays', (t) => {
+test('a thought opens to a body under its line, and focus stays on the line', (t) => {
+  // The whole text is a sibling of the toggle, not the toggle's own text: prose
+  // inside a <button> could not be selected, showed its markdown raw, and was
+  // the button's accessible name in full.
   const view = mount(t)
-  const item: TranscriptItem = { id: 'a', kind: 'thinking', text: '首句。\n后文。', turnId: 't1' }
+  const item: TranscriptItem = { id: 'a', kind: 'thinking', text: '首句。\n\n**后文**。', turnId: 't1' }
   const paint = (open: boolean) => view.render(transcript([item]), new Map([['a', open]]))
   paint(false)
   const head = runOf(view).children[0]!.children[0]!.node as HTMLElement
   view.stub.focus(head)
   paint(true)
-  assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '首句。\n后文。')
-  assert.equal(runOf(view).children[0]!.children.length, 1)
+  const line = runOf(view).children[0]!
+  assert.equal(line.children.length, 2, 'the line, then the body')
+  assert.equal(line.children[0]!.node, head, 'the line is kept, not rebuilt')
+  assert.equal(line.children[0]!.children[0]!.text, '首句。', 'the line keeps its first sentence')
+  const body = line.children[1]!
+  assert.deepEqual(body.classes, ['thinking-body', 'md'])
+  assert.notEqual(body.tagName, 'BUTTON')
+  assert.ok(body.children.length >= 2, 'rendered as markdown blocks')
+  assert.ok(body.children.some((child) => child.children.some((part) => part.tagName === 'STRONG')), 'markdown, not raw text')
   assert.equal(view.stub.activeElement(), head)
   paint(false)
-  assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '首句。')
+  assert.equal(runOf(view).children[0]!.children.length, 1, 'folded: the body is absent, not hidden')
   assert.equal(view.stub.activeElement(), head)
 })
 
@@ -225,16 +235,15 @@ test('a live thought shimmers on its first sentence, and opens to the whole text
   view.render(transcript([item]), new Map([['s', true]]), RUNNING_T1)
   const open = runOf(view).children[0]!
   assert.equal(open.classes.includes('open'), true)
-  assert.equal(open.children.length, 1, 'no body node: the line itself opens')
-  assert.equal(open.children[0]!.children[0]!.text, '第一行。\n第二行。\n第三行。', 'the whole text, not the sentence')
+  assert.equal(open.children.length, 2, 'the line, and the body that streams under it')
+  assert.equal(open.children[0]!.children[0]!.text, '第一行。', 'the line stays one sentence')
+  assert.match(open.children[1]!.text, /第三行/, 'the body holds the whole text')
 
-  // Sealed: the line says the first sentence.
+  // Sealed: the shimmer stops; the body stays while the thought is open.
   const { pending: _pending, ...sealed } = item
   view.render(transcript([sealed]), new Map([['s', true]]))
-  const done = runOf(view).children[0]!.children[0]!
   assert.equal(runOf(view).children[0]!.classes.includes('live'), false, 'sealed: the shimmer stops')
-  assert.deepEqual(done.children.map((part) => part.classes.join(' ')), ['line-text'])
-  assert.equal(done.children[0]!.text, '第一行。\n第二行。\n第三行。')
+  assert.match(runOf(view).children[0]!.children[1]!.text, /第三行/)
   view.render(transcript([sealed]), NO_DISCLOSURE)
   assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '第一行。')
 })
@@ -546,8 +555,8 @@ test('the pane’s absolute answer outranks the default, both ways', (t) => {
 
   render(transcript([sealedThinking]), new Map([['thinking-0', true]]))
   assert.equal(line().classes.includes('open'), true)
-  assert.equal(line().children.length, 1)
-  assert.equal(line().children[0]!.children[0]!.text, '推理。然后呢。')
+  assert.equal(line().children.length, 2)
+  assert.match(line().children[1]!.text, /推理。然后呢。/)
 
   render(transcript([sealedThinking]), new Map([['thinking-0', false]]))
   assert.equal(line().classes.includes('open'), false)

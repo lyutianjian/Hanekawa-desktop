@@ -2910,16 +2910,20 @@ body.settings-open #browser-resizer { display: none; }
 /* The name and summary of a sub-agent's latest tool, in `.step-live` below. */
 .step-name { min-width: 0; color: var(--text-secondary); font-family: var(--font-mono); overflow-wrap: anywhere; }
 .step-summary { min-width: 0; color: var(--text-tertiary); font-family: var(--font-mono); overflow-wrap: anywhere; }
-/* An open thought is its own line, whole: it wraps, and scrolls past 320px. */
-.thinking.open > .run-line { align-items: flex-start; }
-.thinking.open > .run-line .line-text {
+/* An open thought's whole text, under its line: markdown in the quiet voice of
+   the line above it, selectable, and scrolling past 320px so one long thought
+   does not push the answer off screen. The first block sits close under the
+   line; the last leaves no margin of its own. */
+.thinking-body {
   max-height: 320px;
   overflow-y: auto;
-  white-space: pre-wrap;
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
   overflow-wrap: anywhere;
-  text-overflow: clip;
   line-height: var(--leading-prose);
 }
+.thinking-body > :first-child { margin-top: 0; }
+.thinking-body > :last-child { margin-bottom: 0; }
 /* The sub-agent panel's status dot and type tag. The transcript's own rows say
    their state in words; the panel's rows keep the dot, in one colour per state. */
 .step-bead {

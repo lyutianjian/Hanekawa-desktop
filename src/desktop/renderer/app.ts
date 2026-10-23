@@ -267,7 +267,7 @@ const surface = createSurfacePanel(required('surface'), (action) => {
 })
 const suggestions = createSuggestionsView(required('suggestions'), (index) => {
   void activePane()?.acceptCompletionAt(index)
-})
+}, required('input'))
 const processStrip = createProcessStripView(required('process-strip'), () => showSideTab('commands'))
 const status = createStatusView({
   usage: required('status-usage'),
