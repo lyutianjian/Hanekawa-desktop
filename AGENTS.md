@@ -12,8 +12,6 @@ npm run typecheck
 npm run build
 npm run build:desktop
 npm run test
-npm run smoke:desktop
-npm run smoke:browser
 ```
 
 Focused tests:
@@ -102,8 +100,6 @@ desktop/ -> runtime/ + harness/ -> config/providers/
 - `TokenUsage`'s three input fields are disjoint: uncached input, cache writes (`cacheCreationInputTokens`, optional — absent means the provider does not report writes, never zero writes), cache reads. Add them only through `promptTokens()`, and take the hit rate only from `cacheHitRate()`, whose denominator is that same sum: a write is a miss that was paid for. Usage arithmetic preserves absence rather than materializing a zero.
 - Context occupancy is `promptTokens(usage.lastRequest)`, pushed per provider response through `RecordProxy.onRequestUsage` and seeded from the metrics sidecar for a session this process never ran — `loadLastRequestUsage` for the request, `loadSessionTotals` for the running total, which only lands while the total is still empty. A mid-turn report moves `lastRequest` only — the totals stay on the end-of-run accounting, or every request is counted twice.
 - The desktop readout pairs a cumulative count with the *last request's* hit rate; the session-cumulative rate lives in the hover. A cumulative rate can only fall — the cold first request, every compaction and every subagent prompt sit in its denominator forever — so it answers how the session went, not whether the cache is working now.
-- `scripts/smoke-browser.mjs` runs `scripts/smoke/browser.cjs` in Electron against `DesktopBrowserHost`, a loopback server and a disposable profile removed after Electron exits: the agent-browser paths only a real renderer has (beforeunload refusal, hit testing, native `<select>`, key chords). Its entry is CommonJS because an ESM Electron entry never starts in a headless Linux container.
-- `scripts/smoke-desktop.mjs` exercises real Electron behavior with scratch projects, a disposable home and a private profile. Teardown stops children before removing these and reports every cleanup failure. Real global config/settings/projects stay untouched; reports are retained only with explicit `--out` or `--keep`.
 
 ## Renderer invariants
 

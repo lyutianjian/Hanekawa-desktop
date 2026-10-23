@@ -509,29 +509,6 @@ npm test -- test/config.test.ts test/cacheBreakDetection.test.ts
 
 `npm test` 给子进程一个一次性的 home 和临时目录，无论成功、失败还是中断都会删除。跑单个测试也请用这个入口，不要直接用 `tsx --test`，否则会读写你真实的 `~/.myagent`。
 
-### 桌面冒烟测试（真实应用）
-
-`npm test` 从不启动 Electron：它离线且封闭，也应该保持这样。桌面外壳由另一个驱动程序验证：它启动真实应用，通过 Chrome DevTools Protocol 操作，检查只有运行中的窗口才能体现的东西——后台会话持续流式输出、挂起的权限请求在切换会话后依然存在、删除会话会清掉所有产物、设置在重启后保留。
-
-```bash
-npm run build:desktop      # 发现 dist/ 过期会拒绝运行
-npm run smoke:desktop
-npm run smoke:desktop -- --first-run
-```
-
-它需要显示器，所以只能本地运行。默认使用你配置的服务商。`--first-run` 从没有配置文件开始，使用本地模拟的 OpenAI 兼容端点：验证自动打开配置页、保留草稿、通过服务商窗口一次保存服务商和模型、发送消息，以及重启后使用已保存的模型。这个模式不需要真实凭据，也不会发出外部模型请求。
-
-- **不碰你的数据。** 应用使用临时项目、一次性 home 和独立的 Electron profile。服务商配置来自 `~/.myagent/config.json` 的一份 `0600` 副本；测试模型、项目注册、会话和文件历史都留在一次性 home 里。断言会确认仓库的会话以及你真实的配置、设置和项目注册表都没被改动。
-- **默认不花钱。** 只有一项——后台继续运行的真实回合——需要真实的模型调用，并且只在加 `--paid-turn` 时运行。该回合由一次性闩锁限制，默认使用 `step-3.5-flash`（可用 `--model=<key>` 指定），超时会被中断。
-- 临时项目、配置、浏览器缓存、截图和日志在成功、失败或中断后都会删除，摘要打印在终端。加 `--out=.smoke/<name>` 保留截图、日志和摘要，或加 `--keep` 保留整个临时环境用于调试。SIGKILL 或断电无法执行清理。
-
-常用参数：`--only=S3,S8` 只运行指定步骤；`--verbose` 打印通过的断言；`--kill-stale` 配合相同的 `--out` 目录停止之前的冒烟进程；`--port=`（默认 9222）；`--model=<key>`、`--paid-prompt=<text>`、`--paid-turn-timeout=<ms>`（默认 45000）用于付费回合。
-
-另有两个同样需要显示器的本地检查，清理规则相同：
-
-- `npm run smoke:browser`：先 `npm run build`，再在一次性 profile 中用 Electron 对内置浏览器跑只有真实渲染进程才有的路径（离开页面拦截、点击命中测试、原生 `<select>`、组合键）。
-- `npm run smoke:motion`：录制并检查桌面动效，支持 `--scale=1|1.25`、`--theme=dark|light`、`--dpi=chromium|native`、`--port`、`--out`、`--keep`。
-
 ## 环境变量
 
 - `MYAGENT_DEBUG_PROVIDER=1`：记录服务商请求和响应内容

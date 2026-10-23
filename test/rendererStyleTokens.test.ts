@@ -1412,7 +1412,7 @@ test('the session on screen is painted, and the four row states stack in order',
   // surface `.settings-nav-item.selected` uses: one way of saying "you are on
   // this one" across the app. Everything else about a row stays unpainted —
   // being open in a background lane is not a state the user asked to see, so
-  // `.open` remains data (`aria-selected`, the smoke probes) and styles nothing.
+  // `.open` remains data (`aria-selected`) and styles nothing.
   //
   // Verified by mutation: dropping `.session-row.active`, moving it above
   // `.selected`, or re-adding any of the forbidden tiers below reds this test

@@ -25,7 +25,7 @@ import type { WireBrowserTabInfo } from '../src/desktop/shellProtocol.js'
  * Everything the panel has to get right that is *not* compositing — which lane's
  * tabs are on screen, which one survives a close, when the native view may
  * paint, and what a typed address means — is arithmetic over data and is tested
- * here. The `WebContentsView` actually covering its hole is the smoke's job.
+ * here. The `WebContentsView` actually covering its hole is not.
  */
 
 function tab(overrides: Partial<WireBrowserTabInfo> & { tabId: string; lane: string }): WireBrowserTabInfo {

@@ -1,12 +1,11 @@
 import test, { type TestContext } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const fixturesUrl = new URL('../scripts/smoke/fixtures.mjs', import.meta.url).href
 const environmentUrl = new URL('../scripts/test-environment.mjs', import.meta.url).href
 const runner = fileURLToPath(new URL('../scripts/test.mjs', import.meta.url))
 const repoRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -24,70 +23,6 @@ function reportedRoot(stdout: string): string {
   assert.ok(match, stdout)
   return JSON.parse(match[1]) as string
 }
-
-for (const [name, ending, status] of [
-  ['success', '', 0],
-  ['failure', "throw new Error('expected fixture failure')", 1],
-  ['interruption', "process.kill(process.pid, 'SIGTERM'); setInterval(() => {}, 1000)", 143],
-] as const) {
-  test('smoke ' + name + ' removes models, projects, history and profile without changing the source config', {
-    skip: name === 'interruption' && process.platform === 'win32',
-  }, (t) => {
-    const sourceHome = scratch(t)
-    const configPath = join(sourceHome, '.myagent', 'config.json')
-    mkdirSync(join(sourceHome, '.myagent'))
-    const original = '{"models":{"real":{"model":"original"}}}\n'
-    writeFileSync(configPath, original)
-    const source = [
-      "import { mkdirSync, writeFileSync, writeSync } from 'node:fs'",
-      "import { join } from 'node:path'",
-      'import { createSmokeEnvironment, globalConfigPath, makeProject } from ' + JSON.stringify(fixturesUrl),
-      'const environment = createSmokeEnvironment({ sourceHome: ' + JSON.stringify(sourceHome) + ' })',
-      "makeProject(environment.root, 'test-project', environment.home)",
-      "writeFileSync(globalConfigPath(environment.home), '{\"models\":{\"smoke-model\":{}}}')",
-      "writeFileSync(join(environment.home, '.myagent/projects.json'), '{\"projects\":[\"test-project\"]}')",
-      "mkdirSync(join(environment.home, '.myagent/file-history/test-session'), { recursive: true })",
-      "mkdirSync(join(environment.root, 'profile/Cache'), { recursive: true })",
-      "writeSync(1, 'CLEANUP_ROOT ' + JSON.stringify(environment.root) + '\\n')",
-      ending,
-    ].join('\n')
-    const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { encoding: 'utf8', timeout: 15_000 })
-    assert.ifError(result.error)
-    assert.equal(result.status, status, result.stderr)
-    assert.equal(existsSync(reportedRoot(result.stdout)), false)
-    assert.equal(readFileSync(configPath, 'utf8'), original)
-  })
-}
-
-test('smoke setup failure removes the environment created before reading config', (t) => {
-  const root = scratch(t)
-  const source = [
-    'import { createSmokeEnvironment } from ' + JSON.stringify(fixturesUrl),
-    'createSmokeEnvironment({ sourceHome: ' + JSON.stringify(join(root, 'missing-home')) + ' })',
-  ].join('\n')
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
-    encoding: 'utf8', env: { ...process.env, TMPDIR: root, TMP: root, TEMP: root }, timeout: 15_000,
-  })
-  assert.ifError(result.error)
-  assert.equal(result.status, 1)
-  assert.deepEqual(readdirSync(root), [])
-})
-
-test('an explicit keep retains the scratch environment', (t) => {
-  const root = scratch(t)
-  const source = [
-    'import { createSmokeEnvironment } from ' + JSON.stringify(fixturesUrl),
-    'const environment = createSmokeEnvironment({ keep: true, copyConfig: false })',
-    'environment.cleanup()',
-    "console.log('CLEANUP_ROOT ' + JSON.stringify(environment.root))",
-  ].join('\n')
-  const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
-    encoding: 'utf8', env: { ...process.env, TMPDIR: root, TMP: root, TEMP: root }, timeout: 15_000,
-  })
-  assert.ifError(result.error)
-  assert.equal(result.status, 0, result.stderr)
-  assert.equal(existsSync(reportedRoot(result.stdout)), true)
-})
 
 test('a failed exit callback does not skip the remaining cleanup', () => {
   const source = [

@@ -230,14 +230,10 @@ export type HostCommand =
    */
   | { type: 'focus-pane'; id: string; paneId: string }
   /**
-   * Open another project in the same process.
-   *
-   * `path` is optional because the shell owns the picker: with no path the shell
-   * puts up its native directory dialog, and cancelling is a no-op. A client
-   * never sends one — but the field is what lets the whole feature be driven
-   * from a smoke harness, since a native modal cannot be clicked over CDP.
+   * Open another project in the same process. The shell owns the picker: it
+   * puts up its native directory dialog, and cancelling is a no-op.
    */
-  | { type: 'open-project'; id: string; path?: string }
+  | { type: 'open-project'; id: string }
   // --- message queue --------------------------------------------------------
   /**
    * Hold a message until the running turn is over.

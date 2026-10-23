@@ -333,7 +333,7 @@ export interface ShellHostDeps<
   /** Builds a lane's occupant (production: the `SessionHost` for that pane). */
   createOccupant: (attach: LaneAttach<P, PaneT, W>) => LaneOccupant
   /** `open-project` hand-off. A shell that cannot open projects rejects the command. */
-  onOpenProject?: (path?: string) => void
+  onOpenProject?: () => void
   /**
    * `open-in-editor` hand-off, given the project's real `cwd` — and, since T15,
    * one file inside it at one line (`target.path` already resolved to an
@@ -345,7 +345,7 @@ export interface ShellHostDeps<
    */
   onOpenInEditor?: (cwd: string, target?: { path: string; line?: number }) => Promise<void>
   /**
-   * A native directory picker, for `import-skill` without a `sourceDir`.
+   * A native directory picker, for `import-skill` and `new-coordinator-project`.
    *
    * Awaited and allowed to answer `undefined` (cancelled) — the same shape
    * `promptForProjectDirectory` already has in `main.ts`. A shell without one
@@ -641,7 +641,6 @@ const SETTINGS_CHANGE_SCHEMAS = {
     .object({
       scope: z.literal('extensions'),
       kind: z.literal('import-skill'),
-      sourceDir: z.string().optional(),
     })
     .strict(),
   'reload-skills': z
@@ -698,7 +697,7 @@ const SHELL_COMMAND_SCHEMAS = {
     })
     .strict(),
   'open-project': z
-    .object({ type: z.literal('open-project'), id: commandId, path: z.string().optional() })
+    .object({ type: z.literal('open-project'), id: commandId })
     .strict(),
   'remove-project': z
     .object({ type: z.literal('remove-project'), id: commandId, projectRoot: z.string() })
@@ -830,7 +829,7 @@ const SHELL_COMMAND_SCHEMAS = {
     .object({ type: z.literal('open-coordinator'), id: commandId, projectRoot: z.string().min(1) })
     .strict(),
   'new-coordinator-project': z
-    .object({ type: z.literal('new-coordinator-project'), id: commandId, path: z.string().min(1).optional() })
+    .object({ type: z.literal('new-coordinator-project'), id: commandId })
     .strict(),
   'coordination-survey': z
     .object({ type: z.literal('coordination-survey'), id: commandId, projectRoot: z.string().min(1) })
@@ -1292,7 +1291,7 @@ export class ShellHost<
         // Missing callback rejects rather than answering `ok` — a focus that
         // silently did nothing is indistinguishable from success on the wire.
         if (!this.deps.onOpenProject) throw new Error('The shell cannot open projects.')
-        this.deps.onOpenProject(command.path)
+        this.deps.onOpenProject()
         return { ok: true } satisfies WireShellOpenProjectResult
       }
       case 'remove-project':
@@ -1377,8 +1376,8 @@ export class ShellHost<
         return this.openCoordinator(await this.requireCwdForRoot(command.projectRoot))
       case 'new-coordinator-project': {
         const { onPickDirectory } = this.deps
-        if (command.path === undefined && !onPickDirectory) throw new Error('The shell cannot open projects.')
-        const target = command.path ?? (await onPickDirectory!({ title: '新建调度', buttonLabel: '新建' }))
+        if (!onPickDirectory) throw new Error('The shell cannot open projects.')
+        const target = await onPickDirectory({ title: '新建调度', buttonLabel: '新建' })
         if (target === undefined) return { cancelled: true } satisfies WireShellNewCoordinatorProjectResult
         return this.openCoordinator(target)
       }
@@ -2448,8 +2447,8 @@ interface SettingsChangeEffect {
 async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLaneWorkspace<PaneLike>>(
   entry: ProjectEntry<P, W>,
   change: SettingsChange,
-  // Only `import-skill` needs it, and only when the command arrived without a
-  // path. Passed in rather than reached for so this stays Electron-free.
+  // Only `import-skill` needs it. Passed in rather than reached for so this
+  // stays Electron-free.
   pickDirectory?: ShellHostDeps<P, PaneLike, W>['onPickDirectory'],
 ): Promise<SettingsChangeEffect> {
   if (change.scope === 'provider') {
@@ -2549,14 +2548,11 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
       // import (no SKILL.md, a name already taken) has to reject the command
       // rather than come back as a successful-looking snapshot with nothing new
       // in it. Nothing has been written to config or settings at this point.
-      let sourceDir = change.sourceDir
-      if (sourceDir === undefined) {
-        if (!pickDirectory) throw new Error('The shell cannot open a folder picker.')
-        sourceDir = await pickDirectory({ title: '导入技能', buttonLabel: '导入' })
-        // Cancelling is a no-op, not an error — the same rule the project picker
-        // follows. The reload still runs and answers with an unchanged snapshot.
-        if (!sourceDir) return { saveConfig: false, rebuild: false, scope: 'models' }
-      }
+      if (!pickDirectory) throw new Error('The shell cannot open a folder picker.')
+      const sourceDir = await pickDirectory({ title: '导入技能', buttonLabel: '导入' })
+      // Cancelling is a no-op, not an error — the same rule the project picker
+      // follows. The reload still runs and answers with an unchanged snapshot.
+      if (!sourceDir) return { saveConfig: false, rebuild: false, scope: 'models' }
       await importSkill(entry.cwd, sourceDir)
       // Rebuild for the reason `set-skill-enabled` needs one: a runtime is handed
       // the skill list it was built with.

@@ -604,7 +604,7 @@ test('an open dropdown has no clipping ancestor inside the screen', (t) => {
   // this holds is the property the fix rests on — nothing between the menu and
   // the screen's root clips its overflow. `.settings-body` scrolls (`overflow-y:
   // auto`), which *extends* rather than cuts, and is the documented trade-off in
-  // `styles.css`. The real proof is smoke step 8's `elementFromPoint` probe.
+  // `styles.css`.
   const { view, apply } = mount(t)
   apply({ kind: 'toggle-menu', menu: 'row:routing:main' })
   const chain = pathTo(view(), 'settings-menu')

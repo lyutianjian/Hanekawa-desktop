@@ -236,7 +236,7 @@ const COMMAND_SCHEMAS = {
   // guards it is the same thing that guards `run-tool` — the host process is the
   // trust boundary, not this schema.
   'open-project': z
-    .object({ type: z.literal('open-project'), id: commandId, path: z.string().optional() })
+    .object({ type: z.literal('open-project'), id: commandId })
     .strict(),
   // Spelled out like the two enums above rather than derived, and `_NoDrift` is
   // what keeps it honest. `content` is unbounded on purpose: it becomes a user

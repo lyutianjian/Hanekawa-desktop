@@ -21,12 +21,8 @@ import {
 } from '../src/desktop/renderer/model/projectPicker.js'
 
 /**
- * The renderer's first `dom/` unit test.
- *
- * Until this file, `dom/` and `paneSession.ts` were covered only by
- * `scripts/smoke-desktop.mjs` — a real Electron run needing a display and
- * credentials — which is why both bugs stage 4f fixed lived here. `test/helpers/domStub.ts`
- * is the smallest thing that makes a view renderable in `node --test`.
+ * `test/helpers/domStub.ts` is the smallest thing that makes a view renderable
+ * in `node --test`.
  *
  * This file is **not** in the base TypeScript program: the base `lib` is `ES2022`
  * only, and that absence is what stops host code from touching `document`. It is

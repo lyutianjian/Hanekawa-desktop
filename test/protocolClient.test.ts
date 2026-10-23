@@ -550,9 +550,6 @@ test('focusPane asks the shell and returns its answer; openProject omits an abse
   await settle()
   const open = harness.sent.find((command) => command.type === 'open-project')
   assert.ok(open && open.type === 'open-project')
-  // The key must be absent rather than undefined: the schema is `.strict()` and
-  // Electron IPC clones what it is given.
-  assert.equal('path' in open, false)
   harness.post({ type: 'reply', id: open.id, result: { ok: true } })
   await opening
 })

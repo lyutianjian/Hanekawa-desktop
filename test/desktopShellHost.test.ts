@@ -444,7 +444,7 @@ interface Harness {
   activates: string[]
   laneEvents: WireLaneInfo[][]
   allLanesClosed: string[]
-  openProjectRequests: Array<string | undefined>
+  openProjectRequests: { count: number }
   /** What `open-in-editor` handed over, in order: the cwd, and a target when one was named. */
   editorRequests: Array<{ cwd: string; target?: { path: string; line?: number } }>
   /** Makes the next `open-in-editor` reject, the way an uninstalled `code` does. */
@@ -523,7 +523,7 @@ function createHarness(
   const activates: string[] = []
   const laneEvents: WireLaneInfo[][] = []
   const allLanesClosed: string[] = []
-  const openProjectRequests: Array<string | undefined> = []
+  const openProjectRequests = { count: 0 }
   const editorRequests: Array<{ cwd: string; target?: { path: string; line?: number } }> = []
   const windowThemes: Array<{ theme: 'dark' | 'light'; preference: 'system' | 'dark' | 'light' }> = []
   const attentionRequests: number[] = []
@@ -561,7 +561,7 @@ function createHarness(
     },
     ...(options.withOpenProject === false
       ? {}
-      : { onOpenProject: (path?: string) => openProjectRequests.push(path) }),
+      : { onOpenProject: () => { openProjectRequests.count++ } }),
     ...(options.withOpenInEditor === false
       ? {}
       : {
@@ -674,7 +674,7 @@ test('the structural shell halves are satisfied by the real runtime types', () =
 const COMMAND_SAMPLES = {
   panes: { type: 'panes', id: 'a' },
   'open-session': { type: 'open-session', id: 'b', sessionId: 's1', title: 'T', projectRoot: 'r' },
-  'open-project': { type: 'open-project', id: 'c', path: fixturePath('repo') },
+  'open-project': { type: 'open-project', id: 'c' },
   'list-sessions': { type: 'list-sessions', id: 'd' },
   'usage-stats': { type: 'usage-stats', id: 'u' },
   'delete-session': { type: 'delete-session', id: 'e', projectRoot: 'r', sessionId: 's1' },
@@ -708,7 +708,7 @@ const COMMAND_SAMPLES = {
     visible: true,
   },
   'open-coordinator': { type: 'open-coordinator', id: 'v', projectRoot: 'r' },
-  'new-coordinator-project': { type: 'new-coordinator-project', id: 'v2', path: 'p' },
+  'new-coordinator-project': { type: 'new-coordinator-project', id: 'v2' },
   'coordination-stop-all': { type: 'coordination-stop-all', id: 'w', projectRoot: 'r' },
   'coordination-survey': { type: 'coordination-survey', id: 'w2', projectRoot: 'r' },
   'thread-merges': { type: 'thread-merges', id: 'x', projectRoot: 'r' },
@@ -767,7 +767,7 @@ const SETTINGS_CHANGE_SAMPLES = {
     enabled: false,
   },
   'reload-skills': { scope: 'extensions', kind: 'reload-skills' },
-  'import-skill': { scope: 'extensions', kind: 'import-skill', sourceDir: '/tmp/demo-skill' },
+  'import-skill': { scope: 'extensions', kind: 'import-skill' },
   'set-mcp-trust': { scope: 'extensions', kind: 'set-mcp-trust', name: 'github', trusted: true },
   'set-mcp-server': {
     scope: 'extensions',
@@ -1037,24 +1037,17 @@ test('panes reports the topology across projects, in open order', async () => {
 
 // --- open-project ---------------------------------------------------------------
 
-test('open-project hands the path to the shell and answers ok', async () => {
+test('open-project reaches the shell and answers ok', async () => {
   const h = createHarness()
-  const result = await h.client.openProject(fixturePath('repo', 'gamma'))
+  const result = await h.client.openProject()
   await settle()
   assert.deepEqual(result, { ok: true })
-  assert.deepEqual(h.openProjectRequests, [fixturePath('repo', 'gamma')])
-})
-
-test('open-project without a path still reaches the shell', async () => {
-  const h = createHarness()
-  await h.client.openProject()
-  await settle()
-  assert.deepEqual(h.openProjectRequests, [undefined])
+  assert.equal(h.openProjectRequests.count, 1)
 })
 
 test('open-project rejects when the shell cannot open projects', async () => {
   const h = createHarness({ withOpenProject: false })
-  await assert.rejects(h.client.openProject(fixturePath('repo', 'gamma')), /cannot open projects/)
+  await assert.rejects(h.client.openProject(), /cannot open projects/)
 })
 
 // --- detach ---------------------------------------------------------------------
@@ -3075,7 +3068,8 @@ test('new-coordinator-project picks a folder, adds it and opens its coordinator;
   picked = undefined
   assert.deepEqual(await h.client.newCoordinatorProject(), { cancelled: true })
 
-  await assert.rejects(h.client.newCoordinatorProject(os.homedir()), /主目录/)
+  picked = os.homedir()
+  await assert.rejects(h.client.newCoordinatorProject(), /主目录/)
   assert.deepEqual(ensured, [fixturePath('repo', 'beta')], 'home is refused before it is registered')
 })
 

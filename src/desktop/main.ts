@@ -514,9 +514,6 @@ async function openProject(cwd: string): Promise<void> {
 /**
  * The interactive policy for `openProject`: pick a directory if none was given,
  * report failures without taking the process down.
- *
- * `path` comes from the wire (`open-project`), where it is optional so this can
- * be driven without touching a native modal — CDP cannot click one.
  */
 async function openProjectInteractive(path?: string): Promise<void> {
   try {
@@ -739,8 +736,8 @@ async function ensureShell(): Promise<Shell> {
           shellHost?.requestActivate(lane)
           return true
         },
-        onOpenProject: (path) => {
-          void openProjectInteractive(path)
+        onOpenProject: () => {
+          void openProjectInteractive()
         },
         // `open-attachment` resolved to its on-disk path: the host stays
         // Electron-free, so `shell.openPath` lives here. The path is
@@ -781,8 +778,8 @@ async function ensureShell(): Promise<Shell> {
         coordination: sessionHost,
       }
     },
-    onOpenProject: (path) => {
-      void openProjectInteractive(path)
+    onOpenProject: () => {
+      void openProjectInteractive()
     },
     onPickDirectory: (options) => promptForDirectory(options),
     // 「选择图片」 (S11): the Electron boundary's half of the composer's
@@ -1009,7 +1006,7 @@ function focusWindow(window: BrowserWindow): void {
  * already passed `safeHref` in the parser, and this is the second net.
  *
  * Untested, like everything else in this file: `main.ts` cannot be imported under
- * plain node. Verified by smoke only.
+ * plain node.
  */
 function guardNavigation(window: BrowserWindow): void {
   const openExternally = (url: string): void => {

@@ -12,8 +12,8 @@ import type { SnapshotOwner } from '../src/desktop/browser/snapshotCache.js'
  *
  * The point of the seam is right here: the projection never sees a
  * `WebContents`, so everything about how a scan becomes pages is checked in a
- * plain test process. What is left for the smoke is only whether a real page
- * returns the shape this test hands in.
+ * plain test process. Left untested is only whether a real page returns the
+ * shape this test hands in.
  */
 
 const owner: SnapshotOwner = { tabId: 'tab-1', contentsId: 5, generation: 2 }

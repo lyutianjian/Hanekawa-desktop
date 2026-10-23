@@ -201,10 +201,10 @@ export interface SessionHostDeps {
    */
   onFocusPane?: (paneId: string) => boolean
   /**
-   * Asks the shell to open another project. With no path the shell puts up its
-   * own directory picker; the host neither waits for it nor learns the outcome.
+   * Asks the shell to open another project. The shell puts up its own
+   * directory picker; the host neither waits for it nor learns the outcome.
    */
-  onOpenProject?: (path?: string) => void
+  onOpenProject?: () => void
   /**
    * Opens a registered attachment's cached original (an `open-attachment`
    * resolved to its on-disk path). The shell owns the OS surface —
@@ -274,7 +274,7 @@ export class SessionHost implements CoordinationLaneControl {
   private readonly onPaneOpened: (pane: SessionPane, sessionId: string | undefined) => void
   private readonly onPaneClosed: (paneId: string) => void
   private readonly onFocusPane: ((paneId: string) => boolean) | undefined
-  private readonly onOpenProject: ((path?: string) => void) | undefined
+  private readonly onOpenProject: (() => void) | undefined
   private readonly onOpenAttachment: ((filePath: string) => void) | undefined
   private readonly describePanes: (() => WirePaneInfo[]) | undefined
   private readonly onPaneListChanged: (() => void) | undefined
@@ -1072,7 +1072,7 @@ export class SessionHost implements CoordinationLaneControl {
         return this.handleFocusPane(command) satisfies WireFocusPaneResult
 
       case 'open-project':
-        return this.handleOpenProject(command) satisfies WireOpenProjectResult
+        return this.handleOpenProject() satisfies WireOpenProjectResult
 
       case 'enqueue-message': {
         // `MessageQueue` notifies its subscribers, and `postQueuedMessages` both
@@ -1604,11 +1604,9 @@ export class SessionHost implements CoordinationLaneControl {
    * project takes MCP connections and a store, and the user may still have a
    * directory dialog in front of them.
    */
-  private handleOpenProject(
-    command: Extract<HostCommand, { type: 'open-project' }>,
-  ): WireOpenProjectResult {
+  private handleOpenProject(): WireOpenProjectResult {
     if (!this.onOpenProject) throw new Error('This shell cannot open projects')
-    this.onOpenProject(command.path)
+    this.onOpenProject()
     return { ok: true }
   }
 

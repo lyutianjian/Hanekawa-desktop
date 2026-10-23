@@ -130,7 +130,7 @@ test('the user message record replaces its turn-start bubble instead of doubling
   ])
 
   const user = state.items.filter((item) => item.kind === 'user')
-  assert.equal(user.length, 1, 'two identical bubbles is the desktop smoke-test duplicate')
+  assert.equal(user.length, 1, 'the record must replace the turn-start bubble, not add a second one')
   assert.equal(user[0]?.text, '/skill arg', 'the record carries displayContent; turn-start does not')
 })
 

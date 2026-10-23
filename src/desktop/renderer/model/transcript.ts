@@ -925,8 +925,8 @@ function applyRecord(
   // Idempotent by id. The user's message is already on screen: `turn-start`
   // placed it there under `event.messageId`, and that id *is* the record id
   // (`SessionController.submit` mints it and `AgentLoop.runInternal` uses it
-  // verbatim), so appending the record would draw the same bubble twice — the
-  // duplicate the desktop smoke test found. Replacing rather than dropping,
+  // verbatim), so appending the record would draw the same bubble twice.
+  // Replacing rather than dropping,
   // because the record carries `displayContent`, which is the authoritative
   // text (a skill command's `displayInput` arrives only this way).
   for (const item of pending) {

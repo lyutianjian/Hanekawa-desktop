@@ -122,12 +122,8 @@ export class ShellClient {
     }) as Promise<WireShellOpenSessionResult>
   }
 
-  async openProject(path?: string): Promise<WireShellOpenProjectResult> {
-    return this.send({
-      type: 'open-project',
-      id: crypto.randomUUID(),
-      ...(path !== undefined ? { path } : {}),
-    }) as Promise<WireShellOpenProjectResult>
+  async openProject(): Promise<WireShellOpenProjectResult> {
+    return this.send({ type: 'open-project', id: crypto.randomUUID() }) as Promise<WireShellOpenProjectResult>
   }
 
   /**
@@ -288,12 +284,8 @@ export class ShellClient {
   }
 
   /** Picks a folder, adds it as a project and opens its coordinator; `cancelled` when the picker is dismissed. */
-  async newCoordinatorProject(path?: string): Promise<WireShellNewCoordinatorProjectResult> {
-    return this.send({
-      type: 'new-coordinator-project',
-      id: crypto.randomUUID(),
-      ...(path !== undefined ? { path } : {}),
-    }) as Promise<WireShellNewCoordinatorProjectResult>
+  async newCoordinatorProject(): Promise<WireShellNewCoordinatorProjectResult> {
+    return this.send({ type: 'new-coordinator-project', id: crypto.randomUUID() }) as Promise<WireShellNewCoordinatorProjectResult>
   }
 
   /** The coordinator welcome's 「读取项目」. */

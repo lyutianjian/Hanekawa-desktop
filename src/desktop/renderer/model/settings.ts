@@ -3249,7 +3249,7 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
         changes: [{ scope: 'extensions', kind: 'reload-skills' }],
       }
     case 'import-skill':
-      // No `sourceDir`: the host owns the native picker, and a cancelled pick is
+      // The host owns the native picker, and a cancelled pick is
       // a successful no-op rather than an error.
       return {
         state: { ...cleared, busy: true },

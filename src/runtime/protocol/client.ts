@@ -591,15 +591,11 @@ export class SessionClient {
    * Asks the shell to open another project in this process.
    *
    * Resolving means the shell accepted the request; the project is bootstrapped
-   * afterwards, in its own window. `path` is for a smoke harness — a client
-   * normally omits it and lets the shell put up its native directory picker.
+   * afterwards, in its own window, once the user answers the shell's native
+   * directory picker.
    */
-  async openProject(path?: string): Promise<void> {
-    await this.send({
-      type: 'open-project',
-      id: randomUUID(),
-      ...(path ? { path } : {}),
-    })
+  async openProject(): Promise<void> {
+    await this.send({ type: 'open-project', id: randomUUID() })
   }
 
   /**

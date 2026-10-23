@@ -31,7 +31,7 @@ import {
 import type { DesktopBridge } from '../src/desktop/types.js'
 
 /**
- * End-to-end smoke for the desktop stack without launching Electron.
+ * End-to-end test of the desktop stack without launching Electron.
  *
  * Both halves are the adapters that actually ship: `createElectronMainChannel`
  * over a mock `ipcMain`/`webContents`, and `createBridgeChannel` over a mock
@@ -584,7 +584,7 @@ test('two projects: the tab list spans both, and cross-project work goes through
   const windows: Array<{ pane: SessionPane }> = [{ pane: workspaceA.list()[0]! }, { pane: workspaceB.list()[0]! }]
   const describePanes = () => directory.describe(windows.map((entry) => entry.pane))
   const focused: string[] = []
-  const projectRequests: Array<string | undefined> = []
+  const projectRequests: string[] = []
   const onFocusPane = (paneId: string): boolean => {
     const found = windows.some((entry) => entry.pane.getSession().id === paneId)
     if (found) focused.push(paneId)
@@ -605,7 +605,7 @@ test('two projects: the tab list spans both, and cross-project work goes through
     onPaneOpened: () => undefined,
     onPaneClosed: (paneId) => closedByA.push(paneId),
     onFocusPane,
-    onOpenProject: (path) => projectRequests.push(path),
+    onOpenProject: () => projectRequests.push('A'),
     describePanes,
   })
   const hostB = new SessionHost({
@@ -618,7 +618,7 @@ test('two projects: the tab list spans both, and cross-project work goes through
     onPaneOpened: () => undefined,
     onPaneClosed: () => undefined,
     onFocusPane,
-    onOpenProject: (path) => projectRequests.push(path),
+    onOpenProject: () => projectRequests.push('B'),
     describePanes,
   })
 
@@ -653,8 +653,8 @@ test('two projects: the tab list spans both, and cross-project work goes through
 
     // Opening a project is the shell's job too — a host only knows its own.
     await clientA.openProject()
-    await clientB.openProject(ROOT_A)
-    assert.deepEqual(projectRequests, [undefined, ROOT_A])
+    await clientB.openProject()
+    assert.deepEqual(projectRequests, ['A', 'B'])
 
     // A host refuses to close another project's pane, which is what backs the
     // tab bar drawing no × on a foreign row: its own registry is the only one it

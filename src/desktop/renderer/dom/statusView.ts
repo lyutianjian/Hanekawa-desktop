@@ -22,10 +22,9 @@ import { icon, type IconName } from './icons.js'
  * - the 生成中 label, to nowhere: the transcript and the stop button both say a
  *   turn is running, and this strip is for the numbers.
  *
- * `document.title` still happens here rather than in the header, and that is
- * deliberate: it is the desktop shell's end-to-end proof (the smoke driver reads
- * it from outside the process), and it means "a `hello()` came back" only as
- * long as it is written on the pane's path rather than off the lane list.
+ * `document.title` still happens here rather than in the header: it means "a
+ * `hello()` came back" only as long as it is written on the pane's path rather
+ * than off the lane list.
  */
 
 export interface StatusView {

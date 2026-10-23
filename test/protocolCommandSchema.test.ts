@@ -212,10 +212,8 @@ test('the two shell hand-off commands are strict about their own fields', () => 
   assert.equal(parseHostCommand({ type: 'focus-pane', id: '1', paneId: 'p', sessionId: 's' }).ok, false)
   assert.equal(parseHostCommand({ type: 'focus-pane', id: '1', paneId: 42 }).ok, false)
 
-  // `path` is optional (the shell owns the picker) but must be a string when
-  // present, and nothing else may ride along with it.
-  assert.equal(parseHostCommand({ type: 'open-project', id: '1', path: 'C:/repo' }).ok, true)
-  assert.equal(parseHostCommand({ type: 'open-project', id: '1', path: 42 }).ok, false)
+  // The shell owns the picker: no path, and nothing else may ride along.
+  assert.equal(parseHostCommand({ type: 'open-project', id: '1', path: 'C:/repo' }).ok, false)
   assert.equal(parseHostCommand({ type: 'open-project', id: '1', cwd: 'C:/repo' }).ok, false)
 })
 

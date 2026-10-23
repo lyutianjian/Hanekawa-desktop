@@ -14,8 +14,7 @@ import { installDomStub, type DomStub, type StubView } from './helpers/domStub.j
  *
  * `app.ts` is the wiring layer and has no unit tests: the views are pinned on
  * one side (`dom/`) and the decisions on the other (`model/`), but the file that
- * puts them together is covered by nothing but the desktop smoke — which needs a
- * display and did not run. Stage 6 is what that cost: a `shellClient` call added
+ * puts them together had no test of its own. Stage 6 is what that cost: a `shellClient` call added
  * inside `applyResolvedTheme`, whose only call site at the time ran at module top
  * level *above* `const shellClient`, threw before a single view was constructed.
  * (In the source that is a temporal-dead-zone `ReferenceError`; in the shipped

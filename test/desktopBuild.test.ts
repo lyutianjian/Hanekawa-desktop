@@ -20,7 +20,7 @@ import { build } from 'esbuild'
 import { SHEETS } from '../src/desktop/renderer/model/workingMark.js'
 
 /**
- * Smoke for the desktop shell build pipeline. Seven artifacts must land at the
+ * Checks the desktop shell build pipeline. Seven artifacts must land at the
  * right depths of the output directory:
  *
  *  - `desktop/main.js` — the Node-targeted main process. `electron` is left

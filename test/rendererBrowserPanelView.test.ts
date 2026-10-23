@@ -20,7 +20,7 @@ import type { WireBrowserRect, WireBrowserTabInfo } from '../src/desktop/shellPr
  * view *says* the right thing: one push per real change, visibility told rather
  * than styled, and a hide on the way out.
  *
- * Whether the native view actually lands on the hole is the smoke's job — there
+ * Whether the native view actually lands on the hole is out of reach — there
  * is no compositor here.
  *
  * Not in the base TypeScript program (its `lib` has no DOM): excluded there,

@@ -779,7 +779,7 @@ test('a row carries its tier as data — and no tier paints anything', (t) => {
   // `active` is the one the window is showing, `open` is a lane that exists but
   // is not in front, and neither class is history. All three paint identically
   // now — activation is imperceptible by design — but the classes stay: they
-  // feed `aria-selected` and the smoke probes, and this is the guard that they
+  // feed `aria-selected`, and this is the guard that they
   // still exist on the nodes.
   const { render, root } = mount(t)
   render(viewOf(tieredState()))

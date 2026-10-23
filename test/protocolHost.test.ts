@@ -72,7 +72,7 @@ interface Harness {
     openedCallbacks: Array<{ paneId: string }>
     closedCallbacks: string[]
     focusedPanes: string[]
-    openedProjects: Array<string | undefined>
+    openedProjects: number
     /** How often the shell was asked to fan a pane list out to its other windows. */
     paneListFanOuts: number
   }
@@ -142,7 +142,7 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
     openedCallbacks: [],
     closedCallbacks: [],
     focusedPanes: [],
-    openedProjects: [],
+    openedProjects: 0,
     paneListFanOuts: 0,
   }
 
@@ -372,8 +372,8 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
           calls.focusedPanes.push(paneId)
           return options.focusFound ?? true
         },
-        onOpenProject: (path?: string) => {
-          calls.openedProjects.push(path)
+        onOpenProject: () => {
+          calls.openedProjects++
         },
         onPaneListChanged: () => {
           calls.paneListFanOuts += 1
@@ -1979,15 +1979,10 @@ test('a focus the shell could not satisfy answers ok:false, not a failure', asyn
   harness.dispose()
 })
 
-test('open-project forwards the path when given one, and undefined when not', async () => {
+test('open-project hands off to the shell', async () => {
   const harness = await createHarness()
   assert.deepEqual(await replyTo(harness, { type: 'open-project', id: 'p1' }, 'p1'), { ok: true })
-  assert.deepEqual(
-    await replyTo(harness, { type: 'open-project', id: 'p2', path: 'C:/repo/other' }, 'p2'),
-    { ok: true },
-  )
-  // `undefined` means "put your own picker up"; the shell owns the dialog.
-  assert.deepEqual(harness.calls.openedProjects, [undefined, 'C:/repo/other'])
+  assert.equal(harness.calls.openedProjects, 1)
   harness.dispose()
 })
 

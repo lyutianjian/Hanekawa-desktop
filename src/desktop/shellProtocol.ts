@@ -94,11 +94,11 @@ export type ShellCommand =
    */
   | { type: 'delete-session'; id: string; projectRoot: string; sessionId: string }
   /**
-   * Hands a directory to the shell, exactly like the `open-project` host
-   * command: `ok` means accepted, not that a project is open — without `path`
-   * the user still has a directory dialog to answer.
+   * Asks the shell to open a project, exactly like the `open-project` host
+   * command: `ok` means accepted, not that a project is open — the user still
+   * has a directory dialog to answer.
    */
-  | { type: 'open-project'; id: string; path?: string }
+  | { type: 'open-project'; id: string }
   /**
    * Forgets a project: unregisters it from `~/.myagent/projects.json` and
    * releases any lane it still holds.
@@ -252,11 +252,10 @@ export type ShellCommand =
    */
   | { type: 'open-coordinator'; id: string; projectRoot: string }
   /**
-   * Picks a folder (or takes `path`, which spares tests the native modal),
-   * adds it as a project and opens its coordinator session. The home directory
+   * Picks a folder, adds it as a project and opens its coordinator session. The home directory
    * is refused: it is the global workspace and gets no coordinator.
    */
-  | { type: 'new-coordinator-project'; id: string; path?: string }
+  | { type: 'new-coordinator-project'; id: string }
   /** Starts the survey thread (了解项目) of a project whose coordinator has no threads yet. */
   | { type: 'coordination-survey'; id: string; projectRoot: string }
   /** Stops the coordinator and every thread of the project that has a live lane. */
@@ -661,14 +660,8 @@ export type SettingsChange =
   | { scope: 'extensions'; kind: 'set-skill-enabled'; name: string; enabled: boolean }
   /** An action: re-reads `.myagent/skills/` and re-registers their commands. */
   | { scope: 'extensions'; kind: 'reload-skills' }
-  /**
-   * Copies a skill folder into `.myagent/skills/` and reloads.
-   *
-   * `sourceDir` is optional for the reason `open-project`'s `path` is: without
-   * it the main process puts up a native directory picker, and with it the same
-   * command can be driven from the smoke, which cannot click a native modal.
-   */
-  | { scope: 'extensions'; kind: 'import-skill'; sourceDir?: string }
+  /** Copies a skill folder the user picks into `.myagent/skills/` and reloads. */
+  | { scope: 'extensions'; kind: 'import-skill' }
   | { scope: 'extensions'; kind: 'set-mcp-trust'; name: string; trusted: boolean }
   /**
    * `previousName` is a rename: one command rather than a remove plus a set, so
