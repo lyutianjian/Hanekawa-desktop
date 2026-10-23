@@ -590,7 +590,7 @@ export function createTranscriptView(
         observeOverflow: (node) => overflowObserver?.observe(node),
       })
       const edits = handlers.onViewEdits ? collectTurnEdits(entries, new Set(footers.keys())) : new Map<number, TurnEdits>()
-      // 撤销 rewinds to the turn's opening message, so only the newest settled turn offers it.
+      // 回退 rewinds to the turn's opening message, so only the newest settled turn offers it.
       const lastTurn = activity?.isStreaming === true ? undefined : Math.max(-1, ...footers.keys())
       const cards = new Map([...edits].map(([index, turn]) => [index, editsCardNode(painter, turn, index === lastTurn)]))
       const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index), activity !== undefined, cards.get(index)))
@@ -1936,7 +1936,7 @@ const EDITS_CARD_ROWS = 5
 
 /**
  * 已编辑 N 个文件: one row per file with its counts, 查看全部 with the turn's
- * totals, and 撤销 on the newest turn. Every row opens the side panel's 改动 page.
+ * totals, and 回退 on the newest turn. Every row opens the side panel's 改动 page.
  */
 function editsCardNode(painter: Painter, turn: TurnEdits, undoable: boolean): HTMLElement {
   return painter.node(
@@ -1950,7 +1950,7 @@ function editsCardNode(painter: Painter, turn: TurnEdits, undoable: boolean): HT
       const rewind = painter.onRewind
       const messageId = turn.userMessageId
       const undo = undoable && messageId !== undefined && rewind
-        ? button('edits-undo', '撤销', '撤销本轮的文件改动', () => rewind(messageId))
+        ? button('edits-undo', '回退', '回退本回合的文件改动', () => rewind(messageId))
         : undefined
       const rows = shown.map((file) => {
         const row = button('edits-row', '', `查看 ${file.name} 的改动`, () => view(file.path))

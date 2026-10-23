@@ -418,7 +418,7 @@ export function createSettingsView(
             el('span', undefined, '显示名'),
             el('span'),
           )
-        : el('div', 'settings-model-empty', '还没有模型。'),
+        : el('div', 'settings-model-empty', '还没有模型'),
       ...form.models.map((row) => modelRowNode(row, key)),
     ])
     return [

@@ -981,7 +981,7 @@ export function createComposerView(els: {
       if (!runtimeMenuNode) {
         runtimeMenuNode = el('div', 'chip-menu')
         runtimeMenuNode.setAttribute('role', 'menu')
-        runtimeMenuNode.setAttribute('aria-label', '模型与推理强度')
+        runtimeMenuNode.setAttribute('aria-label', '模型与思考强度')
         runtimeMenuNode.addEventListener('mousemove', (event) => { pointer = { x: event.clientX, y: event.clientY } })
         followPointer(runtimeMenuNode, '.chip-menu-row')
         els.chipShell.appendChild(runtimeMenuNode)

@@ -31,7 +31,7 @@ export interface EditedFile {
 export interface TurnEdits {
   /** Stable across repaints: the first editing step's id. */
   readonly key: string
-  /** The message that opened the turn — the checkpoint 撤销 rewinds to. */
+  /** The message that opened the turn — the checkpoint 回退 rewinds to. */
   readonly userMessageId?: string
   readonly files: readonly EditedFile[]
   readonly added?: number

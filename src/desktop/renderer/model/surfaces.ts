@@ -189,7 +189,7 @@ export function resumePickerView(input: {
       ...(session.id === input.currentSessionId ? { current: true } : {}),
       action: { kind: 'open-pane', sessionId: session.id } as const,
     })),
-    emptyMessage: '还没有其他会话。',
+    emptyMessage: '还没有其他会话',
   }
 }
 

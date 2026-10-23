@@ -1625,7 +1625,7 @@ async function runProbeNow({ seq, ...request }: SettingsProbeRequest): Promise<v
   let result: WireShellProbeEndpointResult
   try {
     const projectRoot = settingsState.projectRoot
-    if (projectRoot === undefined) throw new Error('No project is open.')
+    if (projectRoot === undefined) throw new Error('没有打开的项目')
     result = await shellClient.probeEndpoint({ projectRoot, ...request })
   } catch (error) {
     result = { ok: false, reason: 'other', detail: error instanceof Error ? error.message : String(error) }

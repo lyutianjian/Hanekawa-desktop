@@ -56,12 +56,12 @@ export function composerChipView(
   if (!runtime) {
     return {
       model: PLACEHOLDER,
-      modelTitle: '尚未收到运行时快照',
+      modelTitle: '正在连接会话…',
       effort: PLACEHOLDER,
-      effortTitle: '尚未收到运行时快照',
+      effortTitle: '正在连接会话…',
       atCeiling: false,
       enabled: false,
-      title: '尚未收到运行时快照',
+      title: '正在连接会话…',
     }
   }
 
@@ -213,7 +213,7 @@ export function permissionPillView(input: {
   if (!current) {
     return {
       label: PLACEHOLDER,
-      title: '尚未收到运行时快照',
+      title: '正在连接会话…',
       enabled: false,
       open: false,
       options,

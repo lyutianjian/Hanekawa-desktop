@@ -91,7 +91,8 @@ export interface SidebarDom {
 
 const BADGE_LABELS = {
   running: '运行中',
-  'awaiting-input': '等待授权',
+  // One badge for an approval and a question alike, so the neutral verb.
+  'awaiting-input': '等待你处理',
   failed: '失败',
   unread: '有新回复',
 } as const

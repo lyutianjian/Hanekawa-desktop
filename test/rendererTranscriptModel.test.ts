@@ -262,7 +262,7 @@ test('turn-end closes the segment and the elapsed time rides on a duration item'
   assert.deepEqual(thinkingItems(state).map((item) => [item.pending, item.durationMs]), [[undefined, undefined]])
   assert.deepEqual(
     state.items.filter((item) => item.kind === 'duration').map((item) => [item.text, item.durationMs]),
-    [['已处理 7m 38s', 458_000]],
+    [['已处理 7 分 38 秒', 458_000]],
   )
   assert.equal(state.isThinking, false)
 })
@@ -328,7 +328,7 @@ test('a zero-step turn still draws the single elapsed line, under the answer', (
 
   const entries = groupTranscript(state.items)
   assert.deepEqual(entries.map((entry) => entry.kind), ['item', 'item', 'item'])
-  assert.deepEqual([itemAt(entries, 1).text, itemAt(entries, 2).text], ['hi', '已处理 1s'])
+  assert.deepEqual([itemAt(entries, 1).text, itemAt(entries, 2).text], ['hi', '已处理 1 秒'])
 })
 
 test('a live thought is timed from its first delta to its last stop, and keeps the time through its commit', () => {
@@ -370,7 +370,7 @@ test('a later turn-end leaves an earlier turn is block alone', () => {
   ])
   assert.deepEqual(
     state.items.filter((item) => item.kind === 'duration').map((item) => item.text),
-    ['已处理 7m 38s', '已处理 2s'],
+    ['已处理 7 分 38 秒', '已处理 2 秒'],
   )
 })
 
@@ -399,13 +399,13 @@ test('transcript-reset drops a block that was still arriving', () => {
 })
 
 test('the elapsed time reads as minutes and seconds, with a tenth under a second', () => {
-  assert.equal(formatWorkedDuration(458_000), '7m 38s')
-  assert.equal(formatWorkedDuration(62_000), '1m 2s')
-  assert.equal(formatWorkedDuration(3400), '3s', 'above a second the fraction is noise')
-  assert.equal(formatWorkedDuration(1000), '1s')
-  // `已处理 0s` reads as a broken clock, so a sub-second turn keeps its fraction.
-  assert.equal(formatWorkedDuration(420), '0.4s')
-  assert.equal(formatWorkedDuration(-5), '0s')
+  assert.equal(formatWorkedDuration(458_000), '7 分 38 秒')
+  assert.equal(formatWorkedDuration(62_000), '1 分 2 秒')
+  assert.equal(formatWorkedDuration(3400), '3 秒', 'above a second the fraction is noise')
+  assert.equal(formatWorkedDuration(1000), '1 秒')
+  // `已处理 0 秒` reads as a broken clock, so a sub-second turn keeps its fraction.
+  assert.equal(formatWorkedDuration(420), '0.4 秒')
+  assert.equal(formatWorkedDuration(-5), '0 秒')
 })
 
 test('a tool result replaces the pending call row it answers', () => {
@@ -441,7 +441,7 @@ test('a failed tool result is marked failed', () => {
   }])
 
   assert.equal(state.items[0]?.failed, true)
-  assert.match(state.items[0]?.text ?? '', /Bash failed: command not found/)
+  assert.match(state.items[0]?.text ?? '', /Bash 失败：command not found/)
 })
 
 test('a failed result carries its error code; a successful one carries none', () => {
@@ -549,7 +549,7 @@ test('the subagent summary appended for the model draws nothing', () => {
 })
 
 test('a failed turn still gets its duration line; an aborted one does not', () => {
-  assert.equal(formatTurnSummary({ type: 'turn-end', aborted: false, rolledBack: false, durationMs: 1250 }), '已处理 1s')
+  assert.equal(formatTurnSummary({ type: 'turn-end', aborted: false, rolledBack: false, durationMs: 1250 }), '已处理 1 秒')
   assert.equal(formatTurnSummary({ type: 'turn-end', aborted: true, rolledBack: false, durationMs: 1250 }), undefined)
 })
 
@@ -692,7 +692,7 @@ test('a turn becomes runs of work between prose: each thought a run of its own, 
   assert.equal(run.failedCount, 0)
   assert.equal(run.status, 'done')
   // No turn-end to quote on replay: the records span the turn, and the line is made here.
-  assert.deepEqual([itemAt(entries, 5).kind, itemAt(entries, 5).durationMs, itemAt(entries, 5).text], ['duration', 4000, '已处理 4s'])
+  assert.deepEqual([itemAt(entries, 5).kind, itemAt(entries, 5).durationMs, itemAt(entries, 5).text], ['duration', 4000, '已处理 4 秒'])
 })
 
 test('a failed call is counted, and a never-answered one keeps the group running', () => {
@@ -1001,7 +1001,7 @@ test('the four tool states are derived, and each one has words as well as a colo
   // as text — the bead is aria-hidden and a colour is not a label.
   assert.deepEqual(
     (['awaiting-approval', 'running', 'done', 'failed'] as ToolStepStatus[]).map(toolStatusLabel),
-    ['等待授权', '执行中', '完成', '失败'],
+    ['等待你确认', '执行中', '完成', '失败'],
   )
 })
 

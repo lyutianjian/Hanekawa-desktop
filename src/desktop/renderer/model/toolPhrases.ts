@@ -27,7 +27,7 @@ const PHRASES: Record<string, { readonly verb: string; readonly target?: 'file' 
   Skill: { verb: '使用技能', target: 'text' },
   Agent: { verb: '子代理', target: 'text' },
   SendMessage: { verb: '发送消息', target: 'text' },
-  AskUserQuestion: { verb: '等待回答' },
+  AskUserQuestion: { verb: '等待你回答' },
   TodoWrite: { verb: '更新任务' },
   TaskCreate: { verb: '更新任务' },
   TaskUpdate: { verb: '更新任务' },

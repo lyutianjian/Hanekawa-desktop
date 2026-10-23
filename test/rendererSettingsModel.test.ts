@@ -1298,7 +1298,7 @@ test('the skills card lists every skill, switched-off ones included', () => {
   assert.match(review.detail ?? '', /匹配 src\/\*\*/)
   assert.match(review.detail ?? '', /工具：Read、Grep/)
   assert.match(review.detail ?? '', /模型：claude-big/)
-  assert.match(review.detail ?? '', /推理强度：high/)
+  assert.match(review.detail ?? '', /思考强度：high/)
   assert.match(review.detail ?? '', /带 hooks/)
   assert.match(review.detail ?? '', /2 个附件/)
   assert.match(review.detail ?? '', /已关闭/)

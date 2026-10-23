@@ -498,7 +498,7 @@ test('loose items paint as items: messages, notices and 已中断; the duration 
     { id: 'a', kind: 'user', text: 'hi' },
     { id: 'b', kind: 'notice', text: '上下文已压缩' },
     { id: 'c', kind: 'error', text: 'boom', failed: true },
-    { id: 'd', kind: 'duration', text: '已处理 1s', durationMs: 1000, turnId: 't1' },
+    { id: 'd', kind: 'duration', text: '已处理 1 秒', durationMs: 1000, turnId: 't1' },
     { id: 'e', kind: 'notice', text: 'Interrupted.', interrupt: true },
   ]), NO_DISCLOSURE, IDLE_ACTIVITY)
 
@@ -509,7 +509,7 @@ test('loose items paint as items: messages, notices and 已中断; the duration 
     ['item-meta', 'turn-foot'],
     ['item', 'notice', 'interrupt'],
   ])
-  assert.deepEqual(items().map((item) => item.text), ['hi显示更多', '上下文已压缩', 'boom', '用时 1s', '已中断'])
+  assert.deepEqual(items().map((item) => item.text), ['hi显示更多', '上下文已压缩', 'boom', '用时 1 秒', '已中断'])
 })
 
 test('a duration made from a streaming turn’s records is not drawn until the turn ends', (t) => {
@@ -524,7 +524,7 @@ test('a duration made from a streaming turn’s records is not drawn until the t
   assert.equal(items().some((item) => item.classes.includes('duration')), false)
   render(transcript(turn), NO_DISCLOSURE, IDLE_ACTIVITY)
   assert.equal(items().some((item) => item.classes.includes('duration')), false, 'never a row')
-  assert.deepEqual(factsOf(items().at(-1)!), ['用时 5s'], 'settled: the span of the records, as replay has no measured time')
+  assert.deepEqual(factsOf(items().at(-1)!), ['用时 5 秒'], 'settled: the span of the records, as replay has no measured time')
 })
 
 // --- the thinking line -------------------------------------------------------
@@ -1869,7 +1869,7 @@ test('before the first step the status is a line of its own, at the tail', (t) =
     ['line-mark', 'line-meta line-elapsed', 'line-text'],
     'mark, counter, words — and the clock is painted on the first frame',
   )
-  assert.deepEqual(statusText(row), { label: '处理中', meta: ['5s', '·', '1.2k tokens', '·'] })
+  assert.deepEqual(statusText(row), { label: '处理中', meta: ['5 秒', '·', '1.2k token', '·'] })
   // `.transcript` is `aria-live="polite"`: the words may be announced, the
   // counter must not be (it changes ten times a second), and neither is the mark.
   assert.equal(row.children[0]!.attributes.get('aria-hidden'), 'true')
@@ -1883,7 +1883,7 @@ test('the counter is empty on a short wait, and tokens come only beside the seco
   render(state, NO_DISCLOSURE, waiting(state, Date.now() - 500, 90))
   assert.deepEqual(statusText(items().at(-1)!).meta, [])
   render(state, NO_DISCLOSURE, waiting(state, Date.now() - 3_000))
-  assert.deepEqual(statusText(items().at(-1)!).meta, ['3s', '·'], 'no tokens reported yet')
+  assert.deepEqual(statusText(items().at(-1)!).meta, ['3 秒', '·'], 'no tokens reported yet')
 })
 
 test('the status line stays last while a run works, and its pieces survive the step settling', (t) => {
@@ -1940,7 +1940,7 @@ test('M18 keeps the mark and clock mounted across tool handoffs and unchanged pa
     assert.deepEqual(row.classes, ['waiting'])
     pieces ??= row.children
     for (const index of [0, 1, 2]) assert.equal(row.children[index]!.node, pieces[index]!.node)
-    assert.deepEqual(statusText(row).meta.slice(0, 2), ['6s', '·'])
+    assert.deepEqual(statusText(row).meta.slice(0, 2), ['6 秒', '·'])
   }
   assert.equal(starts.starts, 0, 'label updates never detach or restart the mark')
 })
@@ -2632,19 +2632,19 @@ test('the turn footer rides on the answer: 复制 · 刚刚 · 用时 · tokens,
   const turn: TranscriptItem[] = [
     { id: 'u', kind: 'user', text: 'go', turnId: 't1' },
     { id: 'a', kind: 'assistant', text: 'done', turnId: 't1', createdAt: at },
-    { id: 'd', kind: 'duration', text: '已处理 24m 0s', durationMs: 1_440_000, turnId: 't1' },
+    { id: 'd', kind: 'duration', text: '已处理 24 分 0 秒', durationMs: 1_440_000, turnId: 't1' },
   ]
   render(transcript(turn), NO_DISCLOSURE, { ...IDLE_ACTIVITY, outputTokens: 3200 })
   assert.deepEqual(items().map((item) => item.classes[1]), ['user', 'assistant'])
   const row = items()[1]!.children.find((child) => child.classes.includes('item-meta'))!
-  assert.deepEqual(row.children.map((child) => child.text), ['', '刚刚', '用时 24m 0s', '3.2k tokens'])
+  assert.deepEqual(row.children.map((child) => child.text), ['', '刚刚', '用时 24 分 0 秒', '3.2k token'])
   assert.match(row.children[1]!.attributes.get('title') ?? '', /^\d{4}-\d\d-\d\d \d\d:\d\d$/)
 
   // No count for a replayed turn, and none while another turn streams.
   render(transcript(turn), NO_DISCLOSURE, IDLE_ACTIVITY)
-  assert.deepEqual(factsOf(items()[1]!), ['用时 24m 0s'])
+  assert.deepEqual(factsOf(items()[1]!), ['用时 24 分 0 秒'])
   render(transcript(turn), NO_DISCLOSURE, { ...IDLE_ACTIVITY, isStreaming: true, turnId: 't2', startedAt: Date.now(), outputTokens: 90 })
-  assert.deepEqual(factsOf(items()[1]!), ['用时 24m 0s'])
+  assert.deepEqual(factsOf(items()[1]!), ['用时 24 分 0 秒'])
 })
 
 test('prose between tool calls carries no meta row; only the settled turn\'s answer does', (t) => {
@@ -2662,7 +2662,7 @@ test('prose between tool calls carries no meta row; only the settled turn\'s ans
   render(transcript([
     ...running,
     { id: 'a2', kind: 'assistant', text: 'done', model: 'm', turnId: 't1', createdAt: at },
-    { id: 'd', kind: 'duration', text: '已处理 5s', durationMs: 5000, turnId: 't1' },
+    { id: 'd', kind: 'duration', text: '已处理 5 秒', durationMs: 5000, turnId: 't1' },
   ]), NO_DISCLOSURE, IDLE_ACTIVITY)
   const assistants = items().filter((item) => item.classes.includes('assistant'))
   assert.deepEqual(assistants.map(meta), [false, true])
@@ -2673,11 +2673,11 @@ test('a turn with no answer hangs its footer under its last entry; side views dr
   const turn: TranscriptItem[] = [
     { id: 'u', kind: 'user', text: 'go', turnId: 't1' },
     { id: 'e', kind: 'error', text: 'boom', failed: true, turnId: 't1' },
-    { id: 'd', kind: 'duration', text: '已处理 3s', durationMs: 3000, turnId: 't1' },
+    { id: 'd', kind: 'duration', text: '已处理 3 秒', durationMs: 3000, turnId: 't1' },
   ]
   render(transcript(turn), NO_DISCLOSURE, IDLE_ACTIVITY)
   assert.deepEqual(items().map((item) => item.classes.join(' ')), ['item user', 'item error failed', 'item-meta turn-foot'])
-  assert.deepEqual(factsOf(items()[2]!), ['用时 3s'])
+  assert.deepEqual(factsOf(items()[2]!), ['用时 3 秒'])
 
   // The subagent panel and the thread detail render without an activity.
   render(transcript(turn))

@@ -26,5 +26,5 @@ test('commands list running processes first, then the finished ones newest first
 })
 
 test('elapsed time reads in seconds, minutes, then hours', () => {
-  assert.deepEqual([formatElapsed(-5), formatElapsed(59_999), formatElapsed(75_000), formatElapsed(3_725_000)], ['0s', '59s', '1m15s', '1h2m'])
+  assert.deepEqual([formatElapsed(-5), formatElapsed(59_999), formatElapsed(75_000), formatElapsed(3_725_000)], ['0 秒', '59 秒', '1 分 15 秒', '1 小时 2 分'])
 })

@@ -29,7 +29,7 @@ test('a row unfolds into its output and only a running one can be stopped', asyn
 
   const rows = () => stub.inspect(container).children
   assert.equal(rows().length, 2)
-  assert.equal(byClass(byClass(byClass(rows()[1], 'command-head'), 'command-meta'), 'command-time')?.text, '1m15s')
+  assert.equal(byClass(byClass(byClass(rows()[1], 'command-head'), 'command-meta'), 'command-time')?.text, '1 分 15 秒')
   assert.equal(byClass(rows()[1], 'command-stop'), undefined, 'a finished process has nothing to stop')
   stub.click(byClass(rows()[0], 'command-stop')!.node)
   assert.deepEqual(stopped, ['t1'])

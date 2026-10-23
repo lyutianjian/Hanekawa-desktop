@@ -52,10 +52,10 @@ export const CREATE_BLOCKED_HINT = '先回应当前会话里的授权请求或�
 /** The nav row that turns the「最近」filter on and off. */
 export const SIDEBAR_RECENT_LABEL = '最近'
 /** The three things the list can say when it has no rows to draw. */
-export const SIDEBAR_EMPTY_TEXT = '还没有会话。'
+export const SIDEBAR_EMPTY_TEXT = '还没有会话'
 /** The「最近」filter is on and the global workspace has no history yet. */
-export const SIDEBAR_EMPTY_RECENT_TEXT = '还没有无项目会话。'
-export const SIDEBAR_NO_MATCHES_TEXT = '没有匹配的会话。'
+export const SIDEBAR_EMPTY_RECENT_TEXT = '还没有无项目会话'
+export const SIDEBAR_NO_MATCHES_TEXT = '没有匹配的会话'
 /** The first read of the history failed and there is nothing older to show. */
 export const SIDEBAR_LOAD_FAILED_TEXT = '读取会话失败'
 

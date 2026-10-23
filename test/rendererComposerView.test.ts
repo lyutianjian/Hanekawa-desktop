@@ -514,7 +514,7 @@ test('clicking the chip asks the pane for the rows rather than opening anything'
   r.composer.showRuntimeMenu(menuView())
   assert.deepEqual(r.chipRows().map((row) => row.text), [
     `模型claude-sonnet-5`,
-    `推理强度${EFFORT_LABELS.high}`,
+    `思考强度${EFFORT_LABELS.high}`,
   ])
   assert.equal(r.view('chipRuntime').attributes.get('aria-expanded'), 'true')
   // The popover opens as its two rows and nothing else. Focus lands on the first

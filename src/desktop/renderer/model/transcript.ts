@@ -633,18 +633,19 @@ export function formatTurnSummary(event: Extract<SessionEvent, { type: 'turn-end
 }
 
 /**
- * `7m 38s`, the shape `design_guidance.md` asks the collapsed thinking header for,
- * and the same one the TUI's own elapsed line uses.
+ * `7 分 38 秒`: the units are written out in Chinese like the rest of the
+ * window — `7m 38s` was the one English shape left in a Chinese sentence
+ * (「已处理 7m 38s」).
  *
- * Sub-second turns keep a tenth, because `已处理 0s` reads as a broken clock. Above
- * a second the fraction is noise, so it floors.
+ * Sub-second turns keep a tenth, because `已处理 0 秒` reads as a broken clock.
+ * Above a second the fraction is noise, so it floors.
  */
 export function formatWorkedDuration(ms: number): string {
   const total = Math.max(0, ms) / 1000
-  if (total < 1) return `${Math.round(total * 10) / 10}s`
+  if (total < 1) return `${Math.round(total * 10) / 10} 秒`
   const seconds = Math.floor(total)
   const minutes = Math.floor(seconds / 60)
-  return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`
+  return minutes > 0 ? `${minutes} 分 ${seconds % 60} 秒` : `${seconds} 秒`
 }
 
 /**
@@ -854,7 +855,7 @@ function applyRecord(
   const turnId = recordStamp(record).turnId ?? state.turnId
 
   // The approval is bookkeeping — it draws nothing — but it is what moves a call
-  // out of 「等待授权」. Live it needs no queue: the call it belongs to is simply
+  // out of 「等待你确认」. Live it needs no queue: the call it belongs to is simply
   // the earliest one of that tool still waiting, because a second call of the
   // same tool cannot be recorded while this one holds the gate.
   if (record.type === 'tool_approval') {
@@ -1465,8 +1466,8 @@ function toolCallDetail(input: unknown): string {
 function toolResultSummary(tool: string, ok: boolean, content: string): string {
   const firstLine = content.split('\n').find((line) => line.trim().length > 0) ?? ''
   const detail = truncate(firstLine.trim(), 160)
-  if (!ok) return `${tool} failed${detail ? `: ${detail}` : ''}`
-  return detail ? `${tool} → ${detail}` : `${tool} → done`
+  if (!ok) return `${tool} 失败${detail ? `：${detail}` : ''}`
+  return detail ? `${tool} → ${detail}` : `${tool} → 完成`
 }
 
 function truncate(value: string, maxLength: number): string {
@@ -1771,7 +1772,7 @@ export function toolStepStatus(item: TranscriptItem): ToolStepStatus {
  */
 export function toolStatusLabel(status: ToolStepStatus): string {
   switch (status) {
-    case 'awaiting-approval': return '等待授权'
+    case 'awaiting-approval': return '等待你确认'
     case 'running': return '执行中'
     case 'done': return '完成'
     case 'failed': return '失败'

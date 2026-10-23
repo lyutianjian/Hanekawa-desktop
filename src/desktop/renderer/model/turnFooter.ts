@@ -39,10 +39,10 @@ export function splitTurnFooters(
 
 export { absoluteTime, relativeTime } from './timeLabel.js'
 
-/** `['用时 24m 0s', '3.2k tokens']`. */
+/** `['用时 24 分 0 秒', '3.2k token']`. */
 export function footerFacts(footer: TurnFooter): string[] {
   return [
     `用时 ${formatWorkedDuration(footer.durationMs)}`,
-    ...(footer.tokens === undefined ? [] : [`${formatTokens(footer.tokens)} tokens`]),
+    ...(footer.tokens === undefined ? [] : [`${formatTokens(footer.tokens)} token`]),
   ]
 }

@@ -379,7 +379,7 @@ test('an empty list says why: still reading, a read that failed, or nothing at a
   assert.deepEqual(intents.at(-1), { kind: 'retry-load' })
 
   render(viewOf({ listLoad: 'ready' }))
-  assert.equal(list().children[0]!.text, '还没有会话。')
+  assert.equal(list().children[0]!.text, '还没有会话')
 
   render(viewOf({ ...tieredState(), listLoad: 'failed' }))
   assert.equal(sessionRows(root()).length, 3, 'drawn rows outlive a later failure')
@@ -964,10 +964,10 @@ test('a session waiting for approval says so in words; a running one does not', 
   assert.ok(waiting.classes.includes('awaiting-input'))
   const label = find(waiting, 'session-badge-label')
   assert.ok(label, 'a parked request names itself on the row')
-  assert.equal(label.text, '等待授权')
+  assert.equal(label.text, '等待你处理')
   // The label is the visible half of what `aria-label` already said; both stay,
   // because the badge is still the thing being described.
-  assert.equal(waiting.attributes.get('aria-label'), '等待授权')
+  assert.equal(waiting.attributes.get('aria-label'), '等待你处理')
 })
 
 test('a session whose last turn failed names it in words, like a parked request', (t) => {

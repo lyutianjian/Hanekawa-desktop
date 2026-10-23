@@ -115,14 +115,14 @@ const CATEGORY_OF: Readonly<Record<string, Category>> = {
 }
 
 const CATEGORY_TEXT: Readonly<Record<Exclude<Category, 'todo'>, (count: number) => string>> = {
-  cmd: (count) => `已运行 ${count} 个命令`,
+  cmd: (count) => `运行 ${count} 个命令`,
   read: (count) => `读取 ${count} 个文件`,
   edit: (count) => `编辑 ${count} 个文件`,
   search: (count) => `搜索 ${count} 次`,
   web: (count) => `浏览 ${count} 个网页`,
   agent: (count) => `运行 ${count} 个子代理`,
   plan: () => '提出计划',
-  other: (count) => `已使用 ${count} 个工具`,
+  other: (count) => `使用 ${count} 个工具`,
 }
 
 function categoryOf(step: ActivityStep): Category | undefined {
