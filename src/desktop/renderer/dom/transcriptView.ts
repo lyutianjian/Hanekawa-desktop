@@ -61,6 +61,7 @@ import { markdownChildren } from './markdownView.js'
 import { createPresence, finishPresenceWithin, type Presence } from './presence.js'
 import { motionDelay, motionPolicy } from './motion.js'
 import { createWorkingMark, type WorkingMark } from './workingMarkView.js'
+import type { MarkSpec } from '../model/workingMark.js'
 
 /**
  * Paints the transcript: loose items interleaved with activity runs.
@@ -192,8 +193,14 @@ export function createTranscriptView(
       }
       syncJump()
     },
-    { icon: 'arrow-down' },
   )
+  // Two glyphs on one centre, switched by opacity rather than by `display`: the
+  // arrow is what the button *is*, and the mark is what it must not lose while
+  // the pointer happens to cross it.
+  const jumpArrow = el('span', 'jump-arrow', icon('arrow-down'))
+  const jumpMark = el('span', 'jump-mark')
+  jumpMark.setAttribute('aria-hidden', 'true')
+  append(jump, [jumpArrow, jumpMark])
   jump.hidden = true
   floatHost.appendChild(jump)
 
@@ -335,9 +342,15 @@ export function createTranscriptView(
   let clock: ReturnType<typeof setInterval> | undefined
   let clockFrom: number | undefined
   // The mark's carrier, kept the way `clockNode` is. One controller, created at
-  // the first status line.
+  // the first status line. Its node has two homes — the status line and the jump
+  // button — and `syncJump` is the only place that decides which, because the
+  // scroll and resize paths have no paint to tell them what the turn is doing.
   let markHost: HTMLElement | undefined
   let mark: WorkingMark | undefined
+  /** A turn is in flight (`activity.isStreaming`), as of the last paint. */
+  let running = false
+  /** What the status line said the mark should be, as of the last paint. */
+  let liveMark: MarkSpec | undefined
 
   function stopClock(): void {
     if (clock === undefined) return
@@ -386,8 +399,26 @@ export function createTranscriptView(
     ;(clock as unknown as { unref?: () => void }).unref?.()
   }
 
+  /**
+   * Where the button is, and — because it is the one thing every scroll, resize
+   * and repaint agrees on — where the turn's single working mark lives.
+   *
+   * While the turn runs and the reader is looking back, the mark is the button's:
+   * that is the only place it can be seen, since the status line it normally sits
+   * on is below the fold. Reaching the tail hands it back. The move is a reparent
+   * of one node, which keeps the animation it was on (verified in
+   * `rendererWorkingMark.test.ts`), so coming back does not replay `grow`.
+   */
   function syncJump(): void {
-    show(jump, !atTail())
+    const visible = !atTail()
+    show(jump, visible)
+    jump.classList.toggle('is-working', visible && running)
+    // While the reader looks back during a turn, the button is the only place the
+    // mark can be seen: the status line it normally sits on is below the fold.
+    const carrier = visible ? jumpMark : markHost
+    if (!running) mark?.end()
+    else if (liveMark !== undefined && carrier !== undefined) (mark ??= createWorkingMark()).attach(carrier, liveMark)
+    else mark?.hide()
   }
 
   /**
@@ -618,10 +649,10 @@ export function createTranscriptView(
       reconcile(column, [...(header ? [header] : []), ...placed, ...(trailer ? [trailer] : [])])
       for (const run of afterPaint) run()
       runClock(live.row?.startedAt)
-      // After the reconcile, so the carrier is in the document when the mark moves in.
-      if (live.mark && markHost) (mark ??= createWorkingMark()).attach(markHost, live.mark)
-      else if (activity?.isStreaming === true) mark?.hide()
-      else mark?.end()
+      // After the reconcile, so both carriers are in the document when the mark
+      // moves into one of them.
+      running = activity?.isStreaming === true
+      liveMark = live.mark
 
       // The turn the reader is looking at: the newest user message. Read off the
       // *entries* rather than off `state.items`, because what the lift needs is

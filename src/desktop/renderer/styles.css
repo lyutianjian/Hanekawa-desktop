@@ -3474,14 +3474,22 @@ body.resizing #browser-resizer::after { opacity: 1; }
    caret on this screen, and the live status line says what is running. */
 
 /* --- jump to bottom ---
-   Floats over the tail of the transcript while the user is reading back, and is
+   Floats just above the composer while the user is reading back, and is
    `hidden` (not merely transparent) the rest of the time: `[hidden]` above takes
    it out of the tab order too, and a button nobody can see must not be reachable
-   by Tab. Positioned against `.pane`, so it clears the composer. */
+   by Tab. Positioned against `.pane`, whose bottom edge is the composer's top,
+   so it clears the input row without measuring anything.
+
+   Centred on the pane, which is the composer's axis: `#transcript-area` and
+   `#input-row` are two rows of the same flex column, and `.composer-column` is
+   `margin: 0 auto` inside a row that repeats `.transcript`'s gutter — the
+   scrollbar only shifts the reading column on a platform where the gutter is
+   not reserved symmetrically (`.transcript`'s `scrollbar-gutter` below). */
 .scroll-bottom {
   position: absolute;
-  right: 16px;
+  left: 50%;
   bottom: 12px;
+  transform: translateX(-50%);
   width: var(--control-lg);
   height: var(--control-lg);
   display: flex;
@@ -3497,6 +3505,31 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 .scroll-bottom:hover { background: var(--surface-hover); color: var(--text-primary); }
 .scroll-bottom:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* The button's two glyphs share its centre and only their opacity differs, so a
+   running turn swaps the arrow for the mark without the box reflowing — and the
+   hover that asks 「show me the arrow」 cannot move the pointer target it is on.
+   The mark is the turn's own, moved here by `transcriptView.ts`; the arrow is
+   what the button looks like at rest and under the pointer. */
+.jump-arrow,
+.jump-mark {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  translate: -50% -50%;
+  transition: opacity var(--motion-micro) var(--ease-out);
+}
+/* The mark's own square, so `.mark`'s `inset: 0` lands on 20px and not on the
+   whole button — the sprite would be scaled up to 32px otherwise. */
+.jump-mark { width: var(--mark-size); height: var(--mark-size); opacity: 0; }
+.scroll-bottom.is-working .jump-arrow { opacity: 0; }
+.scroll-bottom.is-working .jump-mark { opacity: 1; }
+.scroll-bottom.is-working:hover .jump-mark,
+.scroll-bottom.is-working:focus-visible .jump-mark { opacity: 0; }
+.scroll-bottom.is-working:hover .jump-arrow,
+.scroll-bottom.is-working:focus-visible .jump-arrow { opacity: 1; }
 
 /* --- welcome (empty state) ---
    The home page a new conversation opens with: a brand mark and one title line

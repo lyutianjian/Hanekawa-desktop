@@ -434,6 +434,52 @@ test('clicking the float button jumps to the tail', (t) => {
   assert.equal(jump().hidden, true)
 })
 
+test('a running turn parks its working mark in the float button while the reader looks back', (t) => {
+  const { render, jump, stub, container, items } = mount(t)
+  const inButton = (): StubView | undefined =>
+    jump().children.find((child) => child.classes.includes('jump-mark'))?.children[0]
+  const onLine = (): StubView | undefined =>
+    items().at(-1)?.children.find((child) => child.classes.includes('line-mark'))?.children[0]
+
+  stub.setMetrics(container, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 })
+  render(transcript([{ id: 'u1', kind: 'user', text: 'go', turnId: 't1' }]), NO_DISCLOSURE, RUNNING_T1)
+  const mark = onLine()
+  assert.ok(mark, 'following the tail: the status line carries it')
+  assert.equal(inButton(), undefined)
+
+  // The status line is below the fold now, so the button is the only place the
+  // mark can be seen at all.
+  scrolledUpBy(stub, container, 400)
+  stub.dispatch(container, 'scroll')
+  assert.equal(jump().classes.includes('is-working'), true)
+  assert.equal(inButton()?.node, mark.node, 'the same mark, moved rather than rebuilt')
+  assert.equal(onLine(), undefined)
+
+  // Back at the tail the button hides and the status line takes it back.
+  stub.click(jump().node)
+  assert.equal(jump().classes.includes('is-working'), false)
+  assert.equal(onLine()?.node, mark.node)
+})
+
+test('a turn that ends while the reader looks back leaves an arrow, not a stopped mark', (t) => {
+  const { render, jump, stub, container } = mount(t)
+
+  stub.setMetrics(container, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 })
+  const user: TranscriptItem = { id: 'u1', kind: 'user', text: 'go', turnId: 't1' }
+  render(transcript([user]), NO_DISCLOSURE, RUNNING_T1)
+  scrolledUpBy(stub, container, 400)
+  stub.dispatch(container, 'scroll')
+  assert.equal(jump().classes.includes('is-working'), true)
+
+  render(transcript([user]), NO_DISCLOSURE, IDLE_ACTIVITY)
+  // The turn-end paint follows the tail, so the reader's own wheel is what puts
+  // them back up here — and a wheel is what lifts the follow, as it does for real.
+  scrolledUpBy(stub, container, 400)
+  stub.dispatch(container, 'scroll')
+  assert.equal(jump().hidden, false, 'still reading back')
+  assert.equal(jump().classes.includes('is-working'), false, 'the arrow is back')
+})
+
 test('the transcript follows the tail only when the reader is already there', (t) => {
   const { render, stub, container } = mount(t)
 
