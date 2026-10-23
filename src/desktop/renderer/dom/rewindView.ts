@@ -3,6 +3,7 @@ import type { RewindIntent, RewindViewModel } from '../model/rewindPanel.js'
 import { el, replace } from './dom.js'
 import { createModalPresence } from './presence.js'
 import { actionBar } from './actionBar.js'
+import { focusByKey, heldFocusKey, trapTab } from './focus.js'
 
 /**
  * The `/rewind` panel: a checkpoint list, then a confirm screen.
@@ -19,6 +20,14 @@ import { actionBar } from './actionBar.js'
  * No `innerHTML`, and **no markdown**: a checkpoint label is the user's own
  * message, and this dialog is asking them to confirm destroying work. It shows
  * the bytes, the way the permission dialog's command block does.
+ *
+ * Focus moves in on open and goes back where it came from on close, the way the
+ * settings dialog does it: the panel used to open with focus still in the
+ * composer behind the scrim, so a screen reader announced nothing and Tab walked
+ * the hidden page. The keys still route here through the window keymap — focus
+ * inside the layer is one of the places `ownedByTarget` gives them to the panel.
+ * The checkpoint list is one focus stop that names its cursor row through
+ * `aria-activedescendant`, the same arrangement the sidebar uses.
  */
 export interface RewindPanel {
   render(view: RewindViewModel): void
@@ -34,7 +43,11 @@ export function createRewindView(
   onIntent: RewindActivate,
 ): RewindPanel {
   const presence = createModalPresence(container, panel, () => replace(panel))
+  panel.setAttribute('tabindex', '-1')
+  container.addEventListener('keydown', (event) => trapTab(panel, event))
   let open = false
+  /** Where focus was when the panel opened, handed back on close. */
+  let returnTo: HTMLElement | undefined
   /** Mid-decision: files are being reverted or a summary generated. */
   let busy = false
 
@@ -52,13 +65,23 @@ export function createRewindView(
   return {
     render(view) {
       busy = view.busyLabel !== undefined
+      const opening = !open
+      if (opening) {
+        const active = document.activeElement
+        returnTo = active instanceof HTMLElement && !container.contains(active) ? active : undefined
+      }
+      // A repaint replaces the focused list; put focus back on its successor,
+      // or on the panel when the screen it lived on is gone.
+      const held = heldFocusKey(panel)
+      const holding = opening || held !== undefined || document.activeElement === panel
+      const rows = view.screen === 'select' ? selectScreen(view, onIntent) : undefined
       replace(
         panel,
-        el('div', 'title', view.title),
+        el('h2', 'title', view.title),
         view.subtitle.length > 0 && el('div', 'subtitle', view.subtitle),
         view.error !== undefined && el('div', 'error', view.error),
         view.emptyMessage !== undefined && el('div', 'subtitle', view.emptyMessage),
-        view.screen === 'select' ? selectScreen(view, onIntent) : confirmScreen(view),
+        rows?.list ?? confirmScreen(view),
         // The same bar the blocking dialogs end with, and the same rule: a slot
         // resolves through `view.options`, so a button cannot pick a decision
         // the number key would not.
@@ -72,13 +95,24 @@ export function createRewindView(
       )
       presence.set(true)
       open = true
+      if (holding && !focusByKey(panel, held ?? ROWS_FOCUS_KEY) && document.activeElement !== panel) {
+        panel.focus({ preventScroll: true })
+      }
+      rows?.cursor?.scrollIntoView({ block: 'nearest' })
     },
 
     hide() {
       // Execution/close intent is already handled; the exit owns only pixels.
+      const restore = returnTo
+      returnTo = undefined
+      const active = document.activeElement
+      const focusInside = active === null || active === document.body || container.contains(active) || panel.contains(active)
       open = false
       busy = false
       presence.set(false)
+      // A node that left the page meanwhile ignores `focus()`, which is the
+      // right answer: there is nothing to go back to.
+      if (focusInside) restore?.focus({ preventScroll: true })
     },
 
     isOpen() {
@@ -87,11 +121,25 @@ export function createRewindView(
   }
 }
 
-function selectScreen(view: RewindViewModel, onIntent: RewindActivate): HTMLElement {
+const ROWS_FOCUS_KEY = 'rewind-rows'
+
+function selectScreen(
+  view: RewindViewModel,
+  onIntent: RewindActivate,
+): { list: HTMLElement; cursor: HTMLElement | undefined } {
   const list = el('div', 'rows')
   list.setAttribute('role', 'listbox')
-  for (const row of view.rows) {
+  list.setAttribute('aria-label', '检查点')
+  list.setAttribute('tabindex', '0')
+  list.dataset.focusKey = ROWS_FOCUS_KEY
+  let cursor: HTMLElement | undefined
+  for (const [index, row] of view.rows.entries()) {
     const node = el('div', `row${row.selected ? ' selected' : ''}${row.isCurrent ? ' current' : ''}`)
+    node.id = `rewind-row-${index}`
+    if (row.selected) {
+      list.setAttribute('aria-activedescendant', node.id)
+      cursor = node
+    }
     node.dataset.rowId = row.id
     node.setAttribute('role', 'option')
     node.setAttribute('aria-selected', String(row.selected))
@@ -100,7 +148,7 @@ function selectScreen(view: RewindViewModel, onIntent: RewindActivate): HTMLElem
     node.addEventListener('click', () => onIntent({ kind: 'select-row', id: row.id }))
     list.appendChild(node)
   }
-  return list
+  return { list, cursor }
 }
 
 function confirmScreen(view: RewindViewModel): HTMLElement {

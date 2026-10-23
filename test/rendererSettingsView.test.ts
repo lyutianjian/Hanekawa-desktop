@@ -364,6 +364,20 @@ test('the dialog is named by its title, an error is announced, and the nav says 
   assert.equal(findOne(child(anchored(), 'settings-body'), 'settings-row-error').attributes.get('role'), 'alert')
 })
 
+test('a saved row says 已保存, and a repaint does not restart the receipt', (t) => {
+  // Keyed by the batch: the receipt fades once, then a later save is a new node.
+  const { view, render } = mount(t, stateOf({ category: 'general', savedRows: { seq: 3, ids: ['context:contextWindow'] } }))
+  const receipts = () => findAll(child(view(), 'settings-body'), 'settings-saved')
+  assert.equal(receipts().length, 1)
+  assert.equal(receipts()[0]!.text, '已保存')
+  assert.equal(receipts()[0]!.attributes.get('role'), 'status')
+  const first = receipts()[0]!.node
+  render(stateOf({ category: 'general', savedRows: { seq: 3, ids: ['context:contextWindow'] }, query: '' }))
+  assert.equal(receipts()[0]!.node, first, 'the same batch keeps the same node')
+  render(stateOf({ category: 'general', savedRows: { seq: 4, ids: ['context:contextWindow'] } }))
+  assert.notEqual(receipts()[0]!.node, first, 'a new save is a new receipt')
+})
+
 test('a model row opens to its switches, and the effort levels are one switch each', (t) => {
   const { view, apply, stub, intents } = mount(t)
   apply({ kind: 'edit-endpoint', name: 'main' })

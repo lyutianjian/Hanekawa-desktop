@@ -41,7 +41,10 @@ const MOTION_TOKENS = {
   "--motion-scrim-out": "120ms",
   "--motion-running": "2000ms",
   "--motion-locate": "600ms",
-  "--motion-hover-delay": "500ms"
+  "--motion-hover-delay": "500ms",
+  // Batch 5: the settings row's 「已保存」, held then faded — longer than the
+  // copy button's 1200ms tick because it fades out rather than snapping back.
+  "--motion-receipt": "1600ms"
 }
 
 const htmlPath = path.join(rendererRoot, 'index.html')
@@ -2640,8 +2643,9 @@ test('buttons answer the pointer and the keyboard, and there is one primary', ()
   // the same fill: no answer at all. They hover one rung further now.
   assert.ok(declares(blockFor('#composer-request .dialog-btn:not(.primary):hover:enabled'), 'background', 'var(--surface-active)'))
   // One primary, the inverted fill: the rewind panel's and the failure card's
-  // were two more versions of it.
-  for (const selector of ['#rewind-panel .dialog-btn.primary, #composer-request .dialog-btn.primary', '.failure-action.primary']) {
+  // were two more versions of it. The empty canvas's 「新建会话」 joins the
+  // dialog list rather than starting a sixth.
+  for (const selector of ['#rewind-panel .dialog-btn.primary, .no-session .dialog-btn.primary, #composer-request .dialog-btn.primary', '.failure-action.primary']) {
     const primary = blockFor(selector)
     assert.ok(declares(primary, 'background', 'var(--text-primary)'), `${selector} is the inverted fill`)
     assert.ok(declares(primary, 'color', 'var(--surface-base)'), `${selector} is the inverted fill`)

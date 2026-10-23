@@ -409,8 +409,10 @@ export function createSidebarView(
     if (selected) classes.push('selected')
     if (row.lane !== undefined) classes.push('open')
     if (row.confirmingDelete) classes.push('confirming')
+    if (row.opening) classes.push('opening')
 
     const node = el('div', classes.join(' '))
+    if (row.opening) node.setAttribute('aria-busy', 'true')
     node.dataset.sessionId = row.sessionId
     node.dataset.index = String(index)
     node.id = sessionRowId(row.sessionId)
@@ -555,7 +557,7 @@ export function createSidebarView(
     deleteTarget?: string,
   ): HTMLElement => {
     const signature = [
-      row.projectRoot, row.sessionId, row.lane ?? '', row.badge, row.active, row.confirmingDelete,
+      row.projectRoot, row.sessionId, row.lane ?? '', row.badge, row.active, row.confirmingDelete, row.opening,
       row.title, row.messageCount, row.roleMarker ?? '', index, selected, deleteTarget ?? '', trailing?.textContent ?? '',
     ].join('\u0000')
     rowsDrawn.add(row.sessionId)

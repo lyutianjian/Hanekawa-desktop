@@ -460,6 +460,11 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   let threadChipEl: HTMLElement | undefined
   let threadChipKey = ''
   const transcriptEl = el('div', 'transcript')
+  // A log: new entries are announced, old ones are not re-read. `aria-busy`
+  // below holds the announcement while a turn streams, so a screen reader
+  // reads the finished answer once instead of every half-sentence on the way.
+  transcriptEl.setAttribute('role', 'log')
+  transcriptEl.setAttribute('aria-label', '对话')
   transcriptEl.setAttribute('aria-live', 'polite')
   append(paneEl, [welcomeEl, transcriptEl])
   deps.mount.appendChild(paneEl)
@@ -822,6 +827,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // different block left behind — and an absolute answer would not even be
     // corrected by the default.
     const { isStreaming, turnOutputTokens } = client.getSnapshot()
+    if (isStreaming) transcriptEl.setAttribute('aria-busy', 'true')
+    else transcriptEl.removeAttribute('aria-busy')
     const queuedShown = withQueuedMessages(withDetachedRuns(transcript, runningAgentCalls(client.getBackgroundTasks())), queued)
     // No 「重试」 while a turn runs or a retry is on its way: a second press would send it twice.
     const shown = isStreaming || retrying ? queuedShown : withFailureActions(queuedShown)

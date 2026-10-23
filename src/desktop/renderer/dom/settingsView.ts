@@ -4,6 +4,7 @@ import { icon, type IconName } from './icons.js'
 import { onPressOutside } from './dismiss.js'
 import { trapTab } from './focus.js'
 import { createModalPresence, createPresence, finishPresenceWithin } from './presence.js'
+import { SETTINGS_SAVED_TEXT } from '../model/settings.js'
 import type {
   SettingsAnchor,
   SettingsButton,
@@ -994,6 +995,14 @@ function rowNode(
   // the same cell too, or the caret is dropped once per keystroke.
   const control = context.node(`control:${cardId}:${row.id}`, 'div', 'settings-row-control')
   const controls: Node[] = []
+  if (row.savedSeq !== undefined) {
+    // Keyed by the batch, so a repaint keeps the node and its fade runs once;
+    // the next save of this row is a new key and a new receipt.
+    const receipt = context.node(`saved:${cardId}:${row.id}:${row.savedSeq}`, 'span', 'settings-saved')
+    receipt.textContent = SETTINGS_SAVED_TEXT
+    receipt.setAttribute('role', 'status')
+    controls.push(receipt)
+  }
   switch (row.control.kind) {
     case 'text':
       controls.push(

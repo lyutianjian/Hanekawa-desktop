@@ -93,6 +93,54 @@ test('the rewind panel ends with the same bar, and its decisions are its buttons
   )
 })
 
+test('the rewind panel takes focus on open, keeps it across repaints and hands it back', (t) => {
+  // It used to open with focus still in the composer behind the scrim: a screen
+  // reader announced nothing and Tab walked the page under the modal. The keys
+  // still arrive through the window keymap, which gives a layer the keys whose
+  // target is inside it, so moving focus in does not change what a key does.
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('rewind')
+  const panel = stub.createContainer('rewind-panel')
+  const composer = stub.createContainer('input')
+  const view = createRewindView(container, panel, () => {})
+  stub.focus(composer)
+
+  const checkpoint = (messageId: string, messageContent: string) => ({
+    messageId,
+    messageContent,
+    timestamp: '2026-05-19T10:00:00.000Z',
+    turnDiff: { fileCount: 0, additions: 0, deletions: 0, hasChanges: false },
+    restoreDiff: { fileCount: 0, additions: 0, deletions: 0, hasChanges: false },
+    isCurrent: false,
+  })
+  const state = createRewindState([checkpoint('m1', 'add the parser'), checkpoint('m2', 'fix the lexer')])
+  view.render(rewindViewModel(state))
+
+  // The title is a heading, and the list is the one stop, naming its cursor row.
+  const panelView = stub.inspect(panel)
+  assert.equal(panelView.children[0]!.tagName.toLowerCase(), 'h2')
+  const list = panelView.children.find((child) => child.attributes.get('role') === 'listbox')
+  assert.ok(list, 'the select screen has a listbox')
+  assert.equal(stub.activeElement(), list.node, 'focus moved onto the list')
+  const cursor = list.children.find((row) => row.classes.includes('selected'))
+  assert.ok(cursor)
+  assert.equal(list.attributes.get('aria-activedescendant'), cursor.attributes.get('id'))
+
+  // A repaint rebuilds the list; focus lands on the new one, not on <body>.
+  view.render(rewindViewModel(state))
+  const again = stub.inspect(panel).children.find((child) => child.attributes.get('role') === 'listbox')
+  assert.equal(stub.activeElement(), again!.node)
+
+  // The confirm screen has no list: focus falls back to the panel itself.
+  view.render(rewindViewModel({ ...state, screen: 'confirm' }))
+  assert.equal(stub.activeElement(), panel)
+
+  // Closing hands focus back to where it was before the panel opened.
+  view.hide()
+  assert.equal(stub.activeElement(), composer)
+})
+
 test('a press on the rewind scrim closes it, unless a decision is running', (t) => {
   // Escape with a mouse.
   const stub = installDomStub()

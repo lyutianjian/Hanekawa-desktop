@@ -138,3 +138,12 @@ test('a pane reports a failed click through the shell, not as a note in the conv
   assert.deepEqual(errorNotes, ["text, 'error'", "result.message, result.partial ? 'error' : 'system'"])
   assert.match(source, /onActionError\?: \(text: string\) => void/)
 })
+
+test('the transcript is a log that holds its announcement while a turn streams', () => {
+  // A plain `aria-live` region re-announced every streamed half-sentence. As a
+  // `log` that is `aria-busy` mid-turn, a screen reader reads the settled answer
+  // once. Checked in the source because the pane needs a live client to build.
+  const source = readFileSync(new URL('../src/desktop/renderer/paneSession.ts', import.meta.url), 'utf8')
+  assert.match(source, /transcriptEl\.setAttribute\('role', 'log'\)/)
+  assert.match(source, /if \(isStreaming\) transcriptEl\.setAttribute\('aria-busy', 'true'\)\n\s*else transcriptEl\.removeAttribute\('aria-busy'\)/)
+})

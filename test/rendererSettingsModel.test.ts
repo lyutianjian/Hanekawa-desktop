@@ -1516,6 +1516,27 @@ test('a failed change keeps the snapshot on screen', async () => {
   assert.equal(state.busy, false)
 })
 
+test('a landed change leaves a 「已保存」 on its row; a failed one leaves only the error', async () => {
+  // A row lightening from its pending dim was the only sign a save had worked,
+  // and a failure that rolled back lightened it the same way.
+  const batch = pendingOf({ scope: 'provider', kind: 'set-default-model', key: 'broken' })
+  const saved = await runSettingsChanges(fakeClient(), openState(), batch)
+  assert.deepEqual(saved.savedRows, { seq: 0, ids: ['routing:default'] })
+  const row = (state: typeof saved) =>
+    settingsView(state).cards.find((card) => card.id === 'routing')?.rows.find((entry) => entry.id === 'routing:default')
+  assert.equal(row(saved)?.savedSeq, 0)
+  // In flight again, the row is waiting, not saved.
+  assert.equal(row({ ...saved, pending: batch })?.savedSeq, undefined)
+
+  const failed = await runSettingsChanges(
+    fakeClient({ changeSettings: async () => { throw new Error('nope') } }),
+    saved,
+    batch,
+  )
+  assert.equal(failed.savedRows, undefined, 'the screen’s last word is the error')
+  assert.equal(row(failed)?.savedSeq, undefined)
+})
+
 test('changes run in order and the last reply wins', async () => {
   const sent: SettingsChange[] = []
   const state = await runSettingsChanges(

@@ -5,6 +5,7 @@ import { installDomStub, type DomStub, type StubView } from './helpers/domStub.j
 import { trackAnimationStarts, trackIdentity } from './helpers/motion.js'
 import { createCanvasHeaderView, type CanvasHeaderDom } from '../src/desktop/renderer/dom/canvasHeaderView.js'
 import { closeTopDismissable } from '../src/desktop/renderer/dom/dismiss.js'
+import { createNoSessionView } from '../src/desktop/renderer/dom/noSessionView.js'
 import {
   canvasHeaderView,
   type CanvasHeaderMenuItem,
@@ -461,4 +462,26 @@ test('renaming a thread session keeps the crumb under the field, and back', (t) 
   assert.equal(r.crumb()?.node, crumb)
   r.paint({ role: 'thread', thread })
   assert.equal(r.titleNode()?.node, crumb)
+})
+
+test('the empty canvas says so and offers the two ways out', (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const mount = stub.createContainer('transcript-area')
+  const calls: string[] = []
+  const view = createNoSessionView(mount, {
+    onNewSession: () => calls.push('new'),
+    onOpenProject: () => calls.push('open'),
+  })
+  const node = stub.inspect(mount).children[0]!
+  assert.equal(node.hidden, true, 'built hidden: a launching window is not an empty one')
+  view.set(true)
+  const shown = stub.inspect(mount).children[0]!
+  assert.equal(shown.hidden, false)
+  assert.equal(shown.children[0]!.text, '没有打开的会话')
+  const [create, open] = shown.children[1]!.children
+  assert.ok(create!.classes.includes('primary'), 'a new session is the way out most people want')
+  stub.click(create!.node)
+  stub.click(open!.node)
+  assert.deepEqual(calls, ['new', 'open'])
 })

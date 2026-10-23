@@ -166,3 +166,28 @@ export function renameCommit(current: string, next: string): string | undefined 
   if (trimmed.length === 0 || trimmed === current) return undefined
   return trimmed
 }
+
+/** The canvas with no session in it, and the composer's placeholder while it is so. */
+export const NO_SESSION_TEXT = '没有打开的会话'
+export const NO_SESSION_LOCK = '先新建一个会话，或打开一个项目'
+export const THREAD_FINISHED_LOCK = '线程已完成，不能再发消息'
+
+/**
+ * Whether the canvas is the window's empty state: a pane has existed and none
+ * is active now. Only macOS keeps the window when its last lane closes, so this
+ * is the one platform that sees it. Before the first pane attaches the canvas is
+ * still starting up, and an empty state there would flash on every launch.
+ */
+export function canvasIsEmpty(state: { readonly hadPane: boolean; readonly hasActivePane: boolean }): boolean {
+  return state.hadPane && !state.hasActivePane
+}
+
+/**
+ * Why the composer takes no input, or `undefined` when it does. With no session
+ * there is nothing to send to: the input used to stay open and swallow the
+ * message.
+ */
+export function composerLockReason(state: { readonly empty: boolean; readonly threadFinished: boolean }): string | undefined {
+  if (state.empty) return NO_SESSION_LOCK
+  return state.threadFinished ? THREAD_FINISHED_LOCK : undefined
+}

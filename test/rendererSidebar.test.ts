@@ -1046,6 +1046,30 @@ test('a session being deleted cannot come back as a live lane row', () => {
   assert.deepEqual(view.rows, [])
 })
 
+test('a history row being opened says so until it has a lane', () => {
+  // Opening loads a transcript and builds a runtime. A row that showed nothing
+  // meanwhile read as a missed click, and the second click was the usual answer.
+  const state = stateWith({
+    projects: [project('/a', 'alpha', [session('s-1'), session('s-2')])],
+    openingSessions: new Set(['s-1']),
+  })
+  const view = sidebarView(state)
+  assert.deepEqual(view.rows.map((row) => [row.sessionId, row.opening]), [['s-1', true], ['s-2', false]])
+  assert.notEqual(
+    sidebarRenderSignature(view),
+    sidebarRenderSignature(sidebarView(stateWith({ ...state, openingSessions: new Set() }))),
+    'the guard sees the pending state come and go',
+  )
+
+  // Once the lane is there the row is open, whatever the settle has not yet cleared.
+  const opened = sidebarView(stateWith({
+    lanes: [lane('1', 's-1', '/a')],
+    laneStatus: new Map([['1', paneStatus()]]),
+    openingSessions: new Set(['s-1']),
+  }))
+  assert.equal(opened.rows.find((row) => row.sessionId === 's-1')?.opening, false)
+})
+
 test('a project being removed takes its whole group with it', () => {
   const view = sidebarView(
     stateWith({

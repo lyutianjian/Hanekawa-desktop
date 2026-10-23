@@ -1300,6 +1300,41 @@ test('the card reports skip from the close button and the footer, and submit fro
   assert.deepEqual(q.intents, [{ kind: 'skip' }, { kind: 'toggle-collapse' }, { kind: 'skip' }, { kind: 'commit' }])
 })
 
+test('the question card takes focus like the other cards, and keeps it across a rebuild', (t) => {
+  // It used to be the one docked card that left focus in the textarea, so a
+  // screen reader never heard the question. The options are a single stop that
+  // names the cursor row; they cannot be buttons, since 「其他」 holds an input.
+  const q = questionCard(t)
+  const fresh = askModel()
+  const model = { ...fresh, rows: fresh.rows.map((row, index) => ({ ...row, selected: index === 0 })) }
+  q.view.show(model)
+  const options = () => q.find('ask-options')
+  assert.equal(q.stub.activeElement(), options().node, 'opening focuses the options')
+  assert.equal(options().attributes.get('role'), 'listbox')
+  assert.equal(options().attributes.get('aria-multiselectable'), undefined)
+  const cursor = options().children.find((row) => row.classes.includes('selected'))!
+  assert.equal(options().attributes.get('aria-activedescendant'), cursor.attributes.get('id'))
+
+  // Tabbed to 跳过, then a repaint that rebuilds the card: focus stays on 跳过.
+  q.stub.focus(q.find('ask-footer').children.find((c) => c.text === '跳过')!.node)
+  q.view.show({ ...model, rows: model.rows.map((row, index) => ({ ...row, selected: index === 1 })) })
+  assert.equal(q.stub.activeElement(), q.find('ask-footer').children.find((c) => c.text === '跳过')!.node)
+
+  // Folded, the button that unfolds it is where focus goes.
+  q.view.show({ ...model, collapsed: true })
+  const collapse = q.find('ask-head').children.find((c) => c.attributes.get('aria-label') === '展开')!
+  assert.equal(q.stub.activeElement(), collapse.node)
+})
+
+test('a multi-select question says so, and its ticks are what is selected', (t) => {
+  const q = questionCard(t)
+  const model = askModel({ multiSelect: true })
+  q.view.show({ ...model, rows: model.rows.map((row, index) => ({ ...row, toggled: index === 1 })) })
+  const options = q.find('ask-options')
+  assert.equal(options.attributes.get('aria-multiselectable'), 'true')
+  assert.deepEqual(options.children.slice(0, 2).map((row) => row.attributes.get('aria-selected')), ['false', 'true'])
+})
+
 test('collapsed, the card is just its title row', (t) => {
   const q = questionCard(t)
   q.view.show({ ...askModel(), collapsed: true })

@@ -215,6 +215,12 @@ export interface SettingsState {
   readonly error?: string
   /** The rows the error is about, so the view can draw it under them. */
   readonly errorRows?: readonly string[]
+  /**
+   * The rows the last batch to land was about, for the 「已保存」 receipt.
+   * `seq` is that batch's first pending id, so saving the same row twice is two
+   * receipts rather than one that never restarts.
+   */
+  readonly savedRows?: { readonly seq: number; readonly ids: readonly string[] }
   /** Renderer-local theme preference; `app.ts` seeds it from `localStorage`. */
   readonly themePref: ThemePreference
   /** The search box. Filters the nav and the selected page; never the wire. */
@@ -254,6 +260,9 @@ export const CATEGORY_LABELS: Record<SettingsCategory, string> = {
 
 /** The `inherit` sentinel, spelled once. */
 export const INHERIT = 'inherit'
+
+/** The receipt beside a row whose change just landed. */
+export const SETTINGS_SAVED_TEXT = '已保存'
 
 export type SettingsGroup = 'personal' | 'integration' | 'coding'
 
@@ -378,6 +387,12 @@ export interface SettingsRow {
   readonly control: SettingsControl
   /** A change about this row is in flight; the view dims it and stops its controls. */
   readonly pending?: boolean
+  /**
+   * A change about this row just landed: the receipt's id (`savedRows.seq`).
+   * A dimmed row lightening again was the only sign a save had worked, and it
+   * looks the same as one that failed and rolled back.
+   */
+  readonly savedSeq?: number
 }
 
 export interface SettingsCard {
@@ -1027,10 +1042,13 @@ export function settingsView(state: SettingsState): SettingsViewModel {
   // The *projected* snapshot everywhere below, never `state.snapshot`: a click
   // draws its own outcome now and the host confirms it a round trip later.
   const projected = projectSnapshot(state.snapshot, state.pending)
-  const cards = markPending(
-    cardsFor(state.category, projected),
-    pendingRowIds(state.pending),
-    pendingKinds(state.pending),
+  const cards = markSaved(
+    markPending(
+      cardsFor(state.category, projected),
+      pendingRowIds(state.pending),
+      pendingKinds(state.pending),
+    ),
+    state.savedRows,
   )
 
   if (state.category === 'personalization') {
@@ -1101,6 +1119,16 @@ function markPending(
           ),
         }
       : {}),
+  }))
+}
+
+/** Marks the rows the last landed batch was about; a row in flight again shows no receipt. */
+function markSaved(cards: SettingsCard[], saved: SettingsState['savedRows']): SettingsCard[] {
+  if (saved === undefined || saved.ids.length === 0) return cards
+  const ids = new Set(saved.ids)
+  return cards.map((card) => ({
+    ...card,
+    rows: card.rows.map((row) => (ids.has(row.id) && row.pending !== true ? { ...row, savedSeq: saved.seq } : row)),
   }))
 }
 
@@ -3382,6 +3410,8 @@ export async function runSettingsChanges(
       busy: retired.pending.length > 0,
       error: failure?.error,
       errorRows: failure ? errorRowsOf(failure.change) : undefined,
+      // A failure clears the receipt too: the screen's last word is the error.
+      savedRows: failure ? undefined : { seq: batch[0]?.id ?? 0, ids: [...pendingRowIds(batch)] },
       ...(submitted ? (failure ? { draftSubmit: undefined, ...resumable(latest.draft, next.snapshot) } : NO_DRAFT) : {}),
     }
   }

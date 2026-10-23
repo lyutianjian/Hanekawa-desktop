@@ -1,8 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  NO_SESSION_LOCK,
+  THREAD_FINISHED_LOCK,
   UNTITLED_SESSION,
   canvasHeaderView,
+  canvasIsEmpty,
+  composerLockReason,
   renameCommit,
 } from '../src/desktop/renderer/model/canvasHeader.js'
 import type { WireLaneInfo } from '../src/desktop/shellProtocol.js'
@@ -187,4 +191,18 @@ test('a thread role without its thread falls back to the plain title', () => {
     role: 'thread',
   })
   assert.equal(view.breadcrumb, undefined)
+})
+
+test('the canvas is empty only once a pane has come and gone, and then the composer is shut', () => {
+  // macOS keeps the window when its last lane closes. That canvas used to be a
+  // blank page above an open composer that took a message and sent it nowhere.
+  // Before the first pane attaches the window is starting up, not empty: an
+  // empty state there would flash on every launch.
+  assert.equal(canvasIsEmpty({ hadPane: false, hasActivePane: false }), false)
+  assert.equal(canvasIsEmpty({ hadPane: true, hasActivePane: true }), false)
+  assert.equal(canvasIsEmpty({ hadPane: true, hasActivePane: false }), true)
+
+  assert.equal(composerLockReason({ empty: true, threadFinished: false }), NO_SESSION_LOCK)
+  assert.equal(composerLockReason({ empty: false, threadFinished: true }), THREAD_FINISHED_LOCK)
+  assert.equal(composerLockReason({ empty: false, threadFinished: false }), undefined)
 })

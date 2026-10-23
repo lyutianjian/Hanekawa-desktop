@@ -101,6 +101,8 @@ export interface SidebarRow {
   readonly messageCount: number
   /** This row is asking "delete?" and has replaced its actions with the answer. */
   readonly confirmingDelete: boolean
+  /** Clicked from history and still on its way to a lane; see `SidebarState.openingSessions`. */
+  readonly opening: boolean
 }
 
 /**
@@ -364,6 +366,13 @@ export interface SidebarState {
    */
   readonly deletingSessions: ReadonlySet<string>
   readonly removingProjects: ReadonlySet<string>
+  /**
+   * History rows clicked and not yet open. Opening one loads its transcript and
+   * builds a runtime; a row that showed nothing meanwhile read as a click that
+   * missed, and a second click was the usual answer. Cleared when the open
+   * settles, either way.
+   */
+  readonly openingSessions: ReadonlySet<string>
   /** Milliseconds, injected so a draft's synthesized timestamp is testable. */
   readonly now: number
   /** False while a blocking dialog is up: both buttons open something. */
@@ -412,6 +421,7 @@ export function createSidebarState(overrides: Partial<SidebarState> = {}): Sideb
     pendingRemoveProject: undefined,
     deletingSessions: new Set(),
     removingProjects: new Set(),
+    openingSessions: new Set(),
     now: Date.UTC(2026, 7, 20, 12, 0, 0),
     canCreate: true,
     searchQuery: '',
@@ -731,6 +741,8 @@ function rowFor(
     updatedAt: session.updatedAt,
     messageCount: session.messageCount,
     confirmingDelete: state.pendingDelete === session.id,
+    // A row that already has a lane is open, whatever a late settle says.
+    opening: lane === undefined && state.openingSessions.has(session.id),
   }
 }
 
@@ -1028,7 +1040,7 @@ export function sidebarRenderSignature(view: SidebarView): string {
   for (const entry of view.pinned) {
     parts.push(`k:${entry.projectRoot}${entry.projectName}${entry.running}/${entry.blocked}`)
     const row = entry.coordinator
-    if (row) parts.push(`${row.sessionId}${row.lane ?? ''}${row.badge}${row.active ? '1' : '0'}${row.confirmingDelete ? '1' : '0'}`)
+    if (row) parts.push(`${row.sessionId}${row.lane ?? ''}${row.badge}${row.active ? '1' : '0'}${row.confirmingDelete ? '1' : '0'}${row.opening ? 'o' : '-'}`)
   }
   for (const group of view.groups) {
     // The menu and the confirmation are drawn on the heading, a collapsed
@@ -1044,7 +1056,7 @@ export function sidebarRenderSignature(view: SidebarView): string {
     for (const row of group.rows) {
       parts.push(
         `r:${row.sessionId}${row.lane ?? ''}${row.badge}${row.active ? '1' : '0'}`
-          + `${row.confirmingDelete ? '1' : '0'}${row.title}${row.messageCount}`
+          + `${row.confirmingDelete ? '1' : '0'}${row.opening ? 'o' : '-'}${row.title}${row.messageCount}`
           + `${row.roleMarker ?? ''}`,
       )
     }

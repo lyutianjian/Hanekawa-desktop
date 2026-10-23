@@ -96,7 +96,7 @@ import {
   systemThemeFromMatches,
   type ThemePreference,
 } from './model/theme.js'
-import { canvasHeaderView, type CanvasHeaderMenuItem } from './model/canvasHeader.js'
+import { canvasHeaderView, canvasIsEmpty, composerLockReason, type CanvasHeaderMenuItem } from './model/canvasHeader.js'
 import { el, replace, required, show } from './dom/dom.js'
 import type { AttachedPath } from '../../media/attachedPaths.js'
 import { icon } from './dom/icons.js'
@@ -113,6 +113,7 @@ import { createPlanPanelView } from './dom/planPanelView.js'
 import { createChangesPanelView } from './dom/changesPanelView.js'
 import { createQuestionCardView } from './dom/questionCardView.js'
 import { createRewindView } from './dom/rewindView.js'
+import { createNoSessionView } from './dom/noSessionView.js'
 import { createSurfacePanel } from './dom/surfaceView.js'
 import { createProcessStripView } from './dom/processStripView.js'
 import { createComposerView } from './dom/composerView.js'
@@ -351,6 +352,13 @@ let activeLane: string | undefined
  */
 const lastActiveTick = new Map<string, number>()
 let tick = 0
+/** Whether any pane has attached yet; see `canvasIsEmpty`. */
+let hadPane = false
+// After the panes' mount, not inside it: a pane appends its own subtree there.
+const noSessionView = createNoSessionView(transcriptArea, {
+  onNewSession: () => runSidebarIntent(newSessionIntent(buildSidebarView(currentSidebarState()).activeProjectRoot)),
+  onOpenProject: () => runSidebarIntent({ kind: 'open-project' }),
+})
 /** Lanes already asked to close for budget reasons, so a repeat pass is a no-op. */
 const evicting = new Set<string>()
 
@@ -360,6 +368,7 @@ function activePane(): PaneSession | undefined {
 
 function attachPaneSession(lane: string): void {
   if (paneSessions.has(lane)) return
+  hadPane = true
   const session = createPaneSession({
     lane,
     platform,
@@ -694,6 +703,8 @@ let pendingRemoveProject: string | undefined
  * so a failure needs no rollback — the next `refreshSessions()` is the truth.
  */
 const deletingSessions = new Set<string>()
+/** See `SidebarState.openingSessions`. */
+const openingSessions = new Set<string>()
 const removingProjects = new Set<string>()
 let searchQuery = ''
 /** The workspaces folded shut in the sidebar. View state; nothing persists it. */
@@ -722,6 +733,7 @@ function currentSidebarState(): SidebarState {
     pendingRemoveProject,
     deletingSessions,
     removingProjects,
+    openingSessions,
     now: Date.now(),
     // Both buttons open something, which is wrong while a blocking dialog is up.
     canCreate: !(activePane()?.shellState().hasOverlay ?? false),
@@ -850,9 +862,17 @@ function runSidebarIntent(intent: SidebarIntent): void {
       activateLane(intent.lane)
       return
     case 'open':
+      // The second click on a row that is still opening is the same request.
+      if (openingSessions.has(intent.sessionId)) return
+      openingSessions.add(intent.sessionId)
+      renderSidebar()
       void shellClient
         .openSession({ sessionId: intent.sessionId, projectRoot: intent.projectRoot })
         .catch((error) => reportError({ action: '打开会话' }, error))
+        .finally(() => {
+          openingSessions.delete(intent.sessionId)
+          renderSidebar()
+        })
       return
     case 'close':
       closeLane(intent.lane)
@@ -1363,7 +1383,9 @@ function renderCanvasHeader(): void {
     // that answer — the lane list cannot tell a fresh session from an empty one.
     hasConversation: activePane()?.hasConversation() ?? false,
   }))
-  composer.setLocked(thread !== undefined && threadFinished(thread.status) ? '线程已完成，不能再发消息' : undefined)
+  const empty = canvasIsEmpty({ hadPane, hasActivePane: activePane() !== undefined })
+  noSessionView.set(empty)
+  composer.setLocked(composerLockReason({ empty, threadFinished: thread !== undefined && threadFinished(thread.status) }))
 }
 
 function closeHeaderMenu(): void {
