@@ -54,6 +54,7 @@ import type { WireThreadStatus } from '../../shellProtocol.js'
 import { pausedTaskCard, TASK_LOCATE_FALLBACK_MS, type TaskCard, type TaskRowStatus } from '../model/tasks.js'
 import { button } from './controls.js'
 import { copyButton } from './copyButton.js'
+import { OUTPUT_FOLD_LINES, foldOutput } from '../model/outputFold.js'
 import { diffNode, diffStatNode, fileBadgeNode } from './diffView.js'
 import { append, el, reconcile, show, type Child } from './dom.js'
 import { icon, type IconName } from './icons.js'
@@ -1547,16 +1548,25 @@ function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => 
       'step-body',
       bubble(),
       error === undefined ? undefined : el('div', 'step-error', error),
-      el('pre', 'step-terminal', terminal),
+      outputBlock(painter, 'step-terminal', terminal),
     )
   }
   if (family.rows !== undefined) {
-    return () => el('div', 'step-body', el('div', 'step-code', ...family.rows!.map((row) => el(
+    const rows = family.rows
+    const rowNode = (row: (typeof rows)[number]): HTMLElement => el(
       'div',
       'step-code-row',
       el('span', 'step-code-line', String(row.line)),
       el('span', 'step-code-text', row.text),
-    ))))
+    )
+    return () => {
+      const code = el('div', 'step-code', ...rows.slice(0, OUTPUT_FOLD_LINES).map(rowNode))
+      const more = rows.length > OUTPUT_FOLD_LINES
+        ? showAll(rows.length, () => append(code, rows.slice(OUTPUT_FOLD_LINES).map(rowNode)))
+        : undefined
+      const text = rows.map((row) => row.text).join('\n')
+      return el('div', 'step-body', el('div', 'step-output', code, outputCopy(painter, text), more))
+    }
   }
   if (isWebProse(step)) return () => webBody(step)
   const { resultSummary, detail, content } = step.tool
@@ -1568,8 +1578,33 @@ function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => 
     resultSummary === undefined ? undefined : el('div', 'step-body-head', resultSummary),
     // Clipping is the stylesheet's: `max-height` plus scrolling *inside* the
     // block, so a long output never turns the run card into a scroll window.
-    text === undefined || text.length === 0 ? undefined : el('pre', 'step-body-text', text),
+    text === undefined || text.length === 0 ? undefined : outputBlock(painter, 'step-body-text', text),
   )
+}
+
+/**
+ * A tool's output: the `<pre>`, a copy button over its corner, and past
+ * `OUTPUT_FOLD_LINES` lines a 「显示全部 N 行」 under it. The copy always takes
+ * the whole text, folded or not.
+ */
+function outputBlock(painter: Painter, className: string, text: string): HTMLElement {
+  const fold = foldOutput(text)
+  const pre = el('pre', className, fold?.head ?? text)
+  const more = fold === undefined ? undefined : showAll(fold.total, () => { pre.textContent = text })
+  return el('div', 'step-output', pre, outputCopy(painter, text), more)
+}
+
+function outputCopy(painter: Painter, text: string): HTMLButtonElement {
+  return copyButton('step-output-copy', '复制输出', () => painter.onCopy(text))
+}
+
+/** The fold's button; it removes itself once the rest is drawn. */
+function showAll(total: number, reveal: () => void): HTMLButtonElement {
+  const node = button('step-output-more', `显示全部 ${total} 行`, `显示全部 ${total} 行`, () => {
+    reveal()
+    node.remove()
+  })
+  return node
 }
 
 /**

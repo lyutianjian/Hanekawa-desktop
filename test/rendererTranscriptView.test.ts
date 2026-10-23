@@ -613,6 +613,15 @@ const runOf = (rendered: Rendered): StubView => {
 }
 
 /** The first row of the first run's card. */
+/**
+ * A body's parts with each tool output unwrapped to its block: the output's
+ * copy button and 「显示全部」 ride in a `.step-output` wrapper, and these tests
+ * are about the block inside it.
+ */
+function parts(view: StubView | undefined): StubView[] {
+  return (view?.children ?? []).map((child) => (child.classes.includes('step-output') ? child.children[0]! : child))
+}
+
 const rowOf = (rendered: Rendered): StubView => {
   const row = runOf(rendered).children[1]?.children[0]
   assert.ok(row, 'the run is folded, or has no rows')
@@ -701,7 +710,7 @@ test('a tool row is a button whose body exists only while it is open', (t) => {
   assert.equal(head?.attributes.get('aria-label'), '读取 a.ts · 完成')
   // 兜底 body: the result's own summary over `detail ?? content` (§6.2).
   assert.deepEqual(
-    tool.children[1]?.children.map((part) => [part.className, part.text]),
+    parts(tool.children[1]).map((part) => [part.className, part.text]),
     [['step-body-head', 'Read 240 lines'], ['step-body-text', 'line one']],
   )
 
@@ -923,8 +932,8 @@ test('an edit step carries its patch counts in the head and a real diff below', 
   // paints — the result summary is not repeated over it.
   const body = step?.children[1]
   assert.equal(body?.classes.includes('step-body'), true)
-  assert.deepEqual(body?.children.map((child) => [child.className, child.className === 'diff' ? '' : child.text]), [['step-path', 'a.ts'], ['diff', '']])
-  const diff = body?.children[1]
+  assert.deepEqual(parts(body).map((child) => [child.className, child.className === 'diff' ? '' : child.text]), [['step-path', 'a.ts'], ['diff', '']])
+  const diff = parts(body)[1]
   assert.equal(diff?.className, 'diff')
   assert.deepEqual(diff?.children.map((row) => row.classes), [
     ['diff-row', 'ctx'],
@@ -960,7 +969,7 @@ test('an edit record without a patch falls back to the plain body, without error
   assert.equal(step?.children[0]?.children.some((part) => part.classes.includes('step-right')), false)
   // And the body is the fallback family (§6.2 兜底): the summary over `content`.
   const body = step?.children[1]
-  assert.deepEqual(body?.children.map((part) => [part.className, part.text]), [
+  assert.deepEqual(parts(body).map((part) => [part.className, part.text]), [
     ['step-body-head', 'Edited a.ts'],
     ['step-body-text', 'Edited a.ts'],
   ])
@@ -978,8 +987,8 @@ test("a Bash output that happens to be a patch stays a terminal block, not a dif
 
   const body = rowOf(view)?.children[1]
   assert.equal(body?.children.some((child) => child.classes.includes('diff')), false)
-  assert.equal(body?.children[0]?.className, 'step-terminal')
-  assert.equal(body?.children[0]?.text, EDIT_PATCH)
+  assert.equal(parts(body)[0]?.className, 'step-terminal')
+  assert.equal(parts(body)[0]?.text, EDIT_PATCH)
 })
 
 test('skipped lines draw as dashed rules with the count, never as glyphs', (t) => {
@@ -1036,6 +1045,30 @@ function bashStep(overrides: {
   }
 }
 
+test('a long output draws its first 200 lines, unfolds on request, and copies whole', async (t) => {
+  // The block already scrolled inside its height; the fold is about layout: a
+  // build log of thousands of lines was laid out in full the moment it opened.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const view = mount(t)
+  const output = Array.from({ length: 250 }, (_, i) => `line ${i + 1}`).join('\n')
+  view.render(transcript([bashStep({ content: output })]), opened('bash-1'))
+
+  const wrap = rowOf(view)?.children[1]?.children.find((child) => child.classes.includes('step-output'))
+  assert.ok(wrap)
+  const [pre, copy, more] = wrap.children
+  assert.equal(pre?.text.split('\n').length, 200)
+  assert.equal(more?.text, '显示全部 250 行')
+
+  view.stub.click(copy!.node)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(view.copied, [output], 'the copy takes what was folded away too')
+
+  view.stub.click(more!.node)
+  const after = rowOf(view)?.children[1]?.children.find((child) => child.classes.includes('step-output'))
+  assert.equal(after?.children[0]?.text, output)
+  assert.equal(after?.children.some((child) => child.classes.includes('step-output-more')), false)
+})
+
 test('a Bash step opens into a terminal block with its output ANSI-stripped', (t) => {
   const view = mount(t)
   view.render(transcript([bashStep()]), opened('bash-1'))
@@ -1046,11 +1079,11 @@ test('a Bash step opens into a terminal block with its output ANSI-stripped', (t
   // said what ran and how long, so there is no summary line above it (§6.2).
   const body = step?.children[1]
   assert.equal(body?.classes.includes('step-body'), true)
-  assert.deepEqual(body?.children.map((child) => child.className), ['step-terminal'])
-  assert.equal(body?.children[0]?.tagName, 'PRE')
+  assert.deepEqual(parts(body).map((child) => child.className), ['step-terminal'])
+  assert.equal(parts(body)[0]?.tagName, 'PRE')
   // §6.4: the sequences are stripped, not printed — a real `npm test` line, not
   // the `[32m` garbage the raw string would show.
-  assert.equal(body?.children[0]?.text, 'ok 42 passed\n3 failed')
+  assert.equal(parts(body)[0]?.text, 'ok 42 passed\n3 failed')
   assert.equal(body?.text.includes('\x1b'), false)
 })
 
@@ -1068,7 +1101,7 @@ test('a failed Bash step names its error code on its own line and reddens the wh
   assert.deepEqual(step?.classes, ['step', 'tool', 'failed'])
   const body = step?.children[1]
   assert.deepEqual(
-    body?.children.map((child) => [child.className, child.text]),
+    parts(body).map((child) => [child.className, child.text]),
     [['step-error', '命令失败（非零退出）'], ['step-terminal', 'ok 42 passed\n3 failed']],
   )
 })
@@ -1082,7 +1115,7 @@ test('a failed Bash step with no output is one line, not an empty terminal', (t)
 
   const body = rowOf(view)?.children[1]
   assert.deepEqual(
-    body?.children.map((child) => [child.className, child.text]),
+    parts(body).map((child) => [child.className, child.text]),
     [['step-error', '命令失败（非零退出），无输出']],
   )
 })
@@ -1097,10 +1130,10 @@ test('a described Bash step puts the full command in its own bubble above the ou
   )
 
   const body = rowOf(view)?.children[1]
-  assert.deepEqual(body?.children.map((child) => child.className), ['step-command', 'step-error', 'step-terminal'])
-  const bubble = body!.children[0]!
+  assert.deepEqual(parts(body).map((child) => child.className), ['step-command', 'step-error', 'step-terminal'])
+  const bubble = parts(body)[0]!
   assert.equal(bubble.children[0]?.text, `$ ${command}`)
-  assert.equal(body!.children[2]?.text, 'ok 42 passed\n3 failed')
+  assert.equal(parts(body)[2]?.text, 'ok 42 passed\n3 failed')
   view.stub.click(bubble.children[1]!.node)
   assert.deepEqual(view.copied, [command])
   await Promise.resolve()
@@ -1112,7 +1145,7 @@ test('an undescribed Bash step names only its first word; the bubble holds the c
   view.render(transcript([bashStep({ command: 'npm test' })]), opened('bash-1'))
   const step = rowOf(view)
   assert.equal(step?.children[0]?.children[0]?.text, '运行 npm…')
-  assert.deepEqual(step?.children[1]?.children.map((child) => child.className), ['step-command', 'step-terminal'])
+  assert.deepEqual(parts(step?.children[1]).map((child) => child.className), ['step-command', 'step-terminal'])
 
   const running = bashStep({ command: 'npm test' })
   view.render(transcript([{ ...running, pending: true, tool: { ...running.tool!, content: undefined } }]), opened('bash-1'))
@@ -1139,8 +1172,8 @@ test('the terminal shows what the command printed, not the collapsed line’s ex
   )
 
   const body = rowOf(view)?.children[1]
-  assert.equal(body?.children[0]?.className, 'step-terminal')
-  assert.equal(body?.children[0]?.text, 'Task ID: bg-1\nPID: 123')
+  assert.equal(parts(body)[0]?.className, 'step-terminal')
+  assert.equal(parts(body)[0]?.text, 'Task ID: bg-1\nPID: 123')
 })
 
 // --- the search family's grouped list (T15) ---------------------------------
@@ -1288,7 +1321,7 @@ test('an unparseable search payload falls back to the plain body, without errori
   const step = rowOf(view)
   assert.equal(step?.children[1]?.children.some((child) => child.classes.includes('step-search')), false)
   assert.deepEqual(
-    step?.children[1]?.children.map((part) => [part.className, part.text]),
+    parts(step?.children[1]).map((part) => [part.className, part.text]),
     [
       ['step-body-head', 'Found 3 matches across 2 files'],
       ['step-body-text', 'Error: Invalid regular expression pattern.'],
@@ -1336,7 +1369,7 @@ test('a Read step opens into the file as a line-numbered code block', (t) => {
   // no highlighting of any kind: the row is exactly the text the tool read.
   const body = step?.children[1]
   assert.equal(body?.classes.includes('step-body'), true)
-  const block = body?.children[0]
+  const block = parts(body)[0]
   assert.equal(block?.className, 'step-code')
   // A trailing newline is the last line's terminator, not an extra empty row:
   // the tool counts `one\ntwo\n` as 2 lines, and so does the block.
@@ -1355,7 +1388,7 @@ test('a Read step numbers its rows from the tool’s own prefix, offset included
   const content = '    20\tone\n    21\ttwo\n\n[Showing lines 20-21 of 40. Use offset/limit to read another range.]'
   view.render(transcript([readStep({ content })]), opened('read-1'))
 
-  const block = rowOf(view)?.children[1]?.children[0]
+  const block = parts(rowOf(view)?.children[1])[0]
   assert.deepEqual(
     block?.children.map((row) => [row.children[0]?.text, row.children[1]?.text]),
     [['20', 'one'], ['21', 'two']],
@@ -1519,10 +1552,10 @@ test('a WebFetch step opens into the page as the markdown the tool made of it', 
   // as markers instead of the heading and emphasis they are.
   const body = step?.children[1]
   assert.deepEqual(
-    body?.children.map((part) => part.className),
+    parts(body).map((part) => part.className),
     ['step-body-head', 'step-web md'],
   )
-  const article = body?.children[1]
+  const article = parts(body)[1]
   assert.equal(article?.children[0]?.tagName, 'H1')
   assert.equal(article?.children[0]?.text, 'Title')
   assert.equal(article?.children[1]?.tagName, 'P')
@@ -1541,7 +1574,7 @@ test('the fallback body still serves the new families when their data is absent'
   const failedBody = rowOf(view)?.children[1]
   assert.equal(failedBody?.children.some((child) => child.classes.includes('step-web')), false)
   assert.deepEqual(
-    failedBody?.children.map((part) => [part.className, part.text]),
+    parts(failedBody).map((part) => [part.className, part.text]),
     [['step-body-head', 'Fetched example.com (24.3KB)'], ['step-body-text', '# Title\n\nsome prose']],
   )
 

@@ -3074,6 +3074,44 @@ body.settings-open #browser-resizer { display: none; }
      scrollbar of its own. */
   overflow-wrap: anywhere;
 }
+/* A tool's output with its copy button over the top-right corner, shown on
+   hover or focus like a code block's; 显示全部 sits under it, left-aligned. */
+.step-output { position: relative; display: flex; flex-direction: column; }
+.step-output-copy {
+  position: absolute;
+  top: var(--space-1);
+  right: var(--space-1);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-xs);
+  height: var(--control-xs);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-card);
+  color: var(--text-tertiary);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--motion-micro) var(--ease-out);
+}
+.step-output:hover .step-output-copy,
+.step-output-copy:focus-visible { opacity: 1; }
+.step-output-copy:hover { color: var(--text-primary); background: var(--surface-hover); }
+.step-output-copy.failed { color: var(--text-danger); opacity: 1; }
+.step-output-copy .icon { width: 13px; height: 13px; }
+.step-output-more {
+  align-self: flex-start;
+  margin-top: var(--space-1);
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-meta);
+  cursor: pointer;
+}
+.step-output-more:hover { color: var(--text-primary); }
 /* 失败时错误码单独一行 (§6.2): the failure's own code, in words, above the
    output it failed on. It only exists on a failed step, so it carries the
    danger colour itself rather than borrowing the block's. */
