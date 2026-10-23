@@ -11,6 +11,13 @@ export interface Toast {
   readonly text: string
   /** How many times the same message arrived while this one was up. */
   readonly repeats: number
+  /** One button beside the text, such as 重试; pressing it also dismisses the toast. */
+  readonly action?: ToastAction
+}
+
+export interface ToastAction {
+  readonly label: string
+  readonly run: () => void
 }
 
 export interface ToastState {
@@ -29,15 +36,17 @@ export function emptyToasts(): ToastState {
 }
 
 /** The same message again counts up on the toast already showing rather than stacking a twin. */
-export function pushToast(state: ToastState, level: ToastLevel, text: string): ToastState {
+export function pushToast(state: ToastState, level: ToastLevel, text: string, action?: ToastAction): ToastState {
   const twin = state.toasts.find((toast) => toast.level === level && toast.text === text)
   if (twin) {
+    // The latest action wins: it is the one bound to the attempt that just failed.
     return {
       ...state,
-      toasts: state.toasts.map((toast) => (toast === twin ? { ...toast, repeats: toast.repeats + 1 } : toast)),
+      toasts: state.toasts.map((toast) => (toast === twin ? { ...toast, repeats: toast.repeats + 1, ...(action ? { action } : {}) } : toast)),
     }
   }
-  const toasts = [...state.toasts, { id: state.nextId, level, text, repeats: 1 }]
+  const toast: Toast = { id: state.nextId, level, text, repeats: 1, ...(action ? { action } : {}) }
+  const toasts = [...state.toasts, toast]
   return { toasts: toasts.slice(-MAX_TOASTS), nextId: state.nextId + 1 }
 }
 

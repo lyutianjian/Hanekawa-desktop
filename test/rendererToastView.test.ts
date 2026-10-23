@@ -124,3 +124,18 @@ test('a burst stacks at most a few; the oldest makes room', (t) => {
   assert.equal(toasts().length, MAX_TOASTS)
   assert.deepEqual(toasts().map((toast) => toast.children[0]!.text), ['错误 2', '错误 3', '错误 4'])
 })
+
+test('a toast’s 重试 runs the attempt again and closes the toast', (t) => {
+  const { stub, host, toasts, settle } = mount(t)
+  let runs = 0
+  host.push('error', '读取会话列表失败：x', { label: '重试', run: () => { runs += 1 } })
+  const action = toasts()[0]!.children.find((child) => child.classes.includes('toast-action'))
+  assert.ok(action, 'the action is drawn')
+  assert.equal(action.text, '重试')
+  stub.click(action.node)
+  assert.equal(runs, 1)
+  settle()
+  assert.equal(toasts().length, 0)
+  host.push('error', 'plain')
+  assert.equal(toasts()[0]!.children.some((child) => child.classes.includes('toast-action')), false, 'no action, no button')
+})

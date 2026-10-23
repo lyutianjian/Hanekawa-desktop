@@ -7735,6 +7735,20 @@ body.projects-open #browser-resizer,
   cursor: pointer;
 }
 .toast-close:hover { color: var(--text-primary); background: var(--surface-hover); }
+/* The toast's one action (重试): the same pill as the panels' 重试, so a
+   failure offers the same control wherever it is reported. */
+.toast-action {
+  flex: none;
+  padding: 2px var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-meta);
+  cursor: pointer;
+}
+.toast-action:hover { color: var(--text-primary); background: var(--surface-hover); }
 .toast-close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 
 /* The coordinator's fixed welcome above the first entry. */

@@ -692,7 +692,7 @@ function reportError(site: ErrorSite, error: unknown): void {
       return
     }
     case 'toast':
-      toastHost.push('error', text)
+      toastHost.push('error', text, site.retry ? { label: '重试', run: site.retry } : undefined)
   }
 }
 
@@ -865,7 +865,7 @@ async function refreshSessions(): Promise<void> {
       listLoad = 'failed'
       renderSidebar()
     }
-    reportError({ action: '读取会话列表' }, error)
+    reportError({ action: '读取会话列表', retry: () => void refreshSessions() }, error)
   } finally {
     sessionsInFlight = false
   }
@@ -892,7 +892,7 @@ function runSidebarIntent(intent: SidebarIntent): void {
       renderSidebar()
       void shellClient
         .openSession({ sessionId: intent.sessionId, projectRoot: intent.projectRoot })
-        .catch((error) => reportError({ action: '打开会话' }, error))
+        .catch((error) => reportError({ action: '打开会话', retry: () => runSidebarIntent(intent) }, error))
         .finally(() => {
           openingSessions.delete(intent.sessionId)
           renderSidebar()
