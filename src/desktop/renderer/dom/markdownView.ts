@@ -167,7 +167,8 @@ function blockNode(block: MdBlock): HTMLElement {
     }
 
     case 'code': {
-      const wrapper = el('div', 'md-code')
+      // `bare`: no label line for the copy button to sit on, so the code makes room.
+      const wrapper = el('div', block.lang ? 'md-code' : 'md-code bare')
       if (block.lang) wrapper.appendChild(el('div', 'md-code-lang', block.lang))
       wrapper.appendChild(el('pre', undefined, el('code', undefined, block.text)))
       wrapper.appendChild(codeCopyButton(block.text))

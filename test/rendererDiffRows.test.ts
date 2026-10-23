@@ -4,6 +4,7 @@ import {
   DIFF_CONTEXT_LINES,
   diffRowsFor,
   droppedLines,
+  gutterWidth,
   parseUnifiedPatch,
   patchPath,
   previewView,
@@ -286,4 +287,16 @@ test('anything that is not one of those patches parses to undefined, not to rows
     parseUnifiedPatch(['--- a/x', '+++ b/x', '… 5 more lines not shown'].join('\n')),
     undefined,
   )
+})
+
+test('the gutter is as wide as the widest line number in the diff', () => {
+  // A fixed three digits pushed every row past line 999 one column right of
+  // the rows above it.
+  assert.equal(gutterWidth([{ kind: 'ctx', text: 'a', oldLine: 7, newLine: 7 }]), 1)
+  assert.equal(gutterWidth([
+    { kind: 'ctx', text: 'a', oldLine: 998, newLine: 998 },
+    { kind: 'elided', text: '…' },
+    { kind: 'add', text: 'b', newLine: 1204 },
+  ]), 4)
+  assert.equal(gutterWidth([]), 1)
 })

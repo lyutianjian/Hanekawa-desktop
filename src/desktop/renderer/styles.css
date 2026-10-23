@@ -5476,6 +5476,11 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font: inherit;
 }
 .md .md-code code { font: inherit; }
+/* With no label line the copy button sits on the code's first row, where it
+   covered the end of it while the block was hovered. A bare block keeps a
+   column clear for it instead — on every row, since `pre-wrap` decides which
+   row is first only at layout time. */
+.md .md-code.bare pre { padding-right: calc(var(--control-sm) + 12px); }
 /* `table-layout: fixed` over a full-width table: an auto table is sized by its
    own cells' max-content, so one wide row widened the reading column and took
    the transcript's horizontal scrollbar with it. Fixed divides the measure it
