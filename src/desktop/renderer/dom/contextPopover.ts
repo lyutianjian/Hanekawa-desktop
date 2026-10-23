@@ -1,4 +1,5 @@
 import type { ContextPopoverListItem, ContextPopoverView } from '../model/contextBreakdown.js'
+import { button } from './controls.js'
 import { el, reconcile, show } from './dom.js'
 import { icon } from './icons.js'
 import { createPresence, type Presence } from './presence.js'
@@ -22,7 +23,7 @@ type GroupKey = 'mcp' | 'memory'
  * two lists at its foot keep their open state across repaints, and a toggle
  * flips them in place rather than rebuilding the card under the pointer.
  */
-export function createContextPopover(): ContextPopover {
+export function createContextPopover(options: { onCompact?: () => void } = {}): ContextPopover {
   const node = el('div', 'context-popover')
   node.setAttribute('role', 'dialog')
   node.setAttribute('aria-label', '上下文')
@@ -96,6 +97,9 @@ export function createContextPopover(): ContextPopover {
       ...deferred,
       ...(groups.length > 0 ? [el('div', 'ctx-groups', ...groups)] : []),
       ...(view.note ? [el('p', 'ctx-note', view.note)] : []),
+      // The card says how full the context is; this is the one thing to do
+      // about it, where it used to take knowing `/compact` by name.
+      ...(options.onCompact ? [el('div', 'ctx-actions', button('ctx-compact', '压缩上下文', '运行 /compact，把较早的对话压缩成摘要', options.onCompact))] : []),
     ])
   }
 

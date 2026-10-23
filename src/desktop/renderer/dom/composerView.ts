@@ -801,11 +801,21 @@ export function createComposerView(els: {
    */
   const contextRing = el('span', 'context-gauge')
   contextRing.setAttribute('aria-hidden', 'true')
+  // The ring sits in a real button rather than the shell being a `role=button`:
+  // the shell also holds the popover, and a button may not contain the popover's
+  // own buttons. The button is also what puts the indicator in the tab order.
+  const contextTrigger = el('button', 'context-trigger', contextRing)
+  contextTrigger.type = 'button'
+  contextTrigger.setAttribute('aria-haspopup', 'dialog')
+  contextTrigger.setAttribute('aria-expanded', 'false')
   const contextCard = createHoverCard(els.contextIndicator, 'context-tooltip')
-  const contextPopover = createContextPopover()
-  els.contextIndicator.setAttribute('role', 'button')
-  els.contextIndicator.setAttribute('aria-haspopup', 'dialog')
-  els.contextIndicator.setAttribute('aria-expanded', 'false')
+  const contextPopover = createContextPopover({
+    onCompact: () => {
+      setContextOpen(false)
+      contextTrigger.focus()
+      actions.onRuntimeAction({ kind: 'run-command', line: '/compact' })
+    },
+  })
   let contextOpen = false
   let contextLoad = 0
 
@@ -834,7 +844,7 @@ export function createComposerView(els: {
   function setContextOpen(open: boolean): void {
     if (open === contextOpen) return
     contextOpen = open
-    els.contextIndicator.setAttribute('aria-expanded', String(open))
+    contextTrigger.setAttribute('aria-expanded', String(open))
     els.contextIndicator.classList.toggle('open', open)
     contextSignature = undefined
     renderContextGauge()
@@ -842,19 +852,13 @@ export function createComposerView(els: {
     else contextPopover.presence.set(false)
   }
 
-  els.contextIndicator.addEventListener('click', (event) => {
-    if (event.target instanceof Node && contextPopover.node.contains(event.target)) return
-    setContextOpen(!contextOpen)
-  })
+  contextTrigger.addEventListener('click', () => setContextOpen(!contextOpen))
   els.contextIndicator.addEventListener('keydown', (event) => {
-    if ((event.key === 'Enter' || event.key === ' ') && event.target === els.contextIndicator) {
-      event.preventDefault()
-      setContextOpen(!contextOpen)
-    } else if (event.key === 'Escape' && contextOpen) {
+    if (event.key === 'Escape' && contextOpen) {
       event.preventDefault()
       event.stopPropagation()
       setContextOpen(false)
-      els.contextIndicator.focus()
+      contextTrigger.focus()
     }
   })
   els.contextIndicator.addEventListener('focusout', (event) => {
@@ -877,11 +881,11 @@ export function createComposerView(els: {
     if (!contextGauge.visible) {
       contextCard.finish()
       contextOpen = false
-      els.contextIndicator.setAttribute('aria-expanded', 'false')
+      contextTrigger.setAttribute('aria-expanded', 'false')
       els.contextIndicator.classList.remove('open')
       contextPopover.presence.finish()
       replace(els.contextIndicator)
-      els.contextIndicator.removeAttribute('aria-label')
+      contextTrigger.removeAttribute('aria-label')
       return
     }
 
@@ -890,8 +894,8 @@ export function createComposerView(els: {
     contextCard.set(contextOpen
       ? undefined
       : { title: '已使用', lead: `${contextGauge.percent} · ${contextGauge.used} / ${contextGauge.usable}`, rows: [] })
-    reconcile(els.contextIndicator, [contextRing, contextCard.node, contextPopover.node])
-    els.contextIndicator.setAttribute('aria-label', contextGauge.title.replace(/\n/g, '；'))
+    reconcile(els.contextIndicator, [contextTrigger, contextCard.node, contextPopover.node])
+    contextTrigger.setAttribute('aria-label', contextGauge.title.replace(/\n/g, '；'))
     if (contextOpen && moved) void loadContextBreakdown()
   }
 

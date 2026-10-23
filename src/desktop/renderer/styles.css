@@ -4540,7 +4540,22 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 /* The context indicator's click-open card (`dom/contextPopover.ts`): what the
    context is made of. Anchored like the hover card above, but it takes the
    pointer — its two lists at the foot open in place. */
-#composer-context { cursor: pointer; }
+/* The ring's button fills the groove: the shell keeps the shape and the hover,
+   the button only takes the click and the focus ring. */
+.context-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
 #composer-context.open {
   background: var(--surface-hover);
   border-color: var(--border-subtle);
@@ -4685,6 +4700,23 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   color: var(--text-tertiary);
   font-size: var(--type-meta);
 }
+/* The card's one action, at its foot and right-aligned like a dialog's. */
+.ctx-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: var(--space-3);
+}
+.ctx-compact {
+  padding: 2px var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-meta);
+  cursor: pointer;
+}
+.ctx-compact:hover { color: var(--text-primary); background: var(--surface-hover); }
 /* One status label for both fields, and the shell its popover is drawn into —
    the same construction `#composer-permission` uses. This was two buttons split
    by a hairline, each opening a full-width `#surface` card; the model and the

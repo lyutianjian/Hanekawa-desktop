@@ -437,15 +437,19 @@ test('the context indicator is independent of the chip, and is absent when there
     [r.els.contextIndicator, r.els.chipShell],
     'the visible indicator stays outside the chip',
   )
-  const [gauge, tooltip] = r.view('contextIndicator').children
+  const [trigger, tooltip] = r.view('contextIndicator').children
+  // A real button holds the ring: the shell also holds the popover and its own
+  // buttons, which a `role=button` shell would have nested inside a button.
+  assert.equal(trigger?.tagName, 'BUTTON')
+  assert.equal(r.view('contextIndicator').attributes.has('role'), false)
+  const gauge = trigger?.children[0]
   assert.equal(gauge?.className, 'context-gauge warn')
   // The ring is decoration; the figures reach the reader through the indicator's
   // own accessible name, which is why the level may be a colour at all.
   assert.equal(gauge?.attributes.get('aria-hidden'), 'true')
   assert.equal(gauge?.styleProperties.get(CONTEXT_RATIO_VARIABLE), '0.9')
-  assert.equal(r.view('contextIndicator').attributes.get('role'), 'button')
-  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'false')
-  assert.match(r.view('contextIndicator').attributes.get('aria-label') ?? '', /90% 已用/)
+  assert.equal(trigger?.attributes.get('aria-expanded'), 'false')
+  assert.match(trigger?.attributes.get('aria-label') ?? '', /90% 已用/)
   assert.equal((r.els.contextIndicator as { title: string }).title, '', 'the hover card is drawn by the renderer, not by the OS')
 
   assert.equal(tooltip?.classes.includes('hover-card'), true)
@@ -460,26 +464,43 @@ test('clicking the context indicator opens the breakdown, and clicking again or 
   const snapshot = runtime({ contextWindow: 200_000, usableContextWindow: 100_000 })
   r.composer.renderRuntime(snapshot, contextGaugeView(30_000, snapshot))
   const popover = () => r.view('contextIndicator').children.find((child) => child.classes.includes('context-popover'))
+  const trigger = () => r.view('contextIndicator').children[0]!
   assert.equal(popover()?.hidden, true)
 
-  r.stub.click(r.els.contextIndicator)
+  r.stub.click(trigger().node)
   await new Promise((resolve) => setImmediate(resolve))
   assert.deepEqual(r.breakdownRequests, [1])
-  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'true')
+  assert.equal(trigger().attributes.get('aria-expanded'), 'true')
   assert.equal(popover()?.hidden, false)
   assert.match(popover()?.text ?? '', /已使用 30%/)
   assert.match(popover()?.text ?? '', /对话消息/)
   assert.match(popover()?.text ?? '', /压缩预留/)
   assert.equal(r.view('contextIndicator').children[1]?.hidden, true, 'the hover card stands down while the card is open')
 
-  r.stub.click(r.els.contextIndicator)
-  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'false')
+  r.stub.click(trigger().node)
+  assert.equal(trigger().attributes.get('aria-expanded'), 'false')
 
-  r.stub.click(r.els.contextIndicator)
+  r.stub.click(trigger().node)
   await new Promise((resolve) => setImmediate(resolve))
-  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'true')
+  assert.equal(trigger().attributes.get('aria-expanded'), 'true')
   r.stub.dispatch(r.els.contextIndicator, 'keydown', { key: 'Escape' })
-  assert.equal(r.view('contextIndicator').attributes.get('aria-expanded'), 'false')
+  assert.equal(trigger().attributes.get('aria-expanded'), 'false')
+})
+
+test('the context card offers 压缩上下文, which closes it and runs /compact', async (t) => {
+  const r = render(t)
+  const snapshot = runtime({ contextWindow: 200_000, usableContextWindow: 100_000 })
+  r.composer.renderRuntime(snapshot, contextGaugeView(80_000, snapshot))
+  const trigger = r.view('contextIndicator').children[0]!
+  r.stub.click(trigger.node)
+  await new Promise((resolve) => setImmediate(resolve))
+  const popover = r.view('contextIndicator').children.find((child) => child.classes.includes('context-popover'))!
+  const compact = popover.children.flatMap((child) => child.children).find((child) => child.classes.includes('ctx-compact'))
+  assert.equal(compact?.text, '压缩上下文')
+
+  r.stub.click(compact!.node)
+  assert.deepEqual(r.ran, [{ kind: 'run-command', line: '/compact' }])
+  assert.equal(r.view('contextIndicator').children[0]!.attributes.get('aria-expanded'), 'false')
 })
 
 test('clicking the chip asks the pane for the rows rather than opening anything', (t) => {
@@ -970,7 +991,7 @@ test('an unchanged context gauge does not rebuild the hover card', (t) => {
     before,
   )
   assert.match(r.view('contextIndicator').text, /95%/)
-  assert.equal(r.view('contextIndicator').children[0]?.className, 'context-gauge critical')
+  assert.equal(r.view('contextIndicator').children[0]?.children[0]?.className, 'context-gauge critical')
 })
 
 test('the guard does not swallow the click that opens the permission menu', (t) => {
