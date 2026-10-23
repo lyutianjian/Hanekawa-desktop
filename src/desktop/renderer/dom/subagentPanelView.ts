@@ -50,6 +50,10 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
   const timeline = el('div', 'transcript subagent-transcript')
   const floatHost = el('div', 'subagent-float')
   const fallback = el('div', 'subagent-fallback')
+  const failure = el('div', 'load-error')
+  failure.setAttribute('role', 'alert')
+  show(failure, false)
+  let failureShown: string | undefined
   let page: { id: string; agentId: string | undefined; view: TranscriptView } | undefined
   let state: TranscriptState | undefined
   let recordsSeen: string | undefined
@@ -152,7 +156,21 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
       show(timeline, true)
       show(fallback, false)
       paintTimeline()
-    }).catch(() => {})
+    }).then(() => {
+      if (page === current) showFailure(undefined)
+    }, (error: unknown) => {
+      if (page === current) showFailure(error instanceof Error ? error.message : String(error))
+    })
+  }
+
+  // The poll retries on its own while the run is live; 重试 is for one that has
+  // ended, whose page would otherwise sit on the fallback with no word why.
+  function showFailure(message: string | undefined): void {
+    if (message === failureShown) return
+    failureShown = message
+    show(failure, message !== undefined)
+    if (message === undefined) replace(failure)
+    else replace(failure, el('span', 'load-error-text', `无法读取子代理对话：${message}`), button('load-retry', '重试', '重新读取子代理对话', fetchRecords))
   }
 
   function closePage(): void {
@@ -160,6 +178,7 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
     page = undefined
     state = undefined
     recordsSeen = undefined
+    showFailure(undefined)
     manual = new Map()
     if (pollTimer !== undefined) clearInterval(pollTimer)
     pollTimer = undefined
@@ -190,7 +209,7 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
         onOpenSubagent: () => {},
       }),
     }
-    replace(container, pageHead, timeline, fallback, floatHost)
+    replace(container, pageHead, failure, timeline, fallback, floatHost)
     container.scrollTop = 0
   }
 
@@ -202,7 +221,7 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
       el(
         'div',
         'subagent-page-bar',
-        button('subagent-back', '← 全部子代理', '返回子代理列表', () => handlers.onSelect(undefined)),
+        button('subagent-back', '全部子代理', '返回子代理列表', () => handlers.onSelect(undefined), { icon: 'arrow-left' }),
         entry.finished ? undefined : button('subagent-stop', '停止', '停止这个子代理，父代理继续', () => handlers.onStop(entry.id)),
       ),
       el('div', 'subagent-title', ...heading(entry)),

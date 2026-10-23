@@ -2660,7 +2660,7 @@ test('buttons answer the pointer and the keyboard, and there is one primary', ()
   )
   // Four retry/back buttons reset `font` and never set a size, so they were the
   // inherited UI size beside their meta-sized neighbours.
-  for (const selector of ['.usage-retry', '.canvas-back-coordinator', '.thread-detail-retry', '.startup-failure-retry']) {
+  for (const selector of ['.usage-retry', '.canvas-back-coordinator', '.thread-detail-retry, .load-retry', '.startup-failure-retry']) {
     assert.ok(declares(blockFor(selector), 'font-size', 'var(--type-meta)'), `${selector} names its size`)
   }
 })

@@ -1849,6 +1849,7 @@ body.settings-open #browser-resizer { display: none; }
   padding: var(--space-1) var(--space-2);
   cursor: pointer;
 }
+.subagent-back { display: inline-flex; align-items: center; gap: var(--space-1); }
 .subagent-back:hover { background: var(--surface-hover); color: var(--text-primary); }
 .subagent-stop:hover { background: var(--surface-hover); color: var(--text-danger); }
 .subagent-section { margin-top: var(--space-3); min-width: 0; overflow-wrap: anywhere; font-size: var(--type-ui); }
@@ -3566,6 +3567,7 @@ body.settings-open #browser-resizer { display: none; }
 .usage-heatmap { display: flex; justify-content: flex-end; gap: 3px; overflow: hidden; }
 .usage-heat-col { flex: 0 0 10px; display: flex; flex-direction: column; gap: 3px; }
 .usage-heat { width: 10px; height: 10px; border-radius: var(--radius-mark); background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.usage-heat:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .usage-heat.future { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
 .usage-heat.level-1 { background: color-mix(in srgb, var(--accent-info) 30%, transparent); }
 .usage-heat.level-2 { background: color-mix(in srgb, var(--accent-info) 50%, transparent); }
@@ -7371,7 +7373,10 @@ body.projects-open #browser-resizer,
   font-size: var(--type-meta);
 }
 .thread-panel-notice.error { color: var(--text-danger); }
-.thread-detail-error {
+/* A section's read failed: the reason and 重试, in the thread detail, a
+   subagent's page and a command's output alike. */
+.thread-detail-error,
+.load-error {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -7381,8 +7386,10 @@ body.projects-open #browser-resizer,
   color: var(--text-danger);
   font-size: var(--type-meta);
 }
-.thread-detail-error-text { min-width: 0; overflow-wrap: anywhere; }
-.thread-detail-retry {
+.thread-detail-error-text,
+.load-error-text { min-width: 0; overflow-wrap: anywhere; }
+.thread-detail-retry,
+.load-retry {
   flex: none;
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
@@ -7393,7 +7400,8 @@ body.projects-open #browser-resizer,
   font-size: var(--type-meta);
   cursor: pointer;
 }
-.thread-detail-retry:hover { color: var(--text-primary); background: var(--surface-hover); }
+.thread-detail-retry:hover,
+.load-retry:hover { color: var(--text-primary); background: var(--surface-hover); }
 .thread-panel-empty {
   display: flex;
   flex-direction: column;

@@ -4,6 +4,8 @@ import {
   USAGE_RANGES,
   USAGE_UNAVAILABLE,
   USAGE_TABS,
+  heatCellLabel,
+  heatStep,
   usageCardView,
   type UsageCardView,
   type UsageCell,
@@ -90,13 +92,45 @@ export function createUsageCard(now: () => Date = () => new Date()): UsageCardDo
   const hideTip = (): void => { tip.classList.remove('open') }
 
   const overview = (view: UsageCardView): HTMLElement[] => {
-    const heatmap = el('div', 'usage-heatmap', ...view.heatmap.map((column) =>
-      el('div', 'usage-heat-col', ...column.map((cell) => {
+    // One Tab stop for the whole grid, on today; the arrows walk it (see
+    // `heatStep`) and the focused day shows the same tip as a hovered one.
+    const nodes: (HTMLElement | undefined)[][] = []
+    let current: { col: number; row: number } | undefined
+    const heatmap = el('div', 'usage-heatmap', ...view.heatmap.map((column, col) => {
+      nodes[col] = []
+      return el('div', 'usage-heat-col', ...column.map((cell, row) => {
         const node = el('span', `usage-heat level-${cell?.level ?? 0}${cell ? '' : ' future'}`)
-        if (cell && !view.loading) node.addEventListener('mouseenter', () => showTip(node, cell))
+        if (cell && !view.loading) {
+          node.addEventListener('mouseenter', () => showTip(node, cell))
+          node.setAttribute('role', 'img')
+          node.setAttribute('aria-label', heatCellLabel(cell))
+          node.tabIndex = -1
+          node.addEventListener('focus', () => showTip(node, cell))
+          node.addEventListener('blur', hideTip)
+          nodes[col]![row] = node
+          current = { col, row }
+        }
         return node
-      }))))
+      }))
+    }))
+    if (current) nodes[current.col]![current.row]!.tabIndex = 0
+    heatmap.addEventListener('keydown', (event) => {
+      if (!current) return
+      const next = heatStep(view.heatmap, current, event.key)
+      if (!next) return
+      event.preventDefault()
+      event.stopPropagation()
+      nodes[current.col]![current.row]!.tabIndex = -1
+      current = next
+      const node = nodes[next.col]![next.row]!
+      node.tabIndex = 0
+      node.focus()
+    })
     heatmap.addEventListener('mouseleave', hideTip)
+    if (!view.loading) {
+      heatmap.setAttribute('role', 'group')
+      heatmap.setAttribute('aria-label', '每日用量，方向键逐日查看')
+    }
     return [cells('usage-cells', view.cells), heatmap, el('div', 'usage-footnote', view.footnote), tip]
   }
 
