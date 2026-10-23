@@ -480,6 +480,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     onOpenThread: (id) => deps.onOpenThread?.(id),
     ...(deps.onOpenProviderSettings ? { onOpenProviderSettings: deps.onOpenProviderSettings } : {}),
     onRetryTurn: (id) => { void retryTurn(id) },
+    onCompactConversation: () => { void runSurfaceAction({ kind: 'run-command', line: '/compact' }) },
     onBackgroundTool: (id) => {
       void client.backgroundToolCall(id).catch((error) => fail(`转后台失败：${describe(error)}`))
     },

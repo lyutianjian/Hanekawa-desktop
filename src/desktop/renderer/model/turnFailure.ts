@@ -118,3 +118,17 @@ export function turnFailureCard(record: TurnFailureRecord): TurnFailureCard {
     retryable: false,
   }
 }
+
+/**
+ * Whether the provider's message is long enough to fold behind 「展开详情」.
+ * The card clamps it to four lines; past that, or past what four lines hold at
+ * the card's width, the rest would be cut with no way to read it.
+ */
+export function failureDetailFolds(detail: string): boolean {
+  return detail.split('\n').length > 4 || detail.length > 240
+}
+
+/** What 「复制错误」 puts on the clipboard: enough to paste into a bug report. */
+export function failureCopyText(card: Pick<TurnFailureCard, 'reason' | 'target' | 'detail'>): string {
+  return [card.reason, card.target, card.detail].filter((part) => part !== undefined && part !== '').join('\n')
+}

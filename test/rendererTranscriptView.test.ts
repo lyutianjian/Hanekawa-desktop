@@ -2512,6 +2512,59 @@ test('a failed turn draws a card: reason, target, hint, the provider\'s words, a
   assert.deepEqual(find('failure-action').map((action) => action.text), ['打开服务商设置'])
 })
 
+test('a context failure offers 压缩对话 in place of the provider settings, and a long message unfolds', async (t) => {
+  let compacted = 0
+  const copied: string[] = []
+  const stub = installDomStub()
+  const container = stub.createContainer('transcript')
+  const host = stub.createContainer('pane')
+  const real = createTranscriptView(container, host, {
+    onToggle: () => {}, onOpenPlan: () => {}, onOpenSubagent: () => {}, onOpenPath: () => {},
+    onViewImage: () => {}, imageThumbUrl: () => undefined,
+    onCopy: async (text) => { copied.push(text); return true },
+    onOpenProviderSettings: () => {},
+    onRetryTurn: () => {},
+    onCompactConversation: () => { compacted += 1 },
+  })
+  t.after(() => {
+    real.dispose()
+    stub.uninstall()
+  })
+  const detail = Array.from({ length: 6 }, (_, i) => `line ${i}`).join('\n')
+  const find = (cls: string): StubView[] => (function walk(n: StubView): StubView[] {
+    return [...(n.classes.includes(cls) ? [n] : []), ...n.children.flatMap(walk)]
+  })(stub.inspect(container))
+  real.render({
+    ...createTranscriptState(),
+    items: [{
+      id: 'f1', kind: 'turn-failure', text: '对话超出了模型的上下文',
+      failure: {
+        id: 'f1', kind: 'context', reason: '对话超出了模型的上下文', hint: '压缩。', detail, userMessageId: 'u1', retryable: true,
+      },
+    }],
+  }, NO_DISCLOSURE)
+
+  // Provider settings cannot fix an overflow; compacting can.
+  const actions = find('failure-action')
+  assert.deepEqual(actions.map((action) => action.text), ['压缩对话', '重试'])
+  stub.dispatch(actions[0]!.node, 'click', {})
+  assert.equal(compacted, 1)
+
+  const fold = find('failure-fold')[0]!
+  assert.equal(fold.attributes.get('aria-expanded'), 'false')
+  stub.dispatch(fold.node, 'click', {})
+  assert.equal(find('failure-fold')[0]!.attributes.get('aria-expanded'), 'true')
+  assert.equal(find('failure-fold')[0]!.text, '收起')
+  assert.ok(find('failure-detail')[0]!.classes.includes('open'))
+
+  // The receipt's reset is a timer; held, so it cannot fire after the stub is gone.
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  stub.dispatch(find('failure-copy')[0]!.node, 'click', {})
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(copied, [`对话超出了模型的上下文\n${detail}`])
+  assert.equal(find('failure-copy')[0]!.attributes.get('aria-label'), '已复制')
+})
+
 test('receipts: a question card lists asks and answers, a plan card opens the plan', (t) => {
   const view = mount(t)
   const ask: TranscriptItem = {

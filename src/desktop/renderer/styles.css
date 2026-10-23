@@ -3273,6 +3273,26 @@ body.settings-open #browser-resizer { display: none; }
   font-size: var(--type-dense);
   line-height: var(--leading-dense);
 }
+/* The title row carries 复制错误 at its right, where a report copies from. */
+.failure-head { display: flex; align-items: flex-start; gap: var(--space-2); }
+.failure-head .failure-reason { flex: 1 1 auto; min-width: 0; }
+.failure-copy {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-xs);
+  height: var(--control-xs);
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.failure-copy:hover { color: var(--text-secondary); background: var(--surface-hover); }
+.failure-copy.failed { color: var(--text-danger); }
+.failure-copy .icon { width: 13px; height: 13px; }
 .failure-reason { color: var(--text-danger); font-weight: 600; overflow-wrap: anywhere; }
 .failure-target { color: var(--text-tertiary); font-size: var(--type-meta); overflow-wrap: anywhere; }
 .failure-hint { color: var(--text-secondary); overflow-wrap: anywhere; }
@@ -3286,6 +3306,19 @@ body.settings-open #browser-resizer { display: none; }
   font-size: var(--type-meta);
   overflow-wrap: anywhere;
 }
+/* 展开详情 lifts the clamp; the full message keeps its own line breaks. */
+.failure-detail.open { display: block; white-space: pre-wrap; }
+.failure-fold {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-meta);
+  cursor: pointer;
+}
+.failure-fold:hover { color: var(--text-primary); }
 .failure-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-1); }
 .failure-action {
   padding: 3px var(--space-3);

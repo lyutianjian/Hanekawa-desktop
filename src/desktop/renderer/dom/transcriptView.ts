@@ -49,7 +49,7 @@ import {
 import { callParts } from '../model/toolPhrases.js'
 import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
 import type { ThreadNoteCard } from '../model/threadNotes.js'
-import type { TurnFailureCard } from '../model/turnFailure.js'
+import { failureCopyText, failureDetailFolds, type TurnFailureCard } from '../model/turnFailure.js'
 import type { WireThreadStatus } from '../../shellProtocol.js'
 import { pausedTaskCard, TASK_LOCATE_FALLBACK_MS, type TaskCard, type TaskRowStatus } from '../model/tasks.js'
 import { button } from './controls.js'
@@ -167,6 +167,8 @@ export interface TranscriptHandlers {
   onOpenProviderSettings?(): void
   /** A failed turn's 「重试」: run the turn again on its own message. Absent draws no button. */
   onRetryTurn?(failureId: string): void
+  /** A context-overflow failure's 「压缩对话」: `/compact`. Absent draws no button. */
+  onCompactConversation?(): void
   /** A running `Bash` row's 转后台: stop blocking the turn on it. */
   onBackgroundTool?(toolUseId: string): void
   /** An edited-files card's row or 查看全部: the turn's changes in the side panel, `path` scrolled to. Absent draws no card. */
@@ -864,6 +866,7 @@ function createPainter(
     onOpenThread: handlers.onOpenThread,
     onOpenProviderSettings: handlers.onOpenProviderSettings,
     onRetryTurn: handlers.onRetryTurn,
+    onCompactConversation: handlers.onCompactConversation,
     onBackgroundTool: handlers.onBackgroundTool,
     onViewEdits: handlers.onViewEdits,
     node(key, className, signature, fill, create) {
@@ -1754,28 +1757,50 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
  * message has long since been answered or re-sent.
  */
 function turnFailureNode(painter: Painter, failure: TurnFailureCard, classes: string[], key: string): HTMLElement {
-  const { onRetryTurn, onOpenProviderSettings } = painter
+  const { onRetryTurn, onOpenProviderSettings, onCompactConversation } = painter
   const retry = failure.retryable && onRetryTurn !== undefined
+  // Compacting is the fix for this one failure, and only the newest failure's
+  // conversation is still the one it would compact.
+  const compact = failure.retryable && failure.kind === 'context' && onCompactConversation !== undefined
   return painter.node(
     key,
     classes.join(' '),
-    [failure.reason, failure.hint, failure.target, failure.detail, retry, onOpenProviderSettings !== undefined],
-    () => [
-      el('div', 'failure-reason', failure.reason),
-      failure.target === undefined ? undefined : el('div', 'failure-target', failure.target),
-      el('div', 'failure-hint', failure.hint),
-      failure.detail === '' ? undefined : el('div', 'failure-detail', failure.detail),
-      retry || onOpenProviderSettings !== undefined
-        ? el(
-          'div',
-          'failure-actions',
-          onOpenProviderSettings === undefined
-            ? undefined
-            : button('failure-action', '打开服务商设置', '打开服务商设置', () => onOpenProviderSettings()),
-          retry ? button('failure-action primary', '重试', '重新发送这次请求', () => onRetryTurn(failure.id)) : undefined,
-        )
-        : undefined,
-    ],
+    [failure.reason, failure.hint, failure.target, failure.detail, retry, compact, onOpenProviderSettings !== undefined],
+    () => {
+      const detail = failure.detail === '' ? undefined : el('div', 'failure-detail', failure.detail)
+      // Folded state lives on the node: the signature above keeps the card
+      // across repaints, so an opened detail stays open while the turn streams on.
+      const fold = detail !== undefined && failureDetailFolds(failure.detail)
+        ? button('failure-fold', '展开详情', '展开详情', () => {
+          const open = !detail.classList.contains('open')
+          detail.classList.toggle('open', open)
+          fold!.setAttribute('aria-expanded', String(open))
+          fold!.querySelector('.btn-label')!.textContent = open ? '收起' : '展开详情'
+        })
+        : undefined
+      fold?.setAttribute('aria-expanded', 'false')
+      return [
+        el('div', 'failure-head',
+          el('div', 'failure-reason', failure.reason),
+          detail === undefined ? undefined : copyButton('failure-copy', '复制错误', () => painter.onCopy(failureCopyText(failure))),
+        ),
+        failure.target === undefined ? undefined : el('div', 'failure-target', failure.target),
+        el('div', 'failure-hint', failure.hint),
+        detail,
+        fold,
+        retry || compact || onOpenProviderSettings !== undefined
+          ? el(
+            'div',
+            'failure-actions',
+            onOpenProviderSettings === undefined || failure.kind === 'context'
+              ? undefined
+              : button('failure-action', '打开服务商设置', '打开服务商设置', () => onOpenProviderSettings()),
+            compact ? button('failure-action', '压缩对话', '运行 /compact，把较早的对话压缩成摘要', () => onCompactConversation()) : undefined,
+            retry ? button('failure-action primary', '重试', '重新发送这次请求', () => onRetryTurn(failure.id)) : undefined,
+          )
+          : undefined,
+      ]
+    },
   )
 }
 

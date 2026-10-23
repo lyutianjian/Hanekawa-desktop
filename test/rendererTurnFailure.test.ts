@@ -4,6 +4,8 @@ import test from 'node:test'
 import {
   classifyTurnFailure,
   endpointLabel,
+  failureCopyText,
+  failureDetailFolds,
   turnFailureCard,
   type TurnFailureKind,
 } from '../src/desktop/renderer/model/turnFailure.js'
@@ -115,4 +117,18 @@ test('a retry runs on the message on screen: no second bubble, and the card it r
   const replayed = createTranscriptState([user('u1'), failure(), retry, failure({ id: 'f2' })])
   assert.deepEqual(replayed.items.map((item) => item.id), ['u1', 'f2'], 'a retried failure stays gone on reload; a new one shows')
   assert.deepEqual(withFailureActions(replayed).items.map((item) => item.failure?.retryable), [undefined, true])
+})
+
+test('a long provider message folds behind 展开详情, and 复制错误 copies the whole report', () => {
+  // The card clamps the message at four lines; past that the rest was cut with
+  // no way to read it, so only then does the card offer to unfold.
+  assert.equal(failureDetailFolds('Connection error.'), false)
+  assert.equal(failureDetailFolds('a\nb\nc\nd'), false)
+  assert.equal(failureDetailFolds('a\nb\nc\nd\ne'), true)
+  assert.equal(failureDetailFolds('x'.repeat(241)), true)
+  assert.equal(
+    failureCopyText({ reason: '请求失败', target: '模型 m · 服务商 h/v1', detail: 'boom' }),
+    '请求失败\n模型 m · 服务商 h/v1\nboom',
+  )
+  assert.equal(failureCopyText({ reason: '请求失败', detail: 'boom' }), '请求失败\nboom')
 })
