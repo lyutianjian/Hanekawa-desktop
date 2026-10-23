@@ -73,7 +73,10 @@ import {
   clampSidebarWidth,
   parseSidebarWidth,
   SIDEBAR_WIDTH_DEFAULT,
+  SIDEBAR_WIDTH_MAX,
+  SIDEBAR_WIDTH_MIN,
   SIDEBAR_WIDTH_VARIABLE,
+  resizerKeyWidth,
   sidebarWidthVariable,
 } from './model/sidebarWidth.js'
 import {
@@ -128,6 +131,8 @@ import { createSubagentPanelView } from './dom/subagentPanelView.js'
 import {
   SIDE_WIDTH_STORAGE_KEYS,
   SIDE_WIDTH_VARIABLES,
+  SIDE_WIDTH_MAX,
+  SIDE_WIDTH_MIN,
   newTabsForLane,
   clampSideWidth,
   parseSideWidth,
@@ -241,6 +246,15 @@ function applySidebarWidth(px: number): void {
     SIDEBAR_WIDTH_VARIABLE,
     sidebarWidthVariable(sidebarWidth),
   )
+  markResizer(required('sidebar-resizer'), sidebarWidth, SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX)
+}
+
+/** A drag handle's value, for the screen reader that hears it as a slider. */
+function markResizer(node: HTMLElement, now: number, min: number, max: number): void {
+  node.setAttribute('aria-valuenow', String(Math.round(now)))
+  node.setAttribute('aria-valuemin', String(min))
+  node.setAttribute('aria-valuemax', String(max))
+  node.setAttribute('aria-valuetext', `${Math.round(now)} 像素`)
 }
 applySidebarWidth(sidebarWidth)
 
@@ -2227,6 +2241,21 @@ sidebarResizer.addEventListener('dblclick', () => {
   localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth))
 })
 
+// The keyboard's drag: the handle is in the tab order, and answers a slider's
+// keys (`resizerKeyWidth`). Enter puts the default back, as the double-click does.
+sidebarResizer.addEventListener('keydown', (event) => {
+  const next = event.key === 'Enter'
+    ? SIDEBAR_WIDTH_DEFAULT
+    : resizerKeyWidth(event.key, event.shiftKey, sidebarWidth, { min: SIDEBAR_WIDTH_MIN, max: SIDEBAR_WIDTH_MAX, grows: 'right' })
+  if (next === undefined) return
+  // Stopped here: with focus on a non-editable element, the window's keymap
+  // would also hand the arrows to a waiting card.
+  event.preventDefault()
+  event.stopPropagation()
+  applySidebarWidth(next)
+  localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth))
+})
+
 /**
  * The browser panel's drag handle — the rail's, mirrored.
  *
@@ -2266,7 +2295,14 @@ function endBrowserDrag(event: PointerEvent): void {
   browserResizer.releasePointerCapture(event.pointerId)
   document.body.classList.remove('resizing')
   localStorage.setItem(SIDE_WIDTH_STORAGE_KEYS[browserDragMode], String(browserDragWidth))
+  markBrowserResizer()
 }
+
+/** Measured: an unset width is a share of the window, not a stored number. */
+function markBrowserResizer(): void {
+  markResizer(browserResizer, sidePanel.getBoundingClientRect().width, SIDE_WIDTH_MIN, SIDE_WIDTH_MAX)
+}
+browserResizer.addEventListener('focus', markBrowserResizer)
 browserResizer.addEventListener('pointerup', endBrowserDrag)
 browserResizer.addEventListener('pointercancel', endBrowserDrag)
 
@@ -2275,6 +2311,28 @@ browserResizer.addEventListener('dblclick', () => {
   applySideWidth(mode, undefined)
   browserPanel.measure()
   localStorage.removeItem(SIDE_WIDTH_STORAGE_KEYS[mode])
+  markBrowserResizer()
+})
+
+browserResizer.addEventListener('keydown', (event) => {
+  const mode = sidePanelView(sidePanelInput()).mode
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    event.stopPropagation()
+    applySideWidth(mode, undefined)
+    localStorage.removeItem(SIDE_WIDTH_STORAGE_KEYS[mode])
+  } else {
+    const current = sidePanel.getBoundingClientRect().width
+    const next = resizerKeyWidth(event.key, event.shiftKey, current, { min: SIDE_WIDTH_MIN, max: SIDE_WIDTH_MAX, grows: 'left' })
+    if (next === undefined) return
+    event.preventDefault()
+    event.stopPropagation()
+    const width = clampSideWidth(next)
+    applySideWidth(mode, width)
+    localStorage.setItem(SIDE_WIDTH_STORAGE_KEYS[mode], String(width))
+  }
+  browserPanel.measure()
+  markBrowserResizer()
 })
 
 // --- the window's own dismissals ---------------------------------------------------

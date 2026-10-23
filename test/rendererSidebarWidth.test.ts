@@ -5,8 +5,10 @@ import {
   SIDEBAR_WIDTH_DEFAULT,
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_MIN,
+  RESIZER_KEY_STEP,
   clampSidebarWidth,
   parseSidebarWidth,
+  resizerKeyWidth,
   sidebarWidthVariable,
 } from '../src/desktop/renderer/model/sidebarWidth.js'
 
@@ -46,4 +48,21 @@ test('nothing stored is the default, and a stored value is clamped rather than d
 test('the custom property carries its unit, so app.ts never spells px', () => {
   assert.equal(sidebarWidthVariable(300), '300px')
   assert.equal(sidebarWidthVariable(Number.NaN), `${SIDEBAR_WIDTH_DEFAULT}px`)
+})
+
+test('a focused resizer answers the slider keys, in the direction its column grows', () => {
+  // The handles were pointer-only; a focusable separator is a slider to a screen
+  // reader, so it takes the slider's keys. The side panel's handle is on its
+  // left edge, so there ← widens.
+  const rail = { min: 200, max: 320, grows: 'right' as const }
+  const side = { min: 240, max: 900, grows: 'left' as const }
+  assert.equal(resizerKeyWidth('ArrowRight', false, 256, rail), 256 + RESIZER_KEY_STEP)
+  assert.equal(resizerKeyWidth('ArrowLeft', false, 256, rail), 256 - RESIZER_KEY_STEP)
+  assert.equal(resizerKeyWidth('ArrowLeft', false, 400, side), 400 + RESIZER_KEY_STEP)
+  assert.equal(resizerKeyWidth('ArrowRight', true, 400, side), 400 - RESIZER_KEY_STEP * 4)
+  assert.equal(resizerKeyWidth('ArrowUp', false, 400, side), 400 + RESIZER_KEY_STEP)
+  assert.equal(resizerKeyWidth('ArrowDown', false, 256, rail), 256 - RESIZER_KEY_STEP)
+  assert.equal(resizerKeyWidth('Home', false, 256, rail), 200)
+  assert.equal(resizerKeyWidth('End', false, 400, side), 900)
+  assert.equal(resizerKeyWidth('Enter', false, 256, rail), undefined)
 })

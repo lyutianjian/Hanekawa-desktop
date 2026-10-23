@@ -2755,3 +2755,14 @@ test('a settings field is findable at rest', () => {
   // the edge was ~1.05:1 and the field all but vanished until focused.
   assert.ok(declares(blockFor('.settings-input, .settings-select'), 'border', '1px solid var(--border-strong)'))
 })
+
+test('a focused drag handle lights its sash in the focus colour', () => {
+  // The two column handles joined the tab order; an outline round a 3px sliver
+  // read as a stray box, so focus draws the sash itself instead.
+  for (const side of ['sidebar', 'browser']) {
+    assert.ok(declares(blockFor(`#${side}-resizer:focus-visible`), 'outline', 'none'), `${side} drops the box outline`)
+    const sash = blockFor(`#${side}-resizer:focus-visible::after`)
+    assert.ok(declares(sash, 'opacity', '1'), `${side} shows its sash`)
+    assert.ok(declares(sash, 'background', 'var(--focus-ring)'), `${side} sash takes the ring colour`)
+  }
+})

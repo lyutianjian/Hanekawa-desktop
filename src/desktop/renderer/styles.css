@@ -1165,6 +1165,10 @@ body.settings-open #sidebar { display: none; }
 }
 #sidebar-resizer:hover::after,
 body.resizing #sidebar-resizer::after { opacity: 1; }
+/* Keyboard focus draws the sash itself in the ring's colour: an outline round a
+   sliver this thin reads as a stray box, not as the handle being focused. */
+#sidebar-resizer:focus-visible { outline: none; }
+#sidebar-resizer:focus-visible::after { opacity: 1; width: 2px; background: var(--focus-ring); }
 /* A collapsed rail has no edge to drag, and the settings screen has no rail at
    all. Adjacent-sibling rather than a class the view has to remember to write. */
 #sidebar.collapsed + #sidebar-resizer,
@@ -1424,6 +1428,8 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
 }
 #browser-resizer:hover::after,
 body.resizing #browser-resizer::after { opacity: 1; }
+#browser-resizer:focus-visible { outline: none; }
+#browser-resizer:focus-visible::after { opacity: 1; width: 2px; background: var(--focus-ring); }
 /* The settings screen fills the canvas and owns the window; a page painted
    beside it would be the one thing on screen it does not cover. */
 body.settings-open #browser-panel,

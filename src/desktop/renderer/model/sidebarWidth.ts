@@ -55,3 +55,34 @@ export function parseSidebarWidth(raw: string | null): number {
 export function sidebarWidthVariable(px: number): string {
   return `${clampSidebarWidth(px)}px`
 }
+
+/** One arrow press moves a resizer this far; Shift moves it four times as far. */
+export const RESIZER_KEY_STEP = 16
+
+/**
+ * The width a key press on a column's drag handle asks for, or `undefined` for
+ * a key the handle does not take.
+ *
+ * A focusable `separator` is a slider to a screen reader, so it answers the
+ * slider's keys: the arrows step, Home and End go to the ends. `grows` is the
+ * direction that widens the column — right for the rail, left for the side
+ * panel, whose handle sits on its left edge. Up and Down follow the reading of
+ * a value (up is more), whichever side the column is on.
+ */
+export function resizerKeyWidth(
+  key: string,
+  shift: boolean,
+  current: number,
+  range: { readonly min: number; readonly max: number; readonly grows: 'left' | 'right' },
+): number | undefined {
+  const step = shift ? RESIZER_KEY_STEP * 4 : RESIZER_KEY_STEP
+  switch (key) {
+    case 'ArrowRight': return current + (range.grows === 'right' ? step : -step)
+    case 'ArrowLeft': return current + (range.grows === 'left' ? step : -step)
+    case 'ArrowUp': return current + step
+    case 'ArrowDown': return current - step
+    case 'Home': return range.min
+    case 'End': return range.max
+    default: return undefined
+  }
+}
