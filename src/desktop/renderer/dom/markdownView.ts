@@ -7,6 +7,7 @@ import { el, append } from './dom.js'
 import { button } from './controls.js'
 import { copyText } from './clipboard.js'
 import { copyButton } from './copyButton.js'
+import { icon } from './icons.js'
 
 /**
  * `MdBlock[]` to nodes. Every decision — what is a link, what is literal text —
@@ -238,8 +239,13 @@ function mathNode(tex: string, display: boolean): HTMLElement {
 function listItemNode(item: MdListItem): HTMLElement {
   const node = el('li', item.checked === undefined ? undefined : 'md-task')
   // A real checkbox would be focusable and look editable; the state is a marker.
+  // Drawn, not typed: `[x] ` in the reading face was source leaking into prose.
+  // The marker is an image with a name, so the state still reads aloud.
   if (item.checked !== undefined) {
-    node.appendChild(el('span', 'md-check', item.checked ? '[x] ' : '[ ] '))
+    const mark = el('span', item.checked ? 'md-check done' : 'md-check', icon(item.checked ? 'check-circle' : 'circle'))
+    mark.setAttribute('role', 'img')
+    mark.setAttribute('aria-label', item.checked ? '已完成' : '未完成')
+    node.appendChild(mark)
   }
   // A single paragraph is the common case and reads better unwrapped, so tight
   // items do not gain a block of vertical margin each.

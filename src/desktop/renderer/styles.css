@@ -5467,7 +5467,16 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .md li { margin: 2px 0; }
 .md li > ul, .md li > ol { margin-bottom: 0; }
 .md li.md-task { list-style: none; margin-left: -1.4rem; }
-.md .md-check { color: var(--accent-review); }
+/* The marker sits on the first line's x-height, one gap before the text; open
+   items stay quiet so the done ones read as the progress. */
+.md .md-check {
+  display: inline-flex;
+  vertical-align: -0.15em;
+  margin-right: var(--space-2);
+  color: var(--text-tertiary);
+}
+.md .md-check.done { color: var(--accent-review); }
+.md .md-check .icon { width: 1em; height: 1em; }
 .md blockquote {
   margin: 0 0 8px;
   padding-left: 10px;
