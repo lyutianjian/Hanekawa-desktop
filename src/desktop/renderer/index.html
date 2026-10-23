@@ -174,13 +174,6 @@
             </div>
           </div>
         </form>
-        <!--
-          The settings screen fills the canvas rather than floating over the
-          window: it is a screen, not a dialog, and nothing in the agent loop
-          waits on it. `#canvas.settings-open` hides its siblings from the
-          stylesheet, so no view has to know about the others.
-        -->
-        <section id="settings" hidden aria-label="设置"></section>
         <!-- The projects page fills the canvas but, unlike settings, leaves the sidebar up. -->
         <section id="projects" hidden aria-label="项目调度"></section>
         <!--
@@ -280,6 +273,12 @@
       two layers above: while this is open there is genuinely nothing else to
       interact with, and its own contents are the whole story.
     -->
+    <!--
+      Settings: a modal over the whole window, the conversation dimmed behind it.
+      Outside `#shell`, like the viewer below, so nothing in the window's layout
+      clips it or becomes the box its `fixed` layers resolve against.
+    -->
+    <section id="settings" hidden aria-label="设置"></section>
     <div id="lightbox" hidden role="dialog" aria-modal="true" aria-label="图片预览"></div>
     <script type="module" src="./app.js"></script>
   </body>

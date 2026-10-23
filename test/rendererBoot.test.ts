@@ -259,9 +259,8 @@ function findByClass(view: StubView, className: string): StubView | undefined {
 }
 
 test('a new session leaves the settings screen instead of opening behind it', async (t) => {
-  // The screen covers the whole window now, so this is not a nicety: with the
-  // sidebar hidden there is no second place for the new conversation to appear,
-  // and a click that only mutated host state would look like nothing happened.
+  // Settings is a modal over the whole window: a new conversation opened under
+  // its scrim would look like nothing happened.
   // Asserted through the shipped bundle because the wiring is `app.ts`'s alone —
   // `runSidebarIntent` and `renderSettings` are not reachable from any unit test.
   const dom = installDomStub()
@@ -276,7 +275,6 @@ test('a new session leaves the settings screen instead of opening behind it', as
   await import(`${pathToFileURL(bundle).href}?settings`)
   await tick()
 
-  const bodyClasses = () => dom.inspect(dom.body()).classes
   const sidebar = () => dom.inspect(page.get('sidebar'))
   const settingsOpen = () => !dom.inspect(page.get('settings')).hidden
 
@@ -284,16 +282,16 @@ test('a new session leaves the settings screen instead of opening behind it', as
   assert.ok(gear, 'the sidebar footer must offer 设置')
   dom.click(gear.node)
   assert.equal(settingsOpen(), true, 'the gear must open the screen')
-  assert.ok(bodyClasses().includes('settings-open'), '<body> is what hides the sidebar')
 
   // The first nav item is 新建会话 (`dom/sidebarView.ts` builds it first).
   const create = findByClass(sidebar(), 'sidebar-nav-item')
   assert.ok(create, 'the sidebar must offer 新建会话')
   dom.click(create.node)
   assert.equal(dom.inspect(page.get('settings')).attributes.get('inert'), '', 'creating a session immediately leaves settings noninteractive')
-  dom.dispatch(page.get('settings'), 'transitionend', { propertyName: 'opacity' })
+  const panel = findByClass(dom.inspect(page.get('settings')), 'settings-panel')
+  assert.ok(panel)
+  dom.dispatch(panel.node, 'transitionend', { propertyName: 'opacity' })
   assert.equal(settingsOpen(), false, 'the settings pixels leave after the exit settles')
-  assert.ok(!bodyClasses().includes('settings-open'), 'the sidebar must come back with it')
 })
 
 test('booting pulls the topology and repaints the native title-bar overlay', async () => {

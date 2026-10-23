@@ -663,7 +663,7 @@ let mergeBarShown = false
 function visibleErrorPlaces(): ReadonlySet<ErrorPlace> {
   const places = new Set<ErrorPlace>()
   if (projectsOpen) places.add('projects-page')
-  // Both sit in the canvas, which the settings and projects screens cover.
+  // Both sit in the canvas, which the projects screen replaces and the settings scrim covers.
   const canvasShown = !settingsState.open && !projectsOpen
   if (threadListShown && canvasShown) places.add('thread-panel')
   if (mergeBarShown && canvasShown) places.add('merge-bar')
@@ -811,7 +811,7 @@ function sideRail() {
   const info = activeLaneInfo()
   return sideRailView({
     modes: view.modes,
-    open: view.open && !settingsState.open && !projectsOpen ? view.mode : undefined,
+    open: view.open && !projectsOpen ? view.mode : undefined,
     running: (pane?.client.getBackgroundTasks().some((task) => task.status === 'running') ?? false)
       || (pane?.subagents().some((entry) => entry.status === 'running' || entry.status === 'awaiting-approval') ?? false),
     blockedThreads: info === undefined ? 0 : coordinationCounts(coordinationByRoot.get(info.projectRoot)?.threads ?? []).blocked,
@@ -1568,14 +1568,7 @@ const settingsView_ = createSettingsView(
 )
 
 function renderSettings(): void {
-  canvas.classList.toggle('settings-open', settingsState.open)
-  // The screen covers the whole window, not just the canvas: the class on `body`
-  // is what takes the sidebar out, and the one on `#canvas` is what hides the
-  // conversation's own three regions. Two classes because the two questions have
-  // different answers — a collapsed sidebar is not an open settings screen.
-  document.body.classList.toggle('settings-open', settingsState.open)
-  // The stylesheet hides the panel's DOM, but a native view is not in the
-  // document and would keep painting over the settings screen. It has to be told.
+  // A native view is not in the document and would paint over the modal's scrim.
   renderBrowser()
   settingsView_.render(settingsView(settingsState))
 }
@@ -1604,7 +1597,7 @@ function runSettingsIntent(intent: SettingsIntent): void {
   const wasOpen = settingsState.open
   const outcome = applySettingsIntent(settingsState, intent)
   settingsState = outcome.state
-  // The screen replaces the window's content: a menu left open behind it would
+  // The modal covers the window: a menu left open behind it would
   // swallow the first press made on the screen.
   if (!wasOpen && settingsState.open) closeAllDismissables()
   renderSettings()
@@ -1993,7 +1986,7 @@ function showThreadNotice(text: string, tone?: 'error'): void {
 function renderSubagents(): void {
   const input = sidePanelInput()
   const view = sidePanelView(input)
-  const visible = view.open && !settingsState.open && !projectsOpen
+  const visible = view.open && !projectsOpen
   show(sidePanel, visible)
   show(sideResizer, visible)
   for (const mode of ['tasks', 'threads', 'changes'] as const) sidePanel.classList.toggle(mode, view.mode === mode)
@@ -2605,7 +2598,7 @@ let dragDepth = 0
 const dropTarget = (event: DragEvent): boolean =>
   event.dataTransfer?.types.includes('Files') === true
   && !canvas.classList.contains('projects-open')
-  && !canvas.classList.contains('settings-open')
+  && !settingsState.open
   && activePane() !== undefined
 function endDrag(): void {
   dragDepth = 0

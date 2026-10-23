@@ -436,7 +436,8 @@ export const windowChrome = () => `(() => {
     viewportWidth: innerWidth,
     overlay: rect ? { visible: overlay.visible, x: rect.x, width: rect.width, height: rect.height } : null,
     bar: describe(bar),
-    controls: [...bar.querySelectorAll('.titlebar-rail, .titlebar-menu-trigger')].map(describe),
+    controls: [...bar.querySelectorAll('.titlebar-rail, .titlebar-menu-trigger')]
+      .map((node) => ({ ...describe(node), menu: node.classList.contains('titlebar-menu-trigger') })),
     items: openMenu ? [...openMenu.querySelectorAll('button')].map(describe) : [],
     menuRegion: openMenu ? getComputedStyle(openMenu).getPropertyValue('-webkit-app-region') : null,
     leftInset: getComputedStyle(bar).paddingLeft,
@@ -516,7 +517,6 @@ export const settings = () => `(() => {
   const body = document.getElementById('settings-body')
   const shell = document.getElementById('shell')
   const titleBar = document.getElementById('titlebar')
-  const composer = document.getElementById('input-row')
   const active = document.activeElement
   const canvas = document.getElementById('canvas')
   const column = container.querySelector('.settings-column')
@@ -529,12 +529,9 @@ export const settings = () => `(() => {
   const canvasStyle = canvas ? getComputedStyle(canvas) : null
   return {
     open: !container.hidden && !container.hasAttribute('inert'),
-    canvasOpen: document.getElementById('canvas').classList.contains('settings-open'),
-    // The screen covers the whole window, sidebar included: \`body\` carries the
-    // class that takes the column out, and the hit test is the honest question —
-    // \`display: none\` is a rule, not an attribute anything else can see.
-    bodyOpen: document.body.classList.contains('settings-open'),
-    sidebarBoxes: (document.getElementById('sidebar') || { getClientRects: () => [] }).getClientRects().length,
+    // A modal over the whole window: a press at the sidebar's spot lands on the
+    // scrim, not on the sidebar under it.
+    scrimHit: document.elementFromPoint(12, Math.round(window.innerHeight / 2))?.id ?? 'none',
     // Which element holds focus decides whether the screen's own keydown handler
     // (and therefore its documented Esc) can fire at all.
     focus: active ? (active.id || active.className || active.tagName) : 'none',
@@ -558,7 +555,6 @@ export const settings = () => `(() => {
     // \`titleBarOverlay.height\` in \`main.ts\` (the OS paints its three buttons on
     // the same band). Measuring it lets one assertion cover both.
     titleBarHeight: titleBar ? Math.round(titleBar.getBoundingClientRect().height) : 0,
-    composerHidden: composer ? getComputedStyle(composer).display === 'none' : null,
     column: columnBox
       ? { width: Math.round(columnBox.width), left: Math.round(columnBox.left), right: Math.round(columnBox.right) }
       : null,

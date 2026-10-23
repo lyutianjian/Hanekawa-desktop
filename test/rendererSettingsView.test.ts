@@ -128,6 +128,9 @@ const child = (view: StubView, className: string): StubView => {
   return found
 }
 
+/** The nav or the body, which sit in the modal's card. */
+const region = (root: StubView, className: string): StubView => child(child(root, 'settings-panel'), className)
+
 /** Every node with a class, anywhere in the subtree. */
 function findAll(view: StubView, className: string): StubView[] {
   const found: StubView[] = []
@@ -153,7 +156,7 @@ function dialogOf(root: StubView): StubView {
 // --- the nav column ----------------------------------------------------------
 
 test('the nav draws one section per group, labelled, in order', (t) => {
-  const nav = child(mount(t).view(), 'settings-nav')
+  const nav = region(mount(t).view(), 'settings-nav')
   const groups = findAll(nav, 'settings-nav-group')
 
   assert.equal(groups.length, 3)
@@ -167,28 +170,30 @@ test('the nav draws one section per group, labelled, in order', (t) => {
   )
 })
 
-test('the close button leads the column, outside the replaced region', (t) => {
+test('the close button sits in the card, outside the replaced region', (t) => {
   const { view, render } = mount(t)
-  const before = child(view(), 'settings-nav')
-  const closeBefore = findOne(before, 'settings-nav-close').node
-  // First, not last: this screen covers the whole window (the sidebar included),
-  // so the way back has to be where the eye starts rather than under a list the
-  // user may have scrolled.
-  assert.equal(before.children[0]?.node, closeBefore)
-  // The list is what gets rebuilt; the search box and the close button are not.
+  const closeBefore = findOne(view(), 'settings-close').node
+  assert.equal(child(view(), 'settings-panel').children.at(-1)?.node, closeBefore)
+  // The column is what gets rebuilt; the close button is not.
   render(stateOf({ category: 'agent' }))
-  const after = child(view(), 'settings-nav')
-  assert.equal(findOne(after, 'settings-nav-close').node, closeBefore)
-  assert.equal(after.children[0]?.node, closeBefore)
+  assert.equal(findOne(view(), 'settings-close').node, closeBefore)
+})
+
+test('a press on the scrim closes settings; one inside the card does not', (t) => {
+  const { view, stub, container, intents } = mount(t)
+  stub.dispatch(child(view(), 'settings-panel').node, 'pointerdown')
+  assert.ok(!intents.some((intent) => intent.kind === 'close'))
+  stub.dispatch(container, 'pointerdown')
+  assert.ok(intents.some((intent) => intent.kind === 'close'))
 })
 
 // --- the search box ----------------------------------------------------------
 
 test('the search input is built once, so typing cannot lose the caret', (t) => {
   const { view, render } = mount(t)
-  const before = findOne(child(view(), 'settings-nav'), 'settings-search').node
+  const before = findOne(region(view(), 'settings-nav'), 'settings-search').node
   render(stateOf({ query: 'MCP' }))
-  const after = findOne(child(view(), 'settings-nav'), 'settings-search').node
+  const after = findOne(region(view(), 'settings-nav'), 'settings-search').node
 
   // Identity, not equality: the nav list around it is replaced on every render.
   assert.equal(after, before)
@@ -196,7 +201,7 @@ test('the search input is built once, so typing cannot lose the caret', (t) => {
 
 test('typing filters per keystroke, not on blur', (t) => {
   const { view, stub, intents } = mount(t)
-  const search = findOne(child(view(), 'settings-nav'), 'settings-search')
+  const search = findOne(region(view(), 'settings-nav'), 'settings-search')
   assert.equal(search.tagName, 'INPUT')
   assert.equal(search.attributes.get('aria-label'), '搜索设置')
 
@@ -208,7 +213,7 @@ test('typing filters per keystroke, not on blur', (t) => {
 
 test('the search box keeps its own editing keys, but not Escape', (t) => {
   const { view, stub, container, keys } = mount(t)
-  const search = findOne(child(view(), 'settings-nav'), 'settings-search')
+  const search = findOne(region(view(), 'settings-nav'), 'settings-search')
 
   for (const key of ['Backspace', 'ArrowLeft', 'a']) {
     stub.dispatch(container, 'keydown', { target: search.node, key })
@@ -223,7 +228,7 @@ test('the search box keeps its own editing keys, but not Escape', (t) => {
 
 test('the box is emptied when the model clears the query, and never otherwise', (t) => {
   const { view, render } = mount(t)
-  const search = findOne(child(view(), 'settings-nav'), 'settings-search')
+  const search = findOne(region(view(), 'settings-nav'), 'settings-search')
   const node = search.node as { value: string }
 
   node.value = 'MCP'
@@ -237,7 +242,7 @@ test('the box is emptied when the model clears the query, and never otherwise', 
 test('an unmatched page says so in the body', (t) => {
   const { view, render } = mount(t)
   render(stateOf({ category: 'general', query: 'zzz-nothing' }))
-  const body = child(view(), 'settings-body')
+  const body = region(view(), 'settings-body')
 
   assert.equal(findAll(body, 'settings-card').length, 0)
   assert.match(findOne(body, 'settings-empty').text, /zzz-nothing/)
@@ -248,7 +253,7 @@ test('the body scrolls and the column inside it holds the reading measure', (t) 
   // the canvas edge, so the 880px measure lives on a node of its own — the same
   // split as `.transcript-column` inside the transcript's scroller.
   const { view, apply } = mount(t)
-  const body = child(view(), 'settings-body')
+  const body = region(view(), 'settings-body')
 
   assert.deepEqual(
     body.children.map((node) => node.className),
@@ -261,7 +266,7 @@ test('the body scrolls and the column inside it holds the reading measure', (t) 
 
   // Still true with a form open: the form is a dialog, not part of the page.
   apply({ kind: 'edit-endpoint', name: 'main' })
-  const after = child(view(), 'settings-body')
+  const after = region(view(), 'settings-body')
   assert.deepEqual(after.children.map((node) => node.className), ['settings-column'])
   assert.equal(findAll(after, 'settings-field').length, 0)
 
@@ -277,7 +282,7 @@ test('the body scrolls and the column inside it holds the reading measure', (t) 
 /** The routing card's main-role row: a `select` control on the provider page. */
 function mainRoutingPill(view: StubView): StubView {
   // The second select: 默认模型 heads the card.
-  const shells = findAll(child(view, 'settings-body'), 'settings-menu-shell')
+  const shells = findAll(region(view, 'settings-body'), 'settings-menu-shell')
   assert.ok(shells.length > 1, 'the provider page has row-level选择器')
   return shells[1]!
 }
@@ -306,9 +311,9 @@ test('the header project picker and the single-choice form fields stay native se
   // screen-reader-complete for free, and a form is a keyboard flow.
   const { view, apply } = mount(t)
   // The provider page is all global, so it offers no project to choose.
-  assert.equal(findAll(findOne(child(view(), 'settings-body'), 'settings-header'), 'settings-project').length, 0)
+  assert.equal(findAll(findOne(region(view(), 'settings-body'), 'settings-header'), 'settings-project').length, 0)
   apply({ kind: 'select-category', category: 'general' })
-  const header = findOne(child(view(), 'settings-body'), 'settings-header')
+  const header = findOne(region(view(), 'settings-body'), 'settings-header')
   assert.equal(findOne(header, 'settings-project').tagName, 'SELECT')
   apply({ kind: 'select-category', category: 'provider' })
 
@@ -325,17 +330,17 @@ test('an error sits in the open form, under its row, or pins to the screen', (t)
   apply({ kind: 'new-endpoint' })
   apply({ kind: 'submit-draft' })
   assert.equal(findAll(dialogOf(view()), 'settings-error').length, 1, 'the error is drawn away from its form')
-  assert.equal(findAll(child(view(), 'settings-body'), 'settings-error').length, 0)
+  assert.equal(findAll(region(view(), 'settings-body'), 'settings-error').length, 0)
 
   const { view: anchored } = mount(t, stateOf({ category: 'general', error: '上下文窗口必须是数字。', errorRows: ['context:contextWindow'] }))
-  const card = cardTitled(child(anchored(), 'settings-body'), '上下文管理')
+  const card = cardTitled(region(anchored(), 'settings-body'), '上下文管理')
   const at = card.children.findIndex((kid) => kid.classes.includes('settings-row-error'))
   assert.ok(at > 0, 'the error is not inside the card it is about')
   assert.match(card.children[at - 1]!.text, /上下文窗口/)
-  assert.equal(findAll(child(anchored(), 'settings-body'), 'settings-error').length, 0)
+  assert.equal(findAll(region(anchored(), 'settings-body'), 'settings-error').length, 0)
 
   const { view: bare } = mount(t, stateOf({ error: '保存失败。' }))
-  const banner = findAll(child(bare(), 'settings-body'), 'settings-error')
+  const banner = findAll(region(bare(), 'settings-body'), 'settings-error')
   assert.equal(banner.length, 1)
   assert.ok(banner[0]!.classes.includes('banner'), 'a formless error must stay in view however far the page is scrolled')
 })
@@ -345,7 +350,7 @@ test('the dialog is named by its title, an error is announced, and the nav says 
   // refused save was silent until the reader happened on it, and the selected
   // category was only a fill.
   const { view, apply } = mount(t)
-  const current = findAll(child(view(), 'settings-nav'), 'settings-nav-item')
+  const current = findAll(region(view(), 'settings-nav'), 'settings-nav-item')
     .filter((item) => item.attributes.get('aria-current') === 'page')
   assert.equal(current.length, 1)
 
@@ -361,13 +366,13 @@ test('the dialog is named by its title, an error is announced, and the nav says 
   assert.equal(dialogOf(view()).attributes.get('aria-describedby'), error.attributes.get('id'))
 
   const { view: anchored } = mount(t, stateOf({ category: 'general', error: '上下文窗口必须是数字。', errorRows: ['context:contextWindow'] }))
-  assert.equal(findOne(child(anchored(), 'settings-body'), 'settings-row-error').attributes.get('role'), 'alert')
+  assert.equal(findOne(region(anchored(), 'settings-body'), 'settings-row-error').attributes.get('role'), 'alert')
 })
 
 test('a saved row says 已保存, and a repaint does not restart the receipt', (t) => {
   // Keyed by the batch: the receipt fades once, then a later save is a new node.
   const { view, render } = mount(t, stateOf({ category: 'general', savedRows: { seq: 3, ids: ['context:contextWindow'] } }))
-  const receipts = () => findAll(child(view(), 'settings-body'), 'settings-saved')
+  const receipts = () => findAll(region(view(), 'settings-body'), 'settings-saved')
   assert.equal(receipts().length, 1)
   assert.equal(receipts()[0]!.text, '已保存')
   assert.equal(receipts()[0]!.attributes.get('role'), 'status')
@@ -444,7 +449,7 @@ test('only one dropdown is open at a time', (t) => {
   apply({ kind: 'toggle-menu', menu: 'row:routing:main' })
   apply({ kind: 'toggle-menu', menu: 'row:routing:plan' })
 
-  const menus = findAll(child(view(), 'settings-body'), 'settings-menu')
+  const menus = findAll(region(view(), 'settings-body'), 'settings-menu')
   assert.equal(menus.filter((menu) => menu.attributes.get('aria-hidden') !== 'true').length, 1)
   const outgoing = menus.find((menu) => menu.classes.includes('presence-closing'))
   assert.ok(outgoing, 'the previous menu remains for its exit')
@@ -692,7 +697,8 @@ test('a closing settings page is inert and can reverse before it is hidden', (t)
   render(stateOf({ open: true }))
   assert.equal(view().classes.includes('presence-entering'), true)
   render(stateOf({ open: false }))
-  stub.dispatch(container, 'transitionend', { propertyName: 'opacity' })
+  // The scrim follows the card's transition, not its own.
+  stub.dispatch(child(view(), 'settings-panel').node, 'transitionend', { propertyName: 'opacity' })
   assert.equal(view().hidden, true)
 })
 
@@ -725,7 +731,7 @@ function cardTitled(view: StubView, title: string): StubView {
 
 test('a repaint keeps the card and row nodes rather than rebuilding them', (t) => {
   const { view, render } = mount(t)
-  const models = cardTitled(child(view(), 'settings-body'), '服务商')
+  const models = cardTitled(region(view(), 'settings-body'), '服务商')
   const row = findOne(models, 'settings-row')
   const control = findAll(models, 'settings-row-control')[0]
   assert.ok(control)
@@ -733,7 +739,7 @@ test('a repaint keeps the card and row nodes rather than rebuilding them', (t) =
   // Nothing about the provider changed; only the query the nav column filters on.
   render(stateOf({ query: '模' }))
 
-  const after = cardTitled(child(view(), 'settings-body'), '服务商')
+  const after = cardTitled(region(view(), 'settings-body'), '服务商')
   assert.equal(after.node, models.node, 'the card left the page and came back')
   assert.equal(
     findOne(after, 'settings-row').node,
@@ -826,18 +832,19 @@ test('a form opens as a dialog over the screen, and the page behind it goes iner
   assert.equal(child(view(), 'settings-dialog-layer').hidden, false)
   assert.equal(dialogOf(view()).attributes.get('aria-modal'), 'true')
   assert.equal(findOne(dialogOf(view()), 'settings-dialog-title').text, '新服务商')
-  for (const region of ['settings-nav', 'settings-body']) {
-    assert.ok(child(view(), region).attributes.has('inert'), `.${region} is still reachable behind the dialog`)
+  for (const name of ['settings-nav', 'settings-body']) {
+    assert.ok(region(view(), name).attributes.has('inert'), `.${name} is still reachable behind the dialog`)
   }
+  assert.ok(findOne(view(), 'settings-close').attributes.has('inert'))
   apply({ kind: 'cancel-draft' })
-  for (const region of ['settings-nav', 'settings-body']) {
-    assert.equal(child(view(), region).attributes.has('inert'), false)
+  for (const name of ['settings-nav', 'settings-body']) {
+    assert.equal(region(view(), name).attributes.has('inert'), false)
   }
 })
 
 test('the dialog takes focus on its first field and hands it back to the button that opened it', (t) => {
   const { view, apply, stub } = mount(t)
-  const opener = findAll(child(view(), 'settings-body'), 'settings-btn').find((btn) => btn.text === '编辑')
+  const opener = findAll(region(view(), 'settings-body'), 'settings-btn').find((btn) => btn.text === '编辑')
   assert.ok(opener)
   stub.focus(opener.node)
   apply({ kind: 'edit-endpoint', name: 'main' })
@@ -932,7 +939,7 @@ test('a failed listing says why beside the table', (t) => {
 test('a delete confirmation is drawn under the row it is about', (t) => {
   const { view, apply } = mount(t)
   apply({ kind: 'request-remove', target: { kind: 'endpoint', name: 'main' } })
-  const models = cardTitled(child(view(), 'settings-body'), '服务商')
+  const models = cardTitled(region(view(), 'settings-body'), '服务商')
 
   const at = models.children.findIndex((kid) => kid.classes.includes('settings-confirm'))
   assert.ok(at > 0, 'the confirmation is inside the card')
@@ -1029,7 +1036,7 @@ test('the nav keeps its buttons across renders and moves the selection on them',
   // Every keystroke in a field renders the screen, and the nav used to be
   // rebuilt each time — the button just pressed was replaced under focus.
   const { view, apply } = mount(t)
-  const items = () => findAll(child(view(), 'settings-nav'), 'settings-nav-item')
+  const items = () => findAll(region(view(), 'settings-nav'), 'settings-nav-item')
   const selectedAt = () => items().findIndex((item) => item.attributes.get('aria-current') === 'page')
   apply({ kind: 'select-category', category: 'general' })
   const before = items().map((item) => item.node)

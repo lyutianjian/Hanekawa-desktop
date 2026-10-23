@@ -700,7 +700,6 @@ body:has(#sidebar.collapsed) #frame::after {
   left: calc(-1 * var(--hairline));
   transition: left var(--motion-layout) var(--ease-exit);
 }
-body.settings-open #frame::after { display: none; }
 /* The strip above the canvas takes the canvas's colour, so the transcript's top
    fade dissolves into the same surface instead of into the frame. It starts
    where the canvas does and follows the sidebar on the lead's curves. It stops
@@ -720,10 +719,6 @@ body:has(#sidebar.collapsed) #titlebar::before {
   left: 0;
   transition: left var(--motion-layout) var(--ease-exit);
 }
-/* Settings covers the sidebar too, so the strip spans the window, and the two
-   rail toggles have nothing on screen to toggle. */
-body.settings-open #titlebar::before { left: 0; transition: none; }
-body.settings-open .titlebar-rail { visibility: hidden; }
 body.resizing .titlebar-lead,
 body.resizing #titlebar::before,
 body.resizing #frame::after { transition: none; }
@@ -1140,11 +1135,6 @@ body.resizing #frame::after { transition: none; }
   opacity: 0;
   transform: translateX(-8px);
 }
-/* The settings screen takes the whole window rather than the canvas alone, so
-   the sidebar goes with the composer and the header. One rule now, not two: the
-   canvas carries its own margin, so nothing has to give it back an inset the
-   sidebar is no longer providing. `app.ts`'s `renderSettings()` owns the class. */
-body.settings-open #sidebar { display: none; }
 /* The drag handle between the two columns. It lives in the gap the canvas's
    margin already leaves, so it costs the rail no width; the line it paints on
    hover is one pixel of `--border-strong`, drawn by a child-less pseudo-element
@@ -1182,10 +1172,9 @@ body.resizing #sidebar-resizer::after { opacity: 1; }
    sliver this thin reads as a stray box, not as the handle being focused. */
 #sidebar-resizer:focus-visible { outline: none; }
 #sidebar-resizer:focus-visible::after { opacity: 1; width: 2px; background: var(--focus-ring); }
-/* A collapsed rail has no edge to drag, and the settings screen has no rail at
-   all. Adjacent-sibling rather than a class the view has to remember to write. */
-#sidebar.collapsed + #sidebar-resizer,
-body.settings-open #sidebar-resizer { display: none; }
+/* A collapsed rail has no edge to drag. Adjacent-sibling rather than a class
+   the view has to remember to write. */
+#sidebar.collapsed + #sidebar-resizer { display: none; }
 /* The collapse animates `flex-basis`; a drag writes it once per frame. Left on,
    every dragged frame would chase the layout curve and the rail would lag the
    pointer by a third of a second. `app.ts` owns the class for the drag's
@@ -1461,10 +1450,6 @@ body.browser-maximized #browser-resizer { display: none; }
 body.resizing #browser-resizer::after { opacity: 1; }
 #browser-resizer:focus-visible { outline: none; }
 #browser-resizer:focus-visible::after { opacity: 1; width: 2px; background: var(--focus-ring); }
-/* The settings screen fills the canvas and owns the window; a page painted
-   beside it would be the one thing on screen it does not cover. */
-body.settings-open #browser-panel,
-body.settings-open #browser-resizer { display: none; }
 /* The panel's two modes take turns in it: the browser, and the overview. */
 #browser-view {
   flex: 1 1 auto;
@@ -5750,28 +5735,22 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .diff-row.elided .text { flex: 0 0 auto; padding-right: 0; }
 
 /* --- settings ---------------------------------------------------------------
-   A screen, not a dialog: it takes the whole window below the title bar — the
-   canvas *and* the sidebar (see `body.settings-open` above) — and never parks
-   the agent loop. Covering the sidebar is the point: while this screen is up the
-   navigation it holds is not the thing the user is looking at, and leaving it
-   live is what made「新建会话」open a session behind the settings page.
-   `app.ts` closes the screen on any lane activation, so every route back to a
-   conversation lands on the conversation. Nothing here spells a colour — every
-   value is a token, which is what `test/rendererStyleTokens.test.ts` checks. */
+   A modal over the whole window: `#settings` is the scrim, `.settings-panel` the
+   card. It never parks the agent loop; the conversation keeps running behind the
+   scrim, and the native browser view is hidden by `app.ts` because no DOM layer
+   can cover it. Nothing here spells a colour — every value is a token, which is
+   what `test/rendererStyleTokens.test.ts` checks. */
 
 /* `#status` is not listed: it moved inside `#input-row` in 5g, so hiding the
    composer hides it too. Nor are `#surface` / `#suggestions`, for
    the same reason since S9 — they hang off `.composer-column`. Which is also
    what keeps `probes.surface()` honest: it reports "open" from
    `getClientRects()`, not from the `hidden` attribute. */
-body.settings-open #canvas-header,
 body.projects-open #canvas-header,
 body.projects-open #browser-panel,
 body.projects-open #browser-resizer,
 #canvas.projects-open > #transcript-area,
-#canvas.projects-open > #input-row,
-#canvas.settings-open > #transcript-area,
-#canvas.settings-open > #input-row {
+#canvas.projects-open > #input-row {
   display: none;
 }
 
@@ -5791,30 +5770,59 @@ body.projects-open #browser-resizer,
 .no-session-actions { display: flex; gap: 8px; }
 
 #settings {
-  /* Fixed to the same work area on entry and exit, even when the sidebar
-     becomes available again: everything below the caption band. */
+  /* Over the title bar too, whose drag strip would otherwise take every press
+     on the scrim there. */
   position: fixed;
-  inset: var(--titlebar-height) 0 0;
+  inset: 0;
+  -webkit-app-region: no-drag;
   z-index: var(--z-settings);
-  background: var(--surface-canvas);
   display: flex;
-  flex: 1 1 auto;
-  /* Load-bearing, and nothing tests it: without it a flex child refuses to
-     shrink below its content and the screen grows past the window instead of
-     scrolling inside it. */
-  min-height: 0;
-  overflow: hidden;
+  align-items: center;
+  justify-content: center;
+  padding: calc(var(--titlebar-height) + var(--space-3)) var(--space-6) var(--space-6);
 }
-/* The screen takes focus when it opens, so its own Esc works; the ring that
-   would come with that is suppressed deliberately. `.sidebar-list:focus` keeps
-   its inset ring because it is one of two competing key targets in a two-column
-   layout — this one fills the whole canvas, so a ring around it says nothing the
-   user cannot already see, at the size of the entire screen. */
+/* The modal takes focus when it opens, so its own Esc works; the ring around
+   the whole window that would come with that says nothing. */
 #settings:focus { outline: none; }
+
+.settings-panel {
+  display: flex;
+  width: 100%;
+  max-width: 1200px;
+  height: 100%;
+  max-height: 860px;
+  /* Load-bearing: without it a flex child refuses to shrink below its content
+     and the card grows past the window instead of scrolling inside it. No
+     `overflow` here: a row's dropdown would be clipped by it. */
+  min-height: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: var(--surface-canvas);
+  box-shadow: var(--shadow-modal);
+}
+
+.settings-close {
+  position: absolute;
+  top: var(--space-3);
+  right: var(--space-3);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-md);
+  height: var(--control-md);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.settings-close:hover { background: var(--surface-hover); color: var(--text-primary); }
 
 .settings-nav {
   display: flex;
   flex: 0 0 196px;
+  border-right: 1px solid var(--border-subtle);
   flex-direction: column;
   gap: 2px;
   min-height: 0;
@@ -5863,8 +5871,7 @@ body.projects-open #browser-resizer,
   font-size: var(--type-meta);
 }
 
-.settings-nav-item,
-.settings-nav-close {
+.settings-nav-item {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -5878,16 +5885,7 @@ body.projects-open #browser-resizer,
   cursor: pointer;
 }
 
-/* The way out, and the first thing in the column — this screen covers the whole
-   window, so it carries its own exit where the eye starts rather than at the
-   foot of a list the user may have scrolled. Secondary: it is not a category. */
-.settings-nav-close {
-  margin-bottom: var(--space-2);
-  color: var(--text-secondary);
-}
-
-.settings-nav-item:hover:enabled,
-.settings-nav-close:hover:enabled {
+.settings-nav-item:hover:enabled {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
@@ -7084,7 +7082,7 @@ body.projects-open #browser-resizer,
 #submit,
 #stop,
 .settings-nav-item,
-.settings-nav-close,
+.settings-close,
 .settings-search,
 .settings-pill,
 .settings-menu-item,

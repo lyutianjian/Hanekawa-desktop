@@ -50,7 +50,7 @@ export async function startFirstRunFixture() {
   }
 }
 
-const settingsOpen = (ctx) => evaluate(ctx.cdp, "document.body.classList.contains('settings-open')")
+const settingsOpen = (ctx) => evaluate(ctx.cdp, "(() => { const node = document.getElementById('settings'); return !node.hidden && !node.inert })()")
 
 async function click(ctx, label) {
   await evaluate(ctx.cdp, `(() => {

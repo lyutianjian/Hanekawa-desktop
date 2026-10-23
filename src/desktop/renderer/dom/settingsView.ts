@@ -3,7 +3,7 @@ import { button, multiSelectField, nameButton, pillSelect, selectField, textFiel
 import { icon, type IconName } from './icons.js'
 import { onPressOutside } from './dismiss.js'
 import { trapTab } from './focus.js'
-import { createModalPresence, createPresence, finishPresenceWithin } from './presence.js'
+import { createModalPresence, finishPresenceWithin } from './presence.js'
 import { SETTINGS_SAVED_TEXT } from '../model/settings.js'
 import type {
   SettingsAnchor,
@@ -29,11 +29,9 @@ import type {
  * say, what a keystroke means — already happened in `model/settings.ts`; this
  * file only builds elements and forwards intents.
  *
- * The screen fills `#canvas` rather than floating over it. `#overlay` and
- * `#rewind` cover the same canvas (S6) but are modal: each of them parks that
- * lane's agent loop until it is answered. Settings never parks anything, so it
- * hides its siblings from the stylesheet instead of scrimming them, and the
- * sidebar stays usable beside all three.
+ * A window-level modal: `#settings` is the scrim, `.settings-panel` the card
+ * on it. It never parks an agent loop — the conversation behind keeps running,
+ * dimmed — and a press on the scrim closes it like Esc does.
  *
  * **Nodes are kept by id and reconciled**, the rule `dom/transcriptView.ts`
  * already follows. A `replace()` of the whole column pulls every card out of
@@ -131,15 +129,7 @@ export function createSettingsView(
    * just pressed.
    */
   let navPainted: { signature: string; items: Array<{ node: HTMLElement; category: SettingsNavItem['category'] }> } | undefined
-  const close = button('settings-nav-close', '返回会话', '关闭设置（Esc）', () =>
-    onIntent({ kind: 'close' }),
-    { icon: 'arrow-left' },
-  )
-  // First in the column, above the search box: this screen covers the whole
-  // window (the sidebar included), so the way back has to be where the eye
-  // starts. At the foot of the category list it was below a scroller, which is
-  // the one place an exit must not be.
-  nav.appendChild(close)
+  const close = button('settings-close', '', '关闭设置（Esc）', () => onIntent({ kind: 'close' }), { icon: 'close' })
   nav.appendChild(search)
   nav.appendChild(navList)
   const body = el('div', 'settings-body')
@@ -150,8 +140,15 @@ export function createSettingsView(
   // replaced region is the column's children.
   const column = el('div', 'settings-column')
   body.appendChild(column)
-  container.appendChild(nav)
-  container.appendChild(body)
+  const panel = el('div', 'settings-panel')
+  for (const part of [nav, body, close]) panel.appendChild(part)
+  container.appendChild(panel)
+  // The scrim, and only the scrim: a press inside the panel bubbles here too.
+  container.addEventListener('pointerdown', (event) => {
+    if (event.target === container) onIntent({ kind: 'close' })
+  })
+  // On the panel, not the container: the form dialog is outside it and traps its own Tab.
+  panel.addEventListener('keydown', (event) => trapTab(panel, event))
 
   // The form dialog, over the whole screen. While it is up the nav and the page
   // behind it are `inert`, so neither the pointer nor Tab can leave the form.
@@ -177,11 +174,11 @@ export function createSettingsView(
 
   // Programmatically focusable but not a tab stop, exactly like the sidebar's
   // list. Without focus *inside* the screen the `keydown` above never fires, and
-  // this screen is reached by `Ctrl+,` from a composer that the stylesheet then
-  // hides — which left focus on `<body>` and made the close button's own promise,
-  // 关闭设置（Esc）, false until the user happened to click something.
+  // this screen is reached by `Ctrl+,` from the composer behind the scrim —
+  // focus left there would make the close button's own promise, 关闭设置（Esc）,
+  // false until the user happened to click something.
   container.tabIndex = -1
-  const presence = createPresence(container, { kind: 'panel' })
+  const presence = createModalPresence(container, panel, () => {})
   let wasOpen = false
 
   // The kept nodes, and what a kept node's handler reads *now*. Both are pruned
@@ -664,7 +661,7 @@ export function createSettingsView(
         // Closed with a form up: the dialog goes with the screen, not on its next opening.
         if (lastFormKey !== undefined) {
           dialogPresence.set(false, true)
-          for (const region of [nav, body]) region.removeAttribute('inert')
+          for (const region of [nav, body, close]) region.removeAttribute('inert')
           lastFormKey = undefined
           lastConfirmDiscard = false
           opener = undefined
@@ -764,7 +761,7 @@ export function createSettingsView(
       const formKey = form ? formKeyOf(form) : undefined
       if (form) reconcile(dialog, dialogNodes(form, view.error, menus))
       dialog.classList.toggle('wide', form?.kind === 'provider')
-      for (const region of [nav, body]) {
+      for (const region of [nav, body, close]) {
         if (form) region.setAttribute('inert', '')
         else region.removeAttribute('inert')
       }

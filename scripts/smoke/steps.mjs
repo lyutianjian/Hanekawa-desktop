@@ -230,7 +230,7 @@ async function step7(ctx) {
   }
   await ctx.shot('07c-short-session', 'a two-message session: is the question at the top of the canvas with the answer under it')
 
-  await key(ctx.cdp, 'Ctrl+b')
+  await key(ctx.cdp, 'Mod+b')
   // Collapsed for geometry purposes means the width has settled at zero, not
   // just that the class flipped: `#sidebar` animates its flex-basis over
   // `--motion-slow`, and a read on the first frame after the class lands would
@@ -253,7 +253,7 @@ async function step7(ctx) {
   ctx.eq('the rail is gone entirely', collapsed.width, 0)
   await ctx.shot('07b-sidebar-collapsed', 'the collapsed sidebar: the column is gone and the canvas keeps its 8px inset')
 
-  await key(ctx.cdp, 'Ctrl+b')
+  await key(ctx.cdp, 'Mod+b')
   const after = await waitFor('the sidebar to expand again', async () => {
     const view = await read(ctx, probes.sidebar())
     return view.collapsed === false ? view : undefined
@@ -369,7 +369,7 @@ async function step2(ctx) {
     const row = rowFor(view, a2.id)
     return row && row.badge !== 'none' ? { view, row } : undefined
   })
-  ctx.eq('the parked pane shows 等待授权', away.row.badge, '等待授权')
+  ctx.eq('the parked pane shows 等待你处理', away.row.badge, '等待你处理')
   ctx.ok('the switched-to row is the active one', rowFor(away.view, a1.id)?.active === true, JSON.stringify(rowFor(away.view, a1.id)))
   // `deactivate()` clears the paint but not the state: a request drawn while its
   // pane is not the keyboard target would be unanswerable, and here it would be
@@ -378,7 +378,7 @@ async function step2(ctx) {
   const awayCard = await read(ctx, probes.permissionRequest())
   ctx.ok('the request is not left in another pane\'s composer', awayCard.open === false, `open=${awayCard.open}`)
   ctx.ok('and that pane has its composer back', awayCard.inputVisible === true, `input=${awayCard.inputVisible}`)
-  await ctx.shot('02b-awaiting-badge', 'the 等待授权 badge on a background row, next to the active row')
+  await ctx.shot('02b-awaiting-badge', 'the 等待你处理 badge on a background row, next to the active row')
 
   await activate(ctx, a2)
   const back = await waitFor('the request to come back with the pane', async () => {
@@ -783,7 +783,7 @@ async function step5(ctx) {
 
   // B's single lane is its fresh draft — invisible in the sidebar (empty) and
   // active from the open — so the real chord is the way to close it.
-  await key(ctx.cdp, 'Ctrl+w')
+  await key(ctx.cdp, 'Mod+w')
   await waitFor('every project B lane to close', async () => {
     const now = await lanes(ctx)
     return now.every((info) => info.projectRoot !== rootB)
@@ -836,19 +836,13 @@ async function step8(ctx) {
   }
 
   // 8a — the screen, and the one assertable claim about its layout.
-  await key(ctx.cdp, 'Ctrl+,')
+  await key(ctx.cdp, 'Mod+,')
   const open = await waitFor('the settings screen', async () => {
     const view = await read(ctx, probes.settings())
     return view.open ? view : undefined
   })
-  ctx.ok('Ctrl+, opens settings over the canvas', open.canvasOpen === true, `canvasOpen=${open.canvasOpen}`)
-  // The screen owns the whole window now: the sidebar it used to leave live is
-  // what made「新建会话」open a session behind it.
-  ctx.ok(
-    'the settings screen covers the sidebar too',
-    open.bodyOpen === true && open.sidebarBoxes === 0,
-    `bodyOpen=${open.bodyOpen} sidebarBoxes=${open.sidebarBoxes}`,
-  )
+  // A modal over the whole window: the sidebar stays drawn but its presses land on the scrim.
+  ctx.eq('Mod+, opens settings as a modal over the sidebar too', open.scrimHit, 'settings')
   // `ALL_CATEGORIES` in `renderer/model/settings.ts`: provider, extensions,
   // permissions, agent, general, personalization, appearance. A number rather
   // than a derivation — the smoke reads the built renderer, and a category
@@ -940,7 +934,6 @@ async function step8(ctx) {
   ctx.eq('the document never grows past the window', squeezed.docScroll, squeezed.viewport)
   ctx.eq('the title bar is the documented height', squeezed.titleBarHeight, TITLE_BAR_HEIGHT)
   ctx.eq('the shell fills the window below the title bar', squeezed.shellHeight, squeezed.viewport - TITLE_BAR_HEIGHT)
-  ctx.ok('the composer is hidden rather than pushed out', squeezed.composerHidden === true, `composerHidden=${squeezed.composerHidden}`)
   // The narrow end of the same claim: the column gives way instead of overflowing.
   await columnAt('1000x520')
   await ctx.shot('08a-settings-squeezed', 'the longest form at 1000x520: it must scroll inside its own panel, nothing clipped off-window')
@@ -1046,7 +1039,7 @@ async function step8(ctx) {
     const view = await read(ctx, probes.settings())
     return view.open === false ? view : undefined
   })
-  ctx.ok('Escape returns to the conversation', closed.composerHidden === false, `composerHidden=${closed.composerHidden}`)
+  ctx.ok('Escape returns to the conversation', closed.focusInside === false, `focus=${closed.focus}`)
 }
 
 // --- S9: the effort chip --------------------------------------------------------
@@ -1074,7 +1067,7 @@ async function step9(ctx) {
     const view = await read(ctx, probes.chipMenu())
     return view.open ? view : undefined
   })
-  ctx.eq('the chip opens one popover for both fields', menu.rows.map((row) => row.label), ['模型', '推理强度'])
+  ctx.eq('the chip opens one popover for both fields', menu.rows.map((row) => row.label), ['模型', '思考强度'])
   ctx.eq('each row names the value in force', menu.rows[1].value, chipBefore.effort)
   // Geometry is read on the settled frame: rise-in's translate is still live
   // on the frame the waitFor returns on, and the judgement below is about
@@ -1092,7 +1085,7 @@ async function step9(ctx) {
   // A float, not a flex sibling: opening it must not resize the conversation.
   ctx.eq('and floats over the transcript instead of squeezing it', settled.transcriptHeight, shut.transcriptHeight)
 
-  await read(ctx, probes.hoverChipRow('推理强度'))
+  await read(ctx, probes.hoverChipRow('思考强度'))
   const flown = await waitFor('the effort flyout', async () => {
     const view = await read(ctx, probes.chipMenu())
     return view.flyout ? view : undefined
@@ -1695,7 +1688,7 @@ const sameColour = (a, b) => {
 /** Opens settings on the 外观 page, whatever the screen was showing. */
 async function openAppearance(ctx) {
   const before = await read(ctx, probes.settings())
-  if (!before.open) await key(ctx.cdp, 'Ctrl+,')
+  if (!before.open) await key(ctx.cdp, 'Mod+,')
   await waitFor('the settings screen', async () => {
     const view = await read(ctx, probes.settings())
     return view.open ? view : undefined
@@ -1791,7 +1784,7 @@ async function step11(ctx) {
     // process — `setTitleBarOverlay` neither threw nor blocked (a blocked main
     // process answers nothing at all). It does not pin the renderer's own
     // fire-and-forget call, which by construction has no reply to observe.
-    const repaint = await app.shell(ctx.app, { type: 'set-window-theme', theme: 'light' })
+    const repaint = await app.shell(ctx.app, { type: 'set-window-theme', theme: 'light', preference: 'light' })
     ctx.ok('the main process repaints its native chrome on request', repaint?.ok === true, JSON.stringify(repaint))
 
     // The float shadow, in the one place it was added for (D3) and the one place
@@ -2043,17 +2036,20 @@ async function step27(ctx) {
     await key(ctx.cdp, `${modifier}+b`)
     await waitFor('the platform sidebar chord', async () => (await chrome()).collapsed === initial.collapsed)
 
-    await clickControl(1)
-    const menu = await waitFor('the title bar file menu', async () => {
-      const value = await chrome()
-      return value.items.length === 3 ? value : undefined
-    })
-    ctx.eq('the entire dropdown receives pointer events', menu.menuRegion, 'no-drag')
-    ctx.eq('menu hints match the host platform', menu.items.map((item) => item.text),
-      initial.platform === 'darwin'
-        ? ['新建会话⌘T', '打开项目…⇧⌘O', '设置⌘,']
-        : ['新建会话Ctrl+T', '打开项目…Ctrl+Shift+O', '设置Ctrl+,'])
-    await key(ctx.cdp, 'Escape')
+    // macOS keeps 文件/视图 in the native menu bar; the in-window menus exist elsewhere only.
+    const menuIndex = initial.controls.findIndex((control) => control.menu)
+    ctx.eq('the title bar draws its own menus only off macOS', menuIndex === -1, initial.platform === 'darwin')
+    if (menuIndex !== -1) {
+      await clickControl(menuIndex)
+      const menu = await waitFor('the title bar file menu', async () => {
+        const value = await chrome()
+        return value.items.length === 3 ? value : undefined
+      })
+      ctx.eq('the entire dropdown receives pointer events', menu.menuRegion, 'no-drag')
+      ctx.eq('menu hints match the host platform', menu.items.map((item) => item.text),
+        ['新建会话Ctrl+T', '打开项目…Ctrl+Shift+O', '设置Ctrl+,'])
+      await key(ctx.cdp, 'Escape')
+    }
 
     const before = await lanes(ctx)
     await key(ctx.cdp, `${modifier}+t`)
@@ -2177,7 +2173,7 @@ async function step28(ctx) {
 }
 
 export const STEPS = [
-  { id: 'S7', item: 7, name: 'Ctrl+B collapses and restores the sidebar', timeout: 30000, run: step7 },
+  { id: 'S7', item: 7, name: 'Mod+B collapses and restores the sidebar', timeout: 30000, run: step7 },
   { id: 'S27', item: 8, name: 'native title bar space and platform shortcuts work together', timeout: 60000, run: step27 },
   { id: 'S2', item: 2, name: 'a parked permission prompt survives a switch', timeout: 60000, run: step2 },
   { id: 'S6', item: 6, name: 'the budget releases the coldest idle pane, never a pinned one', timeout: 150000, run: step6 },

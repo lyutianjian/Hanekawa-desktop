@@ -26,6 +26,8 @@ import { writeFileSync } from 'node:fs'
 
 /** Modifier bits `Input.dispatchKeyEvent` expects. Windows values. */
 const MOD = { alt: 1, ctrl: 2, meta: 4, shift: 8 }
+// The app's primary modifier: ⌘ on macOS, Ctrl elsewhere — the host Electron runs on.
+MOD.mod = process.platform === 'darwin' ? MOD.meta : MOD.ctrl
 
 /**
  * The keys this driver presses, with the codes Chromium needs.
@@ -223,7 +225,7 @@ export async function evaluate(cdp, expression) {
 }
 
 /**
- * Presses one chord, e.g. `'Ctrl+b'`, `'Enter'`, `'y'`.
+ * Presses one chord, e.g. `'Mod+b'`, `'Enter'`, `'y'`. `Mod` is ⌘ on macOS, Ctrl elsewhere.
  *
  * Modified keys use `rawKeyDown`, which is precisely "a keydown that generates
  * no character"; unmodified printable keys use `keyDown` with `text` so
