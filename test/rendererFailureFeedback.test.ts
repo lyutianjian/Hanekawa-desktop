@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
+import { readFileSync } from 'node:fs'
 
 import { copyText } from '../src/desktop/renderer/dom/clipboard.js'
 import { markdownNode } from '../src/desktop/renderer/dom/markdownView.js'
@@ -87,6 +88,10 @@ test('a code block\'s copy button marks a failed copy instead of staying silent'
   stub.click(copy.node)
   await flush()
   assert.equal(find().classes.includes('failed'), false)
+  // The receipt is the accessible name too, not only the glyph and the title:
+  // a screen reader heard 复制代码 again after a copy that had worked.
+  assert.equal(find().attributes.get('aria-label'), '已复制')
+  t.mock.timers.tick(1200)
   assert.equal(find().attributes.get('aria-label'), '复制代码')
 
   withClipboard(async () => { throw new Error('denied') })
@@ -117,4 +122,19 @@ test('the startup failure page names the failure and 重试 lifts it and asks ag
   stub.click(retry.node)
   assert.equal(retries, 1)
   assert.equal(stub.inspect(body).children.length, 0, 'the page is gone before the second attempt')
+})
+
+test('a pane reports a failed click through the shell, not as a note in the conversation', () => {
+  // About twenty failures — a picker that would not open, an image that would
+  // not attach, a send the host refused — used to land as error notes in the
+  // transcript, where they outlived the moment and sat in a pane that might be
+  // behind another screen. They go through `fail()` to the shell's
+  // `reportError` path now. The one error note left is a rewind that restored
+  // only part of the files: that is part of the session's own history.
+  const source = readFileSync(new URL('../src/desktop/renderer/paneSession.ts', import.meta.url), 'utf8')
+  const errorNotes = [...source.matchAll(/\bnote\(([^\n]*)\)/g)]
+    .map((match) => match[1]!)
+    .filter((args) => args.includes("'error'") && !/\w: /.test(args))
+  assert.deepEqual(errorNotes, ["text, 'error'", "result.message, result.partial ? 'error' : 'system'"])
+  assert.match(source, /onActionError\?: \(text: string\) => void/)
 })

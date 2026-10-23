@@ -1737,10 +1737,13 @@ test('a message carries a meta row: 复制, its model, its time — and a draft 
 
   stub.click(row.children[0]!.node)
   assert.deepEqual(copied, ['part done'], 'the pane is handed the message, not the rendered markdown')
-  // A successful copy turns the glyph into a tick for five seconds.
+  // A successful copy turns the glyph into a tick for one glance — the same
+  // 1.2s receipt as a code block's, where it had been five seconds here — and
+  // names the button 已复制 for a screen reader too, not only in its title.
   await Promise.resolve()
   assert.equal((row.children[0]!.node as HTMLButtonElement).title, '已复制')
-  t.mock.timers.tick(5000)
+  assert.equal((row.children[0]!.node as HTMLButtonElement).getAttribute('aria-label'), '已复制')
+  t.mock.timers.tick(1200)
   assert.equal((row.children[0]!.node as HTMLButtonElement).title, '复制')
 
   // The user's bubble has a time and a copy button, and no model to name.
@@ -1761,10 +1764,22 @@ test('a message carries a meta row: 复制, its model, its time — and a draft 
   stub.click(userRow.children[1]!.node)
   assert.deepEqual(copied, ['part done', 'go'])
   await Promise.resolve()
-  t.mock.timers.tick(5000)
+  t.mock.timers.tick(1200)
   // 回退 addresses the checkpoint by the user record's id.
   stub.click(userRow.children[2]!.node)
   assert.deepEqual(rewound, ['u1'])
+})
+
+test('copying a user message copies their words, not the attached-paths block', async (t) => {
+  // The paths after the words are drawn as tiles; pasting the raw block
+  // elsewhere pasted markup the user never saw.
+  const { render, items, copied, stub } = mount(t)
+  const at = new Date(2026, 4, 7, 14, 32).toISOString()
+  render(transcript([{ id: 'u1', kind: 'user', text: 'look\n\n<attached-paths>\nfile: /p/a.ts\n</attached-paths>', createdAt: at }]))
+  const row = items()[0]!.children.find((child) => child.classes.includes('item-meta'))!
+  stub.click(row.children.find((child) => child.classes.includes('item-copy'))!.node)
+  await Promise.resolve()
+  assert.deepEqual(copied, ['look'])
 })
 
 test('the stub carries every document member the dom helpers reach for', (t) => {

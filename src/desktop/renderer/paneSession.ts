@@ -261,6 +261,8 @@ export interface PaneSessionDeps {
   imageViewer: ImageViewerView
   /** Shell chrome (the tab bar) re-renders from the active session. */
   onShellChanged?: () => void
+  /** An interface action in this pane failed; the shell decides where that is said. */
+  onActionError?: (text: string) => void
   /**
    * A blocking request just arrived: the user has to answer before the agent
    * goes on. The shell turns this into a taskbar flash or a Dock bounce, and
@@ -473,7 +475,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     ...(deps.onOpenProviderSettings ? { onOpenProviderSettings: deps.onOpenProviderSettings } : {}),
     onRetryTurn: (id) => { void retryTurn(id) },
     onBackgroundTool: (id) => {
-      void client.backgroundToolCall(id).catch((error) => note(`转后台失败：${describe(error)}`, 'error'))
+      void client.backgroundToolCall(id).catch((error) => fail(`转后台失败：${describe(error)}`))
     },
     // A receipt can name a plan the pane no longer holds (a reopened session), so
     // the plan it was decided on becomes the one the tab shows.
@@ -496,11 +498,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     imageThumbUrl: (imageId) => previewDataUrl(previewCache, imageId),
     // The clipboard lives here rather than in the view: `navigator` is a host
     // object, and `dom/transcriptView.ts` is the half of this that runs against a
-    // hand-written DOM stub in tests.
-    onCopy: (text) => copyText(text).then((ok) => {
-      if (!ok) note('复制失败：无法写入剪贴板。', 'error')
-      return ok
-    }),
+    // hand-written DOM stub in tests. A failure is the button's own cross; a
+    // note in the conversation as well would report a click as an event.
+    onCopy: (text) => copyText(text),
     onRewind: (messageId) => { void openRewindPanel(messageId) },
   })
   const welcome = createWelcomeView(welcomeEl, {
@@ -793,14 +793,14 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         return
       }
       const message = result.message ?? `无法切换到 ${branch}`
+      // The picker shows it beside the branch that refused; a note under the
+      // conversation as well would say it twice, once out of context.
       branchPicker = { ...branchPicker, switching: false, current: result.current, error: message }
       renderTranscript()
-      note(message, 'error')
     } catch (error) {
       const message = describe(error)
       branchPicker = { ...branchPicker, switching: false, error: message }
       renderTranscript()
-      note(message, 'error')
     }
   }
 
@@ -1069,7 +1069,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // can act on, not a silent partial import.
     for (const source of sources) {
       if (attachmentDraftsFull(draftImages)) {
-        note('已达到单次输入最多 10 张图片的上限；请先移除一些再继续。', 'error')
+        fail('已达到单次输入最多 10 张图片的上限；请先移除一些再继续。')
         return
       }
       await importOneSource(source)
@@ -1111,7 +1111,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         sources.push({ kind: 'bytes', name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })
       } catch (error) {
         // Nothing to retry from: the bytes were never read.
-        note(`无法读取图片 ${file.name}：${describe(error)}`, 'error')
+        fail(`无法读取图片 ${file.name}：${describe(error)}`)
       }
     }
     await importSources(sources)
@@ -1127,7 +1127,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       const paths = await deps.onPickImages()
       if (paths !== undefined) await importImagesFromPaths(paths)
     } catch (error) {
-      note(`选择图片失败：${describe(error)}`, 'error')
+      fail(`选择图片失败：${describe(error)}`)
     }
   }
 
@@ -1154,7 +1154,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     } catch (error) {
       // A released-but-unheld id is idempotent host-side; only a dead lane
       // reaches here, and the files still fall to the retention window.
-      note(`移除图片失败：${describe(error)}`, 'error')
+      fail(`移除图片失败：${describe(error)}`)
     }
   }
 
@@ -1172,9 +1172,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     if (entry?.kind !== 'ready') return
     try {
       const result = await client.openAttachment(entry.ref.id)
-      if (!result.ok) note(formatImageFailure(result.reason, result.message), 'error')
+      if (!result.ok) fail(formatImageFailure(result.reason, result.message))
     } catch (error) {
-      note(`打开图片失败：${describe(error)}`, 'error')
+      fail(`打开图片失败：${describe(error)}`)
     }
   }
 
@@ -1285,6 +1285,18 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     shellKey = key
     deps.onShellChanged?.()
   })
+
+  /**
+   * An interface action failed — a picker that would not open, an image that
+   * would not attach, a send the host refused. The shell reports it beside its
+   * source or in a toast (`reportError`): the conversation is the record of the
+   * session, and a failed click is not part of it. Without a shell (tests), it
+   * falls back to a transcript note so the failure is never silent.
+   */
+  function fail(text: string): void {
+    if (deps.onActionError) deps.onActionError(text)
+    else note(text, 'error')
+  }
 
   function note(text: string, level: 'system' | 'error' = 'system'): void {
     transcript = applySessionEvent(transcript, { type: 'notice', level, content: text }, toolDisplays).state
@@ -1636,7 +1648,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         }
         if (intent.surface === 'provider-panel') {
           if (deps.onOpenProviderSettings) deps.onOpenProviderSettings()
-          else note('此界面无法打开服务商设置。', 'error')
+          else fail('此界面无法打开服务商设置。')
           return
         }
         if (intent.surface === 'background-tasks') {
@@ -1699,7 +1711,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       surfaceIndex = initialSurfaceSelection(view)
       renderSurface()
     } catch (error) {
-      note(`无法打开${SURFACE_LABEL[name]}：${describe(error)}`, 'error')
+      fail(`无法打开${SURFACE_LABEL[name]}：${describe(error)}`)
     }
   }
 
@@ -1736,7 +1748,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     try {
       models = await client.listModels()
     } catch (error) {
-      note(`无法读取模型列表：${describe(error)}`, 'error')
+      fail(`无法读取模型列表：${describe(error)}`)
     }
     if (!active) return
     deps.composer.showRuntimeMenu(runtimeMenuView({ runtime: client.getRuntimeSnapshot(), models }))
@@ -1761,7 +1773,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
           return assertNever(action)
       }
     } catch (error) {
-      note(`操作失败：${describe(error)}`, 'error')
+      fail(`操作失败：${describe(error)}`)
     }
   }
 
@@ -1779,7 +1791,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    */
   async function openRewindPanel(messageId?: string): Promise<void> {
     if (messageId !== undefined && client.getSnapshot().isStreaming) {
-      note('回合进行中，无法回退。', 'error')
+      fail('回合进行中，无法回退。')
       return
     }
     hideSurface()
@@ -1883,7 +1895,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       // Pending or failed attachments, or images against a text-only model:
       // the rest of the input is not sent as though it were complete, and
       // nothing is cleared.
-      note(attachmentsView().sendBlockNote!, 'error')
+      fail(attachmentsView().sendBlockNote!)
       return
     }
     const imageIds = readyAttachmentRefs(draftImages).map((ref) => ref.id)
@@ -1926,7 +1938,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       // typing while the submit round-tripped owns the newer draft, and the
       // attachment restore follows the same rule for the same reason.
       if (deps.composer.value() === '') deps.composer.setValue(sentText, sentText.length)
-      note(`发送失败：${describe(error)}`, 'error')
+      fail(`发送失败：${describe(error)}`)
       draftImages = restoreDraftImages(sentDrafts)
       addDraftPaths(sentPaths)
       renderAttachments()
@@ -1947,7 +1959,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       deps.onUserMessage?.()
       await client.retryTurn(failureId)
     } catch (error) {
-      note(`重试失败：${describe(error)}`, 'error')
+      fail(`重试失败：${describe(error)}`)
     } finally {
       retrying = false
       renderTranscript()
@@ -1972,7 +1984,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       return
     }
     if (attachmentsView().sendBlockNote !== undefined) {
-      note(attachmentsView().sendBlockNote!, 'error')
+      fail(attachmentsView().sendBlockNote!)
       return
     }
 
@@ -1990,7 +2002,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       await client.enqueueMessage(appendAttachedPaths(text, queuedPaths), imageIds.length > 0 ? { imageIds } : {})
     } catch (error) {
       if (deps.composer.value() === '') deps.composer.setValue(text, text.length)
-      note(`排队失败：${describe(error)}`, 'error')
+      fail(`排队失败：${describe(error)}`)
       draftImages = restoreDraftImages(queuedDrafts)
       addDraftPaths(queuedPaths)
       renderAttachments()
@@ -2246,7 +2258,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     try {
       await client.interrupt('user-cancel')
     } catch (error) {
-      note(`停止失败：${describe(error)}`, 'error')
+      fail(`停止失败：${describe(error)}`)
     }
   }
 
@@ -2263,7 +2275,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     try {
       await client.setPermissionMode(mode)
     } catch (error) {
-      note(`切换权限模式失败：${describe(error)}`, 'error')
+      fail(`切换权限模式失败：${describe(error)}`)
     }
   }
 

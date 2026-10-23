@@ -53,6 +53,7 @@ import type { TurnFailureCard } from '../model/turnFailure.js'
 import type { WireThreadStatus } from '../../shellProtocol.js'
 import { pausedTaskCard, TASK_LOCATE_FALLBACK_MS, type TaskCard, type TaskRowStatus } from '../model/tasks.js'
 import { button } from './controls.js'
+import { copyButton } from './copyButton.js'
 import { diffNode, diffStatNode, fileBadgeNode } from './diffView.js'
 import { append, el, reconcile, show, type Child } from './dom.js'
 import { icon, type IconName } from './icons.js'
@@ -1519,7 +1520,7 @@ function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => 
         'div',
         'step-command',
         el('pre', 'step-command-text', `$ ${command}`),
-        copyButton(painter, 'step-command-copy', '复制命令', command),
+        copyButton('step-command-copy', '复制命令', () => painter.onCopy(command)),
       )
     // Still running: the command alone, so the abbreviated row can always be opened.
     if (terminal === undefined) return () => el('div', 'step-body', bubble())
@@ -1799,25 +1800,15 @@ function threadNoteCard(painter: Painter, card: ThreadNoteCard): HTMLElement {
   )
 }
 
-/** A copy button whose glyph turns into a tick for a few seconds once the text is on the clipboard. */
-function copyButton(painter: Painter, className: string, title: string, text: string): HTMLButtonElement {
-  let reset: ReturnType<typeof setTimeout> | undefined
-  const node = button(className, '', title, () => {
-    void painter.onCopy(text).then((ok) => {
-      if (!ok) return
-      node.replaceChildren(icon('check'))
-      node.title = '已复制'
-      clearTimeout(reset)
-      reset = setTimeout(() => {
-        node.replaceChildren(icon('copy'))
-        node.title = title
-      }, COPIED_MS)
-    })
-  }, { icon: 'copy' })
-  return node
+/**
+ * A message's copy button. A user message copies the words they typed: the
+ * `<attached-paths>` block after them is drawn as tiles, not text, and pasting
+ * it elsewhere would paste markup the user never saw.
+ */
+function itemCopyButton(painter: Painter, item: TranscriptItem): HTMLButtonElement {
+  const text = item.kind === 'user' ? splitAttachedPaths(item.text).text : item.text
+  return copyButton('item-copy', '复制', () => painter.onCopy(text))
 }
-
-const COPIED_MS = 5000
 
 /**
  * A message's meta row: 复制 · which model wrote it · when it settled.
@@ -1845,7 +1836,7 @@ function metaRow(painter: Painter, item: TranscriptItem, footer?: TurnFooter): H
   const model = item.kind === 'assistant' ? item.model : undefined
   // A draft has no stamp of its own; copying half a sentence is not the offer.
   if (time === undefined && model === undefined) return undefined
-  const copy = copyButton(painter, 'item-copy', '复制', item.text)
+  const copy = itemCopyButton(painter, item)
   const onRewind = painter.onRewind
   const timeLabel = time === undefined ? undefined : timeNode(time, item.createdAt)
   // The user's row hangs off the bubble's right edge, read right to left: the controls end it.

@@ -391,6 +391,9 @@ function attachPaneSession(lane: string): void {
     // pull it triggers is what swaps「未命名会话」for the real first-message
     // title — the same trigger `turn-end` uses, one interaction earlier.
     onFirstContent: () => void refreshSessions(),
+    // A failed click in the pane — a picker, an attachment, a send — is said
+    // where `reportError` decides, never as a note in the conversation.
+    onActionError: (text) => toastHost.push('error', text),
     // Any pane, not just the active one: a background session asking for
     // permission is exactly the one the user is not looking at.
     onAttentionNeeded: () => shellClient.requestAttention(),
