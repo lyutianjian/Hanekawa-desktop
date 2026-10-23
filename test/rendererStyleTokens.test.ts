@@ -348,10 +348,12 @@ test('the palette is the one that was agreed, value for value', () => {
       '--surface-scrim-strong': 'rgba(0, 0, 0, 0.88)',
       '--text-primary': '#ebebea',
       '--text-secondary': '#a6a6a5',
-      '--text-tertiary': '#858584',
-      '--link': 'var(--accent-brand-strong)',
+      '--text-tertiary': '#8e8e8d',
+      '--link': 'var(--accent-brand-text)',
       '--accent-brand': '#d97757',
       '--accent-brand-strong': '#d97757',
+      '--accent-brand-text': 'var(--accent-brand-strong)',
+      '--selection-bg': 'color-mix(in srgb, var(--accent-brand) 32%, transparent)',
       '--on-brand': '#1c1c1c',
       '--accent-info': '#6fa5dc',
       '--accent-tool': '#a690d8',
@@ -374,10 +376,28 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-6': '32px',
       '--space-7': '48px',
       '--radius-lg': '20px',
-      '--radius-bubble': '13px',
       '--radius-md': '12px',
       '--radius-sm': '8px',
+      '--radius-xs': '4px',
+      '--radius-mark': '2px',
       '--radius-pill': '9999px',
+      '--opacity-disabled': '0.45',
+      '--menu-row-padding': '6px var(--space-2)',
+      '--control-xs': '20px',
+      '--control-sm': '24px',
+      '--control-md': '28px',
+      '--control-lg': '32px',
+      '--z-under': '-1',
+      '--z-raised': '1',
+      '--z-pinned': '2',
+      '--z-composer': '4',
+      '--z-popover': '5',
+      '--z-flyout': '6',
+      '--z-dialog': '7',
+      '--z-settings': '8',
+      '--z-rewind': '9',
+      '--z-toast': '10',
+      '--z-viewer': '11',
       ...MOTION_TOKENS,
     '--presence-x': '0px',
     '--presence-y': '8px',
@@ -488,10 +508,12 @@ test('the palette is the one that was agreed, value for value', () => {
       '--surface-scrim-strong': 'rgba(26, 26, 26, 0.92)',
       '--text-primary': '#1a1a1a',
       '--text-secondary': '#575756',
-      '--text-tertiary': '#777776',
-      '--link': 'var(--accent-brand-strong)',
+      '--text-tertiary': '#6b6b6a',
+      '--link': 'var(--accent-brand-text)',
       '--accent-brand': '#d97757',
       '--accent-brand-strong': '#d97757',
+      '--accent-brand-text': '#ad5234',
+      '--selection-bg': 'color-mix(in srgb, var(--accent-brand) 24%, transparent)',
       '--on-brand': '#ffffff',
       '--accent-info': '#33689f',
       '--accent-tool': '#6e4fa3',
@@ -514,10 +536,28 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-6': '32px',
       '--space-7': '48px',
       '--radius-lg': '20px',
-      '--radius-bubble': '13px',
       '--radius-md': '12px',
       '--radius-sm': '8px',
+      '--radius-xs': '4px',
+      '--radius-mark': '2px',
       '--radius-pill': '9999px',
+      '--opacity-disabled': '0.45',
+      '--menu-row-padding': '6px var(--space-2)',
+      '--control-xs': '20px',
+      '--control-sm': '24px',
+      '--control-md': '28px',
+      '--control-lg': '32px',
+      '--z-under': '-1',
+      '--z-raised': '1',
+      '--z-pinned': '2',
+      '--z-composer': '4',
+      '--z-popover': '5',
+      '--z-flyout': '6',
+      '--z-dialog': '7',
+      '--z-settings': '8',
+      '--z-rewind': '9',
+      '--z-toast': '10',
+      '--z-viewer': '11',
       ...MOTION_TOKENS,
     '--presence-x': '0px',
     '--presence-y': '8px',
@@ -633,10 +673,28 @@ test('the light block overrides only colours, and adds no token the dark palette
     '--space-6',
     '--space-7',
     '--radius-lg',
-    '--radius-bubble',
     '--radius-md',
     '--radius-sm',
+    '--radius-xs',
+    '--radius-mark',
     '--radius-pill',
+    '--opacity-disabled',
+    '--menu-row-padding',
+    '--control-xs',
+    '--control-sm',
+    '--control-md',
+    '--control-lg',
+    '--z-under',
+    '--z-raised',
+    '--z-pinned',
+    '--z-composer',
+    '--z-popover',
+    '--z-flyout',
+    '--z-dialog',
+    '--z-settings',
+    '--z-rewind',
+    '--z-toast',
+    '--z-viewer',
     ...Object.keys(MOTION_TOKENS),
     '--ease-out',
     '--ease-snap',
@@ -841,6 +899,13 @@ test('accents are for icons and state rules, never for fills', () => {
     { selector: '.ctx-swatch-skills', prop: 'background' },
     { selector: '.ctx-swatch-tools', prop: 'background' },
     { selector: '.ctx-swatch-memory', prop: 'background' },
+    // Selected text: a wash of the brand behind characters the reader chose,
+    // in place of Chromium's blue. A transient mark, not a surface.
+    { selector: ':root', prop: '--selection-bg' },
+    { selector: LIGHT_SELECTOR, prop: '--selection-bg' },
+    // The brand's text rung, an accent by family: `color` is where it goes,
+    // and the alias in the dark block is what names it.
+    { selector: ':root', prop: '--accent-brand-text' },
   ]
 
   let seen = 0
@@ -1732,7 +1797,7 @@ test('a collapsed sidebar is gone, and the column inside it does not resize with
   )
   // The rail's own slider is read against the sash, so it hugs the scroller's
   // right edge instead of stopping at the global thumb's 3px inset.
-  const thumb = blockFor('.sidebar-list::-webkit-scrollbar-thumb')
+  const thumb = blockFor(':root:not([data-platform="darwin"]) .sidebar-list::-webkit-scrollbar-thumb')
   assert.ok(
     declares(thumb, 'border-right-width', '0'),
     "the rail's thumb must reach its column's edge",
@@ -1797,12 +1862,12 @@ test('the composer raises its panels, and they no longer span the canvas', () =>
   for (const selector of ['#surface', '#suggestions']) {
     const panel = blockFor(selector)
     assert.ok(
-      declares(panel, 'border-radius', 'var(--radius-lg)'),
-      `${selector} is a floating panel now, not a strip ruled off the canvas`,
+      declares(panel, 'border-radius', 'var(--radius-md)'),
+      `${selector} is a menu card like the pickers beside it: the menu radius, not the panel one`,
     )
     assert.ok(
-      declares(panel, 'border', '1px solid var(--border-subtle)'),
-      `${selector} needs the hairline that separates it from the transcript behind it`,
+      declares(panel, 'border', '1px solid var(--border-strong)'),
+      `${selector} needs the menu cards' hairline to separate it from the transcript behind it`,
     )
     assert.ok(
       declares(panel, 'box-shadow', 'var(--shadow-float)'),
@@ -1853,13 +1918,11 @@ test('activity lines carry one running mark, which moves and stays readable', ()
     }
   }
   const source = stripComments(css)
-  for (const name of ['breathe', 'blink']) {
-    const frame = source.match(new RegExp(`@keyframes ${name} \\{ 50% \\{ ([^}]+)`))?.[1]
-    if (name === 'breathe') {
-      assert.ok(frame)
-      assert.match(frame, /opacity: 0\.65;/)
-    }
-  }
+  const frame = source.match(/@keyframes breathe \{ 50% \{ ([^}]+)/)?.[1]
+  assert.ok(frame)
+  assert.match(frame, /opacity: 0\.65;/)
+  // `blink` was `breathe` under a second name, keyframe for keyframe; one loop.
+  assert.doesNotMatch(source, /@keyframes blink\b/)
   for (const block of blocks) {
     for (const decl of block.decls) {
       if (decl.prop === 'animation' && /^spin /.test(decl.value)) assert.match(decl.value, /linear infinite$/)
@@ -2019,16 +2082,25 @@ test('depth is two steps: menus float, modals sit deeper, and the composer joins
   // The layering the popovers were built against: composer stack under every
   // menu, menus under the modal layer.
   for (const [selector, z] of [
-    ['#composer-popovers', '4'],
-    ['.composer-menu', '5'],
-    ['.chip-menu', '5'],
-    ['.hover-card', '5'],
-    ['.settings-menu', '5'],
-    ['.canvas-menu', '5'],
-    ['.chip-flyout', '6'],
-    ['#rewind', '9'],
+    ['#composer-popovers', 'composer'],
+    ['.composer-menu', 'popover'],
+    ['.chip-menu', 'popover'],
+    ['.hover-card', 'popover'],
+    ['.settings-menu', 'popover'],
+    ['.canvas-menu', 'popover'],
+    // The title bar's menus were a rung above the canvas's for no reason but
+    // the number that was free; both are one press away, so both are popovers.
+    ['.titlebar-menu', 'popover'],
+    // The welcome pickers sat on layer 1 — under a hover card that happened to
+    // overlap them. They are menus like the rest.
+    ['.branch-picker, .project-picker', 'popover'],
+    ['.chip-flyout', 'flyout'],
+    ['.context-popover', 'flyout'],
+    ['#rewind', 'rewind'],
+    ['#toasts', 'toast'],
+    ['#lightbox', 'viewer'],
   ] as const) {
-    assert.ok(declares(blockFor(selector), 'z-index', z), `${selector} belongs on layer ${z}`)
+    assert.ok(declares(blockFor(selector), 'z-index', `var(--z-${z})`), `${selector} belongs on layer --z-${z}`)
   }
 
   // Every popover here is absolute against one of these shells; an `overflow`
@@ -2105,10 +2177,11 @@ test('motion comes from the tokens, and the things that rebuild themselves have 
     )
   }
 
-  // The three entrance keyframes travel one distance and arrive from one scale.
-  // The parser flattens `@keyframes`, so its `from` steps come through as blocks
-  // named `from` — every one of them that moves is one of these three. The
-  // looping sweeps (the sheens) start at `0%` so they stay out of this count.
+  // No entrance keyframe moves any more. `drop-in`, `rise-in` and `slide-in`
+  // outlived the presence transitions that replaced them, referenced by no
+  // rule; they are deleted, and a moving `from` step is a new one. The parser
+  // flattens `@keyframes`, so its `from` steps come through as blocks named
+  // `from`. The looping sweeps (the sheens) start at `0%` and are not counted.
   let entranceSteps = 0
   for (const block of blocks) {
     if (block.selector !== 'from') continue
@@ -2122,7 +2195,7 @@ test('motion comes from the tokens, and the things that rebuild themselves have 
       )
     }
   }
-  assert.equal(entranceSteps, 3, 'expected drop-in, rise-in and slide-in to move')
+  assert.equal(entranceSteps, 0, 'presence transitions own every entrance path')
 
   // The reduced-motion override. `1ms` rather than `0s`: a zero-length
   // transition never fires `transitionend`, and no listener should have to know
@@ -2446,4 +2519,235 @@ test('a background window dims its caption and column heads, and nothing it is r
   for (const content of ['.transcript', '.session-row', '#input']) {
     assert.ok(!rule.selector.includes(content), `${content} is content and keeps its colour`)
   }
+})
+
+test('every stacking order comes from the layer ladder', () => {
+  // Twenty-eight bare numbers had drifted into an order nobody had chosen: the
+  // welcome pickers under a hover card, the title bar's menus a rung above the
+  // canvas's, the drop hint sharing a number with menus. The ladder names what
+  // each rung covers; a rule picks a rung, never a number.
+  for (const { selector, prop, value } of declarations) {
+    if (prop !== 'z-index' || TOKEN_SELECTORS.has(selector)) continue
+    assert.match(value, /^var\(--z-[a-z]+\)$/, `${selector} { z-index: ${value} } must name a --z- rung`)
+  }
+  // The rungs climb strictly in the order the token block lists them.
+  const ladder = [...tokens].filter(([name]) => name.startsWith('--z-')).map(([, value]) => Number(value))
+  assert.ok(ladder.length >= 10)
+  for (let i = 1; i < ladder.length; i += 1) assert.ok(ladder[i]! > ladder[i - 1]!, 'the layer tokens climb in order')
+})
+
+test('every corner comes from the shape ladder', () => {
+  // Seventeen literals had grown between the rungs: 2, 3, 4, 5, 6, 13 and 999px.
+  // Each one now names what it rounds — a key cap or badge is xs, a swatch or a
+  // word highlight is mark, a capsule is pill. Only the geometric keywords stay
+  // literal: 50% is a circle, 0 is square, `inherit` follows the parent.
+  for (const { selector, prop, value } of declarations) {
+    if (!prop.endsWith('radius') || TOKEN_SELECTORS.has(selector)) continue
+    if (['50%', '0', 'inherit'].includes(value)) continue
+    assert.match(value, /var\(--radius-[a-z]+\)/, `${selector} { ${prop}: ${value} } must use a --radius- rung`)
+    assert.doesNotMatch(value.replace(/var\([^)]*\)/g, ''), /\d{2,}px|[3-9]px/, `${selector} mixes a literal into its radius`)
+  }
+})
+
+test('every icon-only button is one of four squares', () => {
+  // Eight sizes, 18 to 36px, had grown a pixel or two apart: a 26px title-bar
+  // rail beside a 28px settings close, a 30px send next to a 36px viewer close.
+  // A square button now takes the rung for where it sits (xs on a tile, sm in a
+  // card or row, md in a bar, lg for a surface's one action), and the rungs
+  // climb by 4px so neighbours on different rungs read as different on purpose.
+  const rungs = ['xs', 'sm', 'md', 'lg'].map((name) => Number.parseInt(tokenValue(`--control-${name}`), 10))
+  assert.deepEqual(rungs, [20, 24, 28, 32])
+  const squares = blocks.filter((block) => {
+    const width = block.decls.find((d) => d.prop === 'width')?.value
+    return width !== undefined && width === block.decls.find((d) => d.prop === 'height')?.value && /var\(--control-/.test(width)
+  })
+  assert.ok(squares.length >= 18, `found ${squares.length} sized icon buttons`)
+  for (const selector of ['#submit, #stop', '.scroll-bottom', '.lightbox-close', '.titlebar-rail', '#composer-attach', '.toast-close', '.attachment-remove']) {
+    assert.ok(squares.some((block) => block.selector === selector), `${selector} takes a --control- rung`)
+  }
+})
+
+test('a ghost icon button shows the press', () => {
+  // Only send and stop had an :active state; every other icon button looked
+  // the same pressed as hovered, so a click on a slow action seemed lost.
+  const press = blocks.find((block) => block.selector.startsWith(':is(.titlebar-rail') && block.selector.endsWith(':active:enabled'))
+  assert.ok(press, 'one shared press rule')
+  assert.ok(declares(press, 'background', 'var(--surface-active)'))
+  assert.ok(declares(press, 'transition-duration', 'var(--motion-press)'))
+})
+
+test('a disabled control looks the same everywhere: faded whole, no pointer', () => {
+  // Five opacities, two kinds of greyed label and two `not-allowed` cursors
+  // had made "disabled" look like a different state on every screen. One fade,
+  // applied to the whole control so label, icon and fill dim together.
+  const disabled = blocks.filter((block) => /:disabled|\[disabled\]|\.disabled\b/.test(block.selector))
+    .filter((block) => !/:not\((:disabled|\[disabled\])\)/.test(block.selector))
+  assert.ok(disabled.length >= 20, `found ${disabled.length} disabled rules`)
+  for (const block of disabled) {
+    assert.ok(declares(block, 'opacity', 'var(--opacity-disabled)'), `${block.selector} fades by --opacity-disabled`)
+    assert.ok(declares(block, 'cursor', 'default'), `${block.selector} stops promising a click`)
+    assert.ok(!block.decls.some((d) => d.prop === 'color' || d.prop === 'background'), `${block.selector} fades, it does not recolour`)
+  }
+})
+
+test('one placeholder colour and one selection colour, both from the palette', () => {
+  // Four fields had no placeholder rule and showed Chromium's own grey, the
+  // sidebar search had its own secondary, and selected text was stock blue —
+  // the one colour on screen from outside the palette.
+  assert.ok(declares(blockFor(':where(input, textarea)::placeholder'), 'color', 'var(--text-tertiary)'))
+  assert.ok(declares(blockFor('::selection'), 'background', 'var(--selection-bg)'))
+  const others = blocks.filter((b) => b.selector.includes('::placeholder') && b.selector !== ':where(input, textarea)::placeholder')
+  for (const block of others) {
+    assert.ok(!block.decls.some((d) => d.prop === 'color'), `${block.selector} recolours the shared placeholder`)
+  }
+})
+
+test('every menu is one card and every menu row one height', () => {
+  // Thirteen menus had been written one at a time: the same card with 4px
+  // literal padding here, an 8px inset there, the composer's two lists on the
+  // panel radius and a fainter hairline than the pickers right beside them,
+  // and rows 4, 6 or 8px tall in padding. One card, one row.
+  const CARDS = [
+    '.titlebar-menu', '.canvas-menu', '.project-menu', '.thread-menu', '.chip-menu', '.chip-flyout',
+    '.composer-menu', '.settings-menu', '.branch-picker, .project-picker', '#surface', '#suggestions',
+  ]
+  for (const selector of CARDS) {
+    const card = blockFor(selector)
+    for (const [prop, value] of [
+      ['background', 'var(--surface-card)'],
+      ['border', '1px solid var(--border-strong)'],
+      ['border-radius', 'var(--radius-md)'],
+      ['box-shadow', 'var(--shadow-float)'],
+    ] as const) {
+      assert.ok(declares(card, prop, value), `${selector} { ${prop}: ${value} }`)
+    }
+  }
+  const ROWS = [
+    '.titlebar-menu-item', '.canvas-menu-item', '.project-menu-item', '.thread-menu-item', '.chip-flyout-item',
+    '.composer-menu-item', '.settings-menu-item', '.branch-picker-row, .project-picker-row',
+  ]
+  for (const selector of ROWS) {
+    const row = blockFor(selector)
+    assert.ok(declares(row, 'padding', 'var(--menu-row-padding)'), `${selector} takes the shared row padding`)
+    assert.ok(declares(row, 'font-size', 'var(--type-ui)'), `${selector} is set at the UI size`)
+    assert.ok(declares(row, 'border-radius', 'var(--radius-sm)'), `${selector} rounds as a row inside a card`)
+    assert.ok(declares(row, 'color', 'var(--text-primary)'), `${selector} rests on primary text, like a native menu`)
+  }
+})
+
+test('buttons answer the pointer and the keyboard, and there is one primary', () => {
+  // The docked card's secondary buttons rested on the hover fill and hovered to
+  // the same fill: no answer at all. They hover one rung further now.
+  assert.ok(declares(blockFor('#composer-request .dialog-btn:not(.primary):hover:enabled'), 'background', 'var(--surface-active)'))
+  // One primary, the inverted fill: the rewind panel's and the failure card's
+  // were two more versions of it.
+  for (const selector of ['#rewind-panel .dialog-btn.primary, #composer-request .dialog-btn.primary', '.failure-action.primary']) {
+    const primary = blockFor(selector)
+    assert.ok(declares(primary, 'background', 'var(--text-primary)'), `${selector} is the inverted fill`)
+    assert.ok(declares(primary, 'color', 'var(--surface-base)'), `${selector} is the inverted fill`)
+  }
+  // The thread menu's rows were the only menu rows with no hover and no
+  // keyboard highlight.
+  assert.ok(declares(blockFor('.thread-menu-item:hover:enabled'), 'background', 'var(--surface-hover)'))
+  assert.ok(css.includes('.thread-menu-item:focus-visible'), 'the thread menu joins the menu rows’ focus fill')
+  // Tab reached the session's delete button while it was still invisible.
+  assert.ok(
+    blocks.some((block) => block.selector.includes('.session-actions:focus-within') && declares(block, 'opacity', '1')),
+    'a focused session action is shown',
+  )
+  // Four retry/back buttons reset `font` and never set a size, so they were the
+  // inherited UI size beside their meta-sized neighbours.
+  for (const selector of ['.usage-retry', '.canvas-back-coordinator', '.thread-detail-retry', '.startup-failure-retry']) {
+    assert.ok(declares(blockFor(selector), 'font-size', 'var(--type-meta)'), `${selector} names its size`)
+  }
+})
+
+test('no control is left in the platform’s own dress', () => {
+  // The viewer's zoom steps had no border or background reset and showed as
+  // raised grey system buttons in the capsule; selects drew a macOS stepper or
+  // a Windows box beside the sheet's own inputs.
+  for (const selector of ['.lightbox-zoom-step', '.lightbox-close']) {
+    const button = blockFor(selector)
+    assert.ok(declares(button, 'font', 'inherit'), `${selector} resets its font`)
+    assert.ok(declares(button, 'cursor', 'pointer'), `${selector} reads as clickable`)
+  }
+  assert.ok(declares(blockFor('.lightbox-zoom-step'), 'border', '0'))
+  const select = blockFor('.settings-select')
+  assert.ok(declares(select, 'appearance', 'none'), 'the select is drawn by the sheet')
+  assert.ok(select.decls.some((d) => d.prop === 'background-image' && d.value.includes('var(--text-secondary)')), 'its chevron follows the theme')
+  // Anything that recolours a select must not use the shorthand, which would wipe the chevron.
+  for (const block of blocks.filter((b) => b.selector.includes('.settings-select'))) {
+    assert.ok(!block.decls.some((d) => d.prop === 'background'), `${block.selector} sets background-color, not background`)
+  }
+})
+
+test('hiding is the one global [hidden] rule, not a copy per element', () => {
+  // `[hidden] { display: none !important }` covers every element; twenty-six
+  // per-element copies had accumulated beside it, each one a place a future
+  // `display` change would look for and find nothing to edit.
+  const copies = blocks.filter((block) =>
+    block.selector !== '[hidden]' &&
+    block.selector.split(',').every((part) => part.trim().endsWith('[hidden]')) &&
+    block.decls.length === 1 && block.decls[0]!.prop === 'display' && block.decls[0]!.value === 'none')
+  assert.deepEqual(copies.map((block) => block.selector), [])
+  assert.ok(declares(blockFor('[hidden]'), 'display', 'none !important'))
+})
+
+test('brand text and metadata clear 4.5:1 on every surface they sit on', () => {
+  // The clay is ~3.1:1 on light paper: right for the spinner and the send
+  // button, too thin for a link or a running label, so light deepens a text rung
+  // of its own. Tertiary text was lifted in both themes for the same reason —
+  // it met 4.5 on the canvas and fell under it on a card or the frame.
+  for (const { name, tokens: palette } of THEMES) {
+    for (const surface of ['--surface-canvas', '--surface-card', '--surface-base']) {
+      for (const text of ['--accent-brand-text', '--text-tertiary']) {
+        const resolve = (token: string): string => {
+          const value = tokenValue(token, palette)
+          const alias = /^var\((--[a-z-]+)\)$/.exec(value)
+          return alias ? resolve(alias[1]!) : value
+        }
+        const ratio = contrast(resolve(text), resolve(surface))
+        assert.ok(ratio >= 4.5, `${name}: ${text} on ${surface} reads ${ratio.toFixed(2)}:1`)
+      }
+    }
+  }
+})
+
+test('scrollbars: drawn on Windows and Linux, the system’s own overlay on macOS', () => {
+  // Chromium 121+ ignores `::-webkit-scrollbar` on any element with
+  // `scrollbar-width` or `scrollbar-color` set, and a blanket `*` rule set both,
+  // so the drawn thumb was dead and the bar was not the width the sidebar's
+  // overhang is cut to. macOS keeps its overlay bars: any webkit style would
+  // force always-on classic ones.
+  assert.ok(!declarations.some((d) => d.prop === 'scrollbar-width' || d.prop === 'scrollbar-color'),
+    'a standard scrollbar property would switch the drawn thumb off')
+  const webkit = blocks.filter((block) => block.selector.includes('::-webkit-scrollbar'))
+  assert.ok(webkit.length >= 5)
+  for (const block of webkit) {
+    assert.ok(block.selector.startsWith(':root:not([data-platform="darwin"]) '), `${block.selector} must leave macOS's overlay bars alone`)
+  }
+  assert.ok(declares(blockFor(':root:not([data-platform="darwin"]) ::-webkit-scrollbar'), 'width', '10px'),
+    'the gutter --sidebar-scrollbar-overhang is measured against')
+  assert.ok(declares(blockFor(':root:not([data-platform="darwin"]) .transcript'), 'scrollbar-gutter', 'stable both-edges'),
+    'the reading column does not jump when its bar appears')
+})
+
+test('an empty list says so in one voice', () => {
+  // Nine "nothing here yet" lines in three colours and two sizes. They are all
+  // the same statement — metadata about a list — so they take metadata's rung
+  // and size; only the padding follows where each one sits.
+  for (const selector of [
+    '#tasks-empty', '.subagent-empty', '.sidebar-empty', '.project-empty', '.usage-empty',
+    '.branch-picker-empty, .project-picker-empty', '.plan-panel-empty', '.settings-empty', '.settings-model-empty',
+  ]) {
+    const block = blockFor(selector)
+    assert.ok(declares(block, 'color', 'var(--text-tertiary)'), `${selector} is tertiary`)
+    assert.ok(declares(block, 'font-size', 'var(--type-meta)'), `${selector} is meta-sized`)
+  }
+})
+
+test('a settings field is findable at rest', () => {
+  // In light the field's fill is one rung off the page; with the subtle hairline
+  // the edge was ~1.05:1 and the field all but vanished until focused.
+  assert.ok(declares(blockFor('.settings-input, .settings-select'), 'border', '1px solid var(--border-strong)'))
 })

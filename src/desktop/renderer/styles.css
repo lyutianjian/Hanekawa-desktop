@@ -62,11 +62,12 @@
   --text-primary: #ebebea;
   --text-secondary: #a6a6a5;
   /* Metadata, and only metadata: anything the user can click asks for one of
-     the two rungs above. */
-  --text-tertiary: #858584;
-  /* Links are brand-coloured text: the *strong* brand rung. An alias, so the
+     the two rungs above. Lifted from #858584 so metadata on a card clears
+     4.5:1, not just on the canvas. */
+  --text-tertiary: #8e8e8d;
+  /* Links are brand-coloured text: the brand's text rung. An alias, so the
      equality cannot drift. */
-  --link: var(--accent-brand-strong);
+  --link: var(--accent-brand-text);
 
   /* --- accents ---
      Icons, badges and 1–3px state rules only, outside the named fills the token
@@ -80,6 +81,15 @@
      surface matches the spinner. */
   --accent-brand: #d97757;
   --accent-brand-strong: #d97757;
+  /* Brand-coloured *text* — a link, a running state's label. The clay itself in
+     dark, where it clears 5.5:1; light deepens it (below), because the clay on
+     paper is ~3.1:1, fine for the spinner and the send button, too thin for a
+     word. Glyphs and fills keep the clay in both themes. */
+  --accent-brand-text: var(--accent-brand-strong);
+  /* Selected text: the brand's clay at a wash, not Chromium's stock blue, which
+     was the one colour on screen from outside the palette. Strong enough to
+     find a selection in the transcript, faint enough to read through. */
+  --selection-bg: color-mix(in srgb, var(--accent-brand) 32%, transparent);
   /* The colour cleared to sit *on* a brand fill. Not `--surface-knob`: the knob
      is white in both themes, while this flips — white on clay in light, the
      canvas's own near-black in dark. */
@@ -135,12 +145,68 @@
      Large for the panels the eye frames the app by, medium for menus and
      mid-sized controls, small for the things *inside* a menu (a row, a file
      chip) — at 12px those read as swollen — and pill for anything that reads
-     as a control (design_guidance 四.2). */
+     as a control (design_guidance 四.2). Below small: xs for the glyph-sized
+     boxes that sit in a line of text (a key cap, a badge, inline code, a check)
+     and mark for the swatches and highlights that are barely rounded at all.
+     The user bubble's own 13px was one pixel off md and is md now. */
   --radius-lg: 20px;
-  --radius-bubble: 13px;
   --radius-md: 12px;
   --radius-sm: 8px;
+  --radius-xs: 4px;
+  --radius-mark: 2px;
   --radius-pill: 9999px;
+
+  /* --- state ---
+     One disabled look for every control: the whole control fades, label, icon
+     and fill together, and the pointer stops promising a click. It was 0.4,
+     0.45, 0.5, 0.55, a tertiary label or a fainter border depending on who
+     wrote the rule, and `not-allowed` on two of them. */
+  --opacity-disabled: 0.45;
+
+  /* A menu row's padding, the same in every menu: 6px over the 14px line makes
+     a 33px row, a comfortable pointer target that still keeps eight rows in a
+     short menu. Rows had grown 4, 6 and 8px tall paddings menu by menu. */
+  --menu-row-padding: 6px var(--space-2);
+
+  /* --- controls ---
+     Four square sizes for every icon-only button, by where it sits: xs on a
+     tile (an attachment's remove), sm inside a card or row (copy, ⋯, a
+     toast's ✕), md in a bar (the title bar, the composer tools, settings) and
+     lg for the one action a surface is about (send, stop, back to bottom, the
+     viewer's close). There were eight, 18 to 36px, a pixel or two apart. */
+  --control-xs: 20px;
+  --control-sm: 24px;
+  --control-md: 28px;
+  --control-lg: 32px;
+
+  /* --- layers ---
+     One ladder for everything that stacks, so a new popover picks a rung by
+     what it must cover instead of a number that happened to be free. Each rung
+     names what sits on it; a stacking context (the title bar, a pane) restarts
+     the ladder inside it, so the names still read right there.
+       under    a backdrop drawn behind its own box (the title strip's canvas)
+       raised   lifted over its siblings: the title bar, sticky heads, a close ✕
+       pinned   over the raised: the window divider, a pinned error banner
+       composer the composer's popover stack, under every menu
+       popover  menus, pickers, hover cards, tips — anything one press opens
+       flyout   a card opened from another card: a submenu, the context detail;
+                and the drop hint, which must cover an open menu
+       dialog   the settings dialogs' layer, over the page and its menus
+       settings the settings screen
+       rewind   the rewind panel's modal layer
+       toast    toasts, over every screen so an error is never hidden
+       viewer   the image viewer: opened deliberately, over everything */
+  --z-under: -1;
+  --z-raised: 1;
+  --z-pinned: 2;
+  --z-composer: 4;
+  --z-popover: 5;
+  --z-flyout: 6;
+  --z-dialog: 7;
+  --z-settings: 8;
+  --z-rewind: 9;
+  --z-toast: 10;
+  --z-viewer: 11;
 
   /* Semantic motion: one cadence per kind of interaction. CSS owns timing;
      model fallback constants are pinned to these values by the token tests. */
@@ -400,12 +466,16 @@
 
   --text-primary: #1a1a1a;
   --text-secondary: #575756;
-  --text-tertiary: #777776;
+  /* From #777776: 4.5:1 on the paper was 4.2 on the frame and on a card. */
+  --text-tertiary: #6b6b6a;
 
   /* The working mark's clay, as in dark: ~3.1:1 on the paper and under white,
      traded for matching the spinner. */
   --accent-brand: #d97757;
   --accent-brand-strong: #d97757;
+  /* The clay deepened to 5.1:1 on the paper for text; see the dark block. */
+  --accent-brand-text: #ad5234;
+  --selection-bg: color-mix(in srgb, var(--accent-brand) 24%, transparent);
   --on-brand: #ffffff;
   --accent-info: #33689f;
   --accent-tool: #6e4fa3;
@@ -446,6 +516,12 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
+/* One placeholder colour for every field. The composer, the address bar, the
+   title editor and the settings textarea had none and fell to Chromium's grey,
+   which sits between the tertiary and secondary rungs; the sidebar search had
+   its own secondary. `opacity: 1` because Firefox-era UA sheets fade it again. */
+:where(input, textarea)::placeholder { color: var(--text-tertiary); opacity: 1; }
+::selection { background: var(--selection-bg); }
 body {
   /* The window frame's material, in one place. `#titlebar` and `#sidebar` are
      transparent and let this through, which is what makes the frame one
@@ -490,12 +566,22 @@ body {
    against the rounded corner the layout is built around — the one piece of
    chrome in the window that ignores the palette entirely. These are ordinary
    selector blocks, not at-rules, so `rendererStyleTokens`'s flat parser still
-   holds. `scrollbar-width`/`-color` is the standard property (and the only one
-   Firefox reads); the `::-webkit-` rules are what Chromium actually applies. */
-* { scrollbar-width: thin; scrollbar-color: var(--border-strong) transparent; }
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
+   holds.
+
+   **Windows and Linux** get the drawn thumb below: a 10px gutter with a 4px
+   pill inset in it, the width `--sidebar-scrollbar-overhang` is cut to. These
+   rules used to sit beside `* { scrollbar-width: thin; scrollbar-color }`, and
+   since Chromium 121 an element with either standard property set ignores its
+   `::-webkit-scrollbar` styling entirely — so the drawn thumb was dead code and
+   the bar was Chromium's own thin one, a different width from the one the
+   sidebar's overhang was measured against.
+
+   **macOS** gets nothing: its scrollbars are the system's overlay ones, which
+   take no width, fade when idle and follow `color-scheme`. Any
+   `::-webkit-scrollbar` style would turn them into always-on classic bars. */
+:root:not([data-platform="darwin"]) ::-webkit-scrollbar { width: 10px; height: 10px; }
+:root:not([data-platform="darwin"]) ::-webkit-scrollbar-track { background: transparent; }
+:root:not([data-platform="darwin"]) ::-webkit-scrollbar-thumb {
   border: 3px solid transparent;
   border-radius: var(--radius-pill);
   /* Painting the thumb through its border box is what leaves the 3px inset
@@ -503,16 +589,20 @@ body {
   background-clip: content-box;
   background-color: var(--border-strong);
 }
-::-webkit-scrollbar-thumb:hover { background-color: var(--text-tertiary); }
-::-webkit-scrollbar-corner { background: transparent; }
+:root:not([data-platform="darwin"]) ::-webkit-scrollbar-thumb:hover { background-color: var(--text-tertiary); }
+:root:not([data-platform="darwin"]) ::-webkit-scrollbar-corner { background: transparent; }
 /* The rail's thumb is the one exception to the inset above. It is read against
    the canvas's edge rather than against a panel of its own, and 3px short of the
    rail's boundary reads as a slider that failed to reach it. The 4px thickness
    is unchanged — the whole inset moves to the left side. */
-.sidebar-list::-webkit-scrollbar-thumb {
+:root:not([data-platform="darwin"]) .sidebar-list::-webkit-scrollbar-thumb {
   border-right-width: 0;
   border-left-width: 6px;
 }
+/* A classic bar takes width when it appears. Reserved on both edges of the
+   transcript, so the reading column stays centred over the composer instead of
+   jumping 10px left the moment a conversation outgrows the window. */
+:root:not([data-platform="darwin"]) .transcript { scrollbar-gutter: stable both-edges; }
 
 /* --- keyboard focus ---
    Chromium's own ring is the platform accent drawn as a thick halo, which on a
@@ -532,7 +622,8 @@ body {
 .chip-flyout-item:focus-visible,
 .settings-menu-item:focus-visible,
 .branch-picker-row:focus-visible,
-.project-picker-row:focus-visible {
+.project-picker-row:focus-visible,
+.thread-menu-item:focus-visible {
   outline: none;
   background: var(--surface-hover);
 }
@@ -547,7 +638,8 @@ body {
 .composer-menu:has(:focus-visible) .composer-menu-item:hover:not(:focus-visible):not(.active),
 .chip-menu:has(:focus-visible) .chip-menu-row:hover:not(:focus-visible):not(.open),
 .chip-flyout:has(:focus-visible) .chip-flyout-item:hover:not(:focus-visible),
-.settings-menu:has(:focus-visible) .settings-menu-item:hover:not(:focus-visible):not(.active) {
+.settings-menu:has(:focus-visible) .settings-menu-item:hover:not(:focus-visible):not(.active),
+.thread-menu:has(:focus-visible) .thread-menu-item:hover:not(:focus-visible) {
   background: transparent;
 }
 
@@ -597,7 +689,7 @@ body:has(#sidebar.collapsed) .titlebar-lead {
   top: 0;
   bottom: 0;
   left: calc(var(--sidebar-width) + var(--sidebar-scrollbar-overhang) - var(--hairline));
-  z-index: 2;
+  z-index: var(--z-pinned);
   border-left: var(--hairline) solid var(--border-subtle);
   pointer-events: none;
   transition: left var(--motion-layout) var(--ease-out);
@@ -613,12 +705,12 @@ body.settings-open #frame::after { display: none; }
    `--transcript-tuck` short of the bar's foot: that band is the canvas's own
    (its offset shadow), so the transcript can scroll up under it. `z-index`
    keeps the bar, and its drag region, above that band. */
-#titlebar { position: relative; z-index: 1; }
+#titlebar { position: relative; z-index: var(--z-raised); }
 #titlebar::before {
   content: '';
   position: absolute;
   inset: 0 0 var(--transcript-tuck) calc(var(--sidebar-width) + var(--sidebar-scrollbar-overhang));
-  z-index: -1;
+  z-index: var(--z-under);
   background: var(--surface-canvas);
   transition: left var(--motion-layout) var(--ease-out);
 }
@@ -637,8 +729,8 @@ body.resizing #frame::after { transition: none; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--control-md);
+  height: var(--control-md);
   margin-right: var(--space-1);
   background: transparent;
   color: var(--text-secondary);
@@ -669,7 +761,6 @@ body.resizing #frame::after { transition: none; }
   background: var(--text-success);
   box-shadow: 0 0 0 1.5px var(--surface-canvas);
 }
-.titlebar-side-dot[hidden] { display: none; }
 /* 线程 with threads waiting on someone: the count in the warn tone. */
 .titlebar-side-badge {
   position: absolute;
@@ -686,7 +777,6 @@ body.resizing #frame::after { transition: none; }
   line-height: 14px;
   text-align: center;
 }
-.titlebar-side-badge[hidden] { display: none; }
 /* Positioned so the menu hangs off its trigger; the bar is not inside a
    scroller, so `overflow` can stay visible here. */
 .titlebar-menu-shell { position: relative; display: inline-flex; }
@@ -708,7 +798,7 @@ body.resizing #frame::after { transition: none; }
      padding), so the card hangs off the control rather than overlapping it. */
   top: var(--space-6);
   left: 0;
-  z-index: 6;
+  z-index: var(--z-popover);
   min-width: 13rem;
   display: flex;
   flex-direction: column;
@@ -726,14 +816,14 @@ body.resizing #frame::after { transition: none; }
   color: var(--text-primary);
   border: 0;
   border-radius: var(--radius-sm);
-  padding: var(--space-2);
+  padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
   text-align: left;
   cursor: pointer;
 }
 .titlebar-menu-item:hover:enabled { background: var(--surface-hover); }
-.titlebar-menu-item:disabled { color: var(--text-tertiary); cursor: default; }
+.titlebar-menu-item:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .titlebar-menu-item .btn-label { flex: 1 1 auto; }
 .titlebar-menu-chord { color: var(--text-tertiary); font-size: var(--type-micro); }
 
@@ -760,7 +850,6 @@ body.resizing #frame::after { transition: none; }
   height: 100%;
   padding: 0 var(--space-2) 0 var(--space-4);
 }
-#canvas-header[hidden] { display: none; }
 .canvas-identity {
   position: relative;
   display: flex;
@@ -799,7 +888,7 @@ body.resizing #frame::after { transition: none; }
   left: 0;
   top: 50%;
   translate: 0 -50%;
-  z-index: 5;
+  z-index: var(--z-popover);
   width: max(100%, 16rem);
   max-width: 28rem;
 }
@@ -810,8 +899,8 @@ body.resizing #frame::after { transition: none; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--control-sm);
+  height: var(--control-sm);
   background: transparent;
   color: var(--text-secondary);
   border: 0;
@@ -824,7 +913,7 @@ body.resizing #frame::after { transition: none; }
   position: absolute;
   top: 28px;
   left: 0;
-  z-index: 5;
+  z-index: var(--z-popover);
   min-width: 9rem;
   display: flex;
   flex-direction: column;
@@ -840,7 +929,7 @@ body.resizing #frame::after { transition: none; }
   color: var(--text-primary);
   border: 0;
   border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
+  padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
   cursor: pointer;
@@ -999,7 +1088,7 @@ body.resizing #frame::after { transition: none; }
 }
 /* The column that holds the four regions, at the sidebar's *open* width and
    never narrower. `#sidebar` is the thing that animates, and a flex column that
-   reflows from 280px to 0 would re-wrap every session title on the way — the
+   reflows from its open width to 0 would re-wrap every session title on the way — the
    collapse would read as the list tearing itself up rather than sliding out.
    So the shell keeps its width, `#sidebar`'s `overflow: hidden` crops it, and
    the rows go out on opacity and 8px of travel instead.
@@ -1110,7 +1199,6 @@ body.resizing #sidebar { transition: none; }
 #browser-panel.tasks { flex-basis: var(--tasks-panel-width); }
 #browser-panel.threads { flex-basis: var(--threads-panel-width); }
 #browser-panel.changes { flex-basis: var(--changes-panel-width); }
-#browser-panel[hidden] { display: none; }
 /* The panel's 8px gutter is `body` showing through; painted in the canvas's
    colour so canvas and gutter read as one surface around the card. */
 body:has(> #browser-panel:not([hidden])) {
@@ -1161,7 +1249,6 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   font-size: var(--type-meta);
 }
 .browser-blank[hidden],
-.browser-error[hidden] { display: none; }
 .browser-error p { margin: 0; max-width: 100%; overflow-wrap: anywhere; }
 .browser-error-title { color: var(--text-primary); font-size: var(--type-body); }
 .browser-error-address { color: var(--text-secondary); }
@@ -1228,7 +1315,7 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   flex: 0 0 auto;
   width: 14px;
   height: 14px;
-  border-radius: 3px;
+  border-radius: var(--radius-mark);
   object-fit: contain;
   background: var(--surface-active);
 }
@@ -1277,7 +1364,7 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   cursor: pointer;
 }
 .browser-nav:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
-.browser-nav:disabled { color: var(--text-tertiary); }
+.browser-nav:disabled { opacity: var(--opacity-disabled); cursor: default; }
 /* 接管 / 交还. A word rather than a glyph, because it is the one control here
    that changes who is driving. Disabled it means nobody is driving this tab, so
    it greys out with the rest of the row; the accent belongs to 交还, where it
@@ -1297,7 +1384,6 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   color: var(--text-warn);
   border-top: 1px solid var(--border-subtle);
 }
-#browser-banner[hidden] { display: none; }
 /* A groove rather than a form field, the same call `.sidebar-search` makes: this
    sits on the panel's own paper, and a bordered white capsule reads there as
    something unfinished. */
@@ -1323,7 +1409,6 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   cursor: col-resize;
   background: transparent;
 }
-#browser-resizer[hidden] { display: none; }
 #browser-resizer::after {
   content: '';
   position: absolute;
@@ -1348,7 +1433,6 @@ body.settings-open #browser-resizer { display: none; }
   display: flex;
   flex-direction: column;
 }
-#browser-view[hidden] { display: none; }
 /* The panel's close button, laid over the first row's right end (a section
    head, the 改动 head, the 线程 title, the browser's tab strip), so no row is
    spent on it. */
@@ -1356,7 +1440,7 @@ body.settings-open #browser-resizer { display: none; }
   position: absolute;
   top: 0;
   right: var(--space-1);
-  z-index: 1;
+  z-index: var(--z-raised);
   height: 36px;
   border: 0;
   border-radius: var(--radius-sm);
@@ -1367,7 +1451,6 @@ body.settings-open #browser-resizer { display: none; }
   padding: 0 var(--space-2);
   cursor: pointer;
 }
-.side-close[hidden] { display: none; }
 .side-close:hover { color: var(--text-primary); }
 /* --- 改动: one turn's edited files ---
    A head with the totals, then one section per file under a head that sticks
@@ -1379,7 +1462,6 @@ body.settings-open #browser-resizer { display: none; }
   display: flex;
   flex-direction: column;
 }
-#changes-view[hidden] { display: none; }
 .changes-head {
   flex: none;
   display: flex;
@@ -1414,7 +1496,7 @@ body.settings-open #browser-resizer { display: none; }
 .changes-file-head {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -1467,8 +1549,8 @@ body.settings-open #browser-resizer { display: none; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: var(--control-md);
+  height: var(--control-md);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -1488,7 +1570,6 @@ body.settings-open #browser-resizer { display: none; }
   font-size: var(--type-code);
   line-height: 20px;
 }
-.changes-diff[hidden] { display: none; }
 .changes-row {
   display: flex;
   align-items: flex-start;
@@ -1524,7 +1605,7 @@ body.settings-open #browser-resizer { display: none; }
   color: var(--text-primary);
 }
 .changes-row.ctx .changes-text { color: var(--text-secondary); }
-.changes-mark { border-radius: 3px; }
+.changes-mark { border-radius: var(--radius-mark); }
 .changes-row.add .changes-mark { background: color-mix(in srgb, var(--diff-add-fg) 28%, transparent); }
 .changes-row.del .changes-mark { background: color-mix(in srgb, var(--diff-del-fg) 28%, transparent); }
 /* Lines a hunk skipped: a quiet band between the hunks, the count in words. */
@@ -1552,9 +1633,7 @@ body.settings-open #browser-resizer { display: none; }
   display: flex;
   flex-direction: column;
 }
-#side-sections[hidden] { display: none; }
 .side-section { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; }
-.side-section[hidden] { display: none; }
 .side-section + .side-section:not([hidden]) { border-top: 1px solid var(--border-subtle); }
 .side-section-head {
   display: flex;
@@ -1575,10 +1654,8 @@ body.settings-open #browser-resizer { display: none; }
 /* Room for the panel's ✕ over whichever section comes first. */
 .side-section-head { padding-right: 40px; }
 #tasks-empty { margin: 0; padding: var(--space-3); padding-right: 40px; color: var(--text-tertiary); font-size: var(--type-meta); }
-#tasks-empty[hidden] { display: none; }
 /* 线程: the project's head over its thread list, or one thread's page. */
 #threads-page { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-#threads-page[hidden] { display: none; }
 .side-section-head .icon { width: 14px; height: 14px; color: var(--text-tertiary); transition: transform var(--motion-micro) var(--ease-out); }
 .side-section-head[aria-expanded="false"] .icon { transform: rotate(-90deg); }
 .side-section-head:hover .icon { color: var(--text-primary); }
@@ -1590,7 +1667,6 @@ body.settings-open #browser-resizer { display: none; }
   min-height: 0;
   max-height: 40vh;
 }
-.side-section-body[hidden] { display: none; }
 .side-section.focus { flex: 1 1 auto; }
 .side-section.focus .side-section-body { flex: 1 1 auto; max-height: none; }
 #subagent-view {
@@ -1603,7 +1679,6 @@ body.settings-open #browser-resizer { display: none; }
   gap: var(--space-1);
   padding: 0 var(--space-2) var(--space-2);
 }
-#subagent-view[hidden] { display: none; }
 /* 命令: one row per background process, unfolding into its output's tail. */
 #commands-view {
   flex: 1 1 auto;
@@ -1690,7 +1765,6 @@ body.settings-open #browser-resizer { display: none; }
   flex-direction: column;
   overflow: hidden;
 }
-#thread-detail-view[hidden] { display: none; }
 .thread-detail-head {
   flex: none;
   padding: var(--space-2);
@@ -1797,7 +1871,6 @@ body.settings-open #browser-resizer { display: none; }
   font-size: var(--type-ui);
 }
 #subagent-view .transcript[hidden],
-#thread-detail-view .transcript[hidden] { display: none; }
 #subagent-view .transcript-column,
 #thread-detail-view .transcript-column { padding-bottom: 0; }
 .subagent-float { display: none; }
@@ -1821,7 +1894,6 @@ body.settings-open #browser-resizer { display: none; }
   font: inherit;
   font-size: var(--type-meta);
 }
-.sidebar-search::placeholder { color: var(--text-secondary); }
 /* The focus ring is a box shadow rather than a border, so gaining focus cannot
    change the box and shift the list below it. A real text input, so `:focus`
    and not `:focus-visible`. */
@@ -1854,7 +1926,7 @@ body.settings-open #browser-resizer { display: none; }
 /* The「最近」filter while it is on. Same idiom as `.sidebar-help.open`: a filled
    row, because the state is one the user has to be able to see they are in. */
 .sidebar-nav-item.on { color: var(--text-primary); background: var(--surface-active); }
-.sidebar-nav-item:disabled { opacity: 0.4; cursor: default; }
+.sidebar-nav-item:disabled { opacity: var(--opacity-disabled); cursor: default; }
 /* The footer settings entry reads as a user-profile row (gear + name), left
    aligned and full width, rather than the pill the two buttons above use — it is
    the personal corner of the sidebar, not another action. */
@@ -1892,7 +1964,7 @@ body.settings-open #browser-resizer { display: none; }
    error state. Keyboard entry still shows it — that is the only time it says
    anything the user cannot already see. */
 .sidebar-list:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
-.sidebar-empty { color: var(--text-secondary); font-size: var(--type-meta); padding: var(--space-2) var(--space-3); }
+.sidebar-empty { color: var(--text-tertiary); font-size: var(--type-meta); padding: var(--space-2) var(--space-3); }
 .sidebar-footer {
   position: relative;
   flex: 0 0 auto;
@@ -1911,7 +1983,7 @@ body.settings-open #browser-resizer { display: none; }
   left: var(--space-2);
   right: calc(var(--space-2) + var(--sidebar-scrollbar-overhang));
   bottom: calc(100% + var(--space-1));
-  z-index: 5;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -1934,7 +2006,7 @@ body.settings-open #browser-resizer { display: none; }
 .sidebar-hint-chord {
   padding: 0 5px;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   color: var(--text-tertiary);
   font-family: var(--font-mono);
   font-size: var(--type-micro);
@@ -1946,8 +2018,8 @@ body.settings-open #browser-resizer { display: none; }
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
+  width: var(--control-md);
+  height: var(--control-md);
   background: transparent;
   color: var(--text-secondary);
   border: 0;
@@ -2070,7 +2142,7 @@ body.settings-open #browser-resizer { display: none; }
   cursor: pointer;
 }
 .project-new:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
-.project-new:disabled { color: var(--border-strong); cursor: default; }
+.project-new:disabled { opacity: var(--opacity-disabled); cursor: default; }
 /* The heading's context menu. Same card as `.titlebar-menu`. `.sidebar-list` is
    the scroller, so an absolutely positioned popover here would be clipped by its
    `overflow`; a fixed one is not, and anchoring it to the heading row keeps it
@@ -2084,7 +2156,7 @@ body.settings-open #browser-resizer { display: none; }
   top: anchor(--project-menu bottom);
   left: anchor(--project-menu left);
   position-try-fallbacks: flip-block;
-  z-index: 5;
+  z-index: var(--z-popover);
   /* Hung under the project's *name*, the same left edge the session titles use. */
   margin: 2px var(--space-2) 2px calc(var(--space-2) + var(--space-3) + 14px + var(--space-2));
   min-width: 10rem;
@@ -2103,7 +2175,7 @@ body.settings-open #browser-resizer { display: none; }
   color: var(--text-primary);
   border: 0;
   border-radius: var(--radius-sm);
-  padding: var(--space-2);
+  padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
   text-align: left;
@@ -2126,7 +2198,7 @@ body.settings-open #browser-resizer { display: none; }
    The *column* has to be declared too, and it is the reason this is a grid at
    all rather than a block: an implicit `auto` track is sized to its item's
    max-content, and `.project-rows`'s max-content is the widest un-wrapped
-   session title. A long enough name grew this track to ~650px inside a 280px
+   session title. A long enough name grew this track to ~650px inside the
    rail, `overflow: hidden` cropped everything past the edge, and the crop lands
    exactly on `.session-actions` — the delete button was not pushed out of the
    row, the row was pushed out of the sidebar, and the name never truncated
@@ -2149,7 +2221,7 @@ body.settings-open #browser-resizer { display: none; }
      the row's own margin, which this node does not have. */
   padding: var(--space-1) var(--space-3) var(--space-2)
            calc(var(--space-2) + var(--space-3) + 14px + var(--space-2));
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font-size: var(--type-meta);
 }
 /* `8px 12px` around a single `--type-ui` line lands the row at ~34px
@@ -2269,7 +2341,7 @@ body.settings-open #browser-resizer { display: none; }
 }
 .session-badge { flex: 0 0 auto; display: inline-flex; align-items: center; }
 .session-badge .icon { width: 8px; height: 8px; }
-.session-badge.running { color: var(--accent-brand-strong); gap: 4px; }
+.session-badge.running { color: var(--accent-brand-text); gap: 4px; }
 /* The running badge is a spinning ring rather than a static dot; awaiting-input
    stays a still dot. The spinner path is stroked, so `.running`'s colour reaches
    it through `currentColor`.
@@ -2306,7 +2378,9 @@ body.settings-open #browser-resizer { display: none; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .session-actions { flex: 0 0 auto; display: flex; gap: 2px; opacity: 0; }
 .session-row:hover .session-actions,
-.session-row.selected .session-actions { opacity: 1; }
+.session-row.selected .session-actions,
+/* Tab lands on the delete button; it must be visible when it does. */
+.session-actions:focus-within { opacity: 1; }
 .session-delete {
   display: inline-flex;
   align-items: center;
@@ -2403,9 +2477,9 @@ body.settings-open #browser-resizer { display: none; }
   overflow-x: clip;
 }
 /* The reading column, bounded by `--reading-measure`. A full-bleed paragraph is
-   a readability problem rather than a taste one, but the old 760px cap left
-   300px of dead canvas on either side of a 1600px window; 1100px tops out
-   around 190 characters, which still reads. The scroller stays full width so
+   a readability problem rather than a taste one: 760px holds a line near 80
+   Latin characters (about 50 Chinese ones) at the reading size, the measure
+   long-form text is set to. The scroller stays full width so
    its scrollbar keeps to the panel's edge. Kept in step with
    `.composer-column` — that is what the shared token is for — or the composer
    stops sharing the text's axis.
@@ -2488,7 +2562,7 @@ body.settings-open #browser-resizer { display: none; }
 .transcript .item.user .user-bubble {
   padding: 7px 13px;
   background: var(--surface-card);
-  border-radius: var(--radius-bubble);
+  border-radius: var(--radius-md);
   color: var(--text-primary);
 }
 .transcript .item.user .user-bubble.clamped .user-text {
@@ -2856,11 +2930,10 @@ body.settings-open #browser-resizer { display: none; }
   color: var(--text-tertiary);
   background: currentColor;
 }
-.step-bead.awaiting-approval { color: var(--accent-warn); animation: blink var(--motion-running) var(--ease-out) infinite; }
+.step-bead.awaiting-approval { color: var(--accent-warn); animation: breathe var(--motion-running) var(--ease-out) infinite; }
 .step-bead.running { animation: breathe var(--motion-running) var(--ease-out) infinite; }
 .step-bead.done { color: var(--accent-review); }
 .step-bead.failed { color: var(--accent-danger); }
-@keyframes blink { 50% { opacity: 0.65; } }
 .step-tag {
   padding: 0 var(--space-1);
   border: 1px solid var(--border-subtle);
@@ -3182,7 +3255,8 @@ body.settings-open #browser-resizer { display: none; }
 }
 .failure-action:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
 .failure-action:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-.failure-action.primary { color: var(--text-primary); border-color: var(--border-strong); }
+.failure-action.primary { color: var(--surface-base); background: var(--text-primary); border-color: transparent; }
+.failure-action.primary:hover:enabled { color: var(--surface-base); background: color-mix(in srgb, var(--text-primary) 86%, var(--surface-base)); }
 /* The receipt a settled question or plan leaves: a thin-bordered card, quiet
    type. A question lists what was asked (grey) over the answer (primary); a plan
    is one line that opens the plan tab. */
@@ -3256,8 +3330,8 @@ body.settings-open #browser-resizer { display: none; }
   position: absolute;
   right: 16px;
   bottom: 12px;
-  width: 30px;
-  height: 30px;
+  width: var(--control-lg);
+  height: var(--control-lg);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -3359,7 +3433,7 @@ body.settings-open #browser-resizer { display: none; }
    so the newest week is always the one in view. */
 .usage-heatmap { display: flex; justify-content: flex-end; gap: 3px; overflow: hidden; }
 .usage-heat-col { flex: 0 0 10px; display: flex; flex-direction: column; gap: 3px; }
-.usage-heat { width: 10px; height: 10px; border-radius: 2px; background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.usage-heat { width: 10px; height: 10px; border-radius: var(--radius-mark); background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
 .usage-heat.future { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
 .usage-heat.level-1 { background: color-mix(in srgb, var(--accent-info) 30%, transparent); }
 .usage-heat.level-2 { background: color-mix(in srgb, var(--accent-info) 50%, transparent); }
@@ -3368,7 +3442,7 @@ body.settings-open #browser-resizer { display: none; }
 .usage-footnote { font-size: var(--type-meta); color: var(--text-tertiary); }
 .usage-tip {
   position: absolute;
-  z-index: 5;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -3399,6 +3473,7 @@ body.settings-open #browser-resizer { display: none; }
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
+  font-size: var(--type-meta);
   cursor: pointer;
 }
 .usage-retry:hover { color: var(--text-primary); background: var(--surface-hover); }
@@ -3467,12 +3542,12 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   position: absolute;
   left: 0;
   bottom: calc(100% + var(--space-2));
-  z-index: 1;
+  z-index: var(--z-popover);
   width: 16rem;
   max-height: 40vh;
   display: flex;
   flex-direction: column;
-  padding: var(--space-2);
+  padding: var(--space-1);
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
@@ -3492,7 +3567,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   color: var(--text-primary);
   border: 0;
   border-radius: var(--radius-sm);
-  padding: var(--space-2) var(--space-3);
+  padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
   text-align: left;
@@ -3513,7 +3588,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .branch-picker-row:hover,
 .project-picker-row:hover { background: var(--surface-hover); }
 .branch-picker-row:disabled,
-.project-picker-row:disabled { cursor: default; opacity: 0.5; }
+.project-picker-row:disabled { opacity: var(--opacity-disabled); cursor: default; }
 /* The keyboard cursor, which is not the same state as the pointer being over a
    row — the sidebar keeps the two apart for the same reason. */
 .branch-picker-row.selected,
@@ -3524,7 +3599,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .branch-picker-empty,
 .project-picker-empty {
   padding: var(--space-2) var(--space-3);
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font-size: var(--type-meta);
 }
 /* git's refusal, under the rows it applies to. Wrapped and scrollable: "your
@@ -3552,8 +3627,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   overflow-y: auto;
   pointer-events: auto;
   background: var(--surface-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-float);
   padding: var(--space-2) var(--space-3);
 }
@@ -3573,7 +3648,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 #surface .row .label { flex: 0 1 auto; min-width: min(11rem, 50%); overflow-wrap: anywhere; }
 #surface .row .value { color: var(--text-secondary); flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
 #surface .row.current .label { color: var(--text-primary); }
-#surface .row.disabled { opacity: 0.55; }
+#surface .row.disabled { opacity: var(--opacity-disabled); cursor: default; }
 #surface .row.heading .label { color: var(--text-primary); }
 #surface .row.tone-success .value { color: var(--text-success); }
 #surface .row.tone-warning .value { color: var(--text-warn); }
@@ -3586,12 +3661,12 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   overflow-y: auto;
   pointer-events: auto;
   background: var(--surface-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-lg);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-float);
   padding: var(--space-1);
 }
-#suggestions .suggestion { display: flex; gap: var(--space-2); padding: 4px var(--space-2); border-radius: var(--radius-sm); font-size: var(--type-ui); cursor: pointer; }
+#suggestions .suggestion { display: flex; gap: var(--space-2); padding: var(--menu-row-padding); border-radius: var(--radius-sm); font-size: var(--type-ui); cursor: pointer; }
 /* Hover is only an affordance: it says the row is clickable, it does not move the
    selection. The keyboard's own row stays `.selected` under the pointer. */
 #suggestions .suggestion:hover { background: var(--surface-hover); }
@@ -3641,9 +3716,9 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   the stack sits on top of the capsule. DOM order is visual order, top to
   bottom.
 
-  `z-index: 4` — over the transcript and `.scroll-bottom` (neither declares
-  one), under every real menu in the sheet (5–6) and therefore under the two
-  modal layer (`#rewind` 9).
+  `--z-composer` — over the transcript and `.scroll-bottom` (neither declares
+  one), under every real menu in the sheet (`--z-popover`, `--z-flyout`) and
+  therefore under the modal layers (`--z-dialog` and up).
 
   `pointer-events: none` is load-bearing: the shell stays in the box tree while
   all three children are hidden, and the `gap` between two open ones is its own
@@ -3654,7 +3729,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   left: 0;
   right: 0;
   bottom: 100%;
-  z-index: 4;
+  z-index: var(--z-composer);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -3822,7 +3897,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   justify-content: center;
   width: 18px;
   height: 16px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, currentColor 16%, transparent);
   color: var(--text-tertiary);
   font-family: var(--font-mono);
@@ -4025,7 +4100,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .path-tile-badge {
   align-self: flex-start;
   padding: 1px 6px;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   border: 1px solid var(--border-strong);
   color: var(--text-secondary);
   font-size: var(--type-meta);
@@ -4085,18 +4160,20 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   position: absolute;
   top: -6px;
   right: -6px;
-  width: 18px;
-  height: 18px;
+  width: var(--control-xs);
+  height: var(--control-xs);
   padding: 0;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: var(--type-micro);
-  line-height: 1;
   border-radius: 50%;
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
   color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--type-micro);
+  line-height: 1;
+  cursor: pointer;
   opacity: 0;
   transition: opacity var(--motion-micro) var(--ease-out);
 }
@@ -4215,8 +4292,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   /* Explicit, because the bar now shrinks: a 26px circle squeezed to an oval is
      not a smaller control, it is a broken one. */
   flex: 0 0 auto;
-  width: 26px;
-  height: 26px;
+  width: var(--control-md);
+  height: var(--control-md);
   background: transparent;
   color: var(--text-secondary);
   border: 1px solid var(--border-strong);
@@ -4252,7 +4329,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border-color: var(--border-subtle);
 }
 #chip-permission.open { color: var(--text-primary); border-color: var(--border-strong); }
-#chip-permission:disabled { opacity: 0.5; cursor: default; }
+#chip-permission:disabled { opacity: var(--opacity-disabled); cursor: default; }
 /* `bottom` clears the chip's own box — one `--type-meta` line at 1.5 inside
    `--space-1` padding and a hairline — so the card hangs above the pill rather
    than over it. */
@@ -4260,7 +4337,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   position: absolute;
   bottom: var(--space-6);
   left: 0;
-  z-index: 5;
+  z-index: var(--z-popover);
   min-width: 8rem;
   max-width: calc(100cqw - var(--space-4));
   display: flex;
@@ -4277,7 +4354,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   color: var(--text-primary);
   border: 0;
   border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
+  padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
   cursor: pointer;
@@ -4303,8 +4380,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   justify-content: center;
   /* Holds its size while the model's name gives — see `.chip-model-label`. */
   flex: 0 0 auto;
-  width: 24px;
-  height: 24px;
+  width: var(--control-sm);
+  height: var(--control-sm);
   background: var(--surface-card);
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
@@ -4351,7 +4428,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   position: absolute;
   right: calc(-1 * var(--canvas-shift));
   bottom: calc(100% + var(--space-2));
-  z-index: 5;
+  z-index: var(--z-popover);
   min-width: 15rem;
   max-width: 18rem;
   padding: var(--space-3);
@@ -4428,7 +4505,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   position: absolute;
   right: calc(-1 * var(--canvas-shift));
   bottom: calc(100% + var(--space-2));
-  z-index: 6;
+  z-index: var(--z-flyout);
   width: 18rem;
   max-height: min(32rem, 70vh);
   overflow-y: auto;
@@ -4501,7 +4578,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .ctx-swatch {
   width: 10px;
   height: 10px;
-  border-radius: 3px;
+  border-radius: var(--radius-mark);
 }
 .ctx-swatch-mcpTools { background: var(--accent-info); }
 .ctx-swatch-messages { background: var(--accent-brand); }
@@ -4619,7 +4696,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border-color: var(--border-subtle);
 }
 #chip-runtime.open { color: var(--text-primary); border-color: var(--border-strong); }
-#chip-runtime:disabled { opacity: 0.5; cursor: default; }
+#chip-runtime:disabled { opacity: var(--opacity-disabled); cursor: default; }
 /* The popover, and the flyout hanging off one of its rows. The same card as
    `.composer-menu` on the same layer (5): over `#composer-popovers` (4), under
    `#rewind` (9). It opens upward and right-aligned, because
@@ -4629,7 +4706,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   position: absolute;
   bottom: var(--space-6);
   right: 0;
-  z-index: 5;
+  z-index: var(--z-popover);
   /* Bounded by the composer bar it hangs from (`100cqw`), not by the window: in a
      narrow canvas — the browser panel open — a fixed 15rem ran off the edge. */
   min-width: min(15rem, calc(100cqw - var(--space-4)));
@@ -4669,7 +4746,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   position: absolute;
   right: 100%;
   bottom: 0;
-  z-index: 6;
+  z-index: var(--z-flyout);
   /* `max-content`: positioned off `right: 100%` of a ~15rem shell, the flyout's
      shrink-to-fit width had nothing to fit into and collapsed to its min-width,
      wrapping a long model name and stacking 「视觉」 one glyph per line. */
@@ -4712,7 +4789,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   color: var(--text-primary);
   border: 0;
   border-radius: var(--radius-sm);
-  padding: var(--space-1) var(--space-2);
+  padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
   cursor: pointer;
@@ -4721,14 +4798,14 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .chip-flyout-note { flex: 0 0 auto; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-meta); }
 .chip-flyout-item .icon { color: var(--text-primary); width: 14px; height: 14px; }
 .chip-flyout-item:hover:enabled { background: var(--surface-hover); }
-.chip-flyout-item.disabled { opacity: 0.55; cursor: default; }
+.chip-flyout-item.disabled { opacity: var(--opacity-disabled); cursor: default; }
 #submit, #stop {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 30px;
-  height: 30px;
+  width: var(--control-lg);
+  height: var(--control-lg);
   border: 0;
   border-radius: var(--radius-pill);
   cursor: pointer;
@@ -4750,7 +4827,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 #stop { background: transparent; color: var(--text-primary); }
 #stop:hover { background: var(--surface-hover); }
 #stop .icon { width: 22px; height: 22px; }
-#submit[disabled] { opacity: 0.5; cursor: not-allowed; }
+#submit[disabled] { opacity: var(--opacity-disabled); cursor: default; }
 
 /* --- the fullscreen image viewer ---
    The one layer that is *fixed* over the whole window rather than absolute
@@ -4759,12 +4836,12 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    belongs to no lane, and an image cropped to the canvas with the sidebar lit
    beside it is a large popover, not a viewer.
 
-   z-index 11, one step above `#rewind` (9). It is opened by a deliberate act and
+   `--z-viewer`, one step above `#rewind` (`--z-rewind`). It is opened by a deliberate act and
    closed by three of them, so it never *traps* anyone. */
 #lightbox {
   position: fixed;
   inset: 0;
-  z-index: 11;
+  z-index: var(--z-viewer);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -4862,24 +4939,30 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   padding: var(--space-1) var(--space-2);
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   box-shadow: var(--shadow-float);
 }
 .lightbox-zoom-step {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--control-md);
+  height: var(--control-md);
   padding: 0;
+  /* The button reset the other controls carry: without it the steps were drawn
+     as the platform's raised grey buttons inside the viewer's capsule. */
+  border: 0;
   border-radius: 50%;
+  background: transparent;
   color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
 }
 .lightbox-zoom-step:hover:not([disabled]) {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
-.lightbox-zoom-step[disabled] { opacity: 0.4; cursor: not-allowed; }
+.lightbox-zoom-step[disabled] { opacity: var(--opacity-disabled); cursor: default; }
 .lightbox-zoom-label {
   min-width: 3.5rem;
   text-align: center;
@@ -4894,13 +4977,15 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: var(--control-lg);
+  height: var(--control-lg);
   padding: 0;
   border-radius: 50%;
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
   color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
 }
 .lightbox-close:hover { background: var(--surface-hover); color: var(--text-primary); }
 
@@ -4936,19 +5021,23 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font-size: var(--type-meta);
   cursor: pointer;
 }
+/* The one primary there is: the inverted fill the settings screen and the
+   permission card already used. The rewind panel's raised-grey primary and the
+   failure card's firmer outline were two more ways to say the same thing. */
 #rewind-panel .dialog-btn.primary,
 #composer-request .dialog-btn.primary {
-  background: var(--surface-active);
-  border-color: var(--border-strong);
-  color: var(--text-primary);
+  background: var(--text-primary);
+  border-color: transparent;
+  color: var(--surface-base);
 }
 #rewind-panel .dialog-btn.danger,
 #composer-request .dialog-btn.danger {
   border-color: var(--accent-danger);
   color: var(--text-danger);
 }
-#rewind-panel .dialog-btn:hover,
-#composer-request .dialog-btn:hover { background: var(--surface-hover); }
+#rewind-panel .dialog-btn:hover:enabled { background: var(--surface-hover); }
+#rewind-panel .dialog-btn.primary:hover:enabled,
+#composer-request .dialog-btn.primary:hover:enabled { background: color-mix(in srgb, var(--text-primary) 86%, var(--surface-base)); }
 /* Where Enter is aimed. On a destructive permission request that is *deny*, so
    this is not decoration — it is the answer about to be given. */
 #rewind-panel .dialog-btn.selected,
@@ -4967,7 +5056,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   box-sizing: border-box;
   padding: 0 4px;
   border: 1px solid var(--border-strong);
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--text-tertiary);
   font-family: var(--font-mono);
@@ -5004,8 +5093,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--control-sm);
+  height: var(--control-sm);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -5041,7 +5130,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   width: 13px;
   height: 13px;
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 .ask-tick.on { border-color: var(--text-primary); background: var(--text-primary); }
 .ask-other-input {
@@ -5056,7 +5145,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font: inherit;
   outline: none;
 }
-.ask-other-input::placeholder { color: var(--text-tertiary); }
 .ask-other-input:focus { border-color: var(--focus-ring); }
 .ask-footer { display: flex; align-items: center; gap: 8px; margin-top: var(--space-3); }
 .ask-spacer { flex: 1 1 auto; }
@@ -5092,7 +5180,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font: inherit;
   outline: none;
 }
-.plan-feedback-input::placeholder { color: var(--text-tertiary); }
 .plan-feedback-input:focus { border-color: var(--focus-ring); }
 #composer-request .plan-actions { justify-content: space-between; }
 .plan-actions-group { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -5102,7 +5189,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   display: flex;
   flex-direction: column;
 }
-#plan-view[hidden] { display: none; }
 .plan-panel-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -5111,7 +5197,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font-size: var(--type-dense);
   line-height: var(--leading-dense);
 }
-.plan-panel-empty { padding: var(--space-4); color: var(--text-tertiary); font-size: var(--type-dense); }
+.plan-panel-empty { padding: var(--space-4); color: var(--text-tertiary); font-size: var(--type-meta); }
 .plan-panel-foot {
   flex: none;
   display: flex;
@@ -5146,16 +5232,19 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   transition: background-color var(--motion-micro) var(--ease-out), color var(--motion-micro) var(--ease-out);
 }
 .plan-panel-copy:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
-.plan-panel-copy:disabled { opacity: 0.45; cursor: default; }
+.plan-panel-copy:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .plan-panel-copy:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* On the docked card the secondary buttons rest on the hover fill, so their
+   hover is one rung further: it used to be the same colour, no answer at all. */
 #composer-request .dialog-btn { background: var(--surface-hover); border-color: transparent; }
-#composer-request .dialog-btn.primary { background: var(--text-primary); border-color: transparent; color: var(--surface-base); }
+#composer-request .dialog-btn:not(.primary):hover:enabled { background: var(--surface-active); }
+#rewind-panel .dialog-btn.primary .kbd,
 #composer-request .dialog-btn.primary .kbd { border-color: currentColor; color: inherit; opacity: 0.6; }
-#composer-request .dialog-btn:disabled { opacity: 0.45; cursor: default; background: var(--surface-card); }
+#composer-request .dialog-btn:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
 /*
   --- the rewind panel ---
-  Its own modal layer (z-index 9).
+  Its own modal layer (`--z-rewind`).
 
   Both numbers are above 5–6, which is where every popover in the app sits (the
   title bar's and canvas header's menus, the permission pill's, the settings
@@ -5171,7 +5260,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   align-items: center;
   justify-content: center;
   padding: var(--space-5);
-  z-index: 9;
+  z-index: var(--z-rewind);
 }
 #rewind-panel {
   background: var(--surface-card);
@@ -5261,7 +5350,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .md .md-inline-code {
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 0 4px;
   color: var(--text-primary);
   font-family: var(--font-mono);
@@ -5298,8 +5387,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--control-sm);
+  height: var(--control-sm);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -5460,7 +5549,7 @@ body.projects-open #browser-resizer,
      becomes available again: everything below the caption band. */
   position: fixed;
   inset: var(--titlebar-height) 0 0;
-  z-index: 8;
+  z-index: var(--z-settings);
   background: var(--surface-canvas);
   display: flex;
   flex: 1 1 auto;
@@ -5476,10 +5565,6 @@ body.projects-open #browser-resizer,
    layout — this one fills the whole canvas, so a ring around it says nothing the
    user cannot already see, at the size of the entire screen. */
 #settings:focus { outline: none; }
-
-#settings[hidden] {
-  display: none;
-}
 
 .settings-nav {
   display: flex;
@@ -5501,10 +5586,6 @@ body.projects-open #browser-resizer,
   color: var(--text-primary);
   font: inherit;
   font-size: var(--type-meta);
-}
-
-.settings-search::placeholder {
-  color: var(--text-tertiary);
 }
 
 .settings-search:focus {
@@ -5571,7 +5652,7 @@ body.projects-open #browser-resizer,
 }
 
 .settings-nav-item:disabled {
-  color: var(--text-tertiary);
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 
@@ -5724,21 +5805,34 @@ body.projects-open #browser-resizer,
   padding-top: var(--space-1);
 }
 
+/* The field's edge is the firm hairline: on light paper a subtle edge around a
+   fill one step off the page measured about 1.05:1 — a field you had to find. */
 .settings-input,
 .settings-select {
   box-sizing: border-box;
   height: 30px;
   min-width: 200px;
   padding: 0 var(--space-2);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  background: var(--surface-base);
+  background-color: var(--surface-base);
   color: var(--text-primary);
   font: inherit;
 }
-
-.settings-input::placeholder {
-  color: var(--text-tertiary);
+/* Drawn by the sheet, not the platform: macOS draws a select as a stepper with
+   a double arrow, Windows as a flat box with a chevron, and neither matches the
+   inputs beside it. The chevron is two gradient triangles in the secondary text
+   colour, so it follows the theme like any glyph. */
+.settings-select {
+  padding-right: 28px;
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--text-secondary) 50%),
+    linear-gradient(135deg, var(--text-secondary) 50%, transparent 50%);
+  background-position: calc(100% - 15px) 55%, calc(100% - 10px) 55%;
+  background-size: 5px 5px;
+  background-repeat: no-repeat;
+  cursor: pointer;
 }
 
 .settings-input:focus,
@@ -5830,7 +5924,7 @@ body.projects-open #browser-resizer,
 }
 
 .settings-pill:disabled {
-  color: var(--text-tertiary);
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 
@@ -5838,14 +5932,14 @@ body.projects-open #browser-resizer,
   position: absolute;
   top: calc(100% + 4px);
   right: 0;
-  z-index: 5;
+  z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
   gap: 1px;
   min-width: 100%;
   max-height: 240px;
   overflow-y: auto;
-  padding: 4px;
+  padding: var(--space-1);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--surface-card);
@@ -5856,12 +5950,13 @@ body.projects-open #browser-resizer,
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
+  padding: var(--menu-row-padding);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-primary);
   font: inherit;
+  font-size: var(--type-ui);
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
@@ -5932,7 +6027,7 @@ body.projects-open #browser-resizer,
 }
 
 .settings-toggle:disabled {
-  opacity: 0.45;
+  opacity: var(--opacity-disabled);
   cursor: default;
 }
 
@@ -6017,12 +6112,8 @@ body.projects-open #browser-resizer,
 }
 
 .settings-btn:disabled {
-  color: var(--text-tertiary);
+  opacity: var(--opacity-disabled);
   cursor: default;
-}
-
-.settings-btn.primary:disabled {
-  background: var(--surface-active);
 }
 
 .settings-confirm {
@@ -6062,7 +6153,7 @@ body.projects-open #browser-resizer,
 .settings-error.banner {
   position: sticky;
   bottom: var(--space-4);
-  z-index: 2;
+  z-index: var(--z-pinned);
   box-shadow: var(--shadow-float);
 }
 
@@ -6086,7 +6177,7 @@ body.projects-open #browser-resizer,
   position: fixed;
   inset: 0;
   -webkit-app-region: no-drag;
-  z-index: 7;
+  z-index: var(--z-dialog);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -6123,8 +6214,8 @@ body.projects-open #browser-resizer,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--control-md);
+  height: var(--control-md);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -6203,7 +6294,8 @@ body.projects-open #browser-resizer,
 .mcp-form-card > .settings-input {
   width: 100%;
   min-width: 0;
-  background: var(--surface-canvas);
+  /* The colour only: a `background` shorthand would wipe the select's chevron. */
+  background-color: var(--surface-canvas);
 }
 
 /* Inside a form a dropdown is a field like the others: boxed and full width. */
@@ -6258,7 +6350,8 @@ body.projects-open #browser-resizer,
 .mcp-segmented-btn {
   padding: 3px 12px;
   border: 0;
-  border-radius: 6px;
+  /* Concentric with the track: its radius less the 2px padding between them. */
+  border-radius: calc(var(--radius-sm) - 2px);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -6302,8 +6395,8 @@ body.projects-open #browser-resizer,
   align-items: center;
   justify-content: center;
   flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
+  width: var(--control-md);
+  height: var(--control-md);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -6401,8 +6494,8 @@ body.projects-open #browser-resizer,
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: var(--control-md);
+  height: var(--control-md);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -6644,7 +6737,7 @@ body.projects-open #browser-resizer,
   box-sizing: border-box;
   height: 14px;
   border: 1px solid var(--border-strong);
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .settings-model-row.picked .settings-model-check {
@@ -6722,7 +6815,6 @@ body.projects-open #browser-resizer,
 .session-confirm-yes,
 .session-confirm-no,
 .session-actions,
-.welcome-project,
 .scroll-bottom,
 .run-line,
 .step-head,
@@ -6765,19 +6857,19 @@ body.projects-open #browser-resizer,
    single brand fill and has nowhere brighter to go. */
 #submit, #stop { transition-duration: var(--motion-release); transition-timing-function: var(--spring); }
 #submit:active, #stop:active { transform: scale(0.96); transition-duration: var(--motion-press); }
+/* A ghost icon button answers the press itself: one step darker than its
+   hover, so a click on a slow action still shows it landed. */
+:is(.titlebar-rail, #composer-attach, .canvas-menu-trigger, .thread-row-more, .toast-close,
+    .md .md-code-copy, .ask-icon-btn, .settings-dialog-close, .changes-file-open,
+    .sidebar-help, .mcp-btn-trash):active:enabled {
+  background: var(--surface-active);
+  transition-duration: var(--motion-press);
+}
 
 @keyframes fade-in { from { opacity: 0; } }
-/* A menu that hangs *below* its trigger arrives from above it, and one that
-   opens upward from below — the panel appears to come out of the control rather
-   than to land on top of it. The 8px travel stays within the design's spatial
-   range and uses the semantic entrance timing. The
-   `scale(0.985)` is the other half of "comes out of the control" — a panel that
-   only slides looks like it was already the right size somewhere off screen. */
-@keyframes drop-in { from { opacity: 0; transform: translateY(-8px) scale(0.985); } }
-@keyframes rise-in { from { opacity: 0; transform: translateY(8px); } }
-@keyframes slide-in { from { opacity: 0; transform: translateX(8px) scale(0.985); } }
 
-/* Presence owns the original drop/rise/slide paths. Transitions, rather than
+/* Presence owns the drop/rise/slide paths the deleted `drop-in`/`rise-in`/
+   `slide-in` keyframes once drew. Transitions, rather than
    restarting keyframes, let a reversing intent continue from the current pixels. */
 .presence[data-presence] {
   --presence-x: 0px;
@@ -6929,7 +7021,7 @@ body.projects-open #browser-resizer,
    as `.session-badge.running` does. */
 .canvas-status.tone-running,
 .thread-status.tone-running,
-.thread-note-status.tone-running { color: var(--accent-brand-strong); }
+.thread-note-status.tone-running { color: var(--accent-brand-text); }
 .canvas-status.tone-attention,
 .thread-status.tone-attention,
 .thread-note-status.tone-attention { color: var(--text-warn); }
@@ -6942,6 +7034,8 @@ body.projects-open #browser-resizer,
 .canvas-status.tone-muted,
 .thread-status.tone-muted,
 .thread-note-status.tone-muted { color: var(--text-tertiary); }
+/* The running page's spinner icon was drawn but never turned. */
+.thread-status.tone-running .icon { animation: spin var(--motion-running) linear infinite; }
 
 /* Sidebar: the coordinator row sits inside its project group and reuses
    `.session-row`'s box; its thread counts trail the title. */
@@ -6972,6 +7066,7 @@ body.projects-open #browser-resizer,
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
+  font-size: var(--type-meta);
   cursor: pointer;
 }
 .canvas-back-coordinator:hover { color: var(--text-primary); background: var(--surface-hover); }
@@ -7001,7 +7096,7 @@ body.projects-open #browser-resizer,
 .thread-row-stop:hover:enabled { color: var(--text-danger); }
 .canvas-stop-thread:disabled,
 .thread-row-open:disabled,
-.thread-row-stop:disabled { opacity: 0.5; cursor: default; }
+.thread-row-stop:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
 /* The 线程 page's head over a coordination project's threads: the title and
    the thread counts, 全部停止 at the end of the counts. The title keeps clear of
@@ -7013,7 +7108,6 @@ body.projects-open #browser-resizer,
   gap: 2px;
   padding: var(--space-3) var(--space-3) var(--space-2);
 }
-#overview-head[hidden] { display: none; }
 .overview-title {
   margin: 0;
   padding-right: 40px;
@@ -7047,12 +7141,11 @@ body.projects-open #browser-resizer,
   cursor: pointer;
 }
 .overview-stop-all:hover:enabled { color: var(--text-danger); background: var(--surface-hover); }
-.overview-stop-all:disabled { opacity: 0.5; cursor: default; }
+.overview-stop-all:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
 /* Thread list: rows straight on the panel, one line each, under bands that
    name their group. */
 #thread-view { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
-#thread-view[hidden] { display: none; }
 .thread-panel { display: flex; flex-direction: column; gap: var(--space-1); padding: 0 var(--space-2) var(--space-2); }
 .thread-panel-notice {
   padding: var(--space-1) var(--space-2);
@@ -7070,7 +7163,6 @@ body.projects-open #browser-resizer,
   color: var(--text-danger);
   font-size: var(--type-meta);
 }
-.thread-detail-error[hidden] { display: none; }
 .thread-detail-error-text { min-width: 0; overflow-wrap: anywhere; }
 .thread-detail-retry {
   flex: none;
@@ -7080,6 +7172,7 @@ body.projects-open #browser-resizer,
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
+  font-size: var(--type-meta);
   cursor: pointer;
 }
 .thread-detail-retry:hover { color: var(--text-primary); background: var(--surface-hover); }
@@ -7112,7 +7205,7 @@ body.projects-open #browser-resizer,
 .thread-group-head {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-raised);
   display: flex;
   align-items: center;
   gap: var(--space-1);
@@ -7120,8 +7213,9 @@ body.projects-open #browser-resizer,
   padding: 0 var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
-  /* Opaque, so rows scrolling under the stuck band do not show through. */
-  background: color-mix(in srgb, var(--text-primary) 4%, var(--surface-card));
+  /* Opaque, so rows scrolling under the stuck band do not show through. A rung
+     of the ladder, not a private 4% mix of its own. */
+  background: var(--surface-card);
   color: var(--text-tertiary);
   font: inherit;
   font-size: var(--type-meta);
@@ -7143,7 +7237,8 @@ body.projects-open #browser-resizer,
   border-radius: var(--radius-sm);
 }
 .thread-row:hover { background: var(--surface-hover); }
-.thread-row.current { background: color-mix(in srgb, var(--text-primary) 4%, transparent); }
+/* The open thread reads as the sidebar's active session does: the same rung. */
+.thread-row.current { background: var(--surface-active); }
 .thread-row.pending { opacity: 0.6; }
 .thread-row.menu-open { anchor-name: --thread-menu; }
 .thread-row-main {
@@ -7211,8 +7306,8 @@ body.projects-open #browser-resizer,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: var(--control-sm);
+  height: var(--control-sm);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -7236,7 +7331,7 @@ body.projects-open #browser-resizer,
   top: anchor(--thread-menu bottom);
   right: anchor(--thread-menu right);
   position-try-fallbacks: flip-block;
-  z-index: 5;
+  z-index: var(--z-popover);
   margin: 2px 0;
   min-width: 9rem;
   display: flex;
@@ -7250,7 +7345,7 @@ body.projects-open #browser-resizer,
 .thread-menu-item {
   display: flex;
   align-items: center;
-  padding: 6px var(--space-2);
+  padding: var(--menu-row-padding);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -7260,13 +7355,14 @@ body.projects-open #browser-resizer,
   text-align: left;
   cursor: pointer;
 }
+/* The one menu whose rows gave no answer to the pointer. */
+.thread-menu-item:hover:enabled { background: var(--surface-hover); }
 .thread-menu-item.danger { color: var(--text-danger); }
-.thread-menu-item:disabled { opacity: 0.5; cursor: default; }
+.thread-menu-item:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
 /* Merge bar: the same pill vocabulary as `.process-chip`, stacked above the
    composer in the strip's place. */
 #merge-bar { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-2); }
-#merge-bar[hidden] { display: none; }
 .merge-bar-toggle,
 .merge-bar-row {
   display: inline-flex;
@@ -7315,7 +7411,7 @@ body.projects-open #browser-resizer,
 .merge-bar-merge:hover:enabled,
 .merge-bar-resolve:hover:enabled { background: var(--surface-hover); }
 .merge-bar-merge:disabled,
-.merge-bar-resolve:disabled { color: var(--text-tertiary); cursor: default; }
+.merge-bar-resolve:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .merge-bar-dismiss {
   flex: 0 0 auto;
   padding: 0 var(--space-1);
@@ -7348,7 +7444,7 @@ body.projects-open #browser-resizer,
   top: var(--space-3);
   inset-inline: 0;
   margin-inline: auto;
-  z-index: 10;
+  z-index: var(--z-toast);
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
@@ -7384,8 +7480,8 @@ body.projects-open #browser-resizer,
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: var(--control-sm);
+  height: var(--control-sm);
   padding: 0;
   border: 0;
   border-radius: var(--radius-sm);
@@ -7473,7 +7569,7 @@ body.projects-open #browser-resizer,
   cursor: pointer;
 }
 .thread-note-open:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
-.thread-note-open:disabled { opacity: 0.5; cursor: default; }
+.thread-note-open:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
 /* --- projects page ----------------------------------------------------------
    Fills the canvas (the sidebar stays up, so its「项目」item can close it again). */
@@ -7483,7 +7579,6 @@ body.projects-open #browser-resizer,
   overflow-y: auto;
   background: var(--surface-canvas);
 }
-#projects[hidden] { display: none; }
 .projects-page {
   display: flex;
   flex-direction: column;
@@ -7574,6 +7669,7 @@ body.projects-open #browser-resizer,
   background: var(--surface-card);
   color: var(--text-primary);
   font: inherit;
+  font-size: var(--type-meta);
   cursor: pointer;
 }
 .startup-failure-retry:hover { background: var(--surface-hover); }
@@ -7583,7 +7679,7 @@ body.projects-open #browser-resizer,
 .drop-overlay {
   position: absolute;
   inset: 8px;
-  z-index: 6;
+  z-index: var(--z-flyout);
   display: flex;
   align-items: center;
   justify-content: center;

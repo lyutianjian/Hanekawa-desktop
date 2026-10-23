@@ -319,11 +319,17 @@ test('the scrims are positioned against the canvas and stack above every popover
   )
 
   // The ordering is these numbers now: before S6 the two scrims won by being
-  // last in the body, and every popover in the app sits at 5–6.
+  // last in the body, and every popover in the app sits at 5–6. Each layer is
+  // a rung of the `--z-` ladder in `:root`, so a value resolves through it.
+  const root = blocks.find((block) => block.selector === ':root')
+  const rung = (value: string) => {
+    const name = /^var\((--z-[a-z]+)\)$/.exec(value)?.[1]
+    return Number(name === undefined ? value : root?.decls.find((d) => d.prop === name)?.value)
+  }
   const layers = blocks.flatMap((block) =>
     block.decls
       .filter((d) => d.prop === 'z-index')
-      .map((d) => ({ selector: block.selector, value: Number(d.value) })),
+      .map((d) => ({ selector: block.selector, value: rung(d.value) })),
   )
   assert.ok(layers.length >= 3, `the sheet still declares layers: ${layers.length}`)
   const at = (selector: string) => layers.find((layer) => layer.selector === selector)?.value
