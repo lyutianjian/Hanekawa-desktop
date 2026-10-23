@@ -56,6 +56,7 @@ import {
   moveSelection,
   newSessionIntent,
   nextCollapsePhase,
+  nextUnreadLanes,
   toggleProject,
   sidebarChordToIntent,
   sidebarKeyToIntent,
@@ -366,6 +367,9 @@ let activeLane: string | undefined
  * a real tie.
  */
 const lastActiveTick = new Map<string, number>()
+/** Lanes whose turn ended while another was on screen; `nextUnreadLanes` owns the rule. */
+let unreadLanes: ReadonlySet<string> = new Set()
+let laneWasStreaming: ReadonlyMap<string, boolean> = new Map()
 let tick = 0
 /** Whether any pane has attached yet; see `canvasIsEmpty`. */
 let hadPane = false
@@ -586,9 +590,14 @@ function removePaneSession(lane: string): void {
 /** What each live lane contributes that no wire field carries. Built once per pass. */
 function laneStatuses(): Map<string, SidebarLaneStatus> {
   const statuses = new Map<string, SidebarLaneStatus>()
+  const streaming = new Map<string, boolean>()
+  for (const [lane, session] of paneSessions) streaming.set(lane, session.client.getSnapshot().isStreaming)
+  unreadLanes = nextUnreadLanes(unreadLanes, laneWasStreaming, streaming, activeLane)
+  laneWasStreaming = streaming
   for (const [lane, session] of paneSessions) {
     statuses.set(lane, {
-      streaming: session.client.getSnapshot().isStreaming,
+      streaming: streaming.get(lane) === true,
+      unread: unreadLanes.has(lane),
       // `hasOverlay` is "a blocking request is drawn *or* parked" — the pane
       // folds every request into its queue whether or not it is painting.
       blocked: session.shellState().hasOverlay,

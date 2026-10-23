@@ -84,7 +84,7 @@ export function sidebarHint(platform: DesktopPlatform): Array<{ label: string; c
 // --- the view ----------------------------------------------------------------
 
 /** What a row says about the pane behind it, if there is one. */
-export type SidebarBadge = 'none' | 'running' | 'awaiting-input' | 'failed'
+export type SidebarBadge = 'none' | 'running' | 'awaiting-input' | 'failed' | 'unread'
 
 export interface SidebarRow {
   readonly sessionId: string
@@ -327,6 +327,30 @@ export interface SidebarLaneStatus {
    * invisible until its first input or output.
    */
   readonly hasConversation: boolean
+  /** A turn finished here while another session was on screen; see {@link nextUnreadLanes}. */
+  readonly unread?: boolean
+}
+
+/**
+ * The lanes with a reply the user has not seen yet.
+ *
+ * A lane turns unread when its turn ends (streaming → not) while it is not the
+ * active one, and turns read the moment it becomes active. Lanes that are gone
+ * drop out. Without it a background session that finished looked exactly like
+ * one that never ran, and the user had to open each to find the answer.
+ */
+export function nextUnreadLanes(
+  unread: ReadonlySet<string>,
+  wasStreaming: ReadonlyMap<string, boolean>,
+  streaming: ReadonlyMap<string, boolean>,
+  activeLane: string | undefined,
+): Set<string> {
+  const next = new Set<string>()
+  for (const [lane, now] of streaming) {
+    if (lane === activeLane) continue
+    if (unread.has(lane) || (wasStreaming.get(lane) === true && !now)) next.add(lane)
+  }
+  return next
 }
 
 export interface SidebarState {
@@ -457,7 +481,8 @@ function badgeFor(lane: string | undefined, state: SidebarState, failed: boolean
   // "Running" is the agent loop *or* a process it left behind — a backgrounded
   // command keeps the session busy after the turn ends.
   if (status?.streaming || status?.processes) return 'running'
-  return failed ? 'failed' : 'none'
+  if (failed) return 'failed'
+  return status?.unread ? 'unread' : 'none'
 }
 
 /**

@@ -18,6 +18,7 @@ import {
   type SidebarProjectSessions,
   type SidebarState,
   type SidebarView,
+  nextUnreadLanes,
 } from '../src/desktop/renderer/model/sidebar.js'
 import type { WireCoordinationThreads, WireLaneInfo, WireThreadStatus } from '../src/desktop/shellProtocol.js'
 import type { WireSessionSummary } from '../src/desktop/shellProtocol.js'
@@ -1190,4 +1191,28 @@ test('a project known only from a lane is still pinned', () => {
     coordination: new Map([['/lane-only', { projectRoot: '/lane-only', started: true, threads: [] }]]),
   }))
   assert.deepEqual(view.pinned.map((entry) => entry.projectRoot), ['/lane-only'])
+})
+
+/**
+ * A background session that finished used to look exactly like one that never
+ * ran; the user had to open each to find the answer. Its row now carries the
+ * thread panel's blue dot until it is opened.
+ */
+test('a turn that ends out of sight leaves the row unread until it is opened', () => {
+  const was = new Map([['1', true], ['2', true], ['3', false]])
+  const now = new Map([['1', false], ['2', false], ['3', false]])
+  const unread = nextUnreadLanes(new Set(), was, now, '2')
+  assert.deepEqual([...unread], ['1'], 'the active lane was watched, and an idle one has nothing new')
+  assert.deepEqual([...nextUnreadLanes(unread, now, now, undefined)], ['1'], 'it stays until read')
+  assert.deepEqual([...nextUnreadLanes(unread, now, now, '1')], [], 'opening it reads it')
+  assert.deepEqual([...nextUnreadLanes(unread, now, new Map(), undefined)], [], 'a closed lane drops out')
+
+  const state = stateWith({
+    projects: [project('/a', 'alpha', [session('a1'), session('a2', { failed: true })])],
+    lanes: [lane('1', 'a1', '/a'), lane('2', 'a2', '/a')],
+    laneStatus: new Map([['1', paneStatus({ unread: true })], ['2', paneStatus({ unread: true })]]),
+  })
+  const badges = new Map(sidebarView(state).rows.map((row) => [row.sessionId, row.badge]))
+  assert.equal(badges.get('a1'), 'unread')
+  assert.equal(badges.get('a2'), 'failed', 'a failure is the thing to read')
 })

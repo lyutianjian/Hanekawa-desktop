@@ -1065,3 +1065,57 @@ test('a text button keeps a title only when it says more than the label', () => 
     stub.uninstall()
   }
 })
+
+/**
+ * The hover says when a session last moved, and says it when it is read: the
+ * row is not repainted as time passes, so the words are written on arrival.
+ * A background lane that finished carries the thread panel's blue dot.
+ */
+test('a session row says its age on hover, and an unread one carries a named dot', (t) => {
+  const { render, root, stub } = mount(t)
+  const minutesAgo = new Date(Date.now() - 5 * 60_000).toISOString()
+  const base = tieredState()
+  render(viewOf({
+    ...base,
+    projects: base.projects!.map((project) => ({
+      ...project,
+      sessions: project.sessions.map((session) => (session.id === 'background' ? { ...session, updatedAt: minutesAgo } : session)),
+    })),
+    laneStatus: new Map([['l2', { streaming: false, blocked: false, processes: false, hasConversation: true, unread: true }]]),
+  }))
+
+  const row = rowTitled(root(), '后台 lane')
+  stub.dispatch(row.node, 'mouseenter')
+  assert.equal((find(row, 'session-open')!.node as unknown as { title: string }).title, '后台 lane · 2 条消息 · 5 分钟前')
+  const badge = find(row, 'session-badge')
+  assert.ok(badge && badge.classes.includes('unread'))
+  assert.equal(badge.attributes.get('aria-label'), '有新回复')
+})
+
+/**
+ * A right press was the only way into a project's menu: nothing a keyboard, a
+ * one-button trackpad or a first-time user could find. The `⋯` is the visible
+ * route, and Shift+F10 is the platform's keyboard one, which also moves focus
+ * into the menu once it is drawn.
+ */
+test('a project menu opens from a visible ⋯ and from Shift+F10, and the keyboard lands in it', (t) => {
+  const { render, root, stub, intents } = mount(t)
+  render(viewOf(tieredState()))
+
+  const more = find(root(), 'project-more')
+  assert.ok(more, 'the heading carries a ⋯')
+  assert.equal(more.attributes.get('aria-haspopup'), 'menu')
+  assert.equal(more.attributes.get('aria-expanded'), 'false')
+  assert.equal(more.attributes.get('aria-label'), '项目操作')
+  stub.click(more.node)
+  assert.deepEqual(intents, [{ kind: 'open-project-menu', projectRoot: '/w/app' }])
+
+  intents.length = 0
+  const event = stub.dispatch(find(root(), 'project-row')!.node, 'keydown', { key: 'F10', shiftKey: true })
+  assert.equal(event.defaultPrevented, true)
+  assert.deepEqual(intents, [{ kind: 'open-project-menu', projectRoot: '/w/app' }])
+  render(viewOf({ ...tieredState(), projectMenu: '/w/app' }))
+  const item = find(root(), 'project-menu-item')!
+  assert.equal(document.activeElement, item.node, 'Shift+F10 puts focus on the item')
+  assert.equal(find(root(), 'project-more')?.attributes.get('aria-expanded'), 'true')
+})

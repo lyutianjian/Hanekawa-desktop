@@ -1,3 +1,4 @@
+import { relativeTime } from '../model/timeLabel.js'
 import {
   SIDEBAR_COLLAPSE_FALLBACK_MS,
   SIDEBAR_EMPTY_RECENT_TEXT,
@@ -92,6 +93,7 @@ const BADGE_LABELS = {
   running: '运行中',
   'awaiting-input': '等待授权',
   failed: '失败',
+  unread: '有新回复',
 } as const
 
 export function createSidebarView(
@@ -243,6 +245,10 @@ export function createSidebarView(
     readonly head: HTMLElement
     headSignature?: string
     heading?: HTMLButtonElement
+    /** The visible `⋯` that opens the menu a right press opens; absent on the global workspace. */
+    more?: HTMLButtonElement
+    /** Opened from the keyboard: the item takes focus once it is drawn. */
+    focusMenu?: boolean
     /**
      * The heading's context menu, kept across repaints and hidden when shut.
      *
@@ -363,7 +369,7 @@ export function createSidebarView(
   // left press there closes the menu and the swallowed click does not also fold
   // the group, and a right press closes it and the swallowed `contextmenu` does
   // not re-open it, which is what the toggle would have done.
-  dismissable(['.project-menu'], {
+  dismissable(['.project-menu', '.project-more'], {
     isOpen: () => asking.menu,
     close: () => onIntent({ kind: 'open-project-menu', projectRoot: undefined }),
   })
@@ -427,7 +433,14 @@ export function createSidebarView(
     const open = el('button', 'session-open')
     open.type = 'button'
     open.dataset.focusKey = `o:${row.sessionId}`
-    open.title = `${row.title} · ${row.messageCount} 条消息`
+    // The full name (a long one is cut to an ellipsis), its size and when it
+    // last moved. Written on arrival rather than at render, so 「N 分钟前」 is
+    // true when it is read: the row is not repainted as time passes.
+    const describe = (): void => {
+      const when = relativeTime(row.updatedAt, Date.now())
+      open.title = [row.title, `${row.messageCount} 条消息`, when].filter(Boolean).join(' · ')
+    }
+    describe()
     // The name is a box — the clipper, with the ellipsis — around a track that
     // travels inside it. Translating the clipper itself would slide the
     // already-truncated box out of view rather than reveal anything.
@@ -470,12 +483,16 @@ export function createSidebarView(
     // `:focus-within`, so a row arrived at by Tab has to have been measured too.
     node.addEventListener('mouseenter', () => {
       hovered = row.sessionId
+      describe()
       measure()
     })
     node.addEventListener('mouseleave', () => {
       if (hovered === row.sessionId) hovered = undefined
     })
-    node.addEventListener('focusin', measure)
+    node.addEventListener('focusin', () => {
+      describe()
+      measure()
+    })
     if (trailing) open.appendChild(trailing)
     if (row.badge !== 'none') {
       const badge = el('span', `session-badge ${row.badge}`)
@@ -690,19 +707,44 @@ export function createSidebarView(
         actions.appendChild(add)
       }
       headingRow.appendChild(actions)
+      entry.more = undefined
 
       // The global workspace has no registry entry to forget, so it has no menu —
       // and `isGlobal` comes off the wire rather than from matching the display
       // name, which the renderer is not allowed to do.
+      //
+      // A right press was the only way in, which a keyboard, a trackpad without
+      // a secondary click, or anyone who never thought to try could not find.
+      // The `⋯` shows on hover and focus; Shift+F10 and the menu key are the
+      // platform's own keyboard route to a context menu.
       if (!group.isGlobal) {
+        const openMenu = (fromKeyboard: boolean): void => {
+          entry.focusMenu = fromKeyboard
+          onIntent({ kind: 'open-project-menu', projectRoot: group.projectRoot })
+        }
         headingRow.addEventListener('contextmenu', (event) => {
           event.preventDefault()
-          onIntent({ kind: 'open-project-menu', projectRoot: group.projectRoot })
+          openMenu(false)
         })
+        headingRow.addEventListener('keydown', (event) => {
+          if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
+          event.preventDefault()
+          event.stopPropagation()
+          openMenu(true)
+        })
+        const more = button('project-more', '', '项目操作', () => openMenu(entry.focusMenu === true), { icon: 'more' })
+        more.dataset.focusKey = `p:${group.projectRoot}`
+        more.setAttribute('aria-haspopup', 'menu')
+        more.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') entry.focusMenu = true
+        })
+        if (!group.confirmingRemove) actions.appendChild(more)
+        entry.more = more
       }
       replace(entry.head, headingRow)
     }
     projectHeadings.set(group.projectRoot, entry.heading!)
+    entry.more?.setAttribute('aria-expanded', String(group.menuOpen))
 
     // Only when the open state actually changes: this runs on every repaint, and
     // rebuilding the item under a menu the user is aiming at would take the
@@ -720,6 +762,8 @@ export function createSidebarView(
       // then drops the focus to `<body>` without a word: hand it to the heading.
       if (!group.menuOpen && entry.menu.contains(document.activeElement)) entry.heading?.focus()
       entry.menuPresence.set(group.menuOpen)
+      if (group.menuOpen && entry.focusMenu) (entry.menu.firstElementChild as HTMLElement | null)?.focus()
+      entry.focusMenu = false
     }
 
     // The class the fold transitions on, toggled on the surviving wrapper.
