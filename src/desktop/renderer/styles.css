@@ -1956,19 +1956,16 @@ body.resizing #browser-resizer::after { opacity: 1; }
    row, because the state is one the user has to be able to see they are in. */
 .sidebar-nav-item.on { color: var(--text-primary); background: var(--surface-active); }
 .sidebar-nav-item:disabled { opacity: var(--opacity-disabled); cursor: default; }
-/* The footer settings entry reads as a user-profile row (gear + name), left
-   aligned and full width, rather than the pill the two buttons above use — it is
-   the personal corner of the sidebar, not another action. */
+/* The footer settings entry: gear + name, sized to its content. */
 .sidebar-settings {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  width: 100%;
   background: transparent;
   color: var(--text-primary);
   border: 0;
   border-radius: var(--radius-md);
-  padding: var(--space-1) var(--space-3);
+  padding: var(--space-1) var(--space-2);
   min-height: 28px;
   font: inherit;
   font-size: var(--type-meta);
@@ -2075,7 +2072,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   font-size: var(--type-micro);
   line-height: 18px;
 }
-.sidebar-footer-row { display: flex; align-items: center; gap: var(--space-1); }
+.sidebar-footer-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-1); }
 .sidebar-help {
   display: inline-flex;
   align-items: center;

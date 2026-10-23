@@ -29,6 +29,7 @@ export type IconName =
   | 'close'
   | 'trash'
   | 'folder'
+  | 'folder-open'
   | 'file'
   | 'chevron-left'
   | 'chevron-right'
@@ -128,6 +129,7 @@ const ICONS = {
   ],
   // diamond
   agent: ['M2.7 10.3a2.41 2.41 0 0 0 0 3.41l7.59 7.59a2.41 2.41 0 0 0 3.41 0l7.59-7.59a2.41 2.41 0 0 0 0-3.41l-7.59-7.59a2.41 2.41 0 0 0-3.41 0Z'],
+  'folder-open': ['m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2'],
   folder: ['M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z'],
   file: [
     'M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z',
@@ -158,8 +160,10 @@ const ICONS = {
   send: ['m5 12 7-7 7 7', 'M12 19V5'],
   // circle-stop, its square filled so it reads at a glance mid-turn.
   stop: [RING, ['rect', { x: 9, y: 9, width: 6, height: 6, rx: 1, fill: 'currentColor' }]],
-  // settings-2: two sliders rather than a cog, which reads as heavy at 14px.
-  gear: ['M14 17H5', 'M19 7h-9', ['circle', { cx: 17, cy: 17, r: 3 }], ['circle', { cx: 7, cy: 7, r: 3 }]],
+  gear: [
+    'M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915',
+    ['circle', { cx: 12, cy: 12, r: 3 }],
+  ],
   // git-branch
   branch: ['M15 6a9 9 0 0 0-9 9V3', ['circle', { cx: 18, cy: 6, r: 3 }], ['circle', { cx: 6, cy: 18, r: 3 }]],
   // external-link: the hand-off to another app.
@@ -181,7 +185,11 @@ const ICONS = {
     'M12 12V8',
   ],
   // circle-question-mark
-  help: [RING, 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3', 'M12 17h.01'],
+  // keyboard: the button opens the shortcut list.
+  help: [
+    ['rect', { width: 20, height: 16, x: 2, y: 4, rx: 2 }],
+    'M6 8h.01', 'M10 8h.01', 'M14 8h.01', 'M18 8h.01', 'M8 12h.01', 'M12 12h.01', 'M16 12h.01', 'M7 16h10',
+  ],
   // The inline request's leading glyph, chosen by what is being asked for: a
   // shell prompt for a command, a shield for everything else — see
   // `dom/permissionRequestView.ts`. square-terminal and shield.

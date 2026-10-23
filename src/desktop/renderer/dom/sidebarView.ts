@@ -667,12 +667,9 @@ export function createSidebarView(
         group.projectName,
         group.projectRoot,
         () => onIntent({ kind: 'toggle-project', projectRoot: group.projectRoot }),
-        // The leading glyph says *what the group is*, not where its fold goes: a
-        // folder for a project on disk, a clock for the global workspace, which is
-        // not a directory the user opened. The fold direction was the chevron's
-        // job and is now carried by the rows themselves being there or not — the
-        // row is still the toggle, and `aria-expanded` still says which way.
-        { icon: group.isGlobal ? 'clock' : 'folder' },
+        // A folder, open or closed with the group, for a project on disk; a clock
+        // for the global workspace, which is not a directory the user opened.
+        { icon: group.isGlobal ? 'clock' : group.collapsed ? 'folder' : 'folder-open' },
       )
       heading.dataset.focusKey = `h:${group.projectRoot}`
       heading.setAttribute('aria-expanded', String(!group.collapsed))
