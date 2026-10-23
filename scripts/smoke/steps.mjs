@@ -2128,6 +2128,25 @@ async function step28(ctx) {
   ctx.ok('dragging the sash widened the card', wider.panel.width > first.panel.width + 40, `${first.panel.width} -> ${wider.panel.width}`)
   await check('after a drag', wider)
   await ctx.shot('28-browser-wider', 'the card after being dragged wider')
+  // 放大 lays the card over the canvas, from the sidebar's edge to the window's; 还原 puts it back.
+  const maximize = await read(ctx, probes.centreOf('#browser-maximize'))
+  await mouseClick(ctx.cdp, maximize.x, maximize.y)
+  const maximized = await waitFor('the card to cover the canvas', async () => {
+    const view = await geometry()
+    return view && view.panel.width > wider.panel.width + 100 ? view : undefined
+  })
+  const sidebarRight = await read(ctx, `document.getElementById('sidebar').getBoundingClientRect().right`)
+  ctx.ok('放大: the card starts just past the sidebar', maximized.panel.left > sidebarRight && maximized.panel.left - sidebarRight < 16,
+    `sidebar=${sidebarRight} panel=${maximized.panel.left}`)
+  await check('放大', maximized)
+  await ctx.shot('28-browser-maximized', 'the card over the transcript and composer; the sidebar stays; the button now shows 还原')
+  const restore = await read(ctx, probes.centreOf('#browser-maximize'))
+  await mouseClick(ctx.cdp, restore.x, restore.y)
+  const restored = await waitFor('the card back beside the canvas', async () => {
+    const view = await geometry()
+    return view && Math.abs(view.panel.width - wider.panel.width) < 1 ? view : undefined
+  })
+  await check('还原', restored)
   // Each title bar button swaps the page; pressing the one on screen closes the panel.
   const pageShown = (id) => waitFor(`#${id} on screen`, async () => read(ctx, `(() => { const node = document.getElementById(${JSON.stringify(id)}); return node && !node.hidden && !document.getElementById('browser-panel').hidden ? true : undefined })()`))
   const tasks = await button('tasks')

@@ -1234,6 +1234,20 @@ body:has(> #browser-panel.changes:not([hidden])) {
 }
 /* With the panel up, the caption buttons are above it, not above the title bar. */
 body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-3); }
+/* 放大: the browser covers everything right of the sidebar, transcript and
+   composer included. Out of flow, so the canvas keeps laying itself out behind
+   it; with the sidebar collapsed it starts under the title bar, whose rail
+   toggles would otherwise be under the page. */
+body.browser-maximized #browser-panel {
+  position: fixed;
+  inset: 0 0 0 calc(var(--sidebar-width) + var(--sidebar-scrollbar-overhang));
+  z-index: var(--z-pinned);
+}
+body.browser-maximized:has(#sidebar.collapsed) #browser-panel {
+  left: 0;
+  margin-top: var(--titlebar-height);
+}
+body.browser-maximized #browser-resizer { display: none; }
 /* The hole. No padding, no border, no transform — it is a measurement, and
    anything that moves its rect moves the page out from under the panel. */
 #browser-hole {
@@ -1288,8 +1302,8 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   display: flex;
   align-items: stretch;
   gap: var(--space-1);
-  /* The panel's ✕ sits over the strip's right end. */
-  padding: var(--space-1) 40px 0 var(--space-1);
+  /* The panel's 放大 and ✕ sit over the strip's right end. */
+  padding: var(--space-1) 72px 0 var(--space-1);
 }
 /* Tabs shrink rather than the strip scrolling: nothing in this window scrolls
    sideways but a diff, and a horizontal scrollbar is the wrong answer here
@@ -1302,7 +1316,7 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
   align-items: center;
   gap: var(--space-1);
   flex: 1 1 0;
-  max-width: 180px;
+  max-width: 140px;
   min-width: 0;
   overflow: hidden;
   padding: var(--space-1) var(--space-2);
@@ -1394,15 +1408,9 @@ body:has(> #browser-panel:not([hidden])) #titlebar { padding-right: var(--space-
 }
 .browser-nav:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-primary); }
 .browser-nav:disabled { opacity: var(--opacity-disabled); cursor: default; }
-/* 接管 / 交还. A word rather than a glyph, because it is the one control here
-   that changes who is driving. Disabled it means nobody is driving this tab, so
-   it greys out with the rest of the row; the accent belongs to 交还, where it
-   pairs with the orange badge the taken-over tab carries. */
-.browser-takeover {
-  flex: 0 0 auto;
-  font-size: var(--type-meta);
-  padding: 0 var(--space-2);
-}
+/* 接管 / 交还, one pointer glyph for both. Disabled it means nobody is driving
+   this tab, so it greys out with the rest of the row; the accent belongs to
+   交还, where it pairs with the orange badge the taken-over tab carries. */
 .browser-takeover.holding { color: var(--accent-warn); }
 /* 「agent 正在操作」. Outside the hole, because the page's native view covers
    the hole; its height comes out of the hole, which the view re-measures. */
@@ -1464,14 +1472,17 @@ body.settings-open #browser-resizer { display: none; }
   display: flex;
   flex-direction: column;
 }
-/* The panel's close button, laid over the first row's right end (a section
-   head, the 改动 head, the 线程 title, the browser's tab strip), so no row is
-   spent on it. */
-.side-close {
+/* The panel's buttons (放大 in the browser, 关闭 everywhere), laid over the
+   first row's right end (a section head, the 改动 head, the 线程 title, the
+   browser's tab strip), so no row is spent on them. */
+#side-actions {
   position: absolute;
   top: 0;
   right: var(--space-1);
   z-index: var(--z-raised);
+  display: flex;
+}
+.side-action {
   height: 36px;
   display: inline-flex;
   align-items: center;
@@ -1483,7 +1494,7 @@ body.settings-open #browser-resizer { display: none; }
   padding: 0 var(--space-2);
   cursor: pointer;
 }
-.side-close:hover { color: var(--text-primary); }
+.side-action:hover { color: var(--text-primary); }
 /* --- 改动: one turn's edited files ---
    A head with the totals, then one section per file under a head that sticks
    while its rows scroll by. Rows wrap rather than scroll sideways: the panel is

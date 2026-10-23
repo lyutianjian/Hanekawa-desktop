@@ -105,15 +105,21 @@ export function createBrowserPanelView(
   url.spellcheck = false
   url.placeholder = '输入网址'
   url.setAttribute('aria-label', '网址')
-  // One control, three states — see `browserControlState`. Its label and its
+  // One control, three states — see `browserControlState`. Its tooltip and its
   // meaning move together, so the press reads the model rather than a captured
   // handler: a button that says「交还」and reports a takeover would be the worst
   // of the possible bugs here.
-  const takeOver = button('browser-nav browser-takeover', '接管', '接管此标签页，暂停 agent 的浏览器操作', () => {
-    const action = browserControlState(activeTab()).action
-    if (action === 'take-over') withActive(handlers.onTakeOver)
-    else if (action === 'release') withActive(handlers.onRelease)
-  })
+  const takeOver = button(
+    'browser-nav browser-takeover',
+    '',
+    '接管此标签页，暂停 agent 的浏览器操作',
+    () => {
+      const action = browserControlState(activeTab()).action
+      if (action === 'take-over') withActive(handlers.onTakeOver)
+      else if (action === 'release') withActive(handlers.onRelease)
+    },
+    { icon: 'mouse-pointer' },
+  )
   replace(nodes.address, back, forward, reload, url, takeOver)
 
   url.addEventListener('keydown', (event) => {
@@ -340,7 +346,6 @@ export function createBrowserPanelView(
     reload.disabled = tab === undefined
     const control = browserControlState(tab)
     takeOver.disabled = control.disabled
-    takeOver.textContent = control.label
     takeOver.title = control.title
     takeOver.setAttribute('aria-label', control.title)
     // The accent pairs the button with the tab's own badge while the user holds

@@ -184,7 +184,6 @@ function failureReason(description: string): string {
 export type BrowserControlAction = 'take-over' | 'release' | 'none'
 
 export interface BrowserControlState {
-  label: string
   /** The tooltip, and the button's accessible name. */
   title: string
   disabled: boolean
@@ -201,13 +200,12 @@ export interface BrowserControlState {
  */
 export function browserControlState(tab: WireBrowserTabInfo | undefined): BrowserControlState {
   if (tab?.takenOver === true) {
-    return { label: '交还', title: '把此标签页交还给 agent', disabled: false, action: 'release' }
+    return { title: '把此标签页交还给 agent', disabled: false, action: 'release' }
   }
   if (tab === undefined || tab.agentActive !== true) {
-    return { label: '接管', title: '当前没有 agent 在操作此标签页', disabled: true, action: 'none' }
+    return { title: '当前没有 agent 在操作此标签页', disabled: true, action: 'none' }
   }
   return {
-    label: '接管',
     title: '接管此标签页，暂停 agent 的浏览器操作',
     disabled: false,
     action: 'take-over',

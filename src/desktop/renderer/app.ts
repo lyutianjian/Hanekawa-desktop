@@ -1872,9 +1872,18 @@ const sidePanel = required('browser-panel')
 const sideClose = required('side-close')
 sideClose.appendChild(icon('close'))
 sideClose.addEventListener('click', () => {
+  browserMaximized = false
   setPanelOpen(false)
   renderSidebar()
   renderBrowser()
+})
+/** 放大: the browser covers the canvas. Window-wide, and dropped when the panel closes. */
+let browserMaximized = false
+const browserMaximize = required('browser-maximize')
+browserMaximize.addEventListener('click', () => {
+  browserMaximized = !browserMaximized
+  renderSubagents()
+  browserPanel.measure()
 })
 const sideResizer = required('browser-resizer')
 const subagentPanel = createSubagentPanelView(required('subagent-view'), {
@@ -1989,6 +1998,15 @@ function renderSubagents(): void {
   show(sideResizer, visible)
   for (const mode of ['tasks', 'threads', 'changes'] as const) sidePanel.classList.toggle(mode, view.mode === mode)
   show(sideClose, visible)
+  const onBrowser = visible && view.mode === 'browser'
+  show(browserMaximize, onBrowser)
+  document.body.classList.toggle('browser-maximized', onBrowser && browserMaximized)
+  const maximizeLabel = browserMaximized ? '还原' : '放大'
+  if (browserMaximize.title !== maximizeLabel) {
+    browserMaximize.title = maximizeLabel
+    browserMaximize.setAttribute('aria-label', maximizeLabel)
+    replace(browserMaximize, icon(browserMaximized ? 'minimize' : 'maximize'))
+  }
   const pane = activePane()
   const root = activeLaneInfo()?.projectRoot
   const onChanges = visible && view.mode === 'changes'

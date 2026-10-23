@@ -91,12 +91,13 @@ test('the control reads the tab: nobody driving, agent driving, user holding', (
   assert.match(idle.title, /没有 agent/)
 
   const driven = browserControlState(tab({ tabId: 'a', lane: '1', agentActive: true }))
-  assert.deepEqual([driven.label, driven.disabled, driven.action], ['接管', false, 'take-over'])
+  assert.deepEqual([driven.disabled, driven.action], [false, 'take-over'])
 
   // Taken over reads as the way back, whether or not the tab still claims a
   // driver: the badge and the button are one state.
   const held = browserControlState(tab({ tabId: 'a', lane: '1', agentActive: true, takenOver: true }))
-  assert.deepEqual([held.label, held.disabled, held.action], ['交还', false, 'release'])
+  assert.deepEqual([held.disabled, held.action], [false, 'release'])
+  assert.match(held.title, /交还/)
   assert.equal(browserControlState(undefined).disabled, true)
 })
 

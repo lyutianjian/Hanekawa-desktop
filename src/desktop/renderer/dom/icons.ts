@@ -37,6 +37,9 @@ export type IconName =
   | 'arrow-left'
   | 'arrow-right'
   | 'rotate-cw'
+  | 'mouse-pointer'
+  | 'maximize'
+  | 'minimize'
   | 'dot'
   | 'check'
   | 'clock'
@@ -139,6 +142,11 @@ const ICONS = {
   'arrow-left': ['m12 19-7-7 7-7', 'M19 12H5'],
   'arrow-right': ['M5 12h14', 'm12 5 7 7-7 7'],
   'rotate-cw': ['M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8', 'M21 3v5h-5'],
+  maximize: ['M15 3h6v6', 'm21 3-7 7', 'm3 21 7-7', 'M9 21H3v-6'],
+  minimize: ['m14 10 7-7', 'M20 10h-6V4', 'm3 21 7-7', 'M4 14h6v6'],
+  'mouse-pointer': [
+    'M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z',
+  ],
   dot: [DOT],
   check: ['M20 6 9 17l-5-5'],
   // The「最近」filter. A folder would say "project", which is the one thing the

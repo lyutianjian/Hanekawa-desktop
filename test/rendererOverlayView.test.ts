@@ -458,7 +458,7 @@ test('the scrims are positioned against the canvas and stack above every popover
   // menu does the same inside the side panel's thread list.
   assert.deepEqual(
     fixed.map((block) => block.selector).sort(),
-    ['#lightbox', '#settings', '.project-menu', '.settings-dialog-layer', '.thread-menu'],
+    ['#lightbox', '#settings', '.project-menu', '.settings-dialog-layer', '.thread-menu', 'body.browser-maximized #browser-panel'],
     'only the window-wide screens use the viewport',
   )
 

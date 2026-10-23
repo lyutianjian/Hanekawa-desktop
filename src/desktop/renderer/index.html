@@ -232,7 +232,10 @@
         the card's frame belongs to the panel around it.
       -->
       <aside id="browser-panel" hidden aria-label="侧栏">
-        <button type="button" id="side-close" class="side-close" title="关闭侧栏" aria-label="关闭侧栏" hidden></button>
+        <div id="side-actions">
+          <button type="button" id="browser-maximize" class="side-action" hidden></button>
+          <button type="button" id="side-close" class="side-action" title="关闭侧栏" aria-label="关闭侧栏" hidden></button>
+        </div>
         <div id="browser-view">
           <div id="browser-tabs" role="tablist" aria-label="标签页"></div>
           <div id="browser-address"></div>

@@ -393,7 +393,7 @@ test('the control takes the tab over, then hands it back', (t) => {
   // And back: the same button, now saying the other thing. One control rather
   // than two, so「已接管」cannot sit beside a tab that is no longer taken.
   r.paint({ tabs: [tab({ tabId: 't1', lane: '1', agentActive: true, takenOver: true })] })
-  assert.equal(control().text, '交还')
+  assert.match(control().attributes.get('aria-label') ?? '', /交还/)
   assert.equal(control().disabled, false)
   r.stub.click(control().node)
   assert.deepEqual(r.released, ['t1'])
