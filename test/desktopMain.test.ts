@@ -15,6 +15,7 @@ import type { SessionMeta } from '../src/sessions/service.js'
 import { createMemoryChannelPair } from '../src/runtime/protocol/memoryChannel.js'
 import { createLaneMux } from '../src/runtime/protocol/laneChannel.js'
 import { ShellHost } from '../src/desktop/shellHost.js'
+import { QuitCoordinator } from '../src/desktop/quitCoordinator.js'
 import { ShellClient } from '../src/desktop/renderer/shellClient.js'
 import { SHELL_LANE } from '../src/desktop/shellProtocol.js'
 import {
@@ -875,4 +876,91 @@ test('single window: two lanes on one transport, opened, listed, closed through 
   }
   assert.equal(panes.size, 0, 'detaching every lane closed every pane')
   assert.equal(workspace.list().length, 0)
+})
+
+/**
+ * The quit gate.
+ *
+ * `main.ts` cannot be imported here, so the state machine it delegates to is
+ * exercised directly: a deferred teardown stands in for the lane/project drain,
+ * and every `app.quit()` source (⌘Q, the last window's `window-all-closed`, a
+ * second click) is the same `onBeforeQuit()` call.
+ */
+test('quit gate holds every before-quit until teardown settles, then releases once', async () => {
+  let finishTeardown!: () => void
+  let teardowns = 0
+  let releases = 0
+  const gate = new QuitCoordinator({
+    teardown: () => {
+      teardowns += 1
+      return new Promise<void>((resolve) => {
+        finishTeardown = resolve
+      })
+    },
+    release: () => {
+      releases += 1
+    },
+  })
+
+  assert.equal(gate.isQuitting(), false, 'a running app is not quitting')
+  // The user's quit, then `window-all-closed`'s own `app.quit()` while the
+  // drain is still in flight, then another quit request.
+  assert.equal(gate.onBeforeQuit(), true)
+  assert.equal(gate.isQuitting(), true)
+  assert.equal(gate.onBeforeQuit(), true)
+  assert.equal(gate.onBeforeQuit(), true)
+  assert.equal(teardowns, 1, 'one drain for every request')
+  assert.equal(releases, 0, 'nothing is released before the drain settles')
+
+  finishTeardown()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(releases, 1, 'exactly one app.quit() follows the drain')
+  assert.equal(gate.onBeforeQuit(), false, 'the released quit is let through')
+})
+
+test('a failing teardown is reported once, then the quit is still released', async () => {
+  const errors: unknown[] = []
+  let releases = 0
+  const gate = new QuitCoordinator({
+    teardown: async () => {
+      throw new Error('mcp did not stop')
+    },
+    release: () => {
+      releases += 1
+    },
+    onError: (error) => {
+      errors.push(error)
+    },
+  })
+
+  assert.equal(gate.onBeforeQuit(), true)
+  assert.equal(gate.onBeforeQuit(), true)
+  await new Promise((resolve) => setImmediate(resolve))
+
+  // The rejection is handled here rather than left to `app.quit().finally`,
+  // which would surface as an unhandled rejection while the process exits.
+  assert.equal(errors.length, 1)
+  assert.equal(releases, 1, 'a failed drain still has to end the process')
+  assert.equal(gate.onBeforeQuit(), false)
+})
+
+test('the quit gate keeps letting quit requests through after release', () => {
+  let releases = 0
+  const gate = new QuitCoordinator({
+    teardown: async () => undefined,
+    release: () => {
+      releases += 1
+    },
+  })
+
+  return new Promise<void>((resolve) => {
+    assert.equal(gate.onBeforeQuit(), true)
+    setImmediate(() => {
+      assert.equal(releases, 1)
+      assert.equal(gate.onBeforeQuit(), false)
+      assert.equal(gate.onBeforeQuit(), false)
+      assert.equal(releases, 1, 'later quit events never drain again')
+      resolve()
+    })
+  })
 })

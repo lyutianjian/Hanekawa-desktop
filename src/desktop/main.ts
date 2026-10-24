@@ -39,7 +39,10 @@
  *     shut every project down — but only up to `SHUTDOWN_DEADLINE_MS`. The
  *     window is destroyed in the first half of `teardown()`, so a project that
  *     never finishes draining used to leave a running process with nothing on
- *     screen. `window-all-closed` quits only when there are no panes left.
+ *     screen. `window-all-closed` quits only when there are no panes left, and
+ *     its `app.quit()` goes through the same gate: every quit request is
+ *     cancelled until `teardown()` has settled, and only the single release
+ *     afterwards is allowed through (`quitCoordinator.ts`).
  *
  * Two keys, and they are not interchangeable: lane keys are minted by the
  * `ShellHost` and never move (session ids travel under `/clear` and `/resume`),
@@ -92,6 +95,8 @@ import { SessionHost } from '../runtime/protocol/host.js'
 import { createLaneMux } from '../runtime/protocol/laneChannel.js'
 import type { RuntimeHost } from '../runtime/types.js'
 import { ShellHost } from './shellHost.js'
+import { QuitCoordinator } from './quitCoordinator.js'
+import { restoreGuiPath } from './guiPath.js'
 import { BrowserTabHost } from './browser/tabs.js'
 import { DesktopBrowserHost } from './browser/host.js'
 import { createBrowserTool } from '../tools/BrowserTool/BrowserTool.js'
@@ -205,7 +210,19 @@ const directory = new ProjectDirectory()
 const browserTabs = new BrowserTabHost()
 /** The single window's shell, once the first project has opened it. */
 let shell: Shell | undefined
-let quitting = false
+/**
+ * The quit gate: every `before-quit` is cancelled while `teardown()` runs, and
+ * exactly one `app.quit()` is released afterwards. See `quitCoordinator.ts`.
+ */
+const quit = new QuitCoordinator({
+  teardown,
+  release: () => app.quit(),
+  onError: (error) => {
+    // The drain failed, but a running process with no window is worse: the
+    // release below still exits. This is a forced exit, not a clean one.
+    console.error('[hanekawa] 退出收尾未完成，强制退出：', error)
+  },
+})
 /** Lane keys are minted here so they are monotonic for the process lifetime. */
 let laneCounter = 0
 /**
@@ -304,16 +321,11 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('before-quit', (event) => {
-    if (quitting) return
-    quitting = true
-    // Teardown is async and Electron will not wait for it on its own:
-    // `project.shutdown()` is the only place background tasks get stopped, so
-    // exiting out from under it leaks child processes. Cancel this quit, drain,
-    // then quit again — the guard above lets the second pass through.
-    event.preventDefault()
-    void teardown().finally(() => {
-      app.quit()
-    })
+    // Electron will not wait for an async handler, so every request is
+    // cancelled until the drain settles; the gate then lets the single
+    // `app.quit()` it issues afterwards through. This also covers
+    // `window-all-closed`'s own `app.quit()` — it has no bypass.
+    if (quit.onBeforeQuit()) event.preventDefault()
   })
 
   app.on('activate', () => {
@@ -321,6 +333,17 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   void app.whenReady().then(async () => {
+    // Before any project can bootstrap a tool or an MCP server. A Finder/Dock
+    // launch inherits launchd's bare PATH; every child spawned afterwards —
+    // Bash, MCP's servers, the editor — inherits `process.env`, so one repair
+    // here is the whole fix. A terminal launch is left untouched.
+    const guiPath = await restoreGuiPath()
+    if (guiPath.status === 'failed') {
+      console.error(
+        `[hanekawa] GUI PATH 恢复失败（${guiPath.reason}）`
+          + `${guiPath.detail ? `：${guiPath.detail}` : ''}，沿用启动时的 PATH`,
+      )
+    }
     // Windows ties notifications and the taskbar button to this id; without
     // one a toast can be dropped or credited to "electron.app". A dev run has
     // no installer to register a shortcut under a stable id, so it borrows the
@@ -881,7 +904,7 @@ async function ensureShell(): Promise<Shell> {
     browser: browserTabs,
     coordination,
     coordinationMigrationFindings: () => coordinationMigrationFindings,
-    isQuitting: () => quitting,
+    isQuitting: () => quit.isQuitting(),
     onAllLanesClosed: () => {
       // The last lane of the single window is the single-window equivalent of
       // "the last window closed". Non-darwin quits, exactly as it always did;
