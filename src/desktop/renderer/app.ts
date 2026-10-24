@@ -69,6 +69,7 @@ import {
   type SidebarState,
 } from './model/sidebar.js'
 import { rewindKeyToIntent } from './model/rewindPanel.js'
+import { setModelNames } from './model/modelNames.js'
 import {
   SIDEBAR_WIDTH_STORAGE_KEY,
   clampSidebarWidth,
@@ -201,6 +202,8 @@ const railChord = desktopShortcut(bridge.platform, 'toggle-sidebar')
 // and the reserved `__shell` lane speaks for the window.
 const mux = createLaneMux(createBridgeChannel(bridge, window))
 const shellClient = new ShellClient(mux.lane(SHELL_LANE))
+// Settled either way: the usage card waits on it, and without names it shows API ids.
+const modelNamesLoaded = shellClient.modelNames().then((result) => setModelNames(result.models), () => {})
 
 // Theme. The preference lives in localStorage; the resolved theme is written to
 // `documentElement.dataset.theme`, which the stylesheet reads. "Follow system"
@@ -405,7 +408,7 @@ function attachPaneSession(lane: string): void {
     status,
     composer,
     imageViewer,
-    loadUsage: () => shellClient.usageStats().then((result) => result.days),
+    loadUsage: () => modelNamesLoaded.then(() => shellClient.usageStats()).then((result) => result.days),
     onShellChanged: () => {
       // Every pane repaints the sidebar, not just the active one: the badges are
       // per row, so a background pane starting a turn has to show up. Cached
@@ -1628,6 +1631,7 @@ async function runProbeNow({ seq, ...request }: SettingsProbeRequest): Promise<v
 
 async function loadSettingsNow(): Promise<void> {
   settingsState = await loadSettings(shellClient, settingsState, () => settingsState)
+  if (settingsState.snapshot) setModelNames(settingsState.snapshot.models)
   renderSettings()
 }
 
@@ -1645,6 +1649,7 @@ async function runSettingsChangesNow(batch: readonly PendingMutation[]): Promise
   const projectRoot = settingsState.projectRoot
   const changes = batch.map((entry) => entry.change)
   settingsState = await runSettingsChanges(shellClient, settingsState, batch, () => settingsState)
+  if (settingsState.snapshot) setModelNames(settingsState.snapshot.models)
   renderSettings()
   // The host rebuilt the runtimes, but the composer's completion list is the
   // renderer's own cache, refreshed only after a slash command runs.

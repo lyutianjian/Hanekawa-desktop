@@ -1,4 +1,5 @@
 import type { WireUsageDay } from '../../shellProtocol.js'
+import { modelName } from './modelNames.js'
 
 export type UsageRange = 'all' | '30d' | '7d'
 
@@ -98,7 +99,10 @@ export function computeUsageStats(allDays: readonly WireUsageDay[], range: Usage
     day.hours.forEach((count, hour) => {
       hours[hour]! += count
     })
-    for (const [model, count] of Object.entries(day.models)) models.set(model, (models.get(model) ?? 0) + count)
+    for (const [id, count] of Object.entries(day.models)) {
+      const model = modelName(id)
+      models.set(model, (models.get(model) ?? 0) + count)
+    }
   }
 
   const peak = Math.max(...hours)

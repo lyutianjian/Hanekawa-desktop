@@ -20,6 +20,7 @@ import type {
   WireShellPanesResult,
   WireShellSessionsResult,
   WireShellUsageStatsResult,
+  WireShellModelNamesResult,
   WireEditorTarget,
   WireBrowserRect,
   WireBrowserTabInfo,
@@ -155,6 +156,10 @@ export class ShellClient {
       type: 'usage-stats',
       id: crypto.randomUUID(),
     }) as Promise<WireShellUsageStatsResult>
+  }
+
+  async modelNames(): Promise<WireShellModelNamesResult> {
+    return this.send({ type: 'model-names', id: crypto.randomUUID() }) as Promise<WireShellModelNamesResult>
   }
 
   async deleteSession(projectRoot: string, sessionId: string): Promise<WireShellDeleteSessionResult> {

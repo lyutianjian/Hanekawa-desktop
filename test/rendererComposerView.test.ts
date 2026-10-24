@@ -404,7 +404,7 @@ test('the chip is one label carrying both fields, inert until a snapshot arrives
       // Drawn at every width; the stylesheet shows it instead of the two labels
       // once the row is too narrow for a name (`@container composer-bar`).
       ['icon chip-model-icon', ''],
-      ['chip-model-label', 'claude-sonnet-5'],
+      ['chip-model-label', 'sonnet'],
       ['chip-effort-label', EFFORT_LABELS.high],
     ],
   )
@@ -513,7 +513,7 @@ test('clicking the chip asks the pane for the rows rather than opening anything'
 
   r.composer.showRuntimeMenu(menuView())
   assert.deepEqual(r.chipRows().map((row) => row.text), [
-    `模型claude-sonnet-5`,
+    `模型sonnet`,
     `思考强度${EFFORT_LABELS.high}`,
   ])
   assert.equal(r.view('chipRuntime').attributes.get('aria-expanded'), 'true')
@@ -965,9 +965,9 @@ test('an unchanged runtime snapshot rebuilds neither the chip nor the pill', (t)
   assert.deepEqual(r.view('chipPermission').children.map((child) => child.node), pillBefore)
 
   // A snapshot that moved still repaints, or the guard would be a freeze.
-  r.composer.renderRuntime(runtime({ model: 'claude-opus-5', permissionMode: 'plan' }))
+  r.composer.renderRuntime(runtime({ modelKey: 'opus', model: 'claude-opus-5', permissionMode: 'plan' }))
   assert.notDeepEqual(r.view('chipRuntime').children.map((child) => child.node), chipBefore)
-  assert.equal(r.view('chipRuntime').children[1]!.text, 'claude-opus-5')
+  assert.equal(r.view('chipRuntime').children[1]!.text, 'opus')
   assert.equal(r.view('chipPermission').children[0]!.text, PERMISSION_MODE_LABELS.plan)
 })
 

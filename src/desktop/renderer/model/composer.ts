@@ -96,11 +96,11 @@ export function composerChipView(
     ? `（已是该模型最高档 ${EFFORT_LABELS[highest]}）`
     : ''
 
-  const modelTitle = `模型：${runtime.model}${provider} · 点击切换`
+  const modelTitle = `模型：${runtime.modelKey}${provider} · 点击切换`
   const effortTitle = `思考强度：${level ? EFFORT_LABELS[level] : runtime.effort}${ceilingNote} · 点击切换`
 
   return {
-    model: runtime.model,
+    model: runtime.modelKey,
     modelTitle,
     effort: level ? EFFORT_LABELS[level] : runtime.effort,
     effortTitle,

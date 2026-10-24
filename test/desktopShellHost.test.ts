@@ -677,6 +677,7 @@ const COMMAND_SAMPLES = {
   'open-project': { type: 'open-project', id: 'c' },
   'list-sessions': { type: 'list-sessions', id: 'd' },
   'usage-stats': { type: 'usage-stats', id: 'u' },
+  'model-names': { type: 'model-names', id: 'mn' },
   'delete-session': { type: 'delete-session', id: 'e', projectRoot: 'r', sessionId: 's1' },
   'get-settings': { type: 'get-settings', id: 'f', projectRoot: 'r' },
   'settings-change': {
@@ -831,6 +832,7 @@ test('every shell command variant round-trips through its schema', () => {
       'delete-session',
       'get-settings',
       'list-sessions',
+      'model-names',
       'new-coordinator-project',
       'open-coordinator',
       'open-in-editor',

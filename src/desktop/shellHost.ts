@@ -79,6 +79,7 @@ import {
   type WireSessionSummary,
   type WireShellSessionsResult,
   type WireShellUsageStatsResult,
+  type WireShellModelNamesResult,
   type WireShellRenameSessionResult,
   type WireShellSettingsChangeResult,
   type WireShellSettingsResult,
@@ -704,6 +705,7 @@ const SHELL_COMMAND_SCHEMAS = {
     .strict(),
   'list-sessions': z.object({ type: z.literal('list-sessions'), id: commandId }).strict(),
   'usage-stats': z.object({ type: z.literal('usage-stats'), id: commandId }).strict(),
+  'model-names': z.object({ type: z.literal('model-names'), id: commandId }).strict(),
   'delete-session': z
     .object({
       type: z.literal('delete-session'),
@@ -1300,6 +1302,8 @@ export class ShellHost<
         return this.listSessions()
       case 'usage-stats':
         return this.usageStats()
+      case 'model-names':
+        return this.modelNames()
       case 'delete-session':
         return this.deleteSession(command.projectRoot, command.sessionId)
       case 'get-settings':
@@ -1525,6 +1529,12 @@ export class ShellHost<
 
   private usageStats(): Promise<WireShellUsageStatsResult> {
     return this.knownRoots().then((roots) => this.usageScanner.scan(roots))
+  }
+
+  private async modelNames(): Promise<WireShellModelNamesResult> {
+    return this.withProjectEntry(await this.settingsRoot(), async (entry) => ({
+      models: Object.entries(entry.project.config.get().models).map(([key, model]) => ({ key, model: model.model })),
+    }))
   }
 
   private async listSessions(): Promise<WireShellSessionsResult> {

@@ -87,6 +87,8 @@ export type ShellCommand =
   | { type: 'list-sessions'; id: string }
   /** Per-day token and activity buckets over every project's metrics — the home page's statistics card. */
   | { type: 'usage-stats'; id: string }
+  /** Every configured model key with its API id, for drawing recorded ids by their display names. */
+  | { type: 'model-names'; id: string }
   /**
    * Deletes a session: its lane if one is open, its three files, and its file
    * history. `projectRoot` is required — sessions live per project, and guessing
@@ -816,6 +818,10 @@ export interface WireUsageDay {
 export interface WireShellUsageStatsResult {
   /** Ascending by day; days without a turn are absent. */
   days: WireUsageDay[]
+}
+
+export interface WireShellModelNamesResult {
+  models: { key: string; model: string }[]
 }
 
 export interface WireShellDeleteSessionResult {

@@ -58,7 +58,7 @@ test('the two rows name their field and show the value in force', () => {
 
   assert.equal(view.enabled, true)
   assert.deepEqual(view.entries.map((entry) => [entry.key, entry.label, entry.value]), [
-    ['model', '模型', 'claude-sonnet-5'],
+    ['model', '模型', 'sonnet'],
     ['effort', '思考强度', EFFORT_LABELS.high],
   ])
   assert.deepEqual(view.entries.map((entry) => entry.title), ['选择模型', '选择思考强度'])
@@ -120,7 +120,7 @@ test('a model list that could not be fetched still opens the menu', () => {
 
   assert.equal(view.enabled, true)
   assert.deepEqual(view.entries[0]!.rows, [])
-  assert.equal(view.entries[0]!.value, 'claude-sonnet-5', 'the current model is still named')
+  assert.equal(view.entries[0]!.value, 'sonnet', 'the current model is still named')
   assert.equal(view.entries[1]!.rows.length, 5)
 })
 

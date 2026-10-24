@@ -64,6 +64,7 @@ import { createPresence, finishPresenceWithin, type Presence } from './presence.
 import { motionDelay, motionPolicy } from './motion.js'
 import { createWorkingMark, type WorkingMark } from './workingMarkView.js'
 import type { MarkSpec } from '../model/workingMark.js'
+import { modelName } from '../model/modelNames.js'
 
 /**
  * Paints the transcript: loose items interleaved with activity runs.
@@ -1398,7 +1399,7 @@ function readStats(rows: readonly CodeRow[]): string {
  */
 function agentStats(run: SubagentRun | undefined): string | undefined {
   if (run === undefined) return undefined
-  const parts = [run.model, run.toolUseCount === undefined ? undefined : `${run.toolUseCount} 工具`]
+  const parts = [run.model === undefined ? undefined : modelName(run.model), run.toolUseCount === undefined ? undefined : `${run.toolUseCount} 工具`]
     .filter((part) => part !== undefined && part.length > 0)
   return parts.length > 0 ? parts.join(' · ') : undefined
 }
@@ -1535,7 +1536,7 @@ function agentName(step: ToolLike): string {
 
 /** 「已运行子代理 名称 · 模型」: the verb and the model quiet, the name carrying the line. */
 function ranAgentLabel(step: ToolLike, run: SubagentRun | undefined): Child[] {
-  const model = run?.model
+  const model = run?.model === undefined ? undefined : modelName(run.model)
   return [
     el('span', 'agent-verb', '已运行子代理 '),
     el('strong', '', agentName(step)),
@@ -1804,7 +1805,7 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
   // just a code block whose end has not arrived, and the parse cache means the
   // cost is one parse of the draft rather than one of every settled message.
   if (item.kind === 'assistant') {
-    return painter.node(key, `${classes.join(' ')} md`, [item.text, item.model, item.createdAt, footer?.durationMs, footer?.tokens, footer && relativeTime(item.createdAt, Date.now()), card], (node) => [
+    return painter.node(key, `${classes.join(' ')} md`, [item.text, item.model === undefined ? undefined : modelName(item.model), item.createdAt, footer?.durationMs, footer?.tokens, footer && relativeTime(item.createdAt, Date.now()), card], (node) => [
       ...markdownChildren(item.text, node),
       card,
       inTurn && footer === undefined ? undefined : metaRow(painter, item, footer),
@@ -1986,7 +1987,7 @@ function itemCopyButton(painter: Painter, item: TranscriptItem): HTMLButtonEleme
  */
 function metaRow(painter: Painter, item: TranscriptItem, footer?: TurnFooter): HTMLElement | undefined {
   const time = relativeTime(item.createdAt, Date.now())
-  const model = item.kind === 'assistant' ? item.model : undefined
+  const model = item.kind === 'assistant' && item.model !== undefined ? modelName(item.model) : undefined
   // A draft has no stamp of its own; copying half a sentence is not the offer.
   if (time === undefined && model === undefined) return undefined
   const copy = itemCopyButton(painter, item)

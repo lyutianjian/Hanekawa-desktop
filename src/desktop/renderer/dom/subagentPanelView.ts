@@ -16,6 +16,7 @@ import { createTranscriptView, type TranscriptView } from './transcriptView.js'
 import type { SessionRecord } from '../../../harness/types.js'
 import type { SubagentEntry } from '../model/subagentPanel.js'
 import { createTranscriptState, formatWorkedDuration, toolStatusLabel, type TranscriptState } from '../model/transcript.js'
+import { modelName } from '../model/modelNames.js'
 
 export interface SubagentPanelModel {
   readonly entries: readonly SubagentEntry[]
@@ -77,7 +78,7 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
   function meta(entry: SubagentEntry, withStatus: boolean): HTMLElement {
     const parts = [
       withStatus ? toolStatusLabel(entry.status) : undefined,
-      entry.model,
+      entry.model === undefined ? undefined : modelName(entry.model),
       entry.toolCount === undefined ? undefined : `${entry.toolCount} 工具`,
     ].filter((part) => part !== undefined && part.length > 0)
     return el('div', 'subagent-meta', parts.join(' · '), duration(entry))

@@ -52,15 +52,15 @@ test('an unconfigured runtime offers settings instead of a loading placeholder',
 
 test('the chip shows the model and the effort level', () => {
   const view = composerChipView(runtime())
-  assert.equal(view.model, 'claude-sonnet-5')
+  assert.equal(view.model, 'sonnet')
   assert.equal(view.effort, EFFORT_LABELS.high)
   assert.equal(view.enabled, true)
-  assert.match(view.modelTitle, /claude-sonnet-5/)
+  assert.match(view.modelTitle, /sonnet/)
 })
 
 test('the chip tooltip names the two fields it opens, and no context figures', () => {
   const view = composerChipView(runtime())
-  assert.match(view.title, /模型：claude-sonnet-5/)
+  assert.match(view.title, /模型：sonnet/)
   assert.match(view.title, /思考强度/)
   assert.doesNotMatch(view.title, /上下文/)
 })
@@ -74,7 +74,7 @@ test('the provider is in the tooltip, not the chip', () => {
   // The chip has room for a name, not a name and a vendor; the vendor is the
   // kind of thing you go looking for rather than read at a glance.
   const view = composerChipView(runtime({ providerName: 'anthropic' }))
-  assert.equal(view.model, 'claude-sonnet-5')
+  assert.equal(view.model, 'sonnet')
   assert.match(view.modelTitle, /anthropic/)
 })
 

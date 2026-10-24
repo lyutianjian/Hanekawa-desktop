@@ -1,4 +1,5 @@
 import type { TurnFailureRecord } from '../../../harness/types.js'
+import { modelName } from './modelNames.js'
 
 /**
  * A turn that ended on a provider or network error, in the words a user can act
@@ -105,7 +106,7 @@ export function turnFailureCard(record: TurnFailureRecord): TurnFailureCard {
   })
   const endpoint = endpointLabel(record.baseUrl, record.providerName)
   const target = [
-    record.model === undefined ? undefined : `模型 ${record.model}`,
+    record.model === undefined ? undefined : `模型 ${modelName(record.model)}`,
     endpoint === undefined ? undefined : `服务商 ${endpoint}`,
   ].filter((part): part is string => part !== undefined).join(' · ')
   return {
