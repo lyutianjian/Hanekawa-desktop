@@ -787,13 +787,18 @@ interface Card {
   buttons(): StubView[]
 }
 
-function card(t: { after(fn: () => void): void }): Card {
+function card(t: { after(fn: () => void): void }, onScreen: () => boolean = () => true): Card {
   const stub = installDomStub()
   t.after(() => stub.uninstall())
   const composer = stub.createContainer('composer')
   const container = stub.createContainer('composer-request')
   const picked: OverlayAction[] = []
-  const view = createPermissionRequestView(createDockedCard(composer, container), container, (action) => picked.push(action))
+  const view = createPermissionRequestView(
+    createDockedCard(composer, container),
+    container,
+    (action) => picked.push(action),
+    onScreen,
+  )
   const buttons = () => {
     const bar = stub.inspect(container).children.find((child) =>
       child.classes.includes('dialog-actions'))
@@ -828,6 +833,30 @@ test('the request transforms the composer rather than covering the lane', (t) =>
   // Emptied, not merely hidden: a stale button answers a settled request, and a
   // hidden one is still a Tab stop in some engines.
   assert.equal(c.stub.inspect(c.container).children.length, 0)
+})
+
+test('a request that arrives behind a screen is drawn but keeps the caret where it is', (t) => {
+  // A request parked while the settings screen, the projects page or the image
+  // viewer covers the composer used to pull focus into a card nobody could see,
+  // mid-typing. The paint still happens — it is what the next repaint shows —
+  // only the focus move does not.
+  let onScreen = false
+  const c = card(t, () => onScreen)
+  const field = c.stub.createContainer('settings-input')
+  c.stub.focus(field)
+
+  c.view.show(permissionFixture())
+  assert.equal(c.stub.inspect(c.composer).classes.includes('request-open'), true, 'the card is drawn and ready')
+  assert.equal(c.stub.activeElement(), field, 'a covered card leaves the caret to the layer in front')
+  assert.deepEqual(c.picked, [], 'and answers nothing on the way in')
+
+  // 返回该会话: the pane is left and painted again, which is `deactivate()`'s
+  // `hide(true)` then `activate()`'s repaint. The card takes the caret then, so a
+  // covered arrival is late-focusable rather than permanently inert.
+  c.view.hide(true)
+  onScreen = true
+  c.view.show(permissionFixture())
+  assert.equal(c.stub.activeElement(), c.buttons()[0]!.node, 'on screen again it takes the caret')
 })
 
 test('M16 permission replies precede exit and typing during the handoff stays in the original input', (t) => {

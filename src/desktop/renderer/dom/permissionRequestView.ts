@@ -43,6 +43,15 @@ export function createPermissionRequestView(
   /** `#composer-request`, the card's own container inside the capsule. */
   container: HTMLElement,
   onSelect: PermissionRequestSelect,
+  /**
+   * Whether the card is on screen right now (`model/overlayVisibility.ts`).
+   *
+   * A request can arrive while the settings screen, the projects page or the
+   * image viewer covers the composer. The card is still painted — that paint is
+   * what the next repaint shows — but it must not take the caret out of the
+   * layer in front, mid-typing.
+   */
+  onScreen: () => boolean = () => true,
 ): PermissionRequestView {
   return {
     finishMotion: () => dock.finishMotion(),
@@ -77,7 +86,7 @@ export function createPermissionRequestView(
         )
         container.setAttribute('aria-label', `${view.title}：${view.reason}`)
       })
-      if (focusAction) {
+      if (focusAction && onScreen()) {
         const index = Math.max(0, view.actions.findIndex((action) => action.slot === view.selectedIndex))
         ;(bar.children[index] as HTMLButtonElement | undefined)?.focus()
       }

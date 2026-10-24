@@ -43,7 +43,6 @@ import { DEFAULT_PANE_LIMIT, selectEvictions, type PaneBudgetEntry } from '../pa
 import { findDraft, planNewSession, type DraftCandidate } from './model/draftSession.js'
 import { createLaneMux } from '../../runtime/protocol/laneChannel.js'
 import {
-  NO_LAYERS,
   ownedByTarget,
   resolveKey,
   type KeyAction,
@@ -51,6 +50,7 @@ import {
   type ShellState,
   type WindowLayers,
 } from './model/keymap.js'
+import { overlayVisible } from './model/overlayVisibility.js'
 import { desktopShortcut, isPrimaryModifier } from './model/desktopShortcuts.js'
 import {
   createSidebarState,
@@ -275,7 +275,13 @@ const composerDock = createDockedCard(required('composer'), required('composer-r
 })
 const permissionRequest = createPermissionRequestView(composerDock, required('composer-request'), (action) => {
   activePane()?.handleOverlayAction(action)
-})
+}, () => overlayVisible({
+  // Read at the paint, not captured: a request arrives while another screen may
+  // already be up, and the covering layer can close while the card waits.
+  paneActive: activePane()?.isActive() === true,
+  screen: settingsState.open || projectsOpen,
+  viewer: imageViewerOpen,
+}))
 const questionCard = createQuestionCardView(composerDock, required('composer-request'), (intent) => {
   activePane()?.handleAskIntent(intent)
 }, bridge.platform)
@@ -2438,7 +2444,14 @@ const EMPTY_SHELL_STATE: ShellState = {
 
 const composerInput = required<HTMLTextAreaElement>('input')
 
-/** What is open above the conversation, for the one decision that needs it: what Escape closes. */
+/**
+ * What is open above the conversation.
+ *
+ * Escape unwinds it — and `screen`/`viewer` are also what makes a blocked lane's
+ * card off screen: a request behind them answers no key at all
+ * (`model/overlayVisibility.ts`). Cheap on every keystroke: the popover registry
+ * is a handful of in-memory booleans, never a DOM query.
+ */
 function windowLayers(): WindowLayers {
   return {
     viewer: imageViewerOpen,
@@ -2504,7 +2517,9 @@ document.addEventListener('keydown', (event) => {
   }
 
   const pane = activePane()
-  const action = resolveKey(chord, pane?.shellState() ?? EMPTY_SHELL_STATE, chord.key === 'Escape' ? windowLayers() : NO_LAYERS)
+  // The layers go in for every key, not just Escape: whether a waiting card is
+  // on screen is what decides who owns the rest of them.
+  const action = resolveKey(chord, pane?.shellState() ?? EMPTY_SHELL_STATE, windowLayers())
   if (ownedByTarget(chord.key, action, keyTarget(event, action))) return
   switch (action) {
     case 'overlay':

@@ -14,6 +14,8 @@
  * shape rather than `KeyboardEvent`.
  */
 
+import { overlayVisible } from './overlayVisibility.js'
+
 export interface KeyChord {
   readonly key: string
   readonly shiftKey?: boolean
@@ -60,10 +62,14 @@ export interface ShellState {
  *
  * These are window-level because none belongs to one pane: a popover hangs off
  * the sidebar or the composer, a screen replaces the canvas, and the viewer
- * covers everything. They matter to Escape only — and only when focus is not
- * inside the layer, since a focused layer handles its own Escape. Focus falls to
+ * covers everything. Escape unwinds them — and only while focus is not inside
+ * the layer, since a focused layer handles its own Escape. Focus falls to
  * `<body>` whenever a repaint destroys the focused node, which is how Escape
  * used to reach "interrupt the turn" with a menu still open.
+ *
+ * `screen` and `viewer` say one more thing: a blocking request's card behind
+ * them is not on screen, and the keys it answers belong to the layer in front.
+ * See {@link overlayVisible}.
  */
 export interface WindowLayers {
   /** The fullscreen image viewer, drawn over every other layer. */
@@ -159,8 +165,23 @@ export function resolveKey(chord: KeyChord, state: ShellState, layers: WindowLay
   //    included, so Escape closes it before anything beneath it hears the key.
   if (chord.key === 'Escape' && layers.viewer) return 'close-viewer'
 
-  // 1. A blocking request first, always. See the note above.
-  if (state.hasOverlay) return 'overlay'
+  // 1. A blocking request first, always — but only while its card is really on
+  //    screen. See the note above for why it must outrank the turn. A card under
+  //    the settings screen, the projects page or the viewer used to answer
+  //    `y`/`a`/Escape anyway: a request nobody could see was allowed, or denied,
+  //    by a key aimed at the layer in front.
+  if (state.hasOverlay) {
+    // `paneActive` is true by construction: `app.ts` routes only the active
+    // pane's state here, and a background pane's card is never painted.
+    if (overlayVisible({ paneActive: true, screen: layers.screen, viewer: layers.viewer })) return 'overlay'
+    // It keeps waiting — `PermissionGate.approve` has no timeout — so every key
+    // that is not the covering layer's own exit is swallowed. Falling through
+    // would hand `y` to the composer and Escape to the turn.
+    if (chord.key !== 'Escape') return 'none'
+    if (layers.popover) return 'close-popover'
+    if (layers.screen) return 'close-screen'
+    return 'none'
+  }
 
   // 2. The rewind panel, which is modal but not blocking. It sits here rather
   //    than first because a permission prompt is holding the agent loop and this
