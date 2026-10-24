@@ -96,6 +96,7 @@ import { createLaneMux } from '../runtime/protocol/laneChannel.js'
 import type { RuntimeHost } from '../runtime/types.js'
 import { ShellHost } from './shellHost.js'
 import { QuitCoordinator } from './quitCoordinator.js'
+import { StartupPreparation } from './startupPreparation.js'
 import { restoreGuiPath } from './guiPath.js'
 import { BrowserTabHost } from './browser/tabs.js'
 import { DesktopBrowserHost } from './browser/host.js'
@@ -226,6 +227,20 @@ const quit = new QuitCoordinator({
 /** Lane keys are minted here so they are monotonic for the process lifetime. */
 let laneCounter = 0
 /**
+ * The one startup repair every project bootstrap waits on. The pre-ready
+ * entries (`second-instance`, `activate`, the menu) share it, so none can
+ * bootstrap tools on the launch PATH while the probe is still running.
+ */
+const startupEnv = new StartupPreparation(async () => {
+  const result = await restoreGuiPath()
+  if (result.status === 'failed') {
+    console.error(
+      `[hanekawa] GUI PATH 恢复失败（${result.reason}）`
+        + `${result.detail ? `：${result.detail}` : ''}，沿用启动时的 PATH`,
+    )
+  }
+})
+/**
  * The agent-facing half of the browser, and the `Browser` tool built over it.
  *
  * Module-level for the same reason the tab host is: the tool is handed to
@@ -333,17 +348,7 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   void app.whenReady().then(async () => {
-    // Before any project can bootstrap a tool or an MCP server. A Finder/Dock
-    // launch inherits launchd's bare PATH; every child spawned afterwards —
-    // Bash, MCP's servers, the editor — inherits `process.env`, so one repair
-    // here is the whole fix. A terminal launch is left untouched.
-    const guiPath = await restoreGuiPath()
-    if (guiPath.status === 'failed') {
-      console.error(
-        `[hanekawa] GUI PATH 恢复失败（${guiPath.reason}）`
-          + `${guiPath.detail ? `：${guiPath.detail}` : ''}，沿用启动时的 PATH`,
-      )
-    }
+    await startupEnv.ready()
     // Windows ties notifications and the taskbar button to this id; without
     // one a toast can be dropped or credited to "electron.app". A dev run has
     // no installer to register a shortcut under a stable id, so it borrows the
@@ -470,6 +475,7 @@ async function bootstrapProject(
   cwd: string,
   options: { sessionId?: string },
 ): Promise<{ entry: ProjectEntry; session: SessionMeta }> {
+  await startupEnv.ready()
   // A macOS Dock reopen can land while the last window's close is still
   // shutting this root down; two runtimes over one `.myagent/` must not overlap.
   await directory.whenClosed(cwd)

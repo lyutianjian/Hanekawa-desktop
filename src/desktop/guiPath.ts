@@ -1,50 +1,40 @@
 /**
- * The macOS GUI PATH repair.
+ * macOS GUI PATH repair.
  *
- * A Finder/Dock launch inherits launchd's bare PATH (`/usr/bin:/bin:/usr/sbin:/sbin`),
- * so `npx`, `rg`, `brew`, `node` and the editor's `code` command are all missing
- * from every child the app starts. Nothing else in the app can fix that per
- * call: `Bash` already runs `$SHELL -c`, MCP spawns its own servers, and the
- * editor is a detached `code`. So the repair happens once, before the first
- * project bootstraps any of them, and every later child inherits the result
- * through `process.env.PATH`.
+ * A Finder/Dock launch inherits launchd's bare PATH, and every child we start
+ * (Bash, MCP servers, the editor) inherits `process.env`. One probe before the
+ * first project bootstraps anything is therefore the whole fix.
  *
- * The probe runs the user's own login *and* interactive shell — `.zprofile` and
- * `.zshrc` both matter on macOS — and reads PATH back with `/usr/bin/printenv`.
- * Echoing `$PATH` from the shell itself would be wrong for fish (a list) and
- * binds the probe to one shell's expansion rules; the exported value is exactly
- * what every child will receive.
- *
- * Three properties keep this from becoming a startup hazard:
- *  - boundaries: the value is printed between two marker lines, and anything an
- *    rc file prints outside them is ignored rather than parsed as PATH;
- *  - limits: output is capped by bytes and the parsed value by length;
- *  - a deadline: the probe is its own process-group leader, so a shell waiting
- *    for input can be reaped together with what its rc started, and nothing
- *    else. Failure always leaves the original PATH in place.
- *
- * macOS only, and only for a launch with no terminal behind it. Windows and
- * Linux already get their PATH from the launcher, and a terminal launch always
- * has the right one.
+ * The probe prints PATH between marker lines and reads it with `/usr/bin/printenv`:
+ * rc files print whatever they like, `$PATH` expansion differs per shell (fish
+ * keeps a list), and only the value between the markers is a PATH to adopt.
+ * `detached` makes the shell a group leader so a timeout can reap exactly the
+ * processes this probe started. A leader can exit while a grandchild still
+ * holds the pipe, so the reaper signals the whole process group rather than
+ * waiting on the leader (which is why `terminateProcessTree` is not used here).
  */
 import { spawn as nodeSpawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { terminateProcessTree } from '../services/backgroundTasks/processTree.js'
+import { StringDecoder } from 'node:string_decoder'
 
-/** Line markers the probe prints around the value; rc noise outside is ignored. */
 export const GUI_PATH_BEGIN_MARKER = '__HANEKAWA_GUI_PATH_BEGIN__'
 export const GUI_PATH_END_MARKER = '__HANEKAWA_GUI_PATH_END__'
 
-/** The whole probe — rc files included — gets this long before it is reaped. */
+/** The rc files run too; a shell that is still waiting at this point is stuck. */
 export const GUI_PATH_TIMEOUT_MS = 5_000
 
-/** A shell that writes more than this is not a PATH probe worth waiting for. */
+/** rc files can be noisy; past this much output the probe is not worth reading. */
 export const GUI_PATH_MAX_OUTPUT_BYTES = 64 * 1024
 
-/** macOS PATHs are a few hundred bytes; a megabyte of them is something else. */
+/** Real macOS PATHs are a few hundred bytes. */
 export const GUI_PATH_MAX_LENGTH = 16 * 1024
 
-export type GuiPathFailure = 'spawn-failed' | 'timeout' | 'output-too-long' | 'invalid-output'
+export type GuiPathFailure =
+  | 'spawn-failed'
+  | 'timeout'
+  | 'output-too-long'
+  | 'invalid-output'
+  | 'shell-failed'
 
 export type GuiPathResult =
   | { status: 'not-applicable' }
@@ -59,21 +49,18 @@ export type SpawnProbe = (
 
 export interface RestoreGuiPathOptions {
   platform?: NodeJS.Platform
-  /** The environment to read from and, on success, to update. Defaults to `process.env`. */
   env?: NodeJS.ProcessEnv
-  /** Test seams; production uses the real login shell and process-tree killer. */
+  /** Test seams; production uses the login shell and the real group reaper. */
   shell?: string
   spawnProbe?: SpawnProbe
-  terminateTree?: (child: ChildProcess) => Promise<void>
   timeoutMs?: number
   maxOutputBytes?: number
 }
 
 /**
- * `TERM`/`TERM_PROGRAM` are the only in-process evidence of a terminal launch:
- * Electron exposes no "launched by launchd" flag. A wrong "GUI" guess only
- * costs one login shell whose PATH is the same one the terminal already had;
- * a wrong "terminal" guess is the bug, so the test errs towards GUI.
+ * `TERM`/`TERM_PROGRAM` are the only in-process evidence of a terminal launch.
+ * Guessing "GUI" wrongly only costs one login shell whose PATH is already the
+ * terminal's; guessing "terminal" wrongly leaves the bug in place.
  */
 export function isGuiLaunch(
   platform: NodeJS.Platform = process.platform,
@@ -82,12 +69,7 @@ export function isGuiLaunch(
   return platform === 'darwin' && env.TERM === undefined && env.TERM_PROGRAM === undefined
 }
 
-/**
- * Resolves the GUI PATH and, on success, writes it to `env.PATH`.
- *
- * Never rejects: a failure is a result, so a startup that cannot repair PATH
- * continues on the launch environment instead of failing to open a window.
- */
+/** Resolves the GUI PATH and, on success, writes it to `env.PATH`. Never rejects. */
 export function restoreGuiPath(options: RestoreGuiPathOptions = {}): Promise<GuiPathResult> {
   const platform = options.platform ?? process.platform
   const env = options.env ?? process.env
@@ -99,21 +81,20 @@ export function restoreGuiPath(options: RestoreGuiPathOptions = {}): Promise<Gui
   }
 
   const spawnProbe = options.spawnProbe ?? (nodeSpawn as unknown as SpawnProbe)
-  const terminateTree = options.terminateTree ?? terminateProcessTree
   const timeoutMs = options.timeoutMs ?? GUI_PATH_TIMEOUT_MS
   const maxOutputBytes = options.maxOutputBytes ?? GUI_PATH_MAX_OUTPUT_BYTES
 
   return new Promise<GuiPathResult>((resolve) => {
     let settled = false
     let timer: ReturnType<typeof setTimeout> | undefined
+    let bytes = 0
     let output = ''
+    const decoder = new StringDecoder('utf8')
 
     const finish = (result: GuiPathResult): void => {
       if (settled) return
       settled = true
       if (timer !== undefined) clearTimeout(timer)
-      // The one write the whole module exists for: every tool, MCP server and
-      // editor spawned afterwards inherits it.
       if (result.status === 'applied') env.PATH = result.path
       resolve(result)
     }
@@ -121,8 +102,6 @@ export function restoreGuiPath(options: RestoreGuiPathOptions = {}): Promise<Gui
     let child: ChildProcess
     try {
       child = spawnProbe(shell, ['-l', '-i', '-c', PROBE_COMMAND], {
-        // Its own group, so the timeout can reap the shell and its rc children
-        // without reaching into the app's other children.
         detached: platform !== 'win32',
         stdio: ['ignore', 'pipe', 'ignore'],
         windowsHide: true,
@@ -133,12 +112,62 @@ export function restoreGuiPath(options: RestoreGuiPathOptions = {}): Promise<Gui
       return
     }
 
-    const reap = (): void => {
-      try {
-        void terminateTree(child).catch(() => undefined)
-      } catch {
-        // It exited between the state check and the signal.
+    const stdout = child.stdout
+    let cleaned = false
+    let reaping: Promise<boolean> | undefined
+
+    const cleanup = (): void => {
+      if (cleaned) return
+      cleaned = true
+      stdout?.removeListener('data', onData)
+      child.removeListener('error', onError)
+      child.removeListener('close', onClose)
+      if (stdout !== null && typeof (stdout as { destroy?: unknown }).destroy === 'function' && !stdout.destroyed) {
+        stdout.destroy()
       }
+      if (typeof child.unref === 'function') child.unref()
+    }
+
+    const reap = (): void => {
+      reaping ??= reapProbeGroup(child).finally(cleanup)
+      void reaping.catch(() => undefined)
+    }
+
+    const onData = (chunk: Buffer | string): void => {
+      if (settled) return
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+      if (bytes + buffer.length > maxOutputBytes) {
+        finish({ status: 'failed', reason: 'output-too-long' })
+        reap()
+        return
+      }
+      bytes += buffer.length
+      output += decoder.write(buffer)
+    }
+
+    const onError = (error: unknown): void => {
+      finish({ status: 'failed', reason: 'spawn-failed', detail: describeError(error) })
+      reap()
+    }
+
+    const onClose = (code: number | null, signal: NodeJS.Signals | null): void => {
+      if (settled) {
+        reap()
+        return
+      }
+      output += decoder.end()
+      if (code !== 0 || signal !== null) {
+        finish({ status: 'failed', reason: 'shell-failed', detail: describeExit(code, signal) })
+      } else {
+        const path = parseProbeOutput(output)
+        finish(
+          path === undefined
+            ? { status: 'failed', reason: 'invalid-output' }
+            : { status: 'applied', path },
+        )
+      }
+      // Whatever the login shell left behind belongs to this probe, not the app.
+      reap()
     }
 
     timer = setTimeout(() => {
@@ -146,52 +175,81 @@ export function restoreGuiPath(options: RestoreGuiPathOptions = {}): Promise<Gui
       reap()
     }, timeoutMs)
 
-    child.stdout?.on('data', (chunk: Buffer | string) => {
-      if (settled) return
-      output += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
-      if (Buffer.byteLength(output) > maxOutputBytes) {
-        finish({ status: 'failed', reason: 'output-too-long' })
-        reap()
-      }
-    })
-
-    child.once('error', (error) => {
-      finish({ status: 'failed', reason: 'spawn-failed', detail: describeError(error) })
-    })
-
-    child.once('close', () => {
-      const path = parseProbeOutput(output)
-      finish(
-        path === undefined
-          ? { status: 'failed', reason: 'invalid-output' }
-          : { status: 'applied', path },
-      )
-    })
+    stdout?.on('data', onData)
+    child.once('error', onError)
+    child.once('close', onClose)
   })
 }
 
 /**
- * `printenv` rather than `$PATH`, and absolute rather than looked up: the
- * launch PATH is exactly what may be missing `/usr/bin`. The leading newline
- * splits the marker from an rc line that did not end with one.
+ * Kills the probe's process group, bounded. Returns whether the group is gone.
+ *
+ * `process.kill(-pgid, 0)` is the liveness test: the leader may already have
+ * exited while a grandchild still belongs to the group, and `ChildProcess`'s
+ * own exit state cannot see that. TERM gets a grace period for well-behaved
+ * descendants, then KILL; both are scoped to this probe's group.
  */
+export async function reapProbeGroup(
+  child: ChildProcess,
+  options: { graceMs?: number; pollMs?: number } = {},
+): Promise<boolean> {
+  const pid = child.pid
+  if (process.platform === 'win32' || pid === undefined) {
+    try {
+      child.kill('SIGKILL')
+    } catch {
+      // Already gone.
+    }
+    return true
+  }
+  const graceMs = options.graceMs ?? 250
+  const pollMs = options.pollMs ?? 25
+  if (!groupAlive(pid)) return true
+  signalGroup(pid, 'SIGTERM')
+  if (await waitGroupGone(pid, graceMs, pollMs)) return true
+  signalGroup(pid, 'SIGKILL')
+  return waitGroupGone(pid, graceMs, pollMs)
+}
+
+function groupAlive(pgid: number): boolean {
+  try {
+    process.kill(-pgid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+function signalGroup(pgid: number, signal: NodeJS.Signals): void {
+  try {
+    process.kill(-pgid, signal)
+  } catch {
+    // The group exited between the liveness check and the signal.
+  }
+}
+
+async function waitGroupGone(pgid: number, timeoutMs: number, pollMs: number): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (groupAlive(pgid)) {
+    if (Date.now() >= deadline) return false
+    await new Promise((resolve) => setTimeout(resolve, pollMs))
+  }
+  return true
+}
+
+/** `printenv` on an exported PATH, because each shell joins `$PATH` its own way. */
 const PROBE_COMMAND =
   `printf '\\n%s\\n' '${GUI_PATH_BEGIN_MARKER}'; `
   + `/usr/bin/printenv PATH; `
   + `printf '%s\\n' '${GUI_PATH_END_MARKER}'`
 
-/** The login shell to probe: `$SHELL`, then the macOS defaults. */
 function loginShell(env: NodeJS.ProcessEnv): string | undefined {
   const configured = env.SHELL?.trim()
   if (configured) return configured
   return ['/bin/zsh', '/bin/bash', '/bin/sh'].find((candidate) => existsSync(candidate))
 }
 
-/**
- * The value between the markers, and only a value that is one non-empty line.
- * Anything else — no markers, a missing value, rc noise inside the markers — is
- * not a PATH this app is willing to adopt.
- */
+/** One non-empty line between the markers; anything else is rc noise. */
 function parseProbeOutput(output: string): string | undefined {
   const lines = output.split(/\r?\n/)
   const start = lines.indexOf(GUI_PATH_BEGIN_MARKER)
@@ -201,6 +259,10 @@ function parseProbeOutput(output: string): string | undefined {
   const value = lines[start + 1] ?? ''
   if (value.length === 0 || value.length > GUI_PATH_MAX_LENGTH || value.includes('\0')) return undefined
   return value
+}
+
+function describeExit(code: number | null, signal: NodeJS.Signals | null): string {
+  return code !== null ? `exit ${code}` : `signal ${signal ?? 'unknown'}`
 }
 
 function describeError(error: unknown): string {
