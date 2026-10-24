@@ -759,7 +759,7 @@ test('writeFile overwrites fresh reads and updates read state', async () => {
   }
 })
 
-test('writeFile refuses to write through a symlink parent', async (t) => {
+test('writeFile follows a legitimate symlink parent to its target', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
   try {
     await mkdir(path.join(dir, 'real'))
@@ -771,16 +771,14 @@ test('writeFile refuses to write through a symlink parent', async (t) => {
     }
 
     const result = await writeFileTool.execute({ filePath: path.join('link', 'a.txt'), content: 'hello' }, context(dir))
-    assert.equal(result.ok, false)
-    assert.equal(result.errorCode, 'precondition_failed')
-    assert.match(result.content, /ancestor directory is a symlink/)
-    await assert.rejects(() => readFile(path.join(dir, 'real', 'a.txt'), 'utf8'))
+    assert.equal(result.ok, true, result.content)
+    assert.equal(await readFile(path.join(dir, 'real', 'a.txt'), 'utf8'), 'hello')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('editFile refuses to edit through a symlink parent', async (t) => {
+test('editFile follows a legitimate symlink parent to its target', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
@@ -795,10 +793,8 @@ test('editFile refuses to edit through a symlink parent', async (t) => {
     await readFileTool.execute({ filePath: path.join('link', 'a.txt') }, ctx)
 
     const result = await editFileTool.execute({ filePath: path.join('link', 'a.txt'), oldString: 'hello', newString: 'bye' }, ctx)
-    assert.equal(result.ok, false)
-    assert.equal(result.errorCode, 'precondition_failed')
-    assert.match(result.content, /ancestor directory is a symlink/)
-    assert.equal(await readFile(path.join(dir, 'real', 'a.txt'), 'utf8'), 'hello')
+    assert.equal(result.ok, true, result.content)
+    assert.equal(await readFile(path.join(dir, 'real', 'a.txt'), 'utf8'), 'bye')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -834,7 +830,7 @@ test('deleteFile refuses unread files', async () => {
   }
 })
 
-test('deleteFile refuses to delete through a symlink parent', async (t) => {
+test('deleteFile follows a legitimate symlink parent to its target', async (t) => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
@@ -849,10 +845,8 @@ test('deleteFile refuses to delete through a symlink parent', async (t) => {
     await readFileTool.execute({ filePath: path.join('link', 'a.txt') }, ctx)
 
     const result = await deleteFileTool.execute({ filePath: path.join('link', 'a.txt') }, ctx)
-    assert.equal(result.ok, false)
-    assert.equal(result.errorCode, 'precondition_failed')
-    assert.match(result.content, /ancestor directory is a symlink/)
-    assert.equal(await readFile(path.join(dir, 'real', 'a.txt'), 'utf8'), 'hello')
+    assert.equal(result.ok, true, result.content)
+    await assert.rejects(() => readFile(path.join(dir, 'real', 'a.txt'), 'utf8'))
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

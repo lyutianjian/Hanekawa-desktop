@@ -620,6 +620,13 @@ export interface ToolContext {
   projectDir?: string
   sessionId: string
   readFiles: Set<string>
+  /**
+   * The file-write target the permission gate bound this call to — the resolved
+   * path from the classification that authorized it. Absent when no gate ran
+   * (direct `execute`); `null` means it could not be resolved and the tool must
+   * refuse.
+   */
+  approvedWriteTarget?: string | null
   readFileState?: Map<string, ReadFileState>
   invokedSkills?: Map<string, { content: string; timestamp: number }>
   taskState?: Map<string, TaskItem>
@@ -697,8 +704,9 @@ export interface ReadFileState {
   size: number
   dev?: number
   ino?: number
-  /** Original on-disk encoding and line endings, restored on write-back. */
+  /** Original on-disk encoding, BOM and line endings, restored on write-back. */
   encoding?: BufferEncoding
+  bom?: boolean
   lineEndings?: 'CRLF' | 'LF'
   /** Counted as read because the opening reminder shows it whole; compaction does not restore it. */
   shownInContext?: true

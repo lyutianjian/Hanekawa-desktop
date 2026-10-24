@@ -2,7 +2,7 @@ import { z } from 'zod/v3'
 import type { Tool } from '../../harness/types.js'
 import { resolveToolPath } from '../../utils/paths.js'
 import { getReadFileContent, rememberReadFile, requireFreshRead, resolveTextFileMeta } from '../fileState.js'
-import { assertParentNotSymlink, assertFileNotSymlink } from '../pathSafety.js'
+import { assertTargetUnchanged, resolveSafeTarget } from '../pathSafety.js'
 import { findStringMatches, multipleMatchFailure, noMatchFailure, replaceLiteralMatch, preserveQuoteStyle } from '../FileEditTool/FileEditTool.js'
 import { patchDetail } from '../editPatch.js'
 import { readTextFile, writeTextFile } from '../textFile.js'
@@ -59,16 +59,13 @@ export const multiEditTool: Tool = {
     if (stale) {
       return stale
     }
-    // Symlink checks BEFORE reading content to prevent TOCTOU: an attacker
-    // could swap the file with a symlink between read and write.
-    const unsafeParent = await assertParentNotSymlink(absolute, filePath)
-    if (unsafeParent) {
-      return unsafeParent
+    // Resolve the real target before reading content to prevent TOCTOU: an
+    // attacker could swap the file with a symlink between read and write.
+    const safe = await resolveSafeTarget(absolute, filePath, { approvedTarget: context.approvedWriteTarget })
+    if ('error' in safe) {
+      return safe.error
     }
-    const unsafeFile = await assertFileNotSymlink(absolute, filePath)
-    if (unsafeFile) {
-      return unsafeFile
-    }
+    const { target } = safe
 
     const originalContent = getReadFileContent(absolute, context) ?? (await readTextFile(absolute)).content
     // Validate all edits against the original content and find match positions
@@ -118,10 +115,14 @@ export const multiEditTool: Tool = {
       nextContent = replaceLiteralMatch(nextContent, edit.oldString, edit.newString, edit.start)
     }
 
-    const { encoding, lineEndings } = await resolveTextFileMeta(absolute, context)
+    const meta = await resolveTextFileMeta(absolute, context)
     await trackFileEdit(context, absolute)
-    await writeTextFile(absolute, nextContent, encoding, lineEndings)
-    await rememberReadFile(absolute, nextContent, context, { encoding, lineEndings })
+    const changed = await assertTargetUnchanged(target, filePath)
+    if (changed) {
+      return changed
+    }
+    await writeTextFile(target.canonical, nextContent, meta)
+    await rememberReadFile(absolute, nextContent, context, meta)
     return {
       ok: true,
       content: `Applied ${edits.length} edits to ${filePath}`,

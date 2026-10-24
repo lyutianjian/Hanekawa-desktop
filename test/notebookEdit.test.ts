@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile, readFile, mkdir } from 'node:fs/promises'
+import { chmod, mkdtemp, rm, writeFile, readFile, readdir, mkdir, stat } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -468,6 +468,116 @@ test('MultiEdit tool rejects .ipynb files', async () => {
     assert.equal(result.ok, false)
     assert.equal(result.errorCode, 'invalid_input')
     assert.match(result.content, /NotebookEdit/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+// ── The notebook's own encoding, line endings and trailing newline ─────────────
+
+test('NotebookEdit preserves BOM, CRLF, the trailing newline and the file mode', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  try {
+    const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
+    const body = JSON.stringify(nb, null, 1).replaceAll('\n', '\r\n')
+    const nbPath = path.join(dir, 'test.ipynb')
+    await writeFile(nbPath, Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from(`${body}\r\n`, 'utf8'),
+    ]))
+    await chmod(nbPath, 0o755)
+    const ctx = context(dir)
+    await readFileTool.execute({ filePath: 'test.ipynb' }, ctx)
+
+    const result = await notebookEditTool.execute(
+      { notebook_path: 'test.ipynb', cell_id: 'abc', new_source: 'a = 2' },
+      ctx,
+    )
+    assert.equal(result.ok, true, result.content)
+
+    const bytes = await readFile(nbPath)
+    assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf])
+    const text = bytes.subarray(3).toString('utf8')
+    assert.equal(text.endsWith('\r\n'), true)
+    assert.equal(text.replaceAll('\r\n', '').includes('\n'), false)
+    assert.deepEqual(JSON.parse(text).cells[0].source, ['a = 2'])
+    assert.equal((await stat(nbPath)).mode & 0o777, 0o755)
+    assert.deepEqual(await readdir(dir), ['test.ipynb'])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('NotebookEdit keeps CRLF and a trailing newline', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  try {
+    const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
+    const body = JSON.stringify(nb, null, 1).replaceAll('\n', '\r\n')
+    const nbPath = path.join(dir, 'test.ipynb')
+    await writeFile(nbPath, `${body}\r\n`, 'utf8')
+    const ctx = context(dir)
+    await readFileTool.execute({ filePath: 'test.ipynb' }, ctx)
+
+    const result = await notebookEditTool.execute(
+      { notebook_path: 'test.ipynb', cell_id: 'abc', new_source: 'a = 2' },
+      ctx,
+    )
+    assert.equal(result.ok, true, result.content)
+
+    const text = await readFile(nbPath, 'utf8')
+    assert.equal(text.endsWith('\r\n'), true)
+    assert.equal(text.replaceAll('\r\n', '').includes('\n'), false)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('NotebookEdit keeps LF and no trailing newline when the notebook had none', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  try {
+    const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
+    const nbPath = path.join(dir, 'test.ipynb')
+    await writeFile(nbPath, JSON.stringify(nb, null, 1), 'utf8')
+    const ctx = context(dir)
+    await readFileTool.execute({ filePath: 'test.ipynb' }, ctx)
+
+    const result = await notebookEditTool.execute(
+      { notebook_path: 'test.ipynb', cell_id: 'abc', new_source: 'a = 2' },
+      ctx,
+    )
+    assert.equal(result.ok, true, result.content)
+
+    const text = await readFile(nbPath, 'utf8')
+    assert.equal(text.endsWith('\n'), false)
+    assert.equal(text.includes('\r'), false)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a failed notebook write leaves the file and its directory clean', async () => {
+  if (process.getuid?.() === 0) return
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  try {
+    const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
+    const nbPath = path.join(dir, 'test.ipynb')
+    const original = `${JSON.stringify(nb, null, 1)}\n`
+    await writeFile(nbPath, original, 'utf8')
+    const ctx = context(dir)
+    await readFileTool.execute({ filePath: 'test.ipynb' }, ctx)
+
+    await chmod(dir, 0o555)
+    try {
+      await assert.rejects(notebookEditTool.execute(
+        { notebook_path: 'test.ipynb', cell_id: 'abc', new_source: 'a = 2' },
+        ctx,
+      ))
+    } finally {
+      await chmod(dir, 0o755)
+    }
+
+    assert.equal(await readFile(nbPath, 'utf8'), original)
+    assert.deepEqual(await readdir(dir), ['test.ipynb'])
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

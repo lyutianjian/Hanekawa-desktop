@@ -5,7 +5,7 @@ import type { Tool, ToolResult } from '../../harness/types.js'
 import { resolveToolPath } from '../../utils/paths.js'
 import { getReadFileContent, rememberReadFile, requireFreshRead, resolveTextFileMeta } from '../fileState.js'
 import { patchDetail } from '../editPatch.js'
-import { assertParentNotSymlink, assertFileNotSymlink } from '../pathSafety.js'
+import { assertTargetUnchanged, resolveSafeTarget } from '../pathSafety.js'
 import { writeTextFile } from '../textFile.js'
 import { trackFileEdit } from '../trackFileEdit.js'
 import { DESCRIPTION } from './prompt.js'
@@ -29,10 +29,11 @@ export const writeFileTool: Tool = {
   async execute(input, context) {
     const { filePath, content } = input as { filePath: string; content: string }
     const absolute = resolveToolPath(context, filePath)
-    const unsafeParentBeforeRead = await assertParentNotSymlink(absolute, filePath)
-    if (unsafeParentBeforeRead) {
-      return unsafeParentBeforeRead
+    const resolved = await resolveSafeTarget(absolute, filePath, { approvedTarget: context.approvedWriteTarget })
+    if ('error' in resolved) {
+      return resolved.error
     }
+    const { target } = resolved
     const conflict = await detectCaseInsensitiveNameConflict(absolute, filePath)
     if (conflict) {
       return conflict
@@ -48,31 +49,23 @@ export const writeFileTool: Tool = {
     // text in hand; a new file diffs against nothing. Either way the patch
     // costs no extra filesystem read.
     const previousContent = exists ? getReadFileContent(absolute, context) : ''
-    const unsafeParentBeforeMkdir = await assertParentNotSymlink(absolute, filePath)
-    if (unsafeParentBeforeMkdir) {
-      return unsafeParentBeforeMkdir
-    }
-    await mkdir(path.dirname(absolute), { recursive: true })
-    const unsafeParentBeforeWrite = await assertParentNotSymlink(absolute, filePath)
-    if (unsafeParentBeforeWrite) {
-      return unsafeParentBeforeWrite
-    }
-    const unsafeFile = await assertFileNotSymlink(absolute, filePath)
-    if (unsafeFile) {
-      return unsafeFile
-    }
-    // An existing file keeps its on-disk encoding and line endings; a new one
-    // is LF/UTF-8. Either way the remembered content stays LF so a later Edit
-    // matches a model-supplied string.
-    const { encoding, lineEndings } = exists
+    // An existing file keeps its on-disk encoding, BOM and line endings; a new
+    // one is UTF-8/LF without a BOM. Either way the remembered content stays LF
+    // (and BOM-free) so a later Edit matches a model-supplied string.
+    const meta = exists
       ? await resolveTextFileMeta(absolute, context)
-      : { encoding: 'utf8' as BufferEncoding, lineEndings: 'LF' as const }
+      : { encoding: 'utf8' as BufferEncoding, bom: false, lineEndings: 'LF' as const }
     await trackFileEdit(context, absolute)
-    // Atomic write: write to a temp file in the same directory, then rename.
-    // This prevents symlink following because writeFile follows symlinks,
-    // but rename does not. It also prevents data loss on crash.
-    await writeTextFile(absolute, content, encoding, lineEndings, { atomic: true })
-    await rememberReadFile(absolute, content, context, { encoding, lineEndings })
+    // The last check before anything is created or written, after the snapshot
+    // has been taken: no directory may be made through a path that no longer
+    // matches the approved target.
+    const changed = await assertTargetUnchanged(target, filePath)
+    if (changed) {
+      return changed
+    }
+    await mkdir(path.dirname(target.canonical), { recursive: true })
+    await writeTextFile(target.canonical, content, meta)
+    await rememberReadFile(absolute, content, context, meta)
     return {
       ok: true,
       content: `Wrote ${filePath}`,

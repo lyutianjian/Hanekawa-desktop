@@ -5,9 +5,10 @@ import { decodeTextBuffer, readTextFile, type LineEndings } from './textFile.js'
 
 type FileSignature = Pick<ReadFileState, 'mtimeMs' | 'ctimeMs' | 'size' | 'dev' | 'ino'>
 
-/** Encoding and line endings travel with the content so a write can restore them. */
+/** Encoding, BOM and line endings travel with the content so a write can restore them. */
 export interface TextFileMeta {
   encoding?: BufferEncoding
+  bom?: boolean
   lineEndings?: LineEndings
 }
 
@@ -56,6 +57,7 @@ export async function rememberShownFiles(shown: string, context: ToolContext): P
 export async function readTextFileWithStat(absolute: string): Promise<{
   content: string
   encoding: BufferEncoding
+  bom: boolean
   lineEndings: LineEndings
   fileStat: Stats
 }> {
@@ -90,7 +92,7 @@ export function captureReadFileStateFromStat(content: string, fileStat: Stats, m
     content,
     timestamp: nextReadFileTimestamp(),
     ...captureFileSignature(fileStat),
-    ...(meta.encoding ? { encoding: meta.encoding } : {}),
+    ...(meta.encoding ? { encoding: meta.encoding, bom: meta.bom === true } : {}),
     ...(meta.lineEndings ? { lineEndings: meta.lineEndings } : {}),
   }
 }
@@ -103,13 +105,13 @@ export function captureReadFileStateFromStat(content: string, fileStat: Stats, m
 export async function resolveTextFileMeta(absolute: string, context: ToolContext): Promise<Required<TextFileMeta>> {
   const state = context.readFileState?.get(absolute)
   if (state?.encoding && state.lineEndings) {
-    return { encoding: state.encoding, lineEndings: state.lineEndings }
+    return { encoding: state.encoding, bom: state.bom === true, lineEndings: state.lineEndings }
   }
   try {
-    const { encoding, lineEndings } = await readTextFile(absolute)
-    return { encoding, lineEndings }
+    const { encoding, bom, lineEndings } = await readTextFile(absolute)
+    return { encoding, bom, lineEndings }
   } catch {
-    return { encoding: 'utf8', lineEndings: 'LF' }
+    return { encoding: 'utf8', bom: false, lineEndings: 'LF' }
   }
 }
 

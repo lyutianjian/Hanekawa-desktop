@@ -62,6 +62,12 @@ export interface PermissionDecision {
   denialReason?: string
   /** Appended to the tool result as a system reminder once the call has run. */
   reminder?: string
+  /**
+   * The file-write target the classifier resolved for this call, carried from
+   * that one classification so a later approval cannot be re-pointed at
+   * another path. `null` means it could not be resolved.
+   */
+  writeTarget?: string | null
 }
 
 export interface PermissionRule {
@@ -359,8 +365,14 @@ export class PermissionGate {
   }
 
   private async decide(tool: Tool, input: unknown): Promise<PermissionDecision> {
-    const mode = this.mode
     const risk = classifyToolCall(tool, input, this.riskContextFor())
+    const decision = await this.decideWithRisk(tool, input, risk)
+    // Bound from this classification, not re-resolved after any approval await.
+    return risk.writeTarget === undefined ? decision : { ...decision, writeTarget: risk.writeTarget }
+  }
+
+  private async decideWithRisk(tool: Tool, input: unknown, risk: RiskAssessment): Promise<PermissionDecision> {
+    const mode = this.mode
     const level = risk.level
 
     // 1. A deny rule is absolute.

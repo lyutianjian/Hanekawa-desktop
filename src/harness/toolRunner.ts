@@ -120,6 +120,11 @@ export class ToolRunner {
 
       const decision = await this.permissionGate.approveDetailed(tool, call.input)
       const approved = decision.approved
+      // Bind the call to the target resolved at classification time, so neither
+      // the approval await nor a pre-tool hook can re-point it.
+      if (decision.writeTarget !== undefined) {
+        executionContext.approvedWriteTarget = decision.writeTarget
+      }
       await this.emitRecord(this.permissionGate.createApprovalRecord(tool, call.input, approved, turnId))
       if (!approved) {
         // A denial the user never saw must not claim they made it, or the model

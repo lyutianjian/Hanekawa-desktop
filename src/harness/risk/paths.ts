@@ -1,5 +1,5 @@
 import path from 'node:path'
-import { existsSync } from 'node:fs'
+import { existsSync, lstatSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { checkWindowsPathSafety, isProtectedPath } from '../../utils/permissions/protectedPaths.js'
 import {
@@ -62,6 +62,48 @@ export function realPath(absolute: string): string {
     return resolveExistingPrefix(absolute)
   } catch {
     return absolute
+  }
+}
+
+/**
+ * The path a file-write tool actually operates on: the parent resolved through
+ * every symlink, the final component left as named. A write replaces that
+ * component by rename and a delete unlinks it, so neither follows it — binding
+ * permission to the followed target would refuse a legal delete of a link.
+ *
+ * Only a missing ancestor is walked past; a permission error, a component that
+ * is not a directory, a dangling link or a path without an existing ancestor
+ * throws, so callers can refuse instead of trusting an unverified path.
+ */
+export function resolveWriteTarget(absolute: string): string {
+  const missing: string[] = []
+  let probe = path.dirname(absolute)
+
+  for (;;) {
+    try {
+      return path.join(realpathSync(probe), ...missing, path.basename(absolute))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+
+    // realpath answers ENOENT for a dangling link too, and that is not a name
+    // a write may create through.
+    let entry
+    try {
+      entry = lstatSync(probe)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+    if (entry?.isSymbolicLink()) {
+      throw new Error(`"${probe}" is a symbolic link that does not resolve`)
+    }
+
+    const parent = path.dirname(probe)
+    if (parent === probe) {
+      throw new Error(`"${absolute}" has no existing ancestor`)
+    }
+    missing.unshift(path.basename(probe))
+    probe = parent
   }
 }
 

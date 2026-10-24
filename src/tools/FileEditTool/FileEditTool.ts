@@ -3,7 +3,7 @@ import type { Tool, ToolResult } from '../../harness/types.js'
 import { resolveToolPath } from '../../utils/paths.js'
 import { patchDetail } from '../editPatch.js'
 import { getReadFileContent, rememberReadFile, requireFreshRead, resolveTextFileMeta } from '../fileState.js'
-import { assertParentNotSymlink, assertFileNotSymlink } from '../pathSafety.js'
+import { assertTargetUnchanged, resolveSafeTarget } from '../pathSafety.js'
 import { readTextFile, writeTextFile } from '../textFile.js'
 import { trackFileEdit } from '../trackFileEdit.js'
 import { DESCRIPTION } from './prompt.js'
@@ -48,16 +48,13 @@ export const editFileTool: Tool = {
     if (oldString.length === 0) {
       return { ok: false, content: 'Refusing to edit: oldString must not be empty.', errorCode: 'precondition_failed' }
     }
-    // Symlink checks BEFORE reading content to prevent TOCTOU: an attacker
-    // could swap the file with a symlink between read and write.
-    const unsafeParent = await assertParentNotSymlink(absolute, filePath)
-    if (unsafeParent) {
-      return unsafeParent
+    // Resolve the real target before reading content to prevent TOCTOU: an
+    // attacker could swap the file with a symlink between read and write.
+    const resolved = await resolveSafeTarget(absolute, filePath, { approvedTarget: context.approvedWriteTarget })
+    if ('error' in resolved) {
+      return resolved.error
     }
-    const unsafeFile = await assertFileNotSymlink(absolute, filePath)
-    if (unsafeFile) {
-      return unsafeFile
-    }
+    const { target } = resolved
     const original = getReadFileContent(absolute, context) ?? (await readTextFile(absolute)).content
     const matches = findStringMatches(original, oldString)
     if (matches.length === 0) {
@@ -78,10 +75,14 @@ export const editFileTool: Tool = {
       nextContent = replaceLiteralMatch(nextContent, oldString, effectiveNewString, match.index)
     }
 
-    const { encoding, lineEndings } = await resolveTextFileMeta(absolute, context)
+    const meta = await resolveTextFileMeta(absolute, context)
     await trackFileEdit(context, absolute)
-    await writeTextFile(absolute, nextContent, encoding, lineEndings)
-    await rememberReadFile(absolute, nextContent, context, { encoding, lineEndings })
+    const changed = await assertTargetUnchanged(target, filePath)
+    if (changed) {
+      return changed
+    }
+    await writeTextFile(target.canonical, nextContent, meta)
+    await rememberReadFile(absolute, nextContent, context, meta)
     const label = matches.length > 1
       ? `Edited ${filePath} (${matches.length} occurrences)`
       : `Edited ${filePath}`

@@ -1,11 +1,12 @@
-import { readFile, writeFile, mkdir, rename } from 'node:fs/promises'
+import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import { z } from 'zod/v3'
 import type { Tool, ToolContext, ToolResult } from '../../harness/types.js'
 import { requireFreshRead, readFileAndRemember } from '../fileState.js'
-import { assertParentNotSymlink, assertFileNotSymlink } from '../pathSafety.js'
+import { assertTargetUnchanged, resolveSafeTarget, type SafeTarget } from '../pathSafety.js'
 import { resolveToolPath } from '../../utils/paths.js'
 import { patchDetail } from '../editPatch.js'
+import { readTextFile, writeTextFile, type TextFileRead } from '../textFile.js'
 import { trackFileEdit } from '../trackFileEdit.js'
 import { DESCRIPTION } from './prompt.js'
 
@@ -164,20 +165,23 @@ export const notebookEditTool: Tool = {
       }
     }
 
-    // Check symlink safety (both parent directory and the file itself)
-    const unsafeParent = await assertParentNotSymlink(absolutePath, options.notebook_path)
-    if (unsafeParent) return unsafeParent
-    const unsafeFile = await assertFileNotSymlink(absolutePath, options.notebook_path)
-    if (unsafeFile) return unsafeFile
+    // Resolve the real target (a symlinked parent is legitimate; the file
+    // itself must not be a link) before anything is read.
+    const resolved = await resolveSafeTarget(absolutePath, options.notebook_path, {
+      approvedTarget: context.approvedWriteTarget,
+    })
+    if ('error' in resolved) return resolved.error
+    const target = resolved.target
 
     // Enforce read-before-edit
     const staleError = await requireFreshRead(absolutePath, options.notebook_path, context)
     if (staleError) return staleError
 
-    // Read the notebook
-    let rawContent: string
+    // Read the notebook through the shared reader: it strips the BOM and
+    // normalizes line endings, and keeps both for the write-back.
+    let file: TextFileRead
     try {
-      rawContent = await readFile(absolutePath, 'utf-8')
+      file = await readTextFile(absolutePath)
     } catch (error) {
       return {
         ok: false,
@@ -189,7 +193,7 @@ export const notebookEditTool: Tool = {
     // Parse JSON
     let notebook: NotebookContent
     try {
-      notebook = JSON.parse(rawContent) as NotebookContent
+      notebook = JSON.parse(file.content) as NotebookContent
     } catch {
       return {
         ok: false,
@@ -229,7 +233,8 @@ export const notebookEditTool: Tool = {
 
       const deletedSource = cellSourceText(found.cell)
       notebook.cells.splice(found.index, 1)
-      await writeNotebook(absolutePath, notebook, context)
+      const writeFailure = await writeNotebook(target, file, notebook, context)
+      if (writeFailure) return writeFailure
 
       return {
         ok: true,
@@ -277,7 +282,8 @@ export const notebookEditTool: Tool = {
       }
 
       notebook.cells.splice(insertIndex, 0, newCell)
-      await writeNotebook(absolutePath, notebook, context)
+      const writeFailure = await writeNotebook(target, file, notebook, context)
+      if (writeFailure) return writeFailure
 
       return {
         ok: true,
@@ -320,7 +326,8 @@ export const notebookEditTool: Tool = {
           newCell.id = generateCellId()
         }
         notebook.cells.push(newCell)
-        await writeNotebook(absolutePath, notebook, context)
+        const writeFailure = await writeNotebook(target, file, notebook, context)
+        if (writeFailure) return writeFailure
 
         return {
           ok: true,
@@ -369,7 +376,8 @@ export const notebookEditTool: Tool = {
       }
     }
 
-    await writeNotebook(absolutePath, notebook, context)
+    const writeFailure = await writeNotebook(target, file, notebook, context)
+    if (writeFailure) return writeFailure
 
     return {
       ok: true,
@@ -389,23 +397,33 @@ export const notebookEditTool: Tool = {
 }
 
 /**
- * Write the notebook back to disk with standard Jupyter formatting.
- * Uses atomic write (tmp + rename) for safety.
+ * Write the notebook back through the shared text writer: the file keeps its
+ * encoding, BOM, line endings and whether it ended with a newline, plus its
+ * mode (atomic temp + rename in `writeTextFile`). Formatting stays the Jupyter
+ * standard one-space indent this tool already produced.
  */
-async function writeNotebook(absolutePath: string, notebook: NotebookContent, context: ToolContext): Promise<void> {
-  await trackFileEdit(context, absolutePath)
+async function writeNotebook(
+  target: SafeTarget,
+  file: TextFileRead,
+  notebook: NotebookContent,
+  context: ToolContext,
+): Promise<ToolResult | undefined> {
+  await trackFileEdit(context, target.absolute)
 
-  // Jupyter standard: 1-space indent
-  const content = JSON.stringify(notebook, null, 1)
+  const content = `${JSON.stringify(notebook, null, 1)}${file.content.endsWith('\n') ? '\n' : ''}`
 
-  // Ensure parent directory exists
-  await mkdir(path.dirname(absolutePath), { recursive: true })
+  const changed = await assertTargetUnchanged(target, target.absolute)
+  if (changed) return changed
 
-  // Atomic write: tmp file + rename
-  const tmpPath = `${absolutePath}.tmp`
-  await writeFile(tmpPath, content, 'utf-8')
-  await rename(tmpPath, absolutePath)
+  await mkdir(path.dirname(target.canonical), { recursive: true })
+  await writeTextFile(target.canonical, content, {
+    encoding: file.encoding,
+    bom: file.bom,
+    lineEndings: file.lineEndings,
+  })
 
-  // Update read state so subsequent edits don't fail with stale_file
-  await readFileAndRemember(absolutePath, context)
+  // Update read state so subsequent edits don't fail with stale_file; only
+  // after the write landed.
+  await readFileAndRemember(target.absolute, context)
+  return undefined
 }

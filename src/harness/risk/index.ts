@@ -2,7 +2,7 @@ import path from 'node:path'
 import type { Tool } from '../types.js'
 import { isPreapprovedUrl, urlHostname } from '../../utils/permissions/webFetchDomains.js'
 import { classifyBash } from './bash.js'
-import { classifyPath } from './paths.js'
+import { classifyPath, resolveWriteTarget } from './paths.js'
 import { maxTier, tierRank, type RiskAssessment, type RiskContext, type RiskReason, type RiskTier } from './types.js'
 
 export { createRiskContext } from './paths.js'
@@ -37,7 +37,8 @@ export function classifyToolCall(tool: ClassifiableTool, input: unknown, ctx: Ri
     // The file tools resolve against the workspace and never expand `~`.
     const abs = path.resolve(ctx.cwd, raw ?? '.')
     const reasons = classifyPath({ raw: raw ?? '.', abs }, write ? 'write' : 'read', ctx)
-    return assessment(reasons, write, write ? [] : [abs], write ? [abs] : [])
+    if (!write) return assessment(reasons, false, [abs], [])
+    return assessment(reasons, true, [], [abs], [], writeTargetOf(abs))
   }
 
   if (tool.name === 'WebFetch') {
@@ -67,7 +68,22 @@ function filePathOf(fields: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-function assessment(reasons: RiskReason[], isFileWrite: boolean, readPaths: string[], writePaths: string[], commands: string[] = []): RiskAssessment {
+function writeTargetOf(absolute: string): string | null {
+  try {
+    return resolveWriteTarget(absolute)
+  } catch {
+    return null
+  }
+}
+
+function assessment(
+  reasons: RiskReason[],
+  isFileWrite: boolean,
+  readPaths: string[],
+  writePaths: string[],
+  commands: string[] = [],
+  writeTarget?: string | null,
+): RiskAssessment {
   const seen = new Set<string>()
   const unique = reasons.filter((reason) => {
     const key = `${reason.code}\0${reason.message}`
@@ -77,5 +93,13 @@ function assessment(reasons: RiskReason[], isFileWrite: boolean, readPaths: stri
   })
   unique.sort((a, b) => tierRank(b.level) - tierRank(a.level))
   const level = unique.reduce<RiskTier>((highest, reason) => maxTier(highest, reason.level), 'readonly')
-  return { level, reasons: unique, isFileWrite, readPaths, writePaths, commands }
+  return {
+    level,
+    reasons: unique,
+    isFileWrite,
+    readPaths,
+    writePaths,
+    commands,
+    ...(writeTarget === undefined ? {} : { writeTarget }),
+  }
 }

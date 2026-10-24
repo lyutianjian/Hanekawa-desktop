@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -9,7 +9,8 @@ import { editFileTool } from '../src/tools/FileEditTool/FileEditTool.js'
 import { multiEditTool } from '../src/tools/MultiEditTool/MultiEditTool.js'
 import { writeFileTool } from '../src/tools/FileWriteTool/FileWriteTool.js'
 import { grepTool } from '../src/tools/GrepTool/GrepTool.js'
-import { applyLineEndings, detectLineEndings } from '../src/tools/textFile.js'
+import fs from 'node:fs/promises'
+import { applyLineEndings, detectLineEndings, writeTextFile } from '../src/tools/textFile.js'
 
 function context(cwd: string) {
   return { cwd, sessionId: 's1', readFiles: new Set<string>(), readFileState: new Map<string, ReadFileState>() }
@@ -180,6 +181,140 @@ test('Read refuses an offset past the end of the file', async () => {
   })
 })
 
+test('Write keeps the mode of the file it replaces', async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'run.sh')
+    await writeFile(file, 'one\n', 'utf8')
+    await chmod(file, 0o755)
+    const ctx = context(dir)
+    await readFileTool.execute({ filePath: 'run.sh' }, ctx)
+
+    const result = await writeFileTool.execute({ filePath: 'run.sh', content: 'two\n' }, ctx)
+
+    assert.equal(result.ok, true, result.content)
+    assert.equal((await stat(file)).mode & 0o777, 0o755)
+  })
+})
+
+test('Edit keeps a 0600 file private', async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'secret.env')
+    await writeFile(file, 'TOKEN=one\n', 'utf8')
+    await chmod(file, 0o600)
+    const ctx = context(dir)
+    await readFileTool.execute({ filePath: 'secret.env' }, ctx)
+
+    const result = await editFileTool.execute({ filePath: 'secret.env', oldString: 'one', newString: 'two' }, ctx)
+
+    assert.equal(result.ok, true, result.content)
+    assert.equal((await stat(file)).mode & 0o777, 0o600)
+  })
+})
+
+test('a new file keeps the umask default mode', async () => {
+  await withTempDir(async (dir) => {
+    const result = await writeFileTool.execute({ filePath: 'fresh.txt', content: 'x\n' }, context(dir))
+    assert.equal(result.ok, true, result.content)
+    assert.equal((await stat(path.join(dir, 'fresh.txt'))).mode & 0o777, 0o666 & ~process.umask())
+  })
+})
+
+test('a failed atomic write leaves no temp file behind', async () => {
+  await withTempDir(async (dir) => {
+    const target = path.join(dir, 'not-a-file')
+    await mkdir(target)
+
+    await assert.rejects(writeFileTool.execute({ filePath: 'not-a-file', content: 'x\n' }, context(dir)))
+
+    assert.deepEqual(await readdir(dir), ['not-a-file'])
+    assert.deepEqual(await readdir(target), [])
+  })
+})
+
+test('a UTF-16LE file keeps exactly one BOM and its CRLF through Read, Write and Edit', async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'cn.txt')
+    await writeFile(file, Buffer.concat([
+      Buffer.from([0xff, 0xfe]),
+      Buffer.from('标题\r\n第二行\r\n', 'utf16le'),
+    ]))
+    const ctx = context(dir)
+
+    const read = await readFileTool.execute({ filePath: 'cn.txt' }, ctx)
+    assert.equal(read.ok, true, read.content)
+    assert.equal(read.content.includes('\uFEFF'), false)
+
+    const overwrite = await writeFileTool.execute({ filePath: 'cn.txt', content: '标题\n第三行\n' }, ctx)
+    assert.equal(overwrite.ok, true, overwrite.content)
+
+    const bytes = await readFile(file)
+    assert.deepEqual([...bytes.subarray(0, 2)], [0xff, 0xfe])
+    assert.equal(bytes.subarray(2).toString('utf16le'), '标题\r\n第三行\r\n')
+
+    const reread = await readFileTool.execute({ filePath: 'cn.txt' }, ctx)
+    assert.equal(reread.ok, true, reread.content)
+    assert.equal(reread.content.includes('\uFFFD'), false)
+
+    const edited = await editFileTool.execute({ filePath: 'cn.txt', oldString: '第三行', newString: '第四行' }, ctx)
+    assert.equal(edited.ok, true, edited.content)
+
+    const after = await readFile(file)
+    assert.deepEqual([...after.subarray(0, 2)], [0xff, 0xfe])
+    assert.equal(after.subarray(2).toString('utf16le'), '标题\r\n第四行\r\n')
+  })
+})
+
+test('a UTF-8 BOM is not shown to the model and is not doubled on write', async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'bom.txt')
+    await writeFile(file, Buffer.concat([
+      Buffer.from([0xef, 0xbb, 0xbf]),
+      Buffer.from('one\ntwo\n', 'utf8'),
+    ]))
+    const ctx = context(dir)
+
+    const read = await readFileTool.execute({ filePath: 'bom.txt' }, ctx)
+    assert.equal(read.ok, true, read.content)
+    assert.equal(read.content.includes('\uFEFF'), false)
+
+    const edited = await editFileTool.execute({ filePath: 'bom.txt', oldString: 'two', newString: 'TWO' }, ctx)
+    assert.equal(edited.ok, true, edited.content)
+
+    const bytes = await readFile(file)
+    assert.deepEqual([...bytes.subarray(0, 3)], [0xef, 0xbb, 0xbf])
+    assert.equal(bytes.subarray(3).toString('utf8'), 'one\nTWO\n')
+  })
+})
+
+test('UTF-8 without a BOM stays without one', async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'plain.txt')
+    await writeFile(file, 'one\ntwo\n', 'utf8')
+    const ctx = context(dir)
+    await readFileTool.execute({ filePath: 'plain.txt' }, ctx)
+
+    await editFileTool.execute({ filePath: 'plain.txt', oldString: 'two', newString: 'TWO' }, ctx)
+
+    assert.deepEqual([...(await readFile(file)).subarray(0, 3)], [...Buffer.from('one')])
+  })
+})
+
+test('a U+FEFF in the body of a file is preserved, not mistaken for a BOM', async () => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'zero-width.txt')
+    await writeFile(file, 'alpha\uFEFFbeta\n', 'utf8')
+    const ctx = context(dir)
+
+    const read = await readFileTool.execute({ filePath: 'zero-width.txt' }, ctx)
+    assert.equal(read.ok, true, read.content)
+    assert.equal(read.content.includes('alpha\uFEFFbeta'), true)
+
+    await editFileTool.execute({ filePath: 'zero-width.txt', oldString: 'beta', newString: 'gamma' }, ctx)
+
+    assert.equal(await readFile(file, 'utf8'), 'alpha\uFEFFgamma\n')
+  })
+})
+
 test('Grep accepts a file as its path instead of failing with ENOTDIR', async () => {
   await withTempDir(async (dir) => {
     const file = path.join(dir, 'clash.yaml')
@@ -207,5 +342,92 @@ test('Grep with no matches answers cleanly rather than falling back', async () =
     const result = await grepTool.execute({ pattern: 'zzz-absent-zzz', path: 'a.txt' }, context(dir))
     assert.equal(result.ok, true)
     assert.equal(result.content, 'No matches found.')
+  })
+})
+
+test('a failed atomic write keeps the original bytes, mode and read state', async () => {
+  if (process.getuid?.() === 0) return
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'a.txt')
+    await writeFile(file, 'old\n', 'utf8')
+    await chmod(file, 0o600)
+    const ctx = context(dir)
+    await readFileTool.execute({ filePath: 'a.txt' }, ctx)
+    const remembered = ctx.readFileState?.get(file)
+
+    await chmod(dir, 0o555)
+    try {
+      await assert.rejects(writeFileTool.execute({ filePath: 'a.txt', content: 'new\n' }, ctx))
+    } finally {
+      await chmod(dir, 0o755)
+    }
+
+    assert.equal(await readFile(file, 'utf8'), 'old\n')
+    assert.equal((await stat(file)).mode & 0o777, 0o600)
+    assert.deepEqual(await readdir(dir), ['a.txt'])
+    assert.equal(ctx.readFileState?.get(file), remembered)
+  })
+})
+
+const UTF8_LF = { encoding: 'utf8' as const, bom: false, lineEndings: 'LF' as const }
+
+async function fileHandlePrototype(dir: string) {
+  const probePath = path.join(dir, 'handle-probe')
+  const probe = await fs.open(probePath, 'w')
+  await probe.close()
+  await fs.rm(probePath)
+  return Object.getPrototypeOf(probe) as { writeFile(...args: unknown[]): Promise<void>; chmod(...args: unknown[]): Promise<void> }
+}
+
+test('a failing write discards the temp file and keeps the target', async (t) => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'a.txt')
+    await writeFile(file, 'old\n', 'utf8')
+    await chmod(file, 0o600)
+    t.mock.method(await fileHandlePrototype(dir), 'writeFile', async () => {
+      throw new Error('disk full')
+    })
+
+    await assert.rejects(writeTextFile(file, 'new\n', UTF8_LF))
+
+    assert.equal(await readFile(file, 'utf8'), 'old\n')
+    assert.equal((await stat(file)).mode & 0o777, 0o600)
+    assert.deepEqual(await readdir(dir), ['a.txt'])
+  })
+})
+
+test('a failing chmod leaves the old file and the read state in place', async (t) => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'a.txt')
+    await writeFile(file, 'old\n', 'utf8')
+    await chmod(file, 0o600)
+    const ctx = context(dir)
+    await readFileTool.execute({ filePath: 'a.txt' }, ctx)
+    const remembered = ctx.readFileState?.get(file)
+    t.mock.method(await fileHandlePrototype(dir), 'chmod', async () => {
+      throw new Error('chmod denied')
+    })
+
+    await assert.rejects(writeFileTool.execute({ filePath: 'a.txt', content: 'new\n' }, ctx))
+
+    assert.equal(await readFile(file, 'utf8'), 'old\n')
+    assert.equal((await stat(file)).mode & 0o777, 0o600)
+    assert.deepEqual(await readdir(dir), ['a.txt'])
+    assert.equal(ctx.readFileState?.get(file), remembered)
+  })
+})
+
+test('a failing rename keeps the target and removes the temp file', async (t) => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'a.txt')
+    await writeFile(file, 'old\n', 'utf8')
+    t.mock.method(fs, 'rename', async () => {
+      throw new Error('rename denied')
+    })
+
+    await assert.rejects(writeTextFile(file, 'new\n', UTF8_LF))
+
+    assert.equal(await readFile(file, 'utf8'), 'old\n')
+    assert.deepEqual(await readdir(dir), ['a.txt'])
   })
 })
