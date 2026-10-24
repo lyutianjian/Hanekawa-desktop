@@ -2491,40 +2491,46 @@ body.resizing #browser-resizer::after { opacity: 1; }
   100% { transform: translateX(var(--marquee-shift)); }
 }
 .session-badge { flex: 0 0 auto; display: inline-flex; align-items: center; }
-.session-badge .icon { width: 12px; height: 12px; }
-.session-badge.running { color: var(--accent-brand-text); gap: 4px; }
-/* The running badge is a spinning ring rather than a static dot; awaiting-input
-   stays a still dot. The spinner path is stroked, so `.running`'s colour reaches
-   it through `currentColor`.
-
-   It is drawn at label size rather than dot size — 14px with a heavier stroke —
-   because on a background lane it is the *only* thing on screen saying the
-   session is still working, and an 8px hairline ring reads as a speck. The
-   awaiting-input dot keeps its 12px box: that one is carried by its word. */
-.session-badge.running .icon {
-  width: 14px;
-  height: 14px;
-  animation: spin var(--motion-running) linear infinite;
+.session-badge .icon { width: 16px; height: 16px; }
+.session-badge.awaiting-input { color: var(--accent-warn); }
+.session-badge.failed { color: var(--text-danger); }
+/* A running session's name: the thinking line's sheen, wider and with a
+   brighter core, so a background lane at work is seen at a glance without a mark
+   beside it. Drawn on both copies of the name so the hover marquee carries it along. */
+.session-row.running .session-title-run,
+.session-row.running .session-title-echo {
+  background: linear-gradient(100deg,
+    color-mix(in oklab, var(--text-tertiary) 65%, transparent) 32%, var(--text-primary) 44%,
+    light-dark(var(--text-primary), var(--surface-knob)) 50%,
+    var(--text-primary) 56%, color-mix(in oklab, var(--text-tertiary) 65%, transparent) 68%);
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: sheen var(--motion-running) linear infinite;
 }
-.session-badge.running .icon { stroke-width: 3; }
-.session-badge.awaiting-input { color: var(--accent-warn); gap: 4px; }
-.session-badge.failed { color: var(--text-danger); gap: 4px; }
+/* The glow riding the band: a blurred copy of the name lit only where the band is,
+   on the same clock. Dark theme only — a blurred dark halo on a light rail reads
+   as a smudge. */
+.session-row.running .session-title-run { position: relative; }
+.session-row.running .session-title-run::after {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(100deg,
+    transparent 40%, light-dark(transparent, var(--surface-knob)) 50%, transparent 60%);
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  filter: blur(3px);
+  animation: sheen var(--motion-running) linear infinite;
+}
 /* A turn that ended out of sight: the same blue dot as an unread thread row. */
 .session-badge.unread { color: var(--accent-info); }
-/* "Waiting for you", in words. The permission request is drawn in one lane's
-   composer now, so a request parked on a background session has nothing on
-   screen anywhere else — and an 8px dot is only findable by someone already
-   looking for it. Text, not a filled pill: `--accent-*` fills exactly three
-   named spots in this sheet and this is not one of them. */
 .session-role {
   flex: 0 0 auto;
   margin-right: var(--space-1);
   color: var(--text-secondary);
-  font-size: var(--type-meta);
-  white-space: nowrap;
-}
-.session-badge-label {
-  flex: 0 0 auto;
   font-size: var(--type-meta);
   white-space: nowrap;
 }
@@ -7386,11 +7392,17 @@ body.projects-open #browser-resizer,
   .step-bead,
   .task-mark .icon,
   .task-card,
-  .session-badge.running .icon,
   .thread-status .icon,
   .session-title-text {
     animation: none !important;
   }
+  .session-row.running .session-title-run,
+  .session-row.running .session-title-echo {
+    animation: none !important;
+    background: none;
+    color: inherit;
+  }
+  .session-row.running .session-title-run::after { display: none; }
   /* The blanket rule above stops the marquee, and stopping it is not enough: the
      hover state also turns the ellipsis off and makes the text an atomic box, so
      a cancelled animation would leave the name hard-clipped mid-character. Here

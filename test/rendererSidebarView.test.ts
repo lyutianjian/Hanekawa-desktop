@@ -949,12 +949,7 @@ test('a repaint that only flips the help panel is not swallowed by the render gu
   )
 })
 
-test('a session waiting for approval says so in words; a running one does not', (t) => {
-  // The permission request is drawn in the *active* lane's composer now
-  // (`dom/permissionRequestView.ts`), so a request parked on a background
-  // session has nothing on screen anywhere but here — and an 8px dot is only
-  // findable by someone already looking for it. "Running" keeps the bare
-  // spinner: it is the state a session is in most of the time.
+test('a running session shimmers its name with no badge; a parked one is a bare dot', (t) => {
   const r = mount(t)
   const base = tieredState()
   r.render(sidebarView(createSidebarState({
@@ -965,22 +960,17 @@ test('a session waiting for approval says so in words; a running one does not', 
     ]),
   })))
 
-  const [running, waiting] = sessionRows(r.root()).map((row) => find(row, 'session-badge'))
-  assert.ok(running, 'the streaming lane has a badge')
+  const [running, waiting] = sessionRows(r.root())
   assert.ok(running.classes.includes('running'))
-  assert.equal(find(running, 'session-badge-label'), undefined, 'running stays a bare spinner')
+  assert.equal(find(running, 'session-badge'), undefined, 'running draws no mark')
 
-  assert.ok(waiting, 'the parked lane has a badge')
-  assert.ok(waiting.classes.includes('awaiting-input'))
-  const label = find(waiting, 'session-badge-label')
-  assert.ok(label, 'a parked request names itself on the row')
-  assert.equal(label.text, '等待你处理')
-  // The label is the visible half of what `aria-label` already said; both stay,
-  // because the badge is still the thing being described.
-  assert.equal(waiting.attributes.get('aria-label'), '等待你处理')
+  const badge = find(waiting, 'session-badge')
+  assert.ok(badge && badge.classes.includes('awaiting-input'))
+  assert.equal(find(badge, 'session-badge-label'), undefined, 'a parked request is a dot, not words')
+  assert.equal(badge.attributes.get('aria-label'), '等待你处理')
 })
 
-test('a session whose last turn failed names it in words, like a parked request', (t) => {
+test('a session whose last turn failed is a bare dot', (t) => {
   const r = mount(t)
   const base = tieredState()
   r.render(sidebarView(createSidebarState({
@@ -993,7 +983,7 @@ test('a session whose last turn failed names it in words, like a parked request'
 
   const failed = sessionRows(r.root()).map((row) => find(row, 'session-badge')).find((badge) => badge?.classes.includes('failed'))
   assert.ok(failed, 'the failed session has a badge')
-  assert.equal(find(failed, 'session-badge-label')?.text, '失败')
+  assert.equal(find(failed, 'session-badge-label'), undefined)
   assert.equal(failed.attributes.get('aria-label'), '失败')
 })
 

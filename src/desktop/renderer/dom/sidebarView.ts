@@ -91,7 +91,6 @@ export interface SidebarDom {
 }
 
 const BADGE_LABELS = {
-  running: '运行中',
   // One badge for an approval and a question alike, so the neutral verb.
   'awaiting-input': '等待你处理',
   failed: '失败',
@@ -423,9 +422,10 @@ export function createSidebarView(
     if (row.lane !== undefined) classes.push('open')
     if (row.confirmingDelete) classes.push('confirming')
     if (row.opening) classes.push('opening')
+    if (row.badge === 'running') classes.push('running')
 
     const node = el('div', classes.join(' '))
-    if (row.opening) node.setAttribute('aria-busy', 'true')
+    if (row.opening || row.badge === 'running') node.setAttribute('aria-busy', 'true')
     node.dataset.sessionId = row.sessionId
     node.dataset.index = String(index)
     node.id = sessionRowId(row.sessionId)
@@ -464,7 +464,10 @@ export function createSidebarView(
     // Two siblings rather than a text node plus a copy: the name the row *shows*
     // is then a node of its own, which is what anything reading this row — a
     // test, a screen reader following `aria-hidden` — should land on.
-    track.appendChild(el('span', 'session-title-run', row.title))
+    const run = el('span', 'session-title-run', row.title)
+    // The running sheen's glow draws a blurred copy of the name from this.
+    run.dataset.text = row.title
+    track.appendChild(run)
     track.appendChild(echo)
     title.appendChild(track)
     open.appendChild(title)
@@ -501,23 +504,13 @@ export function createSidebarView(
       measure()
     })
     if (trailing) open.appendChild(trailing)
-    if (row.badge !== 'none') {
+    // Running is the title's sheen (`.session-row.running`), not a mark; every
+    // other state is a still dot whose colour carries it.
+    if (row.badge !== 'none' && row.badge !== 'running') {
       const badge = el('span', `session-badge ${row.badge}`)
       badge.setAttribute('aria-label', BADGE_LABELS[row.badge])
       badge.title = BADGE_LABELS[row.badge]
-      // Running spins; awaiting-input and failed are still dots. The spinner is stroked so
-      // the `.running` colour rule reaches it through `currentColor`.
-      badge.appendChild(icon(row.badge === 'running' ? 'spinner' : 'dot'))
-      // Awaiting input says so in words, and running does not. The asymmetry is
-      // the point: the permission request is now drawn in the *composer* of one
-      // lane, so a request parked on a background session has nothing on screen
-      // at all — the rail is the only place it can be seen, and a 8px dot the
-      // user has to already suspect is not a notification. "Running" needs no
-      // label; it is the state a session is in most of the time. A failed turn
-      // is said in words for the same reason: nothing else on the rail says it.
-      if (row.badge === 'awaiting-input' || row.badge === 'failed') {
-        badge.appendChild(el('span', 'session-badge-label', BADGE_LABELS[row.badge]))
-      }
+      badge.appendChild(icon('dot'))
       open.appendChild(badge)
     }
     if (row.confirmingDelete) {
