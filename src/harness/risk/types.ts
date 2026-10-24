@@ -32,6 +32,12 @@ export interface RiskAssessment {
    * substitutions and `sh -c`/`eval` payloads included.
    */
   commands: string[]
+  /**
+   * File-write tools: the resolved path the operation will touch (parent
+   * resolved, final component not followed), captured at classification time.
+   * `null` when it could not be resolved — the tool must then refuse.
+   */
+  writeTarget?: string | null
 }
 
 export interface RiskContext {

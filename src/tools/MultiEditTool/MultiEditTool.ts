@@ -61,7 +61,7 @@ export const multiEditTool: Tool = {
     }
     // Resolve the real target before reading content to prevent TOCTOU: an
     // attacker could swap the file with a symlink between read and write.
-    const safe = await resolveSafeTarget(absolute, filePath)
+    const safe = await resolveSafeTarget(absolute, filePath, { approvedTarget: context.approvedWriteTarget })
     if ('error' in safe) {
       return safe.error
     }

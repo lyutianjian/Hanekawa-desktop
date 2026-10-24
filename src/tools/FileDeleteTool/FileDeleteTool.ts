@@ -30,7 +30,10 @@ export const deleteFileTool: Tool = {
     if (stale) {
       return stale
     }
-    const resolved = await resolveSafeTarget(absolute, filePath, { allowTargetSymlink: true })
+    const resolved = await resolveSafeTarget(absolute, filePath, {
+      allowTargetSymlink: true,
+      approvedTarget: context.approvedWriteTarget,
+    })
     if ('error' in resolved) {
       return resolved.error
     }

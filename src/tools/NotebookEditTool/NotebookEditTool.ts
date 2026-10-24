@@ -167,7 +167,9 @@ export const notebookEditTool: Tool = {
 
     // Resolve the real target (a symlinked parent is legitimate; the file
     // itself must not be a link) before anything is read.
-    const resolved = await resolveSafeTarget(absolutePath, options.notebook_path)
+    const resolved = await resolveSafeTarget(absolutePath, options.notebook_path, {
+      approvedTarget: context.approvedWriteTarget,
+    })
     if ('error' in resolved) return resolved.error
     const target = resolved.target
 
@@ -409,11 +411,11 @@ async function writeNotebook(
   await trackFileEdit(context, target.absolute)
 
   const content = `${JSON.stringify(notebook, null, 1)}${file.content.endsWith('\n') ? '\n' : ''}`
-  await mkdir(path.dirname(target.canonical), { recursive: true })
 
   const changed = await assertTargetUnchanged(target, target.absolute)
   if (changed) return changed
 
+  await mkdir(path.dirname(target.canonical), { recursive: true })
   await writeTextFile(target.canonical, content, {
     encoding: file.encoding,
     bom: file.bom,

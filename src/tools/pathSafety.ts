@@ -1,6 +1,6 @@
-import { lstat, realpath } from 'node:fs/promises'
-import path from 'node:path'
+import { lstat } from 'node:fs/promises'
 import type { ToolResult } from '../harness/types.js'
+import { resolveWriteTarget } from '../harness/risk/paths.js'
 import { normalizeCaseForComparison } from '../utils/paths.js'
 
 export interface TargetIdentity {
@@ -23,6 +23,8 @@ export interface SafeTarget {
   canonical: string
   /** The inode (or absence) seen at `absolute` when this target was resolved. */
   identity: TargetIdentity
+  /** The target the permission gate bound this call to, when a gate ran. */
+  approvedTarget?: string | null
 }
 
 /**
@@ -34,16 +36,19 @@ export interface SafeTarget {
 export async function resolveSafeTarget(
   absolute: string,
   filePath: string,
-  options: { allowTargetSymlink?: boolean } = {},
+  options: { allowTargetSymlink?: boolean; approvedTarget?: string | null } = {},
 ): Promise<{ target: SafeTarget } | { error: ToolResult }> {
   let canonical: string
   let identity: TargetIdentity
   try {
-    canonical = await canonicalParent(absolute)
+    canonical = resolveWriteTarget(absolute)
     identity = await targetIdentity(absolute)
   } catch (error) {
     return { error: unresolvable(absolute, filePath, error) }
   }
+
+  const unbound = bindingFailure(canonical, options.approvedTarget, filePath)
+  if (unbound) return { error: unbound }
 
   if (identity.kind === 'symlink' && !options.allowTargetSymlink) {
     return {
@@ -58,7 +63,14 @@ export async function resolveSafeTarget(
     }
   }
 
-  return { target: { absolute, canonical, identity } }
+  return {
+    target: {
+      absolute,
+      canonical,
+      identity,
+      ...(options.approvedTarget === undefined ? {} : { approvedTarget: options.approvedTarget }),
+    },
+  }
 }
 
 /**
@@ -71,11 +83,14 @@ export async function assertTargetUnchanged(target: SafeTarget, filePath: string
   let canonical: string
   let identity: TargetIdentity
   try {
-    canonical = await canonicalParent(target.absolute)
+    canonical = resolveWriteTarget(target.absolute)
     identity = await targetIdentity(target.absolute)
   } catch (error) {
     return unresolvable(target.absolute, filePath, error)
   }
+
+  const unbound = bindingFailure(canonical, target.approvedTarget, filePath)
+  if (unbound) return unbound
 
   if (normalizeCaseForComparison(canonical) !== normalizeCaseForComparison(target.canonical)) {
     return changed(filePath, 'a directory in the path changed after it was checked', target, canonical, identity)
@@ -84,6 +99,36 @@ export async function assertTargetUnchanged(target: SafeTarget, filePath: string
     return changed(filePath, 'the target changed after it was checked', target, canonical, identity)
   }
   return undefined
+}
+
+function bindingFailure(
+  canonical: string,
+  approvedTarget: string | null | undefined,
+  filePath: string,
+): ToolResult | undefined {
+  if (approvedTarget === undefined) return undefined
+  if (approvedTarget === null) {
+    return {
+      ok: false,
+      content: `Refusing to modify ${filePath}: the path could not be resolved when permission was checked.`,
+      errorCode: 'precondition_failed',
+      errorDetails: {
+        reason: 'target_unbound',
+        current: canonical,
+      },
+    }
+  }
+  if (normalizeCaseForComparison(canonical) === normalizeCaseForComparison(approvedTarget)) return undefined
+  return {
+    ok: false,
+    content: `Refusing to modify ${filePath}: the path changed after permission was checked.`,
+    errorCode: 'precondition_failed',
+    errorDetails: {
+      reason: 'target_changed',
+      approvedTarget,
+      current: canonical,
+    },
+  }
 }
 
 function changed(
@@ -135,44 +180,4 @@ async function targetIdentity(absolute: string): Promise<TargetIdentity> {
 
   const kind = entry.isSymbolicLink() ? 'symlink' : entry.isFile() ? 'file' : 'other'
   return { kind, dev: entry.dev, ino: entry.ino }
-}
-
-/**
- * Canonicalize the parent only: the final component is the write's own name,
- * and `rename` never follows a link there. Resolving the whole path would let a
- * concurrently created target link bend the write onto its destination.
- *
- * Only a missing ancestor is skipped; any other resolution failure is an
- * unverifiable path and fails closed rather than being written through.
- */
-async function canonicalParent(absolute: string): Promise<string> {
-  const missing: string[] = []
-  let probe = path.dirname(absolute)
-
-  for (;;) {
-    try {
-      return path.join(await realpath(probe), ...missing, path.basename(absolute))
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    }
-
-    // realpath answers ENOENT for a dangling link too, and that is not a name
-    // this write may create through.
-    let entry
-    try {
-      entry = await lstat(probe)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
-    }
-    if (entry?.isSymbolicLink()) {
-      throw new Error(`"${probe}" is a symbolic link that does not resolve`)
-    }
-
-    const parent = path.dirname(probe)
-    if (parent === probe) {
-      throw new Error(`"${absolute}" has no existing ancestor`)
-    }
-    missing.unshift(path.basename(probe))
-    probe = parent
-  }
 }

@@ -20,7 +20,7 @@ test('complete toolcall workflow: grep -> read -> edit -> verify', async () => {
     const context: ToolContext = { cwd: dir, sessionId: 'test-session', readFiles: new Set() }
 
     // Auto-approve all tools for this test
-    const runner = new ToolRunner(tools, new PermissionGate(async () => true), {
+    const runner = new ToolRunner(tools, new PermissionGate(async () => true, undefined, { cwd: dir }), {
       onRecord: async (record) => { records.push(record) }
     })
 
@@ -85,7 +85,7 @@ test('toolcall permission system works correctly', async () => {
       const approved = request.tool.riskLevel !== 'dangerous'
       approvals.push({ tool: request.tool.name, approved })
       return approved
-    }), {
+    }, undefined, { cwd: dir }), {
       onRecord: async () => {}
     })
 

@@ -29,7 +29,7 @@ export const writeFileTool: Tool = {
   async execute(input, context) {
     const { filePath, content } = input as { filePath: string; content: string }
     const absolute = resolveToolPath(context, filePath)
-    const resolved = await resolveSafeTarget(absolute, filePath)
+    const resolved = await resolveSafeTarget(absolute, filePath, { approvedTarget: context.approvedWriteTarget })
     if ('error' in resolved) {
       return resolved.error
     }
@@ -49,7 +49,6 @@ export const writeFileTool: Tool = {
     // text in hand; a new file diffs against nothing. Either way the patch
     // costs no extra filesystem read.
     const previousContent = exists ? getReadFileContent(absolute, context) : ''
-    await mkdir(path.dirname(target.canonical), { recursive: true })
     // An existing file keeps its on-disk encoding, BOM and line endings; a new
     // one is UTF-8/LF without a BOM. Either way the remembered content stays LF
     // (and BOM-free) so a later Edit matches a model-supplied string.
@@ -57,12 +56,14 @@ export const writeFileTool: Tool = {
       ? await resolveTextFileMeta(absolute, context)
       : { encoding: 'utf8' as BufferEncoding, bom: false, lineEndings: 'LF' as const }
     await trackFileEdit(context, absolute)
-    // The last check before the write proper, after the snapshot has been
-    // taken: the snapshot must reflect what the write is about to replace.
+    // The last check before anything is created or written, after the snapshot
+    // has been taken: no directory may be made through a path that no longer
+    // matches the approved target.
     const changed = await assertTargetUnchanged(target, filePath)
     if (changed) {
       return changed
     }
+    await mkdir(path.dirname(target.canonical), { recursive: true })
     await writeTextFile(target.canonical, content, meta)
     await rememberReadFile(absolute, content, context, meta)
     return {
