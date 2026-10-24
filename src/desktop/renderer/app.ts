@@ -50,7 +50,7 @@ import {
   type ShellState,
   type WindowLayers,
 } from './model/keymap.js'
-import { overlayVisible } from './model/overlayVisibility.js'
+import { overlayVisible, type OverlayScene } from './model/overlayVisibility.js'
 import { desktopShortcut, isPrimaryModifier } from './model/desktopShortcuts.js'
 import {
   createSidebarState,
@@ -275,13 +275,7 @@ const composerDock = createDockedCard(required('composer'), required('composer-r
 })
 const permissionRequest = createPermissionRequestView(composerDock, required('composer-request'), (action) => {
   activePane()?.handleOverlayAction(action)
-}, () => overlayVisible({
-  // Read at the paint, not captured: a request arrives while another screen may
-  // already be up, and the covering layer can close while the card waits.
-  paneActive: activePane()?.isActive() === true,
-  screen: settingsState.open || projectsOpen,
-  viewer: imageViewerOpen,
-}))
+}, () => overlayVisible(coveredScene()))
 const questionCard = createQuestionCardView(composerDock, required('composer-request'), (intent) => {
   activePane()?.handleAskIntent(intent)
 }, bridge.platform)
@@ -350,6 +344,7 @@ const imageViewerView = createImageViewerView(required('lightbox'), {
     imageViewerOpen = false
     renderBrowser()
     activePane()?.onViewerClosed()
+    revealCoveredOverlay()
   },
 })
 // The browser page is a native view above the document, so the viewer has to
@@ -1569,6 +1564,7 @@ function leaveProjects(): void {
   renderSidebar()
   renderBrowser()
   composer.focus()
+  revealCoveredOverlay()
 }
 
 // --- settings ---------------------------------------------------------------
@@ -1628,7 +1624,10 @@ function runSettingsIntent(intent: SettingsIntent): void {
   // swallow the first press made on the screen.
   if (!wasOpen && settingsState.open) closeAllDismissables()
   renderSettings()
-  if (wasOpen && !settingsState.open) composer.focus()
+  if (wasOpen && !settingsState.open) {
+    composer.focus()
+    revealCoveredOverlay()
+  }
   if (outcome.themePreference) {
     themePreference = outcome.themePreference
     localStorage.setItem(THEME_STORAGE_KEY, themePreference)
@@ -2445,19 +2444,40 @@ const EMPTY_SHELL_STATE: ShellState = {
 const composerInput = required<HTMLTextAreaElement>('input')
 
 /**
+ * The layers that cover the canvas, as `model/overlayVisibility.ts` reads them:
+ * one answer for the key map below, the permission card's focus, and
+ * `revealCoveredOverlay`. Read live, never captured — a request arrives while a
+ * layer may already be up, and the layer closes while the card waits.
+ */
+function coveredScene(): OverlayScene {
+  return {
+    paneActive: activePane()?.isActive() === true,
+    screen: settingsState.open || projectsOpen,
+    viewer: imageViewerOpen,
+  }
+}
+
+/**
  * What is open above the conversation.
  *
  * Escape unwinds it — and `screen`/`viewer` are also what makes a blocked lane's
- * card off screen: a request behind them answers no key at all
- * (`model/overlayVisibility.ts`). Cheap on every keystroke: the popover registry
- * is a handful of in-memory booleans, never a DOM query.
+ * card off screen: a request behind them answers no key at all. Cheap on every
+ * keystroke: the popover registry is a handful of in-memory booleans, never a
+ * DOM query.
  */
 function windowLayers(): WindowLayers {
-  return {
-    viewer: imageViewerOpen,
-    screen: settingsState.open || projectsOpen,
-    popover: hasOpenDismissable(),
-  }
+  return { ...coveredScene(), popover: hasOpenDismissable() }
+}
+
+/**
+ * A layer that covered the canvas just closed: the card it was hiding is on
+ * screen again. Its paint never stopped, and `dock.show` will not hand it the
+ * caret — the card has been open the whole time — so the pane is told to give it
+ * one. Called after the closing layer's own exit focus, so the card is last.
+ */
+function revealCoveredOverlay(): void {
+  if (!overlayVisible(coveredScene())) return
+  activePane()?.revealOverlay()
 }
 
 const requestCardHost = required('composer-request')
