@@ -19,6 +19,14 @@ export interface PermissionRequestView {
   show(view: PermissionViewModel): void
   hide(immediate?: boolean): void
   finishMotion(): void
+  /**
+   * Put the caret on the card's chosen button now that it is on screen again —
+   * `paneSession.ts` calls this when the layer that covered it has closed.
+   *
+   * A repaint cannot do it: `dock.show` only moves focus into a card it is
+   * *opening*, and this one has been open, covering the composer, all along.
+   */
+  focus(): void
 }
 
 /** What the card reports when a button is pressed; the modal's shape. */
@@ -43,13 +51,35 @@ export function createPermissionRequestView(
   /** `#composer-request`, the card's own container inside the capsule. */
   container: HTMLElement,
   onSelect: PermissionRequestSelect,
+  /**
+   * Whether the card is on screen right now (`model/overlayVisibility.ts`).
+   *
+   * A request can arrive while the settings screen, the projects page or the
+   * image viewer covers the composer. The card is still painted — that paint is
+   * what the next repaint shows — but it must not take the caret out of the
+   * layer in front, mid-typing.
+   */
+  onScreen: () => boolean = () => true,
 ): PermissionRequestView {
+  /** The painted bar, and the button that answers the request, for `focus()`. */
+  let target: { readonly bar: HTMLElement; readonly index: number } | undefined
+
+  function focusTarget(): void {
+    if (!target || !onScreen()) return
+    ;(target.bar.children[target.index] as HTMLButtonElement | undefined)?.focus()
+  }
+
   return {
     finishMotion: () => dock.finishMotion(),
-    hide: (immediate) => dock.hide(immediate),
+    hide: (immediate) => {
+      target = undefined
+      dock.hide(immediate)
+    },
+    focus: focusTarget,
 
     show(view) {
       const bar = actionBar(view.actions, onSelect, view.selectedIndex)
+      target = { bar, index: Math.max(0, view.actions.findIndex((action) => action.slot === view.selectedIndex)) }
       const focusAction = dock.show(() => {
         // The tone lands on the card rather than on the capsule: the composer's
         // border is a focus affordance, and recolouring it would say "this field
@@ -77,10 +107,7 @@ export function createPermissionRequestView(
         )
         container.setAttribute('aria-label', `${view.title}：${view.reason}`)
       })
-      if (focusAction) {
-        const index = Math.max(0, view.actions.findIndex((action) => action.slot === view.selectedIndex))
-        ;(bar.children[index] as HTMLButtonElement | undefined)?.focus()
-      }
+      if (focusAction) focusTarget()
     },
   }
 }

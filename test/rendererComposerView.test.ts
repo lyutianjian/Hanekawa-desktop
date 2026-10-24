@@ -787,13 +787,18 @@ interface Card {
   buttons(): StubView[]
 }
 
-function card(t: { after(fn: () => void): void }): Card {
+function card(t: { after(fn: () => void): void }, onScreen: () => boolean = () => true): Card {
   const stub = installDomStub()
   t.after(() => stub.uninstall())
   const composer = stub.createContainer('composer')
   const container = stub.createContainer('composer-request')
   const picked: OverlayAction[] = []
-  const view = createPermissionRequestView(createDockedCard(composer, container), container, (action) => picked.push(action))
+  const view = createPermissionRequestView(
+    createDockedCard(composer, container),
+    container,
+    (action) => picked.push(action),
+    onScreen,
+  )
   const buttons = () => {
     const bar = stub.inspect(container).children.find((child) =>
       child.classes.includes('dialog-actions'))
@@ -828,6 +833,57 @@ test('the request transforms the composer rather than covering the lane', (t) =>
   // Emptied, not merely hidden: a stale button answers a settled request, and a
   // hidden one is still a Tab stop in some engines.
   assert.equal(c.stub.inspect(c.container).children.length, 0)
+})
+
+test('a covered card takes no caret when it arrives or while it stays covered', (t) => {
+  // A request parked while the settings screen, the projects page, the image
+  // viewer or another lane covers the composer used to pull focus into a card
+  // nobody could see, mid-typing. The paint still happens — it is what the layer
+  // uncovers — only the focus move does not.
+  let onScreen = false
+  const c = card(t, () => onScreen)
+  const field = c.stub.createContainer('settings-input')
+  c.stub.focus(field)
+
+  c.view.show(permissionFixture())
+  assert.equal(c.stub.inspect(c.composer).classes.includes('request-open'), true, 'the card is drawn and ready')
+  assert.equal(c.stub.activeElement(), field, 'a covered card leaves the caret to the layer in front')
+  assert.deepEqual(c.picked, [], 'and answers nothing on the way in')
+
+  // Still covered — another layer in front, or a background pane — so the same
+  // notification the app sends on every layer close changes nothing.
+  c.view.focus()
+  assert.equal(c.stub.activeElement(), field, 'a notification under a layer still takes nothing')
+})
+
+test('the layer closing hands the card the caret, with no repaint of the pane in between', (t) => {
+  // This is the real return path — `leaveSettings` / `leaveProjects` /
+  // `onViewerClosed` each end in `revealCoveredOverlay()` — and deliberately not
+  // a `hide()` + `show()`: nothing deactivates the pane, and the dock has been
+  // open the whole time, so `dock.show` would never move focus for us.
+  let onScreen = false
+  const c = card(t, () => onScreen)
+  const field = c.stub.createContainer('settings-input')
+  c.stub.focus(field)
+
+  c.view.show(permissionFixture())
+  assert.equal(c.stub.activeElement(), field)
+
+  onScreen = true
+  c.view.focus()
+  assert.equal(c.stub.activeElement(), c.buttons()[0]!.node, 'on screen again it takes the caret')
+  assert.deepEqual(c.picked, [], 'the request is still waiting — nothing was answered')
+})
+
+test('the caret goes to the button the request starts on, not always the first', (t) => {
+  // A destructive command pre-selects 拒绝; the reveal must land there, the same
+  // button a first paint would have focused.
+  let onScreen = false
+  const c = card(t, () => onScreen)
+  c.view.show(permissionFixture({ selectedIndex: 1 }))
+  onScreen = true
+  c.view.focus()
+  assert.equal(c.stub.activeElement(), c.buttons()[1]!.node)
 })
 
 test('M16 permission replies precede exit and typing during the handoff stays in the original input', (t) => {

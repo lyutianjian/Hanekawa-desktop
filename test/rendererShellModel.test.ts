@@ -126,7 +126,9 @@ test('Escape unwinds the window top-down: viewer, dialog, rewind, popover, scree
   const everything = { hasOverlay: true, hasRewind: true, hasSurface: true, completions: 'command' as const, isStreaming: true }
   const all = layers({ viewer: true, popover: true, screen: true })
   assert.equal(resolveKey({ key: 'Escape' }, shell(everything), all), 'close-viewer')
-  assert.equal(resolveKey({ key: 'Escape' }, shell(everything), layers({ popover: true, screen: true })), 'overlay')
+  // A dialog covered by a screen is not on screen, so Escape is the screen's —
+  // see the dedicated test below.
+  assert.equal(resolveKey({ key: 'Escape' }, shell(everything), layers({ popover: true, screen: true })), 'close-popover')
   assert.equal(resolveKey({ key: 'Escape' }, shell({ ...everything, hasOverlay: false }), layers({ popover: true })), 'rewind')
   assert.equal(
     resolveKey({ key: 'Escape' }, shell({ isStreaming: true, hasSurface: true, completions: 'command' }), layers({ popover: true, screen: true })),
@@ -137,11 +139,40 @@ test('Escape unwinds the window top-down: viewer, dialog, rewind, popover, scree
   assert.equal(resolveKey({ key: 'Escape' }, shell({ isStreaming: true }), layers({})), 'interrupt')
 })
 
-test('only Escape reads the window layers', () => {
+test('without a blocking request, only Escape reads the window layers', () => {
   const open = layers({ viewer: true, popover: true, screen: true })
   assert.equal(resolveKey({ key: 'Enter' }, shell(), open), 'submit')
   assert.equal(resolveKey({ key: 'Enter' }, shell({ isStreaming: true }), open), 'enqueue')
   assert.equal(resolveKey({ key: 'ArrowDown' }, shell({ hasSurface: true, inputEmpty: true }), open), 'move-surface-down')
+})
+
+test('a card the screen or the viewer covers answers nothing and keeps waiting', () => {
+  // The request is still parked on `PermissionGate.approve` — it has no timeout —
+  // but nobody can see the card under the settings screen, the projects page or
+  // the image viewer. Every key the card answers is swallowed, so `y` cannot
+  // allow a request nobody is looking at and `a` cannot write a permanent rule.
+  const waiting = shell({ hasOverlay: true, isStreaming: true })
+  for (const key of ['y', 'a', 'n', 'Enter', 'Tab', ' ', '1']) {
+    assert.equal(resolveKey({ key }, waiting, layers({ screen: true })), 'none', `${key} over a screen`)
+    assert.equal(resolveKey({ key }, waiting, layers({ viewer: true })), 'none', `${key} under the viewer`)
+  }
+  // And nothing behind it takes the key either: not the turn, not the draft.
+  assert.equal(resolveKey({ key: 'Enter' }, waiting, layers({ screen: true })), 'none')
+
+  // Escape belongs to the layer in front. Denying a request nobody can see is
+  // the same bug as allowing one.
+  assert.equal(resolveKey({ key: 'Escape' }, waiting, layers({ screen: true })), 'close-screen')
+  assert.equal(resolveKey({ key: 'Escape' }, waiting, layers({ popover: true, screen: true })), 'close-popover')
+  assert.equal(resolveKey({ key: 'Escape' }, waiting, layers({ viewer: true, screen: true })), 'close-viewer')
+
+  // Uncovered it is the card's again, which is what returning to the pane
+  // restores: the request never left the queue.
+  assert.equal(resolveKey({ key: 'y' }, waiting, layers({})), 'overlay')
+  assert.equal(resolveKey({ key: 'Escape' }, waiting, layers({})), 'overlay')
+  // A popover floats over part of the window, not over the composer, so it does
+  // not cover the card and the card still owns the keyboard.
+  assert.equal(resolveKey({ key: 'y' }, waiting, layers({ popover: true })), 'overlay')
+  assert.equal(resolveKey({ key: 'Escape' }, waiting, layers({ popover: true })), 'overlay')
 })
 
 test('Escape while the rewind panel is open never interrupts the turn', () => {

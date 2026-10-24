@@ -380,6 +380,13 @@ export interface PaneSession {
    * cached per pane, and nothing else would notice a skill being switched off.
    */
   refreshCommands(): void
+  /**
+   * A window layer that covered this pane just closed (settings screen, projects
+   * page, image viewer). A permission card was painted all along but could not
+   * take the caret while it was covered (`revealOverlay`), and nothing else
+   * would ever give it back.
+   */
+  revealOverlay(): void
   /** Every `Agent` call in this pane's transcript, for the side panel. */
   subagents(): readonly SubagentEntry[]
   /** Every file this session's tools edited, for the side panel's 改动 page. */
@@ -1449,6 +1456,21 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     }
   }
 
+  /**
+   * The app's word that a layer covering this pane has closed. The card has been
+   * painted and open the whole time; `dock.show` will not move focus into a card
+   * that is already open, so the caret is handed over here instead — after the
+   * repaint, which is the order every other focus move keeps.
+   *
+   * Only a permission request, and only this pane's own: the other two cards are
+   * not part of this and keep the behaviour they have.
+   */
+  function revealOverlay(): void {
+    if (!active || activeRequest(queue)?.kind !== 'permission') return
+    renderOverlay()
+    deps.permissionRequest.focus()
+  }
+
   /** Routes a keystroke to whichever dialog is on top. */
   function handleOverlayKey(event: KeyboardEvent): void {
     const current = activeRequest(queue)
@@ -2378,6 +2400,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     refreshCommands: () => {
       void refreshCommands()
     },
+    revealOverlay,
     handleOverlayKey,
     handleAskIntent,
     handleEnterPlanIntent,
