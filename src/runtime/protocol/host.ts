@@ -7,7 +7,7 @@ import { saveEffortLevel } from '../../config/settings.js'
 import { resolveImageCapability } from '../../config/providers.js'
 import type { PermissionRequest } from '../../harness/permissions.js'
 import type { RuntimeDiagnostic } from '../../harness/diagnostics.js'
-import type { SessionRecord } from '../../harness/types.js'
+import type { MessageQueueRecord, SessionRecord } from '../../harness/types.js'
 import { getSubagentTranscriptPath, SidechainRecordStream } from '../../harness/sidechainRecordStream.js'
 import type { SessionMeta } from '../../sessions/service.js'
 import type { ImageAttachmentRef } from '../../media/types.js'
@@ -18,7 +18,14 @@ import type {
   StoredAttachment,
 } from '../../services/imageAttachments/imageAttachmentService.js'
 import { createQueueImageRebinder } from '../attachmentHandoff.js'
-import { MessageQueue, type RebindQueuedImages } from '../messageQueue.js'
+import {
+  MessageQueue,
+  reconcileRewoundQueue,
+  replayMessageQueue,
+  type MessageQueueRewrite,
+  type QueuedMessage,
+  type RebindQueuedImages,
+} from '../messageQueue.js'
 import { readGitBranch } from '../gitBranch.js'
 import { listGitBranches, switchGitBranch } from '../gitBranches.js'
 import { applyPermissionModeTransition } from '../permissionMode.js'
@@ -279,6 +286,34 @@ export interface PaneRegistry {
  * `PermissionGate.approve`, so cancelling a turn leaves a pending prompt
  * pending, and the agent loop waits forever.
  */
+/**
+ * The append that makes a rewound log agree with the queue the user still
+ * holds: retire what the cut would resurrect, restore what it would drop.
+ */
+function queueCompensation(
+  retained: readonly SessionRecord[],
+  pending: readonly QueuedMessage[],
+): MessageQueueRecord[] {
+  const { retire, restore } = reconcileRewoundQueue(retained, pending)
+  const createdAt = new Date().toISOString()
+  return [
+    ...retire.map((message): MessageQueueRecord => ({
+      id: randomUUID(),
+      type: 'message_queue',
+      operation: 'dequeue',
+      messageId: message.id,
+      createdAt,
+    })),
+    ...restore.map((message): MessageQueueRecord => ({
+      id: randomUUID(),
+      type: 'message_queue',
+      operation: 'enqueue',
+      message,
+      createdAt,
+    })),
+  ]
+}
+
 export class SessionHost implements CoordinationLaneControl {
   private readonly channel: RuntimeChannel
   private readonly controller: SessionController
@@ -313,6 +348,13 @@ export class SessionHost implements CoordinationLaneControl {
   private readonly messages: MessageQueue
   /** A pump run has taken a message but not finished handing it off. See `canPumpQueue`. */
   private pumping = false
+  /**
+   * How many rewinds are between their file cut and their replay. The queue
+   * must not move in that window: the cut can leave an `enqueue` whose
+   * `dequeue` it removed, and pumping it would send a message the compensation
+   * is about to retire.
+   */
+  private queuePauseDepth = 0
   /**
    * The queued message the runtime refused, and the runtime that refused it.
    *
@@ -451,8 +493,8 @@ export class SessionHost implements CoordinationLaneControl {
    * Announces the queue, and takes it as a cue to try the pump.
    *
    * Wired here rather than at each mutation so every path that can grow the queue
-   * is covered by one edge: `enqueue-message`, the `hydrate` after a rewind, and
-   * the `migrateTo` a `/clear` runs. Re-entrancy is safe — a pump in progress
+   * is covered by one edge: `enqueue-message`, the `replace` at the end of a
+   * rewind, and the `migrateTo` a `/clear` runs. Re-entrancy is safe — a pump in progress
    * dequeues, which notifies, which lands back here, where `canPumpQueue`'s
    * `running` guard turns it away.
    */
@@ -642,8 +684,10 @@ export class SessionHost implements CoordinationLaneControl {
     if (this.disposed) return
     const state = {
       pending: this.messages.getSnapshot().length,
-      running: this.pumping,
-      turnActive: this.controller.getSnapshot().isStreaming,
+      running: this.pumping || this.queuePauseDepth > 0,
+      // A switching or compacting lane is as unavailable as a streaming one:
+      // a hand-off there would start a turn the retarget is about to move.
+      turnActive: this.controller.busyKind() !== undefined,
       uiBlocked: this.pendingKinds.size > 0 || !this.runtimeSlot.current,
       headMessageId: this.messages.peek()?.id,
       ...(this.queueBlock && this.queueBlock.session === this.runtimeSlot.current
@@ -959,36 +1003,53 @@ export class SessionHost implements CoordinationLaneControl {
       case 'restore-code':
         return this.controller.getFileHistoryService().rewindTo(command.messageId)
 
-      case 'truncate-session': {
-        const target = (await this.project.store.loadRecords(this.session.id)).find(
-          (record) => record.type === 'message' && record.role === 'user' && record.id === command.messageId,
-        )
-        const result = await this.project.store.truncateBeforeMessage(this.session.id, command.messageId)
-        // Thrown rather than reported: a rewind that silently did nothing would
-        // leave the caller showing a transcript the file no longer matches.
-        if (!result.success) throw new Error(result.error ?? 'Failed to truncate session')
-        const records = await this.afterRewind()
-        // The cut removed the prompt itself; hand it back to edit and resend.
-        if (target?.type === 'message' && !isSystemReminderBlock(target.content)) {
-          this.controller.restoreInput(target.displayContent ?? target.content, target.images)
-        }
-        return withToolDisplays({ records }, this.memoryDir) satisfies WireRewindResult
-      }
-
-      case 'summarize-rewind': {
-        const loaded = await this.project.store.loadRecordsWithDiagnostics(this.session.id)
-        const rewrite = await buildRewindSummaryRewrite({
-          records: loaded.records,
-          targetMessageId: command.messageId,
-          decision: command.decision,
-          // Goes through `AgentLoop.enqueue`, the same single in-flight slot as
-          // `run()`. Sent mid-turn it waits for that turn to finish, so this
-          // reply can be arbitrarily slow; nothing about it is a fast path.
-          summarize: (records) => this.runtimeSlot.requireCurrent().loop.summarizeRecordsForRewind(records),
+      case 'truncate-session':
+        this.assertRewindAllowed()
+        return this.rewriteQueue(async (queue) => {
+          const records = await this.project.store.loadRecords(this.session.id)
+          const targetIndex = records.findIndex((record) => 'id' in record && record.id === command.messageId)
+          // Thrown rather than reported: a rewind that silently did nothing would
+          // leave the caller showing a transcript the file no longer matches.
+          if (targetIndex < 0) throw new Error(`Message not found: ${command.messageId}`)
+          const retained = records.slice(0, targetIndex)
+          const target = records[targetIndex]
+          // One atomic replace, so the cut and every compensating queue record
+          // land together; `truncateBeforeMessage` + a later append could be
+          // interrupted between the two and replay the orphaned enqueue.
+          await this.project.store.replaceRecords(this.session.id, [
+            ...retained,
+            ...queueCompensation(retained, queue.snapshot),
+          ])
+          const after = await this.reloadRewound()
+          queue.replace(replayMessageQueue(after))
+          // The cut removed the prompt itself; hand it back to edit and resend.
+          if (target?.type === 'message' && target.role === 'user' && !isSystemReminderBlock(target.content)) {
+            this.controller.restoreInput(target.displayContent ?? target.content, target.images)
+          }
+          return withToolDisplays({ records: after }, this.memoryDir) satisfies WireRewindResult
         })
-        await this.project.store.replaceRecords(this.session.id, rewrite.nextRecords)
-        return withToolDisplays({ records: await this.afterRewind() }, this.memoryDir) satisfies WireRewindResult
-      }
+
+      case 'summarize-rewind':
+        this.assertRewindAllowed()
+        return this.rewriteQueue(async (queue) => {
+          const loaded = await this.project.store.loadRecordsWithDiagnostics(this.session.id)
+          const rewrite = await buildRewindSummaryRewrite({
+            records: loaded.records,
+            targetMessageId: command.messageId,
+            decision: command.decision,
+            // Goes through `AgentLoop.enqueue`, the same single in-flight slot as
+            // `run()`. Sent mid-turn it waits for that turn to finish, so this
+            // reply can be arbitrarily slow; nothing about it is a fast path.
+            summarize: (records) => this.runtimeSlot.requireCurrent().loop.summarizeRecordsForRewind(records),
+          })
+          await this.project.store.replaceRecords(this.session.id, [
+            ...rewrite.nextRecords,
+            ...queueCompensation(rewrite.nextRecords, queue.snapshot),
+          ])
+          const after = await this.reloadRewound()
+          queue.replace(replayMessageQueue(after))
+          return withToolDisplays({ records: after }, this.memoryDir) satisfies WireRewindResult
+        })
 
       case 'set-model': {
         const effort = this.applyModel(command.modelKey)
@@ -1370,6 +1431,30 @@ export class SessionHost implements CoordinationLaneControl {
   }
 
   /**
+   * Holds the queue across a rewind's read, rewrite and replay.
+   *
+   * The queue's own lock serializes two rewinds and the enqueues that arrive
+   * during one; `queuePauseDepth` only keeps the pump from sending a message
+   * whose record is being rewritten. The tail re-check is what lets the pump
+   * resume once the last rewind has finished.
+   */
+  private async rewriteQueue<T>(operation: (queue: MessageQueueRewrite) => Promise<T>): Promise<T> {
+    this.queuePauseDepth += 1
+    try {
+      return await this.messages.rewrite(operation)
+    } finally {
+      this.queuePauseDepth -= 1
+      if (this.queuePauseDepth === 0) this.pumpQueue()
+    }
+  }
+
+  /** Refuses a rewind under a live turn, a compaction or a switch. */
+  private assertRewindAllowed(): void {
+    if (this.controller.busyKind() === undefined) return
+    throw new Error('回合进行中，无法回退。请先停止当前回合。')
+  }
+
+  /**
    * The tail both rewind commands share once the file on disk has changed.
    *
    * `invalidateRecordsCache` first, or the loop keeps serving the pre-rewind
@@ -1378,13 +1463,10 @@ export class SessionHost implements CoordinationLaneControl {
    * off the same list -- a stale ledger would fold the discarded records back
    * into the next runtime `set-model` or `reload-settings` builds.
    */
-  private async afterRewind(): Promise<SessionRecord[]> {
+  private async reloadRewound(): Promise<SessionRecord[]> {
     this.runtimeSlot.current?.loop.invalidateRecordsCache()
     const records = await this.controller.reload()
     this.ledger.rebase(records)
-    // The rewind may have cut away the `message_queue` records the live queue was
-    // built from, so it is replayed off the new list rather than trusted.
-    await this.messages.hydrate(records)
     return records
   }
 

@@ -122,6 +122,7 @@ async function createHarness(): Promise<Harness> {
     },
     getSnapshot: () => ({
       isStreaming: streaming,
+      switching: false,
       // `total` is not nullable on `SessionUsage`; the real controller seeds it
       // with `createEmptySessionUsage()`, and the host reads it to derive the cost.
       usage: {
@@ -130,7 +131,10 @@ async function createHarness(): Promise<Harness> {
       },
       taskSnapshot: undefined,
       spinnerSubText: undefined,
+      contextUsedTokens: undefined,
+      turnOutputTokens: undefined,
     }),
+    busyKind: () => (streaming ? 'turn' : undefined),
     getSubagentProgress: () => new Map<string, string>(),
     submit: async (input: UserInput) => {
       submits.push(input.text)

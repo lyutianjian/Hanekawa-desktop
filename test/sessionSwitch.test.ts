@@ -127,6 +127,7 @@ async function createSwitchHarness(): Promise<SwitchHarness> {
     getSnapshot: () => ({ status: 'ready', session: runtimeSlot.current, effort: 'high' }),
   }
 
+  let switching = false
   const deps: SessionSwitchDeps = {
     host: {
       store,
@@ -137,6 +138,11 @@ async function createSwitchHarness(): Promise<SwitchHarness> {
     },
     runtimeSlot: runtimeSlot as unknown as SessionSwitchDeps['runtimeSlot'],
     controller: {
+      beginSessionSwitch: () => {
+        if (switching) throw new Error('会话正在切换，请稍候。')
+        switching = true
+      },
+      endSessionSwitch: () => { switching = false },
       retarget: (session: { id: string }) => order.push(`retarget:${session.id}`),
     } as unknown as SessionSwitchDeps['controller'],
     backgroundTasks: {
@@ -203,6 +209,47 @@ test('a new session hands the hook the draft id that did not exist before the ca
     'replace',
   ], 'the cached Environment section goes first; the swap still goes last')
   assert.deepEqual(harness.stopped, [{ sessionId: previous.id, reason: 'Session cleared' }])
+})
+
+test('a refused claim leaves both switch entry points without side effects', async () => {
+  const harness = await createSwitchHarness()
+  const session = await harness.store.create('busy one')
+  const refusedAtClaim: SessionSwitchDeps = {
+    ...harness.deps,
+    controller: {
+      beginSessionSwitch: () => { throw new Error('当前回合仍在进行，请先停止再切换会话。') },
+      endSessionSwitch: () => { throw new Error('a refused claim must not be released') },
+      retarget: () => harness.order.push('retarget'),
+    } as unknown as SessionSwitchDeps['controller'],
+  }
+
+  await assert.rejects(() => switchToExistingSession(refusedAtClaim, session.id), /先停止/)
+  await assert.rejects(
+    () => switchToNewSession(refusedAtClaim, { previousSessionId: session.id }),
+    /先停止/,
+  )
+
+  assert.deepEqual(harness.order, [], 'no runtime was built and the controller was not retargeted')
+  assert.deepEqual(harness.stopped, [], "the outgoing session's background tasks were left alone")
+})
+
+test('a second switch cannot start while one is already in flight', async () => {
+  const harness = await createSwitchHarness()
+  const first = await harness.store.create('first')
+  const second = await harness.store.create('second')
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const held: SessionSwitchDeps = { ...harness.deps, beforeApply: () => gate }
+
+  const running = switchToExistingSession(held, first.id)
+  // Both commands are detached protocol runs, so the busy check alone would let
+  // the second through before the first had retargeted anything.
+  await assert.rejects(() => switchToExistingSession(held, second.id), /正在切换/)
+
+  release()
+  await running
+  // The claim is released in a `finally`, not latched.
+  await switchToExistingSession(harness.deps, second.id)
 })
 
 test('the hook is optional, and leaving it out changes nothing else', async () => {

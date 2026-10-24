@@ -112,6 +112,7 @@ function fakeController(): SessionController {
     subscribe: () => () => undefined,
     getSnapshot: () => ({
       isStreaming: false,
+      switching: false,
       // `total` is not nullable on `SessionUsage`, and the real controller
       // initializes it with `createEmptySessionUsage()`. It used to be `null`
       // here, which only compiled because this whole object is cast — and the
@@ -119,7 +120,10 @@ function fakeController(): SessionController {
       usage: { total: { inputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0 }, lastRequest: null },
       taskSnapshot: undefined,
       spinnerSubText: undefined,
+      contextUsedTokens: undefined,
+      turnOutputTokens: undefined,
     }),
+    busyKind: () => undefined,
     getSubagentProgress: () => new Map<string, string>(),
     reload: async () => [],
     submit: async () => undefined,

@@ -1,7 +1,7 @@
 import { beforeEach, describe, it } from 'node:test'
 import assert from 'node:assert/strict'
 import type { MessageQueueRecord, SessionRecord } from '../src/harness/types.js'
-import { MessageQueue, queuedMessageToInput, replayMessageQueue } from '../src/runtime/messageQueue.js'
+import { MessageQueue, queuedMessageToInput, reconcileRewoundQueue, replayMessageQueue } from '../src/runtime/messageQueue.js'
 import { makeImageAttachmentRef } from './helpers/imageFixtures.js'
 
 describe('messageQueue', () => {
@@ -333,5 +333,40 @@ describe('messageQueue', () => {
     await gated.migrateTo('session-b', [])
     assert.deepEqual(gated.getSnapshot()[0]?.images, [image])
     assert.equal(gateCalls, 0)
+  })
+})
+
+describe('reconcileRewoundQueue', () => {
+  const base = '2026-01-01T00:00:00.000Z'
+  const pending = (id: string) => ({ id, content: id, priority: 'next' as const, createdAt: base })
+
+  it('retires what the cut would resurrect and restores what it would drop', () => {
+    const retained: SessionRecord[] = [
+      { type: 'message_queue', id: 'e-ghost', operation: 'enqueue', message: pending('ghost'), createdAt: base },
+      { type: 'message', id: 'm1', role: 'user', content: 'hi', createdAt: base },
+    ]
+    assert.deepEqual(
+      reconcileRewoundQueue(retained, [pending('still-pending')]),
+      { retire: [pending('ghost')], restore: [pending('still-pending')] },
+    )
+  })
+
+  it('does not retire ids the retained log already proves gone', () => {
+    const retained: SessionRecord[] = [
+      { type: 'message_queue', id: 'e1', operation: 'enqueue', message: pending('sent'), createdAt: base },
+      { type: 'message', id: 'm1', role: 'user', content: 'hi', sourceQueuedMessageId: 'sent', createdAt: base },
+      { type: 'message_queue', id: 'e2', operation: 'enqueue', message: pending('dropped'), createdAt: base },
+      { type: 'message_queue', id: 'e3', operation: 'dequeue', messageId: 'dropped', createdAt: base },
+    ]
+    assert.deepEqual(reconcileRewoundQueue(retained, []), { retire: [], restore: [] })
+  })
+
+  it('leaves retained pending messages alone and restores only the missing ones', () => {
+    const kept = pending('kept')
+    const restored = pending('restored')
+    const retained: SessionRecord[] = [
+      { type: 'message_queue', id: 'e1', operation: 'enqueue', message: kept, createdAt: base },
+    ]
+    assert.deepEqual(reconcileRewoundQueue(retained, [kept, restored]), { retire: [], restore: [restored] })
   })
 })

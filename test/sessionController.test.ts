@@ -15,6 +15,7 @@ import type {
   ToolProgressEvent,
 } from '../src/harness/types.js'
 import type { AgentSession } from '../src/runtime/types.js'
+import type { CompactCheckResult } from '../src/harness/compact.js'
 import type { FileHistoryService } from '../src/services/fileHistory/fileHistoryService.js'
 import type { UserInput } from '../src/media/types.js'
 import { assertNewImagesAllowed, TurnImageBlockError } from '../src/harness/turnImages.js'
@@ -70,6 +71,10 @@ async function createHarness(options: {
   titleReply?: string
   /** The model key the loop is on; differs from the runtime's after a fallback. */
   activeModelKey?: string
+  /** Lets a test hold the turn in its prepare stage. */
+  snapshotGate?: (messageId: string) => Promise<void>
+  /** The stub compactor, when a test needs to hold or inspect it. */
+  compact?: () => Promise<CompactCheckResult>
 } = {}): Promise<Harness> {
   const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-controller-'))
   const store = new SessionStore(cwd)
@@ -100,6 +105,7 @@ async function createHarness(options: {
       assertNewImagesAllowed(input.images, options.imageCapable !== false, 'test-model'),
     invalidateRecordsCache: () => { counters.invalidateCalls += 1 },
     getContextBudget: () => ({ usableContextWindow: options.usableContextWindow ?? 1000 }),
+    compact: options.compact ?? (async () => ({ compacted: false, usage: usage(0, 0) })),
   }
 
   const fileHistoryService = {
@@ -107,7 +113,10 @@ async function createHarness(options: {
       if (options.fileHistoryInitFails) throw new Error('unreadable history')
     },
     dispose: () => { counters.fileHistoryDisposals += 1 },
-    makeSnapshot: async (messageId: string) => { snapshotCalls.push(messageId) },
+    makeSnapshot: async (messageId: string) => {
+      snapshotCalls.push(messageId)
+      await options.snapshotGate?.(messageId)
+    },
     trackEdit: async (filePath: string) => { trackedFiles.push(filePath) },
   } as unknown as FileHistoryService
 
@@ -1048,6 +1057,197 @@ test('the first turn is still interruptible after a second submit was refused', 
 
   assert.equal(seen.length, 1, 'only one turn ever reached the loop')
   assert.equal(seen[0]?.aborted, true, 'and interrupting reached that turn')
+})
+
+test('a stop during the file snapshot aborts the turn before the provider starts', async () => {
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  const runs: UserInput[] = []
+  const harness = await createHarness({
+    snapshotGate: () => gate,
+    run: async (input) => { runs.push(input); return okResult() },
+  })
+
+  const turn = harness.controller.submit({ text: 'hold me' })
+  await waitUntil(() => harness.snapshotCalls.length === 1, 'the snapshot to start')
+  assert.equal(harness.controller.busyKind(), 'turn', 'preparing is already a busy lane')
+  assert.equal(harness.controller.getSnapshot().isStreaming, true)
+  assert.throws(() => harness.controller.retarget({ ...harness.session, id: 'other' }, []), /先停止/)
+  assert.throws(() => harness.controller.beginSessionSwitch(), /先停止/)
+
+  harness.controller.interrupt('user-cancel')
+  release()
+  await turn
+
+  assert.deepEqual(runs, [], 'the provider never started')
+  const end = harness.events.at(-1)
+  assert.equal(end?.type === 'turn-end' ? end.aborted : undefined, true)
+  assert.equal(harness.controller.busyKind(), undefined, 'the lane is free again')
+
+  // The next turn is not blocked by the aborted one's controller.
+  await harness.controller.submit({ text: 'after' })
+  assert.deepEqual(runs, [{ text: 'after' }])
+})
+
+test('compaction holds the lane, refuses a second one, and blocks a switch', async () => {
+  let release!: (result: CompactCheckResult) => void
+  const gate = new Promise<CompactCheckResult>((resolve) => { release = resolve })
+  const harness = await createHarness({ compact: () => gate })
+
+  const compacting = harness.controller.compact()
+  assert.equal(harness.controller.busyKind(), 'compaction')
+  assert.equal(harness.controller.getSnapshot().isStreaming, false,
+    'the guard cannot only look at streaming')
+
+  await assert.rejects(() => harness.controller.compact(), /正在压缩/,
+    'a second compaction must not release the first one early')
+  assert.throws(() => harness.controller.beginSessionSwitch(), /压缩/)
+  assert.throws(
+    () => harness.controller.retarget({ ...harness.session, id: 'other' }, []),
+    /压缩/,
+    'the owning retarget entry refuses too',
+  )
+
+  release({ compacted: false, usage: usage(0, 0) })
+  await compacting
+  assert.equal(harness.controller.busyKind(), undefined)
+})
+
+test('a switch in flight blocks every way a turn can start, until it ends', async () => {
+  const runs: UserInput[] = []
+  const harness = await createHarness({
+    run: async (input) => { runs.push(input); return okResult() },
+  })
+
+  harness.controller.beginSessionSwitch()
+  assert.equal(harness.controller.busyKind(), 'switch')
+  assert.equal(harness.controller.getSnapshot().switching, true)
+
+  await assert.rejects(() => harness.controller.submit({ text: 'too early' }), /正在切换/)
+  await assert.rejects(() => harness.controller.retryTurn('no-such-failure'), /正在切换/)
+  await assert.rejects(() => harness.controller.compact(), /正在切换/)
+  assert.deepEqual(runs, [], 'no turn started under the switch')
+
+  harness.controller.endSessionSwitch()
+  assert.equal(harness.controller.getSnapshot().switching, false,
+    'the claim is released in a finally, not latched')
+  await harness.controller.submit({ text: 'after' })
+  assert.deepEqual(runs, [{ text: 'after' }])
+})
+
+test('a running turn refuses the owning retarget and a switch claim', async () => {
+  let release!: () => void
+  let started!: () => void
+  const runStarted = new Promise<void>((resolve) => { started = resolve })
+  const hold = new Promise<void>((resolve) => { release = resolve })
+  const harness = await createHarness({
+    run: async () => {
+      started()
+      await hold
+      return okResult()
+    },
+  })
+  const other = await harness.store.create('other')
+
+  const turn = harness.controller.submit({ text: 'hello' })
+  await runStarted
+  assert.throws(() => harness.controller.retarget(other, []), /先停止/,
+    'the controller itself must refuse, not only the switch wrapper')
+  assert.throws(() => harness.controller.beginSessionSwitch(), /先停止/)
+
+  release()
+  await turn
+  // The turn has ended, so the same call is now allowed.
+  harness.controller.retarget(other, [])
+  assert.equal(harness.controller.getSessionId(), other.id)
+})
+
+test('a failure lands in the session that ran, and only then can a switch follow', async () => {
+  let release!: () => void
+  let started!: () => void
+  const runStarted = new Promise<void>((resolve) => { started = resolve })
+  const hold = new Promise<void>((resolve) => { release = resolve })
+  const harness = await createHarness({
+    run: async () => {
+      started()
+      await hold
+      throw new Error('provider exploded')
+    },
+  })
+  const other = await harness.store.create('other')
+
+  const turn = harness.controller.submit({ text: 'hello' })
+  await runStarted
+  harness.proxy.onRequestUsage(usage(50, 5))
+  assert.throws(() => harness.controller.retarget(other, []), /先停止/)
+  release()
+  await turn
+
+  const oldRecords = await harness.store.loadRecords(harness.session.id)
+  assert.equal(oldRecords.filter((record) => record.type === 'turn_failure').length, 1,
+    'the failure belongs to the session that ran')
+  assert.deepEqual(await harness.store.loadRecords(other.id), [],
+    'and nothing was written to the session it did not switch to')
+
+  harness.controller.retarget(other, [])
+  assert.equal(harness.controller.getSessionId(), other.id)
+  assert.equal(harness.controller.getSnapshot().usage.lastRequest, null,
+    'the previous session\'s request usage does not follow the retarget')
+})
+
+test('a rollback stays in the session that ran, and the switch waits for the turn to end', async () => {
+  let release!: () => void
+  let started!: () => void
+  const runStarted = new Promise<void>((resolve) => { started = resolve })
+  const hold = new Promise<void>((resolve) => { release = resolve })
+  let harness!: Harness
+  harness = await createHarness({
+    run: async (_input, _signal, messageId) => {
+      const record: SessionRecord = {
+        type: 'message',
+        id: messageId ?? 'user-message',
+        role: 'user',
+        content: 'hello',
+        createdAt: new Date().toISOString(),
+      }
+      // What the loop does before it announces: the record is on disk, so a
+      // rollback has something to cut.
+      await harness.store.appendRecord(harness.session.id, record)
+      harness.proxy.onRecord(record)
+      started()
+      await hold
+      throw abortError()
+    },
+  })
+  const other = await harness.store.create('other')
+  await harness.store.appendRecord(other.id, {
+    type: 'message',
+    id: 'keep',
+    role: 'user',
+    content: 'keep me',
+    createdAt: 'now',
+  })
+
+  const turn = harness.controller.submit({ text: 'hello' })
+  await runStarted
+  assert.throws(() => harness.controller.retarget(other, []), /先停止/)
+  harness.controller.interrupt('user-cancel')
+  release()
+  await turn
+
+  assert.deepEqual(await harness.store.loadRecords(harness.session.id), [],
+    'the interrupted prompt is rolled back from its own log')
+  const kept = await harness.store.loadRecords(other.id)
+  assert.deepEqual(kept.map((record) => record.id), ['keep'],
+    'and the session it did not switch to is untouched')
+  assert.equal(
+    harness.events.filter((event) => event.type === 'restore-input').length,
+    1,
+    'the interrupted prompt comes back to this pane\'s composer',
+  )
+
+  harness.controller.retarget(other, [])
+  assert.equal(harness.controller.getSessionId(), other.id)
 })
 
 test('a queued submission is accepted when its user record lands, not when the turn ends', async () => {

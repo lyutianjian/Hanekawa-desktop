@@ -76,6 +76,47 @@ async function rebindMessageImages(
   }
 }
 
+/**
+ * The queue's write lock, for a rewind that has to inspect the pending list and
+ * rewrite its records without an enqueue or dequeue landing in between.
+ */
+export interface MessageQueueRewrite {
+  /** The pending messages as of the lock being taken, in send order. */
+  readonly snapshot: readonly QueuedMessage[]
+  append(record: MessageQueueRecord): Promise<void>
+  /** Installs the queue the caller has just persisted; no write of its own. */
+  replace(messages: readonly QueuedMessage[]): void
+}
+
+export interface RewoundQueueReconciliation {
+  /** A replay of the retained records would resurrect these; the live queue no longer has them. */
+  retire: QueuedMessage[]
+  /** The live queue still has these, but the retained records no longer do. */
+  restore: QueuedMessage[]
+}
+
+/**
+ * Diffs the live queue against what the retained records would replay to.
+ *
+ * A rewind cuts records without knowing which `message_queue` writes it
+ * orphans, in either direction: cutting a sent message's user record (and the
+ * `dequeue` after it) leaves its `enqueue` claiming it is still waiting, and
+ * cutting a pending message's own `enqueue` drops it from the queue the user
+ * still holds. Both sides are reconciled by id, once, before the rewrite.
+ */
+export function reconcileRewoundQueue(
+  retained: readonly SessionRecord[],
+  pending: readonly QueuedMessage[],
+): RewoundQueueReconciliation {
+  const replayed = replayMessageQueue(retained)
+  const pendingIds = new Set(pending.map((message) => message.id))
+  const replayedIds = new Set(replayed.map((message) => message.id))
+  return {
+    retire: replayed.filter((message) => !pendingIds.has(message.id)),
+    restore: pending.filter((message) => !replayedIds.has(message.id)),
+  }
+}
+
 const EMPTY_SNAPSHOT: readonly QueuedMessage[] = Object.freeze([])
 
 /**
@@ -223,6 +264,20 @@ export class MessageQueue implements SteerSource {
     return this.serialize(async () => {
       this.replaceSnapshot(replayMessageQueue(records))
     })
+  }
+
+  /**
+   * Runs a rewind under the queue's own write lock.
+   *
+   * Without the lock two rewrites would overwrite each other's compensation,
+   * and an enqueue landing mid-rewind would be dropped by the rewrite.
+   */
+  async rewrite<T>(operation: (queue: MessageQueueRewrite) => Promise<T>): Promise<T> {
+    return this.serialize(() => operation({
+      snapshot: this.snapshot,
+      append: (record) => this.persist(this.sessionId, record),
+      replace: (messages) => this.replaceSnapshot(messages),
+    }))
   }
 
   /** Point at a different session, discarding whatever the old one had pending. */

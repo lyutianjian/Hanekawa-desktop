@@ -60,6 +60,18 @@ export async function switchToExistingSession(
   deps: SessionSwitchDeps,
   sessionId: string,
 ): Promise<SessionSwitchResult> {
+  deps.controller.beginSessionSwitch()
+  try {
+    return await applyExistingSwitch(deps, sessionId)
+  } finally {
+    deps.controller.endSessionSwitch()
+  }
+}
+
+async function applyExistingSwitch(
+  deps: SessionSwitchDeps,
+  sessionId: string,
+): Promise<SessionSwitchResult> {
   const meta = await deps.host.store.resolve(sessionId)
   if (!meta) throw new Error(`Unknown session: ${sessionId}`)
 
@@ -84,6 +96,18 @@ export async function switchToExistingSession(
 }
 
 export async function switchToNewSession(
+  deps: SessionSwitchDeps,
+  options: { previousSessionId: string; title?: string },
+): Promise<SessionSwitchResult> {
+  deps.controller.beginSessionSwitch()
+  try {
+    return await applyNewSwitch(deps, options)
+  } finally {
+    deps.controller.endSessionSwitch()
+  }
+}
+
+async function applyNewSwitch(
   deps: SessionSwitchDeps,
   options: { previousSessionId: string; title?: string },
 ): Promise<SessionSwitchResult> {

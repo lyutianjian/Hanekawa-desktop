@@ -54,6 +54,7 @@ const controller = {
   onEvent: (fn) => { eventListeners.add(fn); return () => eventListeners.delete(fn) },
   subscribe: (fn) => { snapshotListeners.add(fn); return () => snapshotListeners.delete(fn) },
   getSnapshot: () => snapshot,
+  busyKind: () => (snapshot.isStreaming ? 'turn' : undefined),
   getSubagentProgress: () => new Map([['agent-1', 'Reading']]),
   submit: async (input) => {
     // The host wraps the wire string into a UserInput before this point; the
