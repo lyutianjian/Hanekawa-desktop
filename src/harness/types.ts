@@ -697,8 +697,9 @@ export interface ReadFileState {
   size: number
   dev?: number
   ino?: number
-  /** Original on-disk encoding and line endings, restored on write-back. */
+  /** Original on-disk encoding, BOM and line endings, restored on write-back. */
   encoding?: BufferEncoding
+  bom?: boolean
   lineEndings?: 'CRLF' | 'LF'
   /** Counted as read because the opening reminder shows it whole; compaction does not restore it. */
   shownInContext?: true
