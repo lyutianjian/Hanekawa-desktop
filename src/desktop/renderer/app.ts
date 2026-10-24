@@ -927,15 +927,21 @@ function runSidebarIntent(intent: SidebarIntent): void {
         composer.focus()
         return
       }
+      const clickedFrom = activeLane
       void shellClient
         .openSession({ ...(target !== undefined ? { projectRoot: target } : {}), activate: false })
         .then((opened) => {
-          if (plan.carryFrom !== undefined) {
-            const input = paneSessions.get(plan.carryFrom)?.draftInput()
-            if (input) paneSessions.get(opened.lane)?.restoreDraft(input)
-          }
-          activateLane(opened.lane)
-          if (plan.carryFrom !== undefined) closeLane(plan.carryFrom)
+          // Read at the reply, not the click: the round trip is long enough to
+          // keep typing, or to send — and a sent draft is a conversation now,
+          // not something to move or close.
+          const from = plan.carryFrom === undefined ? undefined : paneSessions.get(plan.carryFrom)
+          const carry = from !== undefined && !from.hasConversation() ? from : undefined
+          if (carry) paneSessions.get(opened.lane)?.restoreDraft(carry.draftInput())
+          // A session the user opened in the meantime stays on screen; the new
+          // draft waits for the next「新会话」, ranked as the most recent.
+          if (activeLane === clickedFrom) activateLane(opened.lane)
+          else lastActiveTick.set(opened.lane, ++tick)
+          if (carry) closeLane(plan.carryFrom!)
         })
         .catch((error) => reportError({ action: '新建会话' }, error))
       return
