@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { join } from 'node:path'
 import { createUiBridges } from '../src/runtime/bridges.js'
 import { CommandRegistry } from '../src/commands/registry.js'
@@ -15,6 +16,8 @@ import type { SessionMeta } from '../src/sessions/service.js'
 import { createMemoryChannelPair } from '../src/runtime/protocol/memoryChannel.js'
 import { createLaneMux } from '../src/runtime/protocol/laneChannel.js'
 import { ShellHost } from '../src/desktop/shellHost.js'
+import { QuitCoordinator } from '../src/desktop/quitCoordinator.js'
+import { StartupPreparation } from '../src/desktop/startupPreparation.js'
 import { ShellClient } from '../src/desktop/renderer/shellClient.js'
 import { SHELL_LANE } from '../src/desktop/shellProtocol.js'
 import {
@@ -875,4 +878,197 @@ test('single window: two lanes on one transport, opened, listed, closed through 
   }
   assert.equal(panes.size, 0, 'detaching every lane closed every pane')
   assert.equal(workspace.list().length, 0)
+})
+
+/**
+ * The quit gate. `main.ts` cannot be imported here, so its two handlers are
+ * reproduced over a fake app; the gate is the same one `main.ts` uses.
+ */
+test('quit gate holds every before-quit until teardown settles, then releases once', async () => {
+  let finishTeardown!: () => void
+  let teardowns = 0
+  let releases = 0
+  const gate = new QuitCoordinator({
+    teardown: () => {
+      teardowns += 1
+      return new Promise<void>((resolve) => {
+        finishTeardown = resolve
+      })
+    },
+    release: () => {
+      releases += 1
+    },
+  })
+
+  assert.equal(gate.isQuitting(), false, 'a running app is not quitting')
+  // The user's quit, then `window-all-closed`'s own `app.quit()` while the
+  // drain is still in flight, then another quit request.
+  assert.equal(gate.onBeforeQuit(), true)
+  assert.equal(gate.isQuitting(), true)
+  assert.equal(gate.onBeforeQuit(), true)
+  assert.equal(gate.onBeforeQuit(), true)
+  assert.equal(teardowns, 1, 'one drain for every request')
+  assert.equal(releases, 0, 'nothing is released before the drain settles')
+
+  finishTeardown()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(releases, 1, 'exactly one app.quit() follows the drain')
+  assert.equal(gate.onBeforeQuit(), false, 'the released quit is let through')
+})
+
+test('a failing teardown is reported once, then the quit is still released', async () => {
+  const errors: unknown[] = []
+  let releases = 0
+  const gate = new QuitCoordinator({
+    teardown: async () => {
+      throw new Error('mcp did not stop')
+    },
+    release: () => {
+      releases += 1
+    },
+    onError: (error) => {
+      errors.push(error)
+    },
+  })
+
+  assert.equal(gate.onBeforeQuit(), true)
+  assert.equal(gate.onBeforeQuit(), true)
+  await new Promise((resolve) => setImmediate(resolve))
+
+  // The rejection is handled here rather than left to `app.quit().finally`,
+  // which would surface as an unhandled rejection while the process exits.
+  assert.equal(errors.length, 1)
+  assert.equal(releases, 1, 'a failed drain still has to end the process')
+  assert.equal(gate.onBeforeQuit(), false)
+})
+
+test('the quit gate keeps letting quit requests through after release', () => {
+  let releases = 0
+  const gate = new QuitCoordinator({
+    teardown: async () => undefined,
+    release: () => {
+      releases += 1
+    },
+  })
+
+  return new Promise<void>((resolve) => {
+    assert.equal(gate.onBeforeQuit(), true)
+    setImmediate(() => {
+      assert.equal(releases, 1)
+      assert.equal(gate.onBeforeQuit(), false)
+      assert.equal(gate.onBeforeQuit(), false)
+      assert.equal(releases, 1, 'later quit events never drain again')
+      resolve()
+    })
+  })
+})
+
+test('main wiring cancels every quit source while a deferred drain runs', async () => {
+  let finishTeardown!: () => void
+  let teardowns = 0
+  let releases = 0
+  const gate = new QuitCoordinator({
+    teardown: () => {
+      teardowns += 1
+      return new Promise<void>((resolve) => {
+        finishTeardown = resolve
+      })
+    },
+    release: () => {
+      releases += 1
+    },
+  })
+
+  const app = new EventEmitter()
+  let prevented = 0
+  app.on('before-quit', (event: { preventDefault: () => void }) => {
+    if (gate.onBeforeQuit()) event.preventDefault()
+  })
+  app.on('window-all-closed', () => {
+    app.emit('before-quit', { preventDefault: () => { prevented += 1 } })
+  })
+  const quit = (): void => {
+    app.emit('before-quit', { preventDefault: () => { prevented += 1 } })
+  }
+
+  quit()
+  quit()
+  app.emit('window-all-closed')
+  quit()
+  assert.equal(prevented, 4, 'every request during the drain was cancelled')
+  assert.equal(teardowns, 1)
+  assert.equal(releases, 0)
+
+  finishTeardown()
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(releases, 1)
+  quit()
+  assert.equal(prevented, 4, 'the released quit is not cancelled')
+})
+
+test('regression basis: the retired single-flag handler let a second request through', () => {
+  // The pre-fix `before-quit` body, kept as the contrast for the gate test:
+  // the flag was set before the drain, so later events returned without
+  // cancelling. The gate's "all four cancelled" assertion is the change.
+  let quitting = false
+  let prevented = 0
+  const neverDrains = new Promise<void>(() => undefined)
+  const oldBeforeQuit = (event: { preventDefault: () => void }): void => {
+    if (quitting) return
+    quitting = true
+    event.preventDefault()
+    void neverDrains
+  }
+
+  oldBeforeQuit({ preventDefault: () => { prevented += 1 } })
+  oldBeforeQuit({ preventDefault: () => { prevented += 1 } })
+  assert.equal(prevented, 1, 'the old code did not cancel the second request')
+})
+
+test('a deferred startup preparation blocks concurrent bootstraps and runs once', async () => {
+  let finishPreparation!: () => void
+  let runs = 0
+  const prepared = new StartupPreparation(() => {
+    runs += 1
+    return new Promise<void>((resolve) => {
+      finishPreparation = resolve
+    })
+  })
+
+  // `whenReady` and a second-instance bootstrap reach it before the probe ends.
+  const first = prepared.ready()
+  const second = prepared.ready()
+  let firstFinished = false
+  let secondFinished = false
+  void first.then(() => { firstFinished = true })
+  void second.then(() => { secondFinished = true })
+
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal(runs, 1, 'both entries share one preparation')
+  assert.equal(firstFinished, false, 'the first bootstrap waits')
+  assert.equal(secondFinished, false, 'the concurrent bootstrap waits too')
+
+  finishPreparation()
+  await Promise.all([first, second])
+  assert.equal(firstFinished, true)
+  assert.equal(secondFinished, true)
+
+  await prepared.ready()
+  assert.equal(runs, 1, 'later opens reuse the completed preparation')
+})
+
+test('a failed startup preparation is reported once and does not block later opens', async () => {
+  const errors: unknown[] = []
+  let runs = 0
+  const prepared = new StartupPreparation(async () => {
+    runs += 1
+    throw new Error('probe broke')
+  }, (error) => {
+    errors.push(error)
+  })
+
+  await prepared.ready()
+  await prepared.ready()
+  assert.equal(runs, 1)
+  assert.equal(errors.length, 1, 'the failure is reported rather than retried')
 })
