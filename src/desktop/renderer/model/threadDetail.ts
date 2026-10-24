@@ -5,6 +5,8 @@
 
 import type { WireCoordinationThreads, WireThreadInfo } from '../../shellProtocol.js'
 import { THREAD_STATUS_LABEL, threadBlocked, threadTone, type ThreadTone } from './coordinationStatus.js'
+import type { TranscriptState } from './transcript.js'
+import type { WaitingInput } from './waiting.js'
 
 export interface ThreadSelection {
   readonly projectRoot: string
@@ -55,4 +57,21 @@ export function threadPage(
     canStop: thread.status === 'running' || threadBlocked(thread.status),
     stopPending: pending.has(thread.threadId),
   }
+}
+
+/**
+ * A thread's first user message is the coordinator's brief, not anything the
+ * user typed; the page draws it as a card of its own above the conversation.
+ */
+export function splitThreadBrief(state: TranscriptState): { brief: string | undefined; state: TranscriptState } {
+  const index = state.items.findIndex((item) => item.kind === 'user')
+  if (index < 0) return { brief: undefined, state }
+  return { brief: state.items[index]!.text, state: { ...state, items: state.items.filter((_, i) => i !== index) } }
+}
+
+/** What the transcript needs to draw a running thread's turn: its footers and status line. */
+export function threadActivity(state: TranscriptState, running: boolean): WaitingInput {
+  if (!running) return { isStreaming: false, startedAt: undefined, turnId: undefined }
+  const start = state.items.find((item) => item.turnId !== undefined && item.turnId === state.turnId)?.createdAt
+  return { isStreaming: true, startedAt: start === undefined ? undefined : Date.parse(start), turnId: state.turnId }
 }

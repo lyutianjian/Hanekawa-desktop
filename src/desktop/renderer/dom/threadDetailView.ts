@@ -9,10 +9,11 @@ import { button } from './controls.js'
 import { copyText } from './clipboard.js'
 import { icon } from './icons.js'
 import { el, replace, show } from './dom.js'
+import { TONE_ICON } from './threadPanelView.js'
 import { createTranscriptView, isScrolledToBottom, type TranscriptView } from './transcriptView.js'
 import type { WireShellThreadTranscriptResult } from '../../shellProtocol.js'
 import { describeError } from '../model/errorReport.js'
-import type { ThreadPage } from '../model/threadDetail.js'
+import { splitThreadBrief, threadActivity, type ThreadPage } from '../model/threadDetail.js'
 import { createTranscriptState, type ToolDisplayLookup, type TranscriptState } from '../model/transcript.js'
 
 type DetailPage = Extract<ThreadPage, { kind: 'detail' }>
@@ -50,7 +51,15 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
   const body = el('div', 'thread-detail-body', failure, timeline, empty, floatHost)
   let drawn: string | undefined
   let failureShown: string | undefined
-  let current: { threadId: string; view: TranscriptView; token: string | undefined; busy: boolean; again: boolean } | undefined
+  let current: {
+    threadId: string
+    view: TranscriptView
+    token: string | undefined
+    busy: boolean
+    again: boolean
+    running: boolean
+    brief?: { text: string; node: HTMLElement }
+  } | undefined
   let state: TranscriptState | undefined
   let manual = new Map<string, boolean>()
   let pollTimer: ReturnType<typeof setInterval> | undefined
@@ -61,7 +70,10 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
     for (const item of state.items) {
       if (item.turnId !== undefined && !disclosure.has(item.turnId)) disclosure.set(item.turnId, true)
     }
-    current.view.render(state, disclosure)
+    const split = splitThreadBrief(state)
+    if (split.brief === undefined) current.brief = undefined
+    else if (current.brief?.text !== split.brief) current.brief = { text: split.brief, node: briefCard(split.brief) }
+    current.view.render(split.state, disclosure, threadActivity(state, current.running), undefined, current.brief?.node)
   }
 
   function showFailure(message: string | undefined): void {
@@ -131,6 +143,7 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
       token: undefined,
       busy: false,
       again: false,
+      running: false,
       view: createTranscriptView(timeline, floatHost, {
         onToggle: (id, expanded) => {
           manual.set(id, !expanded)
@@ -163,31 +176,31 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
       open(page.threadId)
       drawn = signature
     }
+    const mark = el('span', `thread-row-mark tone-${page.tone}`, icon(TONE_ICON[page.tone]))
+    mark.title = page.statusLabel
+    const name = el('span', 'thread-detail-name', page.title)
+    name.title = page.title
     replace(
       head,
       el(
         'div',
-        'subagent-page-bar',
-        button('subagent-back', '← 返回', '返回线程列表', handlers.onBack),
-        el(
-          'div',
-          'thread-detail-actions',
-          button('thread-row-open', '在主画布打开', '在主画布打开这个线程', () => handlers.onOpen(page.sessionId)),
-          page.canStop
-            ? button('thread-row-stop', '停止', '停止这个线程', () => handlers.onStop(page.threadId), { enabled: !page.stopPending })
-            : undefined,
-        ),
+        'thread-detail-bar',
+        button('thread-detail-icon thread-detail-back', '', '返回线程列表', handlers.onBack, { icon: 'arrow-left' }),
+        button('thread-detail-icon thread-detail-open', '', '在主画布打开', () => handlers.onOpen(page.sessionId), { icon: 'external' }),
+        page.canStop
+          ? button('thread-detail-icon thread-detail-stop', '', '停止这个线程', () => handlers.onStop(page.threadId), { icon: 'stop', enabled: !page.stopPending })
+          : undefined,
       ),
-      el(
-        'div',
-        'subagent-title',
-        el('span', 'subagent-name', page.title),
-        el('span', `thread-status tone-${page.tone}`, page.tone === 'running' ? icon('spinner') : undefined, page.statusLabel),
-      ),
+      el('div', 'thread-detail-title', mark, name),
       page.needsYou
         ? button('thread-detail-needs-you', '需要你处理 · 去处理', '在主画布处理这个线程的请求', () => handlers.onOpen(page.sessionId))
         : undefined,
     )
+    // The status line comes and goes with the thread's own state, which a read that finds the file unchanged would not repaint.
+    if (current !== undefined && current.running !== page.poll) {
+      current.running = page.poll
+      paint()
+    }
     // Once per change the push saw — the last one is the thread settling — and on the timer until then.
     fetchRecords()
     if (page.poll) pollTimer ??= setInterval(fetchRecords, POLL_MS)
@@ -195,4 +208,14 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
   }
 
   return { render }
+}
+
+/** The coordinator's brief: collapsed to its first line, opened to read in full. */
+function briefCard(text: string): HTMLElement {
+  return el(
+    'details',
+    'thread-brief',
+    el('summary', 'thread-brief-head', el('span', 'thread-brief-label', '任务说明'), el('span', 'thread-brief-preview', text.split('\n', 1)[0]!)),
+    el('div', 'thread-brief-text', text),
+  )
 }

@@ -1802,8 +1802,81 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 .thread-detail-head {
   flex: none;
-  padding: var(--space-2);
+  padding: 0 var(--space-2) var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
+}
+/* As tall as `.side-action`, and clear of it: the panel's close button floats over this row's right end. */
+.thread-detail-bar {
+  height: 36px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 36px;
+}
+.thread-detail-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.thread-detail-icon:hover:enabled { background: var(--surface-hover); color: var(--text-primary); }
+.thread-detail-stop:hover:enabled { color: var(--text-danger); }
+.thread-detail-icon:disabled { opacity: var(--opacity-disabled); cursor: default; }
+.thread-detail-open { margin-left: auto; }
+.thread-detail-title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 0 var(--space-1);
+  font-size: var(--type-ui);
+}
+.thread-detail-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+/* The coordinator's brief, above the conversation: one line until opened. */
+.thread-brief {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  font-size: var(--type-meta);
+}
+.thread-brief-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  list-style: none;
+  cursor: pointer;
+}
+.thread-brief-head::-webkit-details-marker { display: none; }
+.thread-brief-head:hover { background: var(--surface-hover); border-radius: var(--radius-sm); }
+.thread-brief-label { flex: none; color: var(--text-secondary); }
+.thread-brief-preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
+}
+.thread-brief[open] .thread-brief-preview { display: none; }
+.thread-brief-text {
+  padding: 0 var(--space-2) var(--space-2);
+  color: var(--text-secondary);
+  line-height: var(--leading-dense);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 .thread-detail-body {
   flex: 1 1 auto;
@@ -1880,7 +1953,6 @@ body.resizing #browser-resizer::after { opacity: 1; }
   color: var(--text-tertiary);
   font-size: var(--type-meta);
 }
-.thread-detail-actions { display: flex; gap: var(--space-1); }
 .thread-detail-needs-you {
   align-self: flex-start;
   margin-top: var(--space-2);
@@ -7371,9 +7443,7 @@ body.projects-open #browser-resizer,
 }
 .canvas-breadcrumb-sep { flex: 0 0 auto; color: var(--text-tertiary); }
 .canvas-status { flex: 0 0 auto; font-size: var(--type-meta); }
-.canvas-stop-thread,
-.thread-row-open,
-.thread-row-stop {
+.canvas-stop-thread {
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-pill);
@@ -7383,13 +7453,8 @@ body.projects-open #browser-resizer,
   font-size: var(--type-meta);
   cursor: pointer;
 }
-.canvas-stop-thread:hover:enabled,
-.thread-row-open:hover:enabled,
-.thread-row-stop:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
-.thread-row-stop:hover:enabled { color: var(--text-danger); }
-.canvas-stop-thread:disabled,
-.thread-row-open:disabled,
-.thread-row-stop:disabled { opacity: var(--opacity-disabled); cursor: default; }
+.canvas-stop-thread:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
+.canvas-stop-thread:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
 /* The 线程 page's head over a coordination project's threads: the title and
    the thread counts, 全部停止 at the end of the counts. The title keeps clear of

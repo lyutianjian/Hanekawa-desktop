@@ -120,15 +120,15 @@ test('a settled thread is read once and has no timer', async (t) => {
   t.mock.timers.tick(5000)
   await flush()
   assert.equal(m.loads.length, 1)
-  assert.equal(m.find('thread-row-stop').length, 0)
+  assert.equal(m.find('thread-detail-stop').length, 0)
 })
 
 test('the controls and the needs-you notice reach the host', (t) => {
   const m = mount(t)
   m.view.render(page({ needsYou: true, poll: false }))
-  m.stub.click(m.find('subagent-back')[0]!.node)
-  m.stub.click(m.find('thread-row-open')[0]!.node)
-  m.stub.click(m.find('thread-row-stop')[0]!.node)
+  m.stub.click(m.find('thread-detail-back')[0]!.node)
+  m.stub.click(m.find('thread-detail-open')[0]!.node)
+  m.stub.click(m.find('thread-detail-stop')[0]!.node)
   m.stub.click(m.find('thread-detail-needs-you')[0]!.node)
   assert.deepEqual(m.calls, ['back', 'open:s1', 'stop:t1', 'open:s1'])
   assert.equal(m.find('thread-detail-needs-you')[0]!.text, '需要你处理 · 去处理')
@@ -204,12 +204,12 @@ test('the head is pinned outside the scrolling body, and back leads to a list wh
   assert.deepEqual(opened, ['a'])
   const head = all(detailRoot, 'thread-detail-head')[0]!
   const body = all(detailRoot, 'thread-detail-body')[0]!
-  assert.equal(all(detailRoot, 'subagent-back').length, 1)
+  assert.equal(all(detailRoot, 'thread-detail-back').length, 1)
   assert.ok(head)
-  assert.equal(all(body.node as HTMLElement, 'subagent-back').length, 0, 'the back button is not inside the scrolling body')
+  assert.equal(all(body.node as HTMLElement, 'thread-detail-back').length, 0, 'the back button is not inside the scrolling body')
   assert.equal(listRoot.hidden, true)
 
-  stub.click(all(detailRoot, 'subagent-back')[0]!.node)
+  stub.click(all(detailRoot, 'thread-detail-back')[0]!.node)
   assert.equal(listRoot.hidden, false)
   assert.equal(detailRoot.hidden, true)
 
@@ -217,4 +217,21 @@ test('the head is pinned outside the scrolling body, and back leads to a list wh
   await flush()
   assert.deepEqual(opened, ['a', 'b'])
   assert.equal(detailRoot.hidden, false)
+})
+
+test('the brief is a card above the conversation, and prose between tool calls carries no copy row', async (t) => {
+  const m = mount(t)
+  m.reply.next = {
+    unchanged: false,
+    token: '1',
+    records: [
+      { type: 'message', id: 'u1', role: 'user', content: 'Background:\nbuild it', createdAt: '2026-10-10T00:00:00Z', turnId: 't1' },
+      { type: 'message', id: 'a1', role: 'assistant', content: 'working on it', createdAt: '2026-10-10T00:00:01Z', turnId: 't1' },
+    ],
+  }
+  m.view.render(page())
+  await flush()
+  assert.equal(m.find('thread-brief-preview')[0]?.text, 'Background:')
+  assert.equal(m.find('user').length, 0, 'the brief is not drawn as the user\'s bubble')
+  assert.equal(m.find('item-copy').length, 0)
 })

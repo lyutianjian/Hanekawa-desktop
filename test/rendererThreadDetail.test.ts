@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { threadPage } from '../src/desktop/renderer/model/threadDetail.js'
+import { splitThreadBrief, threadActivity, threadPage } from '../src/desktop/renderer/model/threadDetail.js'
+import { createTranscriptState, type TranscriptItem } from '../src/desktop/renderer/model/transcript.js'
 import type { WireCoordinationThreads, WireThreadInfo, WireThreadStatus } from '../src/desktop/shellProtocol.js'
 
 function thread(status: WireThreadStatus): WireThreadInfo {
@@ -43,4 +44,26 @@ test('poll, notice and stop follow the thread status', () => {
 test('a stop in flight is carried to the page', () => {
   const page = threadPage(selection, state([thread('running')]), new Set(['t1']))
   assert.equal(page.kind === 'detail' && page.stopPending, true)
+})
+
+test('the first user message is the brief and leaves the conversation; later ones stay', () => {
+  const items: TranscriptItem[] = [
+    { id: 'u1', kind: 'user', text: 'Background:\nbuild it' },
+    { id: 'a1', kind: 'assistant', text: 'ok' },
+    { id: 'u2', kind: 'user', text: 'more' },
+  ]
+  const split = splitThreadBrief({ ...createTranscriptState([]), items })
+  assert.equal(split.brief, 'Background:\nbuild it')
+  assert.deepEqual(split.state.items.map((item) => item.id), ['a1', 'u2'])
+  assert.equal(splitThreadBrief(createTranscriptState([])).brief, undefined)
+})
+
+test('a running thread streams from its turn\'s first record; a settled one is idle', () => {
+  const items: TranscriptItem[] = [
+    { id: 'a0', kind: 'assistant', text: 'old', turnId: 't0', createdAt: '2026-10-10T00:00:00Z' },
+    { id: 'u1', kind: 'user', text: 'go', turnId: 't1', createdAt: '2026-10-10T00:01:00Z' },
+  ]
+  const state = { ...createTranscriptState([]), items, turnId: 't1' }
+  assert.deepEqual(threadActivity(state, true), { isStreaming: true, startedAt: Date.parse('2026-10-10T00:01:00Z'), turnId: 't1' })
+  assert.deepEqual(threadActivity(state, false), { isStreaming: false, startedAt: undefined, turnId: undefined })
 })

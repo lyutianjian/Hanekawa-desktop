@@ -25,7 +25,7 @@ export interface ThreadPanelDom {
   closeMenu(): void
 }
 
-const TONE_ICON: Readonly<Record<ThreadTone, IconName>> = {
+export const TONE_ICON: Readonly<Record<ThreadTone, IconName>> = {
   running: 'spinner',
   attention: 'alert-circle',
   danger: 'x-circle',
