@@ -257,7 +257,7 @@ export function countSessionRecordTokens(
     return countTextTokens(record.summary) + (record.restoredContext ? countTextTokens(record.restoredContext) : 0)
   }
 
-  if (record.type === 'coordination_update') {
+  if (record.type === 'coordination_update' || record.type === 'memory_update') {
     return countTextTokens(record.content)
   }
 

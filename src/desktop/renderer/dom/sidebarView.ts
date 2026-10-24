@@ -30,7 +30,9 @@ import {
 } from '../model/marquee.js'
 import { el, reconcile, replace, show } from './dom.js'
 import { createPresence, finishPresenceWithin, type Presence } from './presence.js'
-import { motionDelay } from './motion.js'
+import { motionDelay, motionPolicy } from './motion.js'
+import { graphemes, revealDurationMs } from '../model/titleReveal.js'
+import { pinGraphemes, revealText } from './titleReveal.js'
 import { button, textField } from './controls.js'
 import { dismissable } from './dismiss.js'
 import { focusByKey, followPointer, heldFocusKey, rovingFocus } from './focus.js'
@@ -174,6 +176,13 @@ export function createSidebarView(
     clearTimeout(settleTimer)
     settleTimer = undefined
   }
+
+  // A restart outside a paint — a hidden echo shown by the hover marquee, a row
+  // re-shown — would otherwise replay the sweep from its first frame.
+  container.addEventListener('animationstart', (event) => {
+    const row = event.target instanceof Element ? event.target.closest<HTMLElement>('.session-row') : null
+    if (row) pinAnimations(row, reveals.get(row.dataset.sessionId ?? ''))
+  })
 
   container.addEventListener('transitionend', (event) => {
     // Only the sidebar's own width: the rows inside it transition too (hover
@@ -426,10 +435,6 @@ export function createSidebarView(
 
     const node = el('div', classes.join(' '))
     if (row.opening || row.badge === 'running') node.setAttribute('aria-busy', 'true')
-    // The row is rebuilt whenever its signature moves, which a streaming turn does
-    // per message; pinning the sheen's phase to the page clock makes a rebuilt row
-    // pick up where the old one was instead of replaying from the start.
-    if (row.badge === 'running') node.style.setProperty('--sheen-delay', `${-performance.now()}ms`)
     node.dataset.sessionId = row.sessionId
     node.dataset.index = String(index)
     node.id = sessionRowId(row.sessionId)
@@ -461,7 +466,7 @@ export function createSidebarView(
     // below is the width of one copy; while the marquee runs it is what the loop
     // wraps onto, and it is `aria-hidden` because it is the same name again.
     if (row.roleMarker !== undefined) open.appendChild(el('span', 'session-role', row.roleMarker))
-    const title = el('span', 'session-title')
+    const title = el('span', row.titlePending ? 'session-title pending' : 'session-title')
     const track = el('span', 'session-title-text')
     const echo = el('span', 'session-title-echo', row.title)
     echo.setAttribute('aria-hidden', 'true')
@@ -471,6 +476,8 @@ export function createSidebarView(
     const run = el('span', 'session-title-run', row.title)
     // The running sheen's glow draws a blurred copy of the name from this.
     run.dataset.text = row.title
+    const revealedAt = reveals.get(row.sessionId)
+    if (revealedAt !== undefined) revealText(run, row.title, revealedAt)
     track.appendChild(run)
     track.appendChild(echo)
     title.appendChild(track)
@@ -567,8 +574,23 @@ export function createSidebarView(
    * A row whose inputs did not change is the same node, so the one under the
    * pointer is only replaced when it is itself what changed.
    */
-  const keptRows = new Map<string, { signature: string; node: HTMLElement; measure: () => void }>()
+  const keptRows = new Map<string, {
+    signature: string
+    title: string
+    titlePending: boolean
+    node: HTMLElement
+    measure: () => void
+  }>()
   let rowsDrawn = new Set<string>()
+  /** Rows whose animations `render` pins to the page clock once they are in the document. */
+  let animatedRows: HTMLElement[] = []
+  /**
+   * When each on-screen row's current name started entering, by session. A name
+   * that changes on a drawn row — a generated title replacing the placeholder, a
+   * rename — enters a grapheme at a time; a row that first appears (startup, an
+   * unfolded group) does not.
+   */
+  const reveals = new Map<string, number>()
 
   const rowNode = (
     row: SidebarRow,
@@ -583,14 +605,24 @@ export function createSidebarView(
     ].join('\u0000')
     rowsDrawn.add(row.sessionId)
     const kept = keptRows.get(row.sessionId)
+    const revealedAt = reveals.get(row.sessionId)
+    if (revealedAt !== undefined && performance.now() >= revealedAt + revealDurationMs(graphemes(row.title).length)) {
+      reveals.delete(row.sessionId)
+    }
     if (kept?.signature === signature) {
       measures.set(row.sessionId, kept.measure)
       if (selected) cursorRow = kept.node
+      animatedRows.push(kept.node)
       return kept.node
     }
+    if (kept !== undefined && !row.titlePending && (kept.titlePending || kept.title !== row.title)) {
+      if (motionPolicy().settleImmediately) reveals.delete(row.sessionId)
+      else reveals.set(row.sessionId, performance.now())
+    }
     const built = buildRow(row, index, selected, trailing, deleteTarget)
-    keptRows.set(row.sessionId, { signature, ...built })
+    keptRows.set(row.sessionId, { signature, title: row.title, titlePending: row.titlePending, ...built })
     if (selected) cursorRow = built.node
+    animatedRows.push(built.node)
     return built.node
   }
 
@@ -959,6 +991,7 @@ export function createSidebarView(
       // closure — and the detached node it holds — with it.
       measures = new Map()
       rowsDrawn = new Set()
+      animatedRows = []
       reconcile(
         pinned,
         [pinnedTitle, ...(view.isEmpty || view.noMatches ? [] : view.pinned.map((entry) => pinnedNode(entry, indexOf, view.selectedIndex)))],
@@ -997,6 +1030,7 @@ export function createSidebarView(
       }
 
       for (const id of keptRows.keys()) if (!rowsDrawn.has(id)) keptRows.delete(id)
+      for (const id of reveals.keys()) if (!rowsDrawn.has(id)) reveals.delete(id)
 
       // The row under the pointer is on a node that did not exist a moment ago,
       // and no pointer event announces that. One measurement, only while a row is
@@ -1047,6 +1081,7 @@ export function createSidebarView(
           : confirming
             ? `c:${confirming.sessionId}`
             : undefined
+      for (const row of animatedRows) pinAnimations(row, reveals.get(row.dataset.sessionId ?? ''))
       const newlyAsked = askKey !== undefined && askKey !== askedKey ? askKey : undefined
       askedKey = askKey
       const lost = heldKey !== undefined && !container.contains(document.activeElement)
@@ -1067,6 +1102,22 @@ export function createSidebarView(
       scrolledTo = view.selectedIndex
     },
   }
+}
+
+/**
+ * Pins a row's animations to the page clock. A CSS animation starts over whenever
+ * its element is rebuilt, re-inserted or re-shown — a streaming turn rebuilds the
+ * row per message — so each restart is handed the start it already had: the
+ * running sheen sweeps from time 0, and a name's graphemes from when it started
+ * entering.
+ */
+function pinAnimations(row: HTMLElement, revealedAt: number | undefined): void {
+  for (const animation of row.getAnimations({ subtree: true })) {
+    if (animation instanceof CSSAnimation && animation.animationName === 'sheen-row' && animation.startTime !== 0) {
+      animation.startTime = 0
+    }
+  }
+  if (revealedAt !== undefined) pinGraphemes(row, revealedAt)
 }
 
 /** Three placeholder rows, drawn while the first history read is under way. */

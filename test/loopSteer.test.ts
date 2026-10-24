@@ -198,3 +198,34 @@ test('a failing coordination hook does not fail the turn', async () => {
   assert.equal(result.content, 'done')
   assert.ok(!records.some((record) => record.type === 'coordination_update'))
 })
+
+test('a memory index change joins the turn at the next step boundary', async () => {
+  const records: SessionRecord[] = []
+  const requests: string[] = []
+  let pending: string | undefined
+  let calls = 0
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage(request) {
+      calls += 1
+      requests.push(JSON.stringify(request.messages))
+      if (calls === 1) return { content: '', toolCalls: [{ id: 'noop-1', name: 'noop', input: {} }] }
+      return { content: 'done', toolCalls: [] }
+    },
+  }
+
+  await loopFor(provider, records, steerFrom([]), () => { pending = 'MEMORY.md changed: Added: - [B](b.md)' }, {
+    memoryIndexWatch: {
+      take: () => { const content = pending; pending = undefined; return content },
+      takeSinceOpening: () => undefined,
+      noteWrite: () => {},
+    },
+  }).run({ text: 'hi' })
+
+  const update = records.find((record) => record.type === 'memory_update')
+  assert.ok(update && update.type === 'memory_update')
+  assert.ok(records.findIndex((record) => record.type === 'tool_result') < records.indexOf(update))
+  assert.ok(requests[1]?.includes('Added: - [B](b.md)'))
+  assert.ok(!requests[0]?.includes('Added: - [B](b.md)'))
+  assert.equal(records.filter((record) => record.type === 'memory_update').length, 1)
+})

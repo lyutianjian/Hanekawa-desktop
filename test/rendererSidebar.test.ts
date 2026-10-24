@@ -198,6 +198,31 @@ test('a session with no row yet marks its project heading instead', () => {
   assert.deepEqual(spoken.groups.map((group) => group.active), [false, false])
 })
 
+test('a name still being written is a placeholder, and the open lane\'s title is the live one', () => {
+  const titled = (overrides: Partial<WireLaneInfo>) => sidebarView(stateWith({
+    projects: [project('/a', 'alpha', [session('a1', { title: '首条消息' })])],
+    lanes: [lane('1', 'a1', '/a', overrides)],
+    laneStatus: new Map([['1', paneStatus()]]),
+  })).rows[0]!
+  assert.deepEqual(
+    [titled({ sessionTitle: '首条消息', titlePending: true })].map((row) => [row.title, row.titlePending]),
+    [['首条消息', true]],
+  )
+  // The generated title lands on the lane before the next history pull lists it.
+  assert.deepEqual(
+    [titled({ sessionTitle: '修改按钮颜色' })].map((row) => [row.title, row.titlePending]),
+    [['修改按钮颜色', false]],
+  )
+
+  // A draft between its first message and the title derived from it has no name yet.
+  const draft = sidebarView(stateWith({
+    projects: [project('/b', 'beta', [])],
+    lanes: [lane('2', 'draft', '/b')],
+    laneStatus: new Map([['2', paneStatus()]]),
+  })).rows[0]!
+  assert.equal(draft.titlePending, true)
+})
+
 test('a search that hides the active session leaves its heading unmarked', () => {
   // The query moved the user nowhere. Handing the highlight up to the heading
   // would read as "you are in a new session here", which is not what happened.

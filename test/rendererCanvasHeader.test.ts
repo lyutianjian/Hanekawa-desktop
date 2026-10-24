@@ -64,6 +64,16 @@ test('the header names the session, falling back the way a sidebar row does', ()
   })
   assert.equal(titled.visible, true)
   assert.equal(titled.title, '重构缓存层')
+  assert.equal(titled.titlePending, false)
+
+  const pending = canvasHeaderView({
+    lane: lane({ sessionTitle: '帮我重构缓存层', titlePending: true }),
+    menuOpen: false,
+    renaming: false,
+    pendingDelete: undefined,
+    hasConversation: true,
+  })
+  assert.equal(pending.titlePending, true, 'a fallback title waiting on the generated one is a placeholder')
 
   const draft = canvasHeaderView({
     lane: lane(),

@@ -34,6 +34,7 @@ import type { RuntimeHost } from './types.js'
  */
 export interface PaneLike {
   getSession(): SessionMeta
+  isTitlePending?(): boolean
 }
 
 /** The project half: a root to key on, and the one call that stops background work. */
@@ -219,6 +220,7 @@ export class ProjectDirectory<
         projectName: projectDisplayName(entry.cwd),
       }
       if (session.title !== undefined) info.sessionTitle = session.title
+      if (pane.isTitlePending?.()) info.titlePending = true
       if (session.coordination !== undefined) info.coordinationRole = session.coordination.role
       out.push(info)
     }

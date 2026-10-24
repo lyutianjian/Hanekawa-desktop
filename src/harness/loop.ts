@@ -41,7 +41,7 @@ import type { SkillDefinition } from '../services/skills/skillsService.js'
 import type { CacheRuntime } from './cacheControl.js'
 import type { PermissionMode } from './permissions.js'
 import type { PlanModeManager } from './planModeManager.js'
-import type { AgentRunResult, AttachmentBytesLoader, ChatMessage, TurnFailureRecord, ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, RequestImageBytes, SessionRecord, SteerSource, Tool, ToolCall, ToolContext, ToolResultRecord, ToolUseSummaryRecord, TokenUsage, TurnOrigin } from './types.js'
+import type { AgentRunResult, AttachmentBytesLoader, ChatMessage, MemoryIndexWatch, TurnFailureRecord, ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, RequestImageBytes, SessionRecord, SteerSource, Tool, ToolCall, ToolContext, ToolResultRecord, ToolUseSummaryRecord, TokenUsage, TurnOrigin } from './types.js'
 import type { CompactPromptVariant } from '../prompts/compactPrompt.js'
 import { formatTaskLine, remainingTasksFromState, sortedTasks } from '../tools/taskFormat.js'
 import { describeShell } from '../tools/BashTool/BashTool.js'
@@ -181,6 +181,8 @@ export interface AgentLoopOptions {
   memoryPrompt?: string
   /** `MEMORY.md`, labelled; it opens the conversation alongside `projectContext`. */
   memoryIndex?: string
+  /** Delivers later changes to `MEMORY.md` without touching `memoryIndex`. */
+  memoryIndexWatch?: MemoryIndexWatch
   criticalSystemReminder?: string
   skills?: SkillDefinition[]
   promptCacheRetention?: 'in_memory' | '24h'
@@ -727,6 +729,32 @@ export class AgentLoop {
     }
   }
 
+  /** Another session's change to the memory index, appended at a step boundary like a coordination update. */
+  private async takeMemoryUpdate(turnId: string): Promise<void> {
+    let content: string | undefined
+    try {
+      content = this.options.memoryIndexWatch?.take()
+    } catch {
+      return
+    }
+    if (!content) return
+    await this.appendRecord({
+      type: 'memory_update',
+      id: randomUUID(),
+      content,
+      turnId,
+      createdAt: new Date().toISOString(),
+    }).catch(() => {})
+  }
+
+  private memoryRestore(): string | undefined {
+    try {
+      return this.options.memoryIndexWatch?.takeSinceOpening()
+    } catch {
+      return undefined
+    }
+  }
+
   private async coordinationRestore(): Promise<string | undefined> {
     try {
       return await this.options.coordinationRestore?.()
@@ -803,6 +831,7 @@ export class AgentLoop {
           })
         }
         await this.takeCoordinationUpdate(turnId)
+        await this.takeMemoryUpdate(turnId)
         await this.takeSteerMessages(turnId, signal)
         await this.options.planModeManager?.beforeTurn()
         if (this.syncRoleModel(cacheSource)) {
@@ -1995,9 +2024,12 @@ export class AgentLoop {
       .map((record) => record.id))
     if (pendingIds.size === 0) return records
 
+    // The summary may drop delivered memory updates; the opening index still
+    // stands in the prefix, so restate everything since it.
+    const leading = [await this.coordinationRestore(), this.memoryRestore()].filter(Boolean).join('\n\n')
     const restoredContext = await this.options.contextBuilder.buildPostCompactRestore(
       this.options.toolContext,
-      await this.coordinationRestore(),
+      leading || undefined,
     )
     const consume = (record: SessionRecord): SessionRecord => {
       if (!pendingIds.has(record.id) || record.type !== 'compact_boundary' || record.postCompactRestore !== 'pending') return record

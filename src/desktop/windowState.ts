@@ -52,7 +52,7 @@ export const DEFAULT_WINDOW_STATE: WindowState = {
 }
 
 /** A first launch's size, before clamping to the work area. */
-export const DEFAULT_WINDOW_SIZE = { width: 1152, height: 738 } as const
+export const DEFAULT_WINDOW_SIZE = { width: 1200, height: 800 } as const
 
 /** The layout's floor: sidebar, reading column and side panel side by side. */
 export const MIN_WINDOW_SIZE = { width: 1000, height: 620 } as const

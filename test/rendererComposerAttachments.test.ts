@@ -15,6 +15,7 @@ import {
   restoredAttachmentDrafts,
   retryAttachmentImport,
   settleAttachmentImport,
+  draftImageSources,
   type AttachmentDrafts,
   type AttachmentImportSource,
 } from '../src/desktop/renderer/model/composerAttachments.js'
@@ -210,4 +211,18 @@ test('a ready row carries its image id and the cached thumbnail URL, or neither'
   ]
   const rows = attachmentStripView(mixed, { supportsImageInput: true }).rows
   assert.deepEqual(rows.map((row) => row.imageId), ['img-1', undefined, undefined])
+})
+
+test('every draft with a source can be imported again elsewhere, ready ones included', () => {
+  let drafts = beginAttachmentImport([], pathSource('C:/pics/a.png'), 'd1')
+  drafts = beginAttachmentImport(drafts, pathSource('C:/pics/b.png'), 'd2')
+  drafts = beginAttachmentImport(drafts, pathSource('C:/pics/c.png'), 'd3')
+  drafts = settleAttachmentImport(drafts, 'd1', { ok: true, ref: ref('img-1') })!
+  drafts = settleAttachmentImport(drafts, 'd2', { ok: false, reason: 'decode-failed', message: 'x' })!
+  drafts = [...drafts, ...restoredAttachmentDrafts([ref('img-r')])]
+  assert.deepEqual(draftImageSources(drafts), [
+    pathSource('C:/pics/a.png'),
+    pathSource('C:/pics/b.png'),
+    pathSource('C:/pics/c.png'),
+  ])
 })

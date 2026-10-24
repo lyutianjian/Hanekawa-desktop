@@ -365,7 +365,7 @@ export class ContextBuilder {
         continue
       }
 
-      if (record.type === 'coordination_update') {
+      if (record.type === 'coordination_update' || record.type === 'memory_update') {
         contextItems.push({
           kind: 'message',
           message: {

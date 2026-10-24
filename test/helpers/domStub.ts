@@ -391,6 +391,11 @@ class StubElement {
     else this.listeners.set(type, [listener])
   }
 
+  /** No style engine, so nothing ever animates. */
+  getAnimations(): never[] {
+    return []
+  }
+
   removeEventListener(type: string, listener: Listener): void {
     const list = this.listeners.get(type)
     if (!list) return

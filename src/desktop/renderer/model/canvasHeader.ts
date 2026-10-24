@@ -53,6 +53,8 @@ export interface CanvasHeaderView {
    */
   readonly visible: boolean
   readonly title: string
+  /** `title` is a fallback while a generated one is on its way; a placeholder bar stands in for it. */
+  readonly titlePending: boolean
   /** The project the session belongs to, for the "open in editor" button's name. */
   readonly projectName: string
   readonly projectRoot: string
@@ -73,6 +75,7 @@ export const UNTITLED_SESSION = '未命名会话'
 const EMPTY: CanvasHeaderView = {
   visible: false,
   title: '',
+  titlePending: false,
   projectName: '',
   projectRoot: '',
   sessionId: '',
@@ -131,6 +134,7 @@ export function canvasHeaderView(input: {
   return {
     visible: true,
     title: lane.sessionTitle ?? UNTITLED_SESSION,
+    titlePending: lane.titlePending === true,
     projectName: lane.projectName,
     projectRoot: lane.projectRoot,
     sessionId: lane.sessionId,

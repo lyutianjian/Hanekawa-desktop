@@ -174,6 +174,7 @@ import {
   attachmentDraftsFull,
   attachmentStripView,
   beginAttachmentImport,
+  draftImageSources,
   imageDimensions,
   readyAttachmentRefs,
   readyDraftRef,
@@ -332,6 +333,13 @@ export interface PaneSessionDeps {
   onSubagentsChanged?: () => void
 }
 
+/** Everything typed into an unsent composer: the text, the attached paths, and where each image came from. */
+export interface DraftInput {
+  readonly text: string
+  readonly paths: readonly AttachedPath[]
+  readonly images: readonly AttachmentImportSource[]
+}
+
 export interface PaneSession {
   readonly lane: string
   readonly client: SessionClient
@@ -356,6 +364,10 @@ export interface PaneSession {
   hasConversation(): boolean
   /** Puts `text` in this pane's composer: the live one when active, the banked draft otherwise. */
   restoreDraftText(text: string): void
+  /** This pane's unsent input, for moving it to another session. */
+  draftInput(): DraftInput
+  /** Puts a moved draft in this pane; its images are imported into this pane's session once it is up. */
+  restoreDraft(input: DraftInput): void
   /**
    * Repaint the empty state. `app.ts` calls it when the project list moves — an
    * idle pane's Hero names a project the sidebar just renamed or removed, and
@@ -638,6 +650,11 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   let draftPaths: readonly AttachedPath[] = []
   /** Monotonic draft ids, so an import settling late can never collide with a newer draft. */
   let draftSeq = 0
+  let markStarted!: () => void
+  /** Settles once `hello` has bound the session that imports are filed under. */
+  const started = new Promise<void>((resolve) => {
+    markStarted = resolve
+  })
   /**
    * This pane's thumbnail data URLs (S12): one on-demand
    * `get-attachment-preview` per image id, LRU-bounded in the model. The
@@ -1083,14 +1100,18 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
         fail('已达到单次输入最多 10 张图片的上限；请先移除一些再继续。')
         return
       }
-      await importOneSource(source)
+      await runImport(beginImport(source), source)
     }
   }
 
-  async function importOneSource(source: AttachmentImportSource): Promise<void> {
+  function beginImport(source: AttachmentImportSource): string {
     const draftId = `draft-${lane}-${++draftSeq}`
     draftImages = beginAttachmentImport(draftImages, source, draftId)
     renderAttachments()
+    return draftId
+  }
+
+  async function runImport(draftId: string, source: AttachmentImportSource): Promise<void> {
     // Bound to the session that owned the moment the import started: an id
     // settled after a `/clear`/`/resume` rebind belongs to the old session's
     // store, and landing it in the new draft list would hang a ref the new
@@ -1175,7 +1196,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     const entry = retrying.find((draft) => draft.draftId === draftId)
     draftImages = retrying
     renderAttachments()
-    if (entry?.kind === 'importing') void importOneSource(entry.source)
+    if (entry?.kind === 'importing') void runImport(draftId, entry.source)
   }
 
   async function openDraftImage(draftId: string): Promise<void> {
@@ -2060,6 +2081,16 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     }
   }
 
+  function restoreDraft(input: DraftInput): void {
+    restoreDraftText(input.text)
+    addDraftPaths(input.paths)
+    for (const source of input.images) {
+      if (attachmentDraftsFull(draftImages)) break
+      const draftId = beginImport(source)
+      void started.then(() => runImport(draftId, source))
+    }
+  }
+
   function activate(): void {
     if (active) return
     active = true
@@ -2148,6 +2179,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
   async function start(): Promise<void> {
     const hello = await client.hello()
+    markStarted()
 
     // Before the first paint, not with the other `hello` bookkeeping below: the
     // welcome screen names the project, and setting these after
@@ -2333,6 +2365,12 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     note,
     hasConversation,
     restoreDraftText,
+    draftInput: () => ({
+      text: active ? deps.composer.value() : draftText,
+      paths: draftPaths,
+      images: draftImageSources(draftImages),
+    }),
+    restoreDraft,
     subagents: () => (subagentList ??= subagentEntries(presentationTranscript(withDetachedRuns(transcript, runningAgentCalls(client.getBackgroundTasks()))).items)),
     edits: () => (editList ??= { edits: sessionEdits(presentationTranscript(transcript).items) }).edits,
     setSelectedSubagent,

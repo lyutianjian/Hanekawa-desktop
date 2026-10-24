@@ -9,6 +9,7 @@ import { SIDEBAR_WIDTH_DEFAULT } from '../src/desktop/renderer/model/sidebarWidt
 import { MARQUEE_GAP } from '../src/desktop/renderer/model/marquee.js'
 import { PRESENCE_FALLBACK_MS, type PresenceKind } from '../src/desktop/renderer/model/presence.js'
 import { TASK_LOCATE_FALLBACK_MS } from '../src/desktop/renderer/model/tasks.js'
+import { GRAPHEME_IN_MS } from '../src/desktop/renderer/model/titleReveal.js'
 
 /**
  * The renderer's stylesheet, asserted at source level.
@@ -43,6 +44,7 @@ const MOTION_TOKENS = {
   "--motion-running": "2000ms",
   "--motion-locate": "600ms",
   "--motion-hover-delay": "500ms",
+  "--motion-grapheme-in": "90ms",
   // Batch 5: the settings row's 「已保存」, held then faded — longer than the
   // copy button's 1200ms tick because it fades out rather than snapping back.
   "--motion-receipt": "1600ms"
@@ -445,8 +447,6 @@ test('the palette is the one that was agreed, value for value', () => {
       // declared here so an un-hovered row resolves to a still animation.
       '--marquee-shift': '0px',
       '--marquee-duration': '0s',
-      // A running row's sheen phase, written per row from the page clock.
-      '--sheen-delay': '0s',
       '--marquee-gap': '48px',
       '--mark-size': '20px',
       '--mark-sheet': 'none',
@@ -607,8 +607,6 @@ test('the palette is the one that was agreed, value for value', () => {
       // declared here so an un-hovered row resolves to a still animation.
       '--marquee-shift': '0px',
       '--marquee-duration': '0s',
-      // A running row's sheen phase, written per row from the page clock.
-      '--sheen-delay': '0s',
       '--marquee-gap': '48px',
       '--mark-size': '20px',
       '--mark-sheet': 'none',
@@ -2130,6 +2128,7 @@ test('depth is two steps: menus float, modals sit deeper, and the composer joins
 
 test('location fallbacks track their semantic durations', () => {
   assert.equal(TASK_LOCATE_FALLBACK_MS, Number.parseInt(MOTION_TOKENS['--motion-locate']) + 60)
+  assert.equal(GRAPHEME_IN_MS, Number.parseInt(MOTION_TOKENS['--motion-grapheme-in']))
   for (const block of blocks) {
     for (const decl of block.decls) {
       if (decl.prop !== 'animation' || /^none(?: !important)?$/.test(decl.value)) continue

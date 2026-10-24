@@ -49,6 +49,8 @@ export interface PaneBudgetEntry {
    * even when idle — a thread is still evictable.
    */
   readonly coordinator: boolean
+  /** The window's unsent new session, kept so its typed prompt survives switching away. */
+  readonly draft: boolean
   /**
    * When this pane was last activated, as a monotonic counter rather than a
    * clock: `Date.now()` ties are real (two activations inside a millisecond) and
@@ -67,8 +69,8 @@ export interface PaneBudgetInput {
  * `limit`.
  *
  * A pane is *pinned* when it is active, streaming, holding an unanswered blocking
- * request, running a background process, owning browser tabs, or being a
- * project's coordinator — every state whose teardown loses something. Pinned
+ * request, running a background process, owning browser tabs, being a
+ * project's coordinator, or being the unsent new session — every state whose teardown loses something. Pinned
  * panes are never returned, and when everything left is pinned this deliberately returns **fewer** lanes than the limit demands: going
  * over budget costs memory, and killing a running turn costs the user their
  * work. Budget loses that argument every time.
@@ -98,7 +100,8 @@ export function isPinned(entry: PaneBudgetEntry): boolean {
     entry.blocked ||
     entry.processes ||
     entry.tabs ||
-    entry.coordinator
+    entry.coordinator ||
+    entry.draft
   )
 }
 

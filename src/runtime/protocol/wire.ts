@@ -809,6 +809,8 @@ export interface WirePaneInfo {
   sessionId: string
   /** May be absent for a fresh draft that has never received a title. */
   sessionTitle?: string
+  /** `sessionTitle` is the first-message fallback and a model-written title is still being generated. */
+  titlePending?: true
   /**
    * Which project this pane belongs to, normalized (`projectRootKey`).
    *

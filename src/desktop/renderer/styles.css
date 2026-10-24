@@ -223,6 +223,8 @@
   --motion-running: 2000ms;
   --motion-locate: 600ms;
   --motion-hover-delay: 500ms;
+  /* One character of a session name entering; `model/titleReveal.ts` staggers them. */
+  --motion-grapheme-in: 90ms;
   /* A receipt (「已保存」) held long enough to read, then faded. */
   --motion-receipt: 1600ms;
   --presence-x: 0px;
@@ -297,9 +299,6 @@
      animation rather than an invalid one. */
   --marquee-shift: 0px;
   --marquee-duration: 0s;
-  /* A running row's sheen phase, written per row by `dom/sidebarView.ts` from the
-     page clock so a rebuilt row continues the sweep rather than restarting it. */
-  --sheen-delay: 0s;
   /* The blank between the two copies of a scrolling name. Not written by the
      view — it is a constant both sides need, and `MARQUEE_GAP` is the other
      half of it. */
@@ -586,6 +585,14 @@ body {
 :root[data-platform="darwin"] body,
 :root[data-platform="darwin"] body:has(> #browser-panel:not([hidden])) {
   background-color: color-mix(in srgb, var(--surface-base) 55%, transparent);
+}
+/* Over that material an opaque ladder rung is about the tint's own grey, so a
+   hovered or open row vanished. Inside the sidebar the two rungs become washes of
+   the text colour instead, which darken (light) or lift (dark) whatever the blur
+   shows through. */
+:root[data-platform="darwin"] #sidebar {
+  --surface-hover: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  --surface-active: color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
 /* The left column — title bar over sidebar and canvas. The side panel sits
    beside it rather than under the title bar, so its card runs full height. */
@@ -2235,12 +2242,11 @@ body.resizing #browser-resizer::after { opacity: 1; }
   flex: 1 1 auto;
   min-width: 0;
   background: transparent;
-  /* The workspace's name, and the sidebar's most-read label — primary, at the
-     list's own size. It was 11px uppercase tertiary: a small-caps treatment says
-     nothing at all about a Chinese project name (`text-transform` is a no-op on
-     it) and the tertiary rung made the one thing naming the group the dimmest
-     text on screen. */
-  color: var(--text-primary);
+  /* The workspace's name, at the list's own size and one rung down from the
+     session titles under it, so the group reads as a heading over its rows
+     rather than as another row. Not tertiary: that rung made the one thing
+     naming the group the dimmest text on screen. */
+  color: var(--text-secondary);
   border: 0;
   /* The box, the fill and the padding all belong to `.project-row` now — this is
      the label inside it, the way `.session-open` is the label inside a session
@@ -2524,19 +2530,23 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .session-badge.failed { color: var(--text-danger); }
 /* A running session's name: the thinking line's sheen, wider and with a
    brighter core, so a background lane at work is seen at a glance without a mark
-   beside it. Drawn on both copies of the name so the hover marquee carries it along. */
+   beside it. Drawn on both copies of the name so the hover marquee carries it along.
+   The tile is four names wide and `sheen-row` travels exactly one tile per loop,
+   so a sweep of about two seconds is followed by about two seconds of rest. Any
+   other travel brings the next tile's band onto the name before the loop
+   restarts, and the restart then snaps it back. */
 .session-row.running .session-title-run,
 .session-row.running .session-title-echo {
   background: linear-gradient(100deg,
-    color-mix(in oklab, var(--text-tertiary) 65%, transparent) 32%, var(--text-primary) 44%,
+    color-mix(in oklab, var(--text-tertiary) 65%, transparent) 38.75%, var(--text-primary) 46.25%,
     light-dark(var(--text-primary), var(--surface-knob)) 50%,
-    var(--text-primary) 56%, color-mix(in oklab, var(--text-tertiary) 65%, transparent) 68%);
-  background-size: 250% 100%;
+    var(--text-primary) 53.75%, color-mix(in oklab, var(--text-tertiary) 65%, transparent) 61.25%);
+  background-size: 400% 100%;
   background-clip: text;
   color: transparent;
-  animation: sheen var(--motion-running) linear infinite;
-  animation-delay: var(--sheen-delay);
+  animation: sheen-row calc(var(--motion-running) * 2) linear infinite;
 }
+@keyframes sheen-row { 0% { background-position: 100% 0; } 100% { background-position: calc(-100% / 3) 0; } }
 /* The glow riding the band: a blurred copy of the name lit only where the band is,
    on the same clock. Dark theme only — a blurred dark halo on a light rail reads
    as a smudge. */
@@ -2547,13 +2557,50 @@ body.resizing #browser-resizer::after { opacity: 1; }
   inset: 0;
   pointer-events: none;
   background: linear-gradient(100deg,
-    transparent 40%, light-dark(transparent, var(--surface-knob)) 50%, transparent 60%);
-  background-size: 250% 100%;
+    transparent 43.75%, light-dark(transparent, var(--surface-knob)) 50%, transparent 56.25%);
+  background-size: 400% 100%;
   background-clip: text;
   color: transparent;
   filter: blur(3px);
-  animation: sheen var(--motion-running) linear infinite;
-  animation-delay: var(--sheen-delay);
+  animation: sheen-row calc(var(--motion-running) * 2) linear infinite;
+}
+/* A session name that changed on screen — a sidebar row's, the canvas header's —
+   enters a grapheme at a time, each out of a blur; `dom/titleReveal.ts` staggers
+   their start times. Inline blocks so the filter applies. A running row's sheen
+   waits until the whole name is in. */
+.session-title-run.revealing > span,
+.canvas-title.revealing > span {
+  display: inline-block;
+  animation: grapheme-in var(--motion-grapheme-in) var(--ease-out) both;
+}
+@keyframes grapheme-in { 0% { opacity: 0; filter: blur(6px); } }
+.session-row.running .session-title-run.revealing {
+  background: none;
+  color: inherit;
+  animation: none;
+}
+.session-row.running .session-title-run.revealing::after { display: none; }
+/* A new session whose name is still being written: a bar holds its place. The
+   name stays in the row or header, transparent, for anything reading it. */
+.session-title.pending,
+.canvas-title.pending { position: relative; }
+.canvas-title.pending { color: transparent; }
+.session-title.pending .session-title-run {
+  background: none;
+  color: transparent;
+  animation: none;
+}
+.session-title.pending .session-title-run::after { display: none; }
+.session-title.pending::before,
+.canvas-title.pending::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  height: 10px;
+  margin: auto 0;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  animation: breathe var(--motion-running) var(--ease-out) infinite;
 }
 /* A turn that ended out of sight: the same blue dot as an unread thread row. */
 .session-badge.unread { color: var(--accent-info); }

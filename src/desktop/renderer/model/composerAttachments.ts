@@ -23,11 +23,12 @@ export type AttachmentImportSource =
 /**
  * One draft entry. `failed` keeps its source so 重试 can run the same import
  * again — pasted bytes are unreadable any other way, so the list is the only
- * place the retry can come from.
+ * place the retry can come from. `ready` keeps it too: an attachment belongs to
+ * one session, so moving the draft to another session imports it again.
  */
 export type AttachmentDraft =
   | { kind: 'importing'; draftId: string; name: string; source: AttachmentImportSource }
-  | { kind: 'ready'; draftId: string; ref: ImageAttachmentRef; animated?: boolean }
+  | { kind: 'ready'; draftId: string; ref: ImageAttachmentRef; animated?: boolean; source?: AttachmentImportSource }
   | {
     kind: 'failed'
     draftId: string
@@ -77,7 +78,7 @@ export function settleAttachmentImport(
   const entry = drafts.find((draft) => draft.draftId === draftId)
   if (!entry || entry.kind !== 'importing') return undefined
   const settled: AttachmentDraft = outcome.ok
-    ? { kind: 'ready', draftId, ref: outcome.ref, ...(outcome.animated ? { animated: true } : {}) }
+    ? { kind: 'ready', draftId, ref: outcome.ref, ...(outcome.animated ? { animated: true } : {}), source: entry.source }
     : {
       kind: 'failed',
       draftId,
@@ -120,6 +121,11 @@ export function removeAttachmentDraft(
 /** The refs a submission would carry; order is list order, which is arrival order. */
 export function readyAttachmentRefs(drafts: AttachmentDrafts): ImageAttachmentRef[] {
   return drafts.flatMap((draft) => (draft.kind === 'ready' ? [draft.ref] : []))
+}
+
+/** What importing this list into another session runs, in list order; restored entries have no source and are left out. */
+export function draftImageSources(drafts: AttachmentDrafts): AttachmentImportSource[] {
+  return drafts.flatMap((draft) => (draft.source === undefined ? [] : [draft.source]))
 }
 
 /** True while any draft is still importing or has failed — the input is not complete yet. */

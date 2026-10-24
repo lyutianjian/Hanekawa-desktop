@@ -74,8 +74,9 @@ export type ShellCommand =
    * Opens a session as a lane, or focuses its existing lane. Without
    * `sessionId` a fresh draft is minted. `projectRoot` is the normalized key
    * the `lanes` events carry; omitted, the first open project answers.
+   * `activate: false` attaches the lane without asking the window to show it.
    */
-  | { type: 'open-session'; id: string; sessionId?: string; title?: string; projectRoot?: string }
+  | { type: 'open-session'; id: string; sessionId?: string; title?: string; projectRoot?: string; activate?: boolean }
   /**
    * Every session on disk, per project — the sidebar's history, which is a
    * superset of the lane topology (most sessions are not open).

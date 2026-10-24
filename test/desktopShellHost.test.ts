@@ -915,6 +915,15 @@ test('openLane with activate: false registers the lane without activating it', a
   assert.deepEqual(h.activates, [], 'and nobody was asked to switch to it')
 })
 
+test('open-session with activate: false does not ask the renderer to switch', async () => {
+  const h = createHarness()
+  const result = await h.client.openSession({ projectRoot: h.entry.root, activate: false })
+  await settle()
+
+  assert.deepEqual(h.client.getLanes().map((lane) => lane.lane), [result.lane])
+  assert.deepEqual(h.activates, [])
+})
+
 test('openLane activates by default, for a new lane and an existing one', async () => {
   const h = createHarness()
   const first = await h.host.openLane(h.entry)

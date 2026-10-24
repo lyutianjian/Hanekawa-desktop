@@ -186,6 +186,8 @@ export class SessionController {
   private readonly newFileHistoryService: (cwd: string, sessionId: string) => FileHistoryService
 
   private session: SessionMeta
+  /** The session whose model-written title is still being generated. */
+  private titlePendingFor: string | undefined
   private abortController: AbortController | null = null
   /** Most recent tool_use id per tool name, for matching the approval record that follows. */
   private readonly lastToolUseIdByTool = new Map<string, string>()
@@ -667,6 +669,11 @@ export class SessionController {
     return this.session
   }
 
+  /** Whether the shown title is only the first-message fallback, with a generated one on its way. */
+  isTitlePending(): boolean {
+    return this.titlePendingFor === this.session.id
+  }
+
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
@@ -946,10 +953,12 @@ export class SessionController {
     if (this.session.title !== undefined) return
     const title = deriveSessionTitle(record)
     if (title === undefined) return
+    const text = record.type === 'message' ? (record.displayContent ?? record.content).trim() : ''
     this.session = { ...this.session, title }
+    if (text) this.titlePendingFor = this.session.id
     this.publish()
     this.emit({ type: 'session-meta', session: this.session })
-    void this.generateTitle(record, title)
+    if (text) void this.generateTitle(text, title)
   }
 
   /**
@@ -957,12 +966,9 @@ export class SessionController {
    * background. Only lands if the title is still the fallback — a rename the
    * user made meanwhile, or a session switch, wins. Failure keeps the fallback.
    */
-  private async generateTitle(record: SessionRecord, fallback: string): Promise<void> {
-    if (record.type !== 'message') return
+  private async generateTitle(text: string, fallback: string): Promise<void> {
     const sessionId = this.session.id
     try {
-      const text = (record.displayContent ?? record.content).trim()
-      if (!text) return
       const generated = await generateSessionTitle({
         runtime: this.getSession().loop.getSideModel(),
         text,
@@ -972,11 +978,17 @@ export class SessionController {
       if (this.disposed || this.session.id !== sessionId || this.session.title !== fallback) return
       await this.store.rename(sessionId, generated)
       if (this.disposed || this.session.id !== sessionId || this.session.title !== fallback) return
+      this.titlePendingFor = undefined
       this.session = { ...this.session, title: generated }
       this.publish()
       this.emit({ type: 'session-meta', session: this.session })
     } catch {
       // Best-effort: the fallback title stays.
+    } finally {
+      if (this.titlePendingFor === sessionId) {
+        this.titlePendingFor = undefined
+        if (!this.disposed && this.session.id === sessionId) this.emit({ type: 'session-meta', session: this.session })
+      }
     }
   }
 

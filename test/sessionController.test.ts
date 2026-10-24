@@ -865,8 +865,10 @@ test('the first user message names an untitled session, exactly as the store doe
   assert.equal(harness.controller.getSessionMeta().title, stored?.title)
   assert.equal(harness.controller.getSessionMeta().title, 'x'.repeat(60), 'the store\'s own 60 characters')
 
+  // The naming, then the empty generated title settling the pending state.
+  await waitUntil(() => !harness.controller.isTitlePending(), 'the pending title to settle')
   const announced = harness.events.filter((event) => event.type === 'session-meta')
-  assert.equal(announced.length, 1)
+  assert.equal(announced.length, 2)
   assert.equal(
     announced[0]?.type === 'session-meta' ? announced[0].session.id : undefined,
     harness.session.id,
@@ -876,7 +878,7 @@ test('the first user message names an untitled session, exactly as the store doe
   // The second message is not a rename: only an unnamed session takes a name.
   harness.proxy.onRecord({ ...record, id: randomUUID(), content: '完全不同的第二条' })
   assert.equal(harness.controller.getSessionMeta().title, 'x'.repeat(60))
-  assert.equal(harness.events.filter((event) => event.type === 'session-meta').length, 1)
+  assert.equal(harness.events.filter((event) => event.type === 'session-meta').length, 2)
 })
 
 test('a session that already has a title is never renamed by a message', async () => {
@@ -1133,6 +1135,7 @@ test('a model-written title replaces the first-message fallback, unless the user
   assert.equal(named.controller.getSessionMeta().title, '修改登录按钮颜色')
   assert.equal((await named.store.list()).find((m) => m.id === named.session.id)?.title, '修改登录按钮颜色')
   assert.equal(named.events.filter((event) => event.type === 'session-meta').length, 2)
+  assert.equal(named.controller.isTitlePending(), false)
 
   const renamed = await createHarness({ untitled: true, titleReply: '修改登录按钮颜色' })
   const second = record()
@@ -1141,6 +1144,28 @@ test('a model-written title replaces the first-message fallback, unless the user
   renamed.controller.refreshSessionMeta({ ...renamed.controller.getSessionMeta(), title: '我自己的名字' })
   await settle()
   assert.equal(renamed.controller.getSessionMeta().title, '我自己的名字')
+})
+
+test('the fallback title is pending until generation settles, landed or not', async () => {
+  const record: SessionRecord = {
+    id: randomUUID(),
+    type: 'message',
+    role: 'user',
+    content: '帮我把登录页的按钮改成蓝色',
+    createdAt: new Date().toISOString(),
+  }
+  // An empty reply is a generation that produced nothing: the fallback stays.
+  const harness = await createHarness({ untitled: true, titleReply: '' })
+  const pendingAtMeta: boolean[] = []
+  harness.controller.onEvent((event) => {
+    if (event.type === 'session-meta') pendingAtMeta.push(harness.controller.isTitlePending())
+  })
+  await harness.store.appendRecord(harness.session.id, record)
+  harness.proxy.onRecord(record)
+  assert.equal(harness.controller.isTitlePending(), true)
+  await waitUntil(() => !harness.controller.isTitlePending(), 'the pending title to settle')
+  assert.equal(harness.controller.getSessionMeta().title, '帮我把登录页的按钮改成蓝色')
+  assert.deepEqual(pendingAtMeta, [true, false], 'the fallback is announced as pending, then the settle')
 })
 
 test('turn events carry the origin and whether the turn failed', async () => {

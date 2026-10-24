@@ -430,7 +430,7 @@ export function estimateRequestTextBytes(
             ? [record.summary, record.restoredContext]
             : record.type === 'tool_use_summary'
               ? [record.summary]
-              : record.type === 'coordination_update' || record.type === 'at_mention_context'
+              : record.type === 'coordination_update' || record.type === 'memory_update' || record.type === 'at_mention_context'
                 ? [record.content]
                 : []
     // Per-record JSON structure (ids, timestamps, wrapper objects).

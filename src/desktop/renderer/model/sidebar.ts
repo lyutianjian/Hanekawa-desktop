@@ -89,6 +89,8 @@ export type SidebarBadge = 'none' | 'running' | 'awaiting-input' | 'failed' | 'u
 export interface SidebarRow {
   readonly sessionId: string
   readonly title: string
+  /** `title` is a fallback while a generated one is on its way; the row draws a placeholder bar instead. */
+  readonly titlePending: boolean
   /** Small prefix text for a coordination session; absent for an ordinary one. */
   readonly roleMarker?: string
   readonly projectRoot: string
@@ -565,7 +567,7 @@ export function sidebarView(state: SidebarState): SidebarView {
       seen.add(session.id)
       if (state.deletingSessions.has(session.id)) continue
       const lane = laneBySession.get(session.id)
-      const row = rowFor(session, project.projectRoot, lane?.lane, active?.paneId, state)
+      const row = rowFor(session, project.projectRoot, lane, active?.paneId, state)
       if (row.active) activeHasRow = true
       if (matches(row)) bucket.rows.push(row)
     }
@@ -593,7 +595,9 @@ export function sidebarView(state: SidebarState): SidebarView {
       updatedAt: new Date(state.now).toISOString(),
       messageCount: 0,
     }
-    const row = rowFor(draft, lane.projectRoot, lane.lane, active?.paneId, state)
+    // Between the first message and the title derived from it, the draft has no
+    // name to show: the placeholder bar stands in rather than 「未命名会话」.
+    const row = rowFor(draft, lane.projectRoot, lane.sessionTitle === undefined ? { ...lane, titlePending: true } : lane, active?.paneId, state)
     if (row.active) activeHasRow = true
     const bucket = bucketFor(lane.projectRoot, lane.projectName)
     if (matches(row)) bucket.rows.push(row)
@@ -716,7 +720,7 @@ function coordinationGroupsOf(
           coordinationRole: 'coordinator',
         },
         root,
-        lane?.lane,
+        lane,
         activePaneId,
         state,
       )
@@ -754,13 +758,17 @@ export function roleMarkerFor(role: 'coordinator' | 'thread' | undefined): strin
 function rowFor(
   session: WireSessionSummary,
   projectRoot: string,
-  lane: string | undefined,
+  laneInfo: WireLaneInfo | undefined,
   activePaneId: string | undefined,
   state: SidebarState,
 ): SidebarRow {
+  const lane = laneInfo?.lane
   return {
     sessionId: session.id,
-    title: session.title ?? '未命名会话',
+    // The lane's title is the live one: a generated title or a rename reaches it
+    // before the next history pull reaches `session`.
+    title: laneInfo?.sessionTitle ?? session.title ?? '未命名会话',
+    titlePending: laneInfo?.titlePending === true,
     ...(roleMarkerFor(session.coordinationRole) !== undefined
       ? { roleMarker: roleMarkerFor(session.coordinationRole) }
       : {}),
@@ -1085,7 +1093,7 @@ export function sidebarRenderSignature(view: SidebarView): string {
     for (const row of visibleGroupRows(group)) {
       parts.push(
         `r:${row.sessionId}${row.lane ?? ''}${row.badge}${row.active ? '1' : '0'}`
-          + `${row.confirmingDelete ? '1' : '0'}${row.opening ? 'o' : '-'}${row.title}${row.messageCount}`
+          + `${row.confirmingDelete ? '1' : '0'}${row.opening ? 'o' : '-'}${row.titlePending ? 'p' : '-'}${row.title}${row.messageCount}`
           + `${row.roleMarker ?? ''}`,
       )
     }

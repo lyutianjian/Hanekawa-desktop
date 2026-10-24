@@ -5,6 +5,8 @@ import { button } from './controls.js'
 import { dismissable } from './dismiss.js'
 import { followPointer, rovingFocus } from './focus.js'
 import { createPresence } from './presence.js'
+import { motionPolicy } from './motion.js'
+import { pinGraphemes, revealText, showText } from './titleReveal.js'
 
 /**
  * The canvas header bar: session identity on the left, "open in editor" on the
@@ -92,6 +94,8 @@ export function createCanvasHeaderView(
 
   /** The title the input was seeded from, so a no-op commit sends nothing. */
   let seededTitle: string | undefined
+  /** What the title node was last drawn from; a name that changes on the same session enters a grapheme at a time. */
+  let drawnTitle: { sessionId: string; title: string; pending: boolean } | undefined
   /** Whether the last paint drew the menu, so focus moves on the edge only. */
   let menuWasOpen = false
   /** The current menu's first item; where the keyboard lands on opening. */
@@ -187,6 +191,7 @@ export function createCanvasHeaderView(
         reconcile(rightControls, [])
         menuPresence.set(false, true)
         seededTitle = undefined
+        drawnTitle = undefined
         menuWasOpen = false
         firstMenuItem = undefined
         safeMenuItem = undefined
@@ -199,12 +204,20 @@ export function createCanvasHeaderView(
       const lostMenuFocus = heldMenuFocus && !menu.contains(document.activeElement)
       const returnFocus = !view.menuOpen && menu.contains(document.activeElement)
       menuPresence.set(view.menuOpen)
-      if (title.textContent !== view.title) title.textContent = view.title
+      let revealedAt: number | undefined
+      if (drawnTitle?.sessionId !== view.sessionId || drawnTitle.title !== view.title || drawnTitle.pending !== view.titlePending) {
+        title.classList.toggle('pending', view.titlePending)
+        const reveal = drawnTitle?.sessionId === view.sessionId && !view.titlePending && !motionPolicy().settleImmediately
+        if (reveal) revealText(title, view.title, revealedAt = performance.now())
+        else showText(title, view.title)
+        drawnTitle = { sessionId: view.sessionId, title: view.title, pending: view.titlePending }
+      }
       // The field floats over the title instead of replacing it: the title keeps
       // its width, so the menu trigger and everything right of it stay put.
       identity.classList.toggle('renaming', view.renaming)
       const shown = view.breadcrumb ? crumb : title
       reconcile(identity, view.renaming ? [shown, titleInput, menuShell] : [shown, menuShell])
+      if (revealedAt !== undefined) pinGraphemes(title, revealedAt)
 
       const startingRename = view.renaming && seededTitle === undefined
       if (view.renaming) {

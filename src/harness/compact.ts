@@ -470,6 +470,10 @@ function formatRecordsForSummary(records: SessionRecord[]): string {
       return `<coordination_update>\n${record.content}\n</coordination_update>`
     }
 
+    if (record.type === 'memory_update') {
+      return `<memory_update>\n${record.content}\n</memory_update>`
+    }
+
     if (record.type === 'tool_approval') {
       return `<tool_approval name="${record.tool}" approved="${record.approved}">\n${JSON.stringify(record.input ?? {})}\n</tool_approval>`
     }

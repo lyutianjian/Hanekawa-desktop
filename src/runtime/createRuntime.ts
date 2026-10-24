@@ -1,5 +1,6 @@
 import { createProvider, resolveImageCapability } from '../config/providers.js'
-import { buildMemoryIndexContext, buildMemoryPrompt } from '../services/memory/memoryPrompt.js'
+import { buildMemoryIndexContext, buildMemoryPrompt, readMemoryIndex } from '../services/memory/memoryPrompt.js'
+import { createMemoryIndexWatch } from '../services/memory/memoryIndexWatch.js'
 import { composeProjectContext, readUserInstructions } from '../services/context/projectContext.js'
 import type { ConfigService, ModelConfig, ThinkingConfig } from '../config/service.js'
 import type { EffortLevel, EffortValue } from '../config/effort.js'
@@ -15,7 +16,7 @@ import { PlanModeManager } from '../harness/planModeManager.js'
 import { ToolRunner } from '../harness/toolRunner.js'
 import type { SystemPromptSectionCache } from '../harness/sections.js'
 import type { PermissionGate } from '../harness/permissions.js'
-import type { AttachmentBytesLoader, CoordinationRole, ImageAttachmentImporter, ModelPricing, ModelProvider, SessionRecord, ToolContext } from '../harness/types.js'
+import type { AttachmentBytesLoader, CoordinationRole, ImageAttachmentImporter, MemoryIndexWatch, ModelPricing, ModelProvider, SessionRecord, ToolContext } from '../harness/types.js'
 import type { AttachmentFactsResolver } from '../harness/turnImages.js'
 import { MODEL_CONTEXT_WINDOW_DEFAULT } from '../prompts/budget.js'
 import type { ContextManagementConfig } from '../prompts/budget.js'
@@ -209,17 +210,19 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
   // next new session without moving an open session's cached prefix. The one
   // global-file read feeds both the memory section's wording and the
   // instructions message, so they cannot disagree.
-  type SessionSnapshot = { sessionId: string; userInstructions: string; memoryPrompt: string; memoryIndex?: string }
+  type SessionSnapshot = { sessionId: string; userInstructions: string; memoryPrompt: string; memoryIndex?: string; memoryIndexWatch?: MemoryIndexWatch }
   let sessionSnapshot: SessionSnapshot | undefined
   const snapshotFor = (sessionId: string): SessionSnapshot => {
     if (sessionSnapshot?.sessionId !== sessionId) {
       const userInstructions = readUserInstructions()
-      const memoryIndex = memoryDir ? buildMemoryIndexContext(memoryDir) : undefined
+      const index = memoryDir ? readMemoryIndex(memoryDir) : ''
+      const memoryIndex = memoryDir ? buildMemoryIndexContext(memoryDir, index) : undefined
       sessionSnapshot = {
         sessionId,
         userInstructions,
         memoryPrompt: buildMemoryPrompt(memoryDir, userInstructions),
         ...(memoryIndex ? { memoryIndex } : {}),
+        ...(memoryDir ? { memoryIndexWatch: createMemoryIndexWatch(memoryDir, index) } : {}),
       }
     }
     return sessionSnapshot
@@ -258,6 +261,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
 
     const snapshot = snapshotFor(runtimeSession.id)
     const projectContext = composeProjectContext(snapshot.userInstructions, getProjectEntries())
+    const watch = snapshot.memoryIndexWatch
     const recordStream = new JsonlRecordStream(store, runtimeSession.id)
     let loop: AgentLoop | undefined
     const planModeManager = new PlanModeManager({
@@ -386,7 +390,14 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       exitPlanMode: () => permissionGate.exitPlanMode(),
       planModeBridge: planModeManager.buildBridge(),
       askUserQuestionBridge: bridges.askUserQuestion,
-      ...(trackFileEdit ? { trackFileEdit } : {}),
+      ...(trackFileEdit || watch
+        ? {
+            trackFileEdit: async (filePath: string) => {
+              watch?.noteWrite(filePath)
+              await trackFileEdit?.(filePath)
+            },
+          }
+        : {}),
       ...(imageAttachments ? { imageAttachments } : {}),
     }
     // Instruction files the conversation opens with count as read.
@@ -406,6 +417,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       projectContext,
       memoryPrompt: snapshot.memoryPrompt,
       memoryIndex: snapshot.memoryIndex,
+      ...(watch ? { memoryIndexWatch: watch } : {}),
       skills: getSkills(),
       promptCacheRetention: targetModelConfig.promptCacheRetention,
       supportsImageInput: resolveImageCapability(targetModelConfig),

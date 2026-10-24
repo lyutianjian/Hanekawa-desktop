@@ -40,6 +40,7 @@ import { createPaneSession, type PaneSession } from './paneSession.js'
 import { ShellClient } from './shellClient.js'
 import { SHELL_LANE } from '../shellProtocol.js'
 import { DEFAULT_PANE_LIMIT, selectEvictions, type PaneBudgetEntry } from '../paneBudget.js'
+import { findDraft, planNewSession, type DraftCandidate } from './model/draftSession.js'
 import { createLaneMux } from '../../runtime/protocol/laneChannel.js'
 import {
   NO_LAYERS,
@@ -628,6 +629,7 @@ function applyPaneBudget(): void {
   const statuses = laneStatuses()
   const tabs = shellClient.getBrowserTabs()
   const laneInfos = shellClient.getLanes()
+  const draft = currentDraft()?.lane
   const entries: PaneBudgetEntry[] = [...paneSessions.keys()].map((lane) => ({
     lane,
     active: lane === activeLane,
@@ -636,6 +638,7 @@ function applyPaneBudget(): void {
     processes: statuses.get(lane)?.processes ?? false,
     tabs: tabsForLane(tabs, lane).length > 0,
     coordinator: laneInfos.find((info) => info.lane === lane)?.coordinationRole === 'coordinator',
+    draft: lane === draft,
     lastActiveTick: lastActiveTick.get(lane) ?? 0,
   }))
 
@@ -911,34 +914,28 @@ function runSidebarIntent(intent: SidebarIntent): void {
       // return below) would leave the click looking like it did nothing.
       leaveSettings()
       leaveProjects()
-      // Already in a fresh session *of the project being asked about*? Then
-      // "new session" is a no-op — an empty session is invisible in the sidebar,
-      // so minting another would only pile up panes nobody can see. The composer
-      // keeps whatever was typed.
-      //
-      // The project check is load-bearing now that every group heading has its
-      // own `+`: without it, clicking `+` on project B while sitting in an empty
-      // session of project A silently does nothing.
-      const active = activePane()
-      const activeRoot = activeLaneInfo()?.projectRoot
-      const sameProject = intent.projectRoot === undefined || intent.projectRoot === activeRoot
-      if (active && sameProject && !active.hasConversation()) {
+      // The unsent new session is the one「新会话」always returns to — it has no
+      // row to click, so this is the only way back to its typed prompt. Its
+      // project is the latest `+`: another project's `+` moves all of its input to a new
+      // session there, opened in the background and shown only once that input is
+      // in, so the composer never flashes empty.
+      const draft = currentDraft()
+      const target = intent.projectRoot ?? activeLaneInfo()?.projectRoot
+      const plan = planNewSession(target, draft)
+      if (plan.kind === 'reuse') {
+        activateLane(plan.lane)
         composer.focus()
         return
       }
-      // Typing into a fresh session and then picking another project's `+` is
-      // choosing where that prompt goes: the text moves to the new session, and
-      // the abandoned draft — invisible in the sidebar — is closed.
-      const carried = active && !active.hasConversation() ? composer.value() : ''
-      const abandoned = carried === '' ? undefined : activeLane
-      // "New session" is a window-level act, so it goes to the shell, targeting
-      // the active pane's project.
       void shellClient
-        .openSession(intent.projectRoot !== undefined ? { projectRoot: intent.projectRoot } : {})
+        .openSession({ ...(target !== undefined ? { projectRoot: target } : {}), activate: false })
         .then((opened) => {
-          if (abandoned === undefined) return
-          paneSessions.get(opened.lane)?.restoreDraftText(carried)
-          closeLane(abandoned)
+          if (plan.carryFrom !== undefined) {
+            const input = paneSessions.get(plan.carryFrom)?.draftInput()
+            if (input) paneSessions.get(opened.lane)?.restoreDraft(input)
+          }
+          activateLane(opened.lane)
+          if (plan.carryFrom !== undefined) closeLane(plan.carryFrom)
         })
         .catch((error) => reportError({ action: '新建会话' }, error))
       return
@@ -1373,6 +1370,21 @@ let headerMenuOpen = false
 let headerRenaming = false
 /** The session the header's delete is asking about, not a flag — see the model. */
 let headerPendingDelete: string | undefined
+
+function currentDraft(): DraftCandidate | undefined {
+  const candidates = shellClient.getLanes().flatMap((info) => {
+    const session = paneSessions.get(info.lane)
+    if (!session) return []
+    return [{
+      lane: info.lane,
+      projectRoot: info.projectRoot,
+      hasConversation: session.hasConversation(),
+      coordinated: info.coordinationRole !== undefined,
+      lastActiveTick: lastActiveTick.get(info.lane) ?? 0,
+    }]
+  })
+  return findDraft(candidates, activeLane)
+}
 
 function activeLaneInfo() {
   return activeLane === undefined

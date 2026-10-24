@@ -67,6 +67,10 @@ export class SessionPane {
     return this.controller.getSessionMeta()
   }
 
+  isTitlePending(): boolean {
+    return this.controller.isTitlePending()
+  }
+
   /**
    * Tears the pane down. Idempotent, because `ProjectRuntime.shutdown()`
    * disposes every open scope as a backstop and may arrive either side of this.

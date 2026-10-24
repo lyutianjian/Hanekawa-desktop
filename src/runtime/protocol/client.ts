@@ -1010,6 +1010,7 @@ function samePaneList(a: readonly WirePaneInfo[], b: readonly WirePaneInfo[]): b
     if (left.paneId !== right.paneId) return false
     if (left.sessionId !== right.sessionId) return false
     if (left.sessionTitle !== right.sessionTitle) return false
+    if (left.titlePending !== right.titlePending) return false
     if (left.projectRoot !== right.projectRoot) return false
     if (left.projectName !== right.projectName) return false
   }

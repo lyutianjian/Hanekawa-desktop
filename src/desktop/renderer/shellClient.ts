@@ -113,13 +113,14 @@ export class ShellClient {
     return this.lanes
   }
 
-  async openSession(options: { sessionId?: string; title?: string; projectRoot?: string } = {}): Promise<WireShellOpenSessionResult> {
+  async openSession(options: { sessionId?: string; title?: string; projectRoot?: string; activate?: boolean } = {}): Promise<WireShellOpenSessionResult> {
     return this.send({
       type: 'open-session',
       id: crypto.randomUUID(),
       ...(options.sessionId !== undefined ? { sessionId: options.sessionId } : {}),
       ...(options.title !== undefined ? { title: options.title } : {}),
       ...(options.projectRoot !== undefined ? { projectRoot: options.projectRoot } : {}),
+      ...(options.activate !== undefined ? { activate: options.activate } : {}),
     }) as Promise<WireShellOpenSessionResult>
   }
 
@@ -571,6 +572,7 @@ function sameLaneList(current: readonly WireLaneInfo[], next: readonly WireLaneI
       a.projectRoot !== b.projectRoot ||
       a.projectName !== b.projectName ||
       a.sessionTitle !== b.sessionTitle ||
+      a.titlePending !== b.titlePending ||
       a.coordinationRole !== b.coordinationRole
     ) {
       return false

@@ -205,6 +205,28 @@ export interface CoordinationUpdateRecord {
   turnId?: string
 }
 
+/**
+ * The memory index's lines that changed under this session, appended by the
+ * loop at the start of a step. Durable, like a coordination update.
+ */
+export interface MemoryUpdateRecord {
+  id: string
+  type: 'memory_update'
+  content: string
+  createdAt: string
+  turnId?: string
+}
+
+/** What the model has seen of `MEMORY.md`, which other sessions may change. */
+export interface MemoryIndexWatch {
+  /** The index's changes since the model last saw it; undefined when none, or when this session made them. */
+  take(): string | undefined
+  /** The index's changes since the opening snapshot, for the post-compact restore. */
+  takeSinceOpening(): string | undefined
+  /** Called before this session's tools write `filePath`. */
+  noteWrite(filePath: string): void
+}
+
 export interface ToolUseSummaryRecord {
   id: string
   type: 'tool_use_summary'
@@ -465,6 +487,7 @@ export type SessionRecord =
   | CompactAttemptFailedRecord
   | ToolUseSummaryRecord
   | CoordinationUpdateRecord
+  | MemoryUpdateRecord
   | SubagentTranscriptRecord
   | SubagentTaskRecord
   | BackgroundTaskRecord

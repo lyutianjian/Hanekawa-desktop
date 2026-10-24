@@ -695,6 +695,7 @@ const SHELL_COMMAND_SCHEMAS = {
       sessionId: z.string().optional(),
       title: z.string().optional(),
       projectRoot: z.string().optional(),
+      activate: z.boolean().optional(),
     })
     .strict(),
   'open-project': z
@@ -1287,7 +1288,7 @@ export class ShellHost<
         return { lanes: this.describeLanes() } satisfies WireShellPanesResult
       case 'open-session': {
         const entry = await this.resolveProjectEntry(command.projectRoot, command.sessionId)
-        return this.openLane(entry, { sessionId: command.sessionId, title: command.title })
+        return this.openLane(entry, { sessionId: command.sessionId, title: command.title, activate: command.activate })
       }
       case 'open-project': {
         // Missing callback rejects rather than answering `ok` — a focus that
@@ -2186,6 +2187,7 @@ export class ShellHost<
       lane,
     }
     if (pane.sessionTitle !== undefined) info.sessionTitle = pane.sessionTitle
+    if (pane.titlePending) info.titlePending = true
     if (pane.coordinationRole !== undefined) info.coordinationRole = pane.coordinationRole
     return info
   }

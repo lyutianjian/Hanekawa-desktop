@@ -24,6 +24,7 @@ function entry(lane: string, overrides: Partial<PaneBudgetEntry> = {}): PaneBudg
     processes: false,
     tabs: false,
     coordinator: false,
+    draft: false,
     lastActiveTick: 0,
     ...overrides,
   }
@@ -130,6 +131,7 @@ test('isPinned is the one place the exemption is spelled', () => {
   assert.equal(isPinned(entry('1', { processes: true })), true)
   assert.equal(isPinned(entry('1', { tabs: true })), true)
   assert.equal(isPinned(entry('1', { coordinator: true })), true)
+  assert.equal(isPinned(entry('1', { draft: true })), true)
 })
 
 test('an idle, inactive, oldest coordinator is never evicted', () => {
