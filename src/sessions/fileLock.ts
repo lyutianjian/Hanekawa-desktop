@@ -21,8 +21,30 @@ import { mkdir } from 'node:fs/promises'
 export interface FileLockOptions {
   /** A lock older than this whose owner is gone may be stolen. */
   staleMs?: number
-  /** Give up and run anyway rather than block forever. */
+  /** Give up after this long. Without `requireLock` the operation then runs anyway. */
   timeoutMs?: number
+  /**
+   * Fail instead of running the operation without the lock.
+   *
+   * The default keeps the lock advisory: a session write must not be wedged
+   * forever by a peer that crashed or lost the file, and the writes it guards
+   * are appends and tmp+rename, which survive an interleaving. A caller that
+   * replaces a whole file must not take that risk — running unlocked there
+   * silently drops whatever a peer wrote in between — so it asks to fail.
+   */
+  requireLock?: boolean
+}
+
+/** Why a lock could not be taken. */
+export type FileLockFailure = 'timeout' | 'unavailable'
+
+export class FileLockError extends Error {
+  constructor(readonly lockPath: string, readonly reason: FileLockFailure) {
+    super(reason === 'timeout'
+      ? `Timed out waiting for file lock: ${lockPath}`
+      : `Cannot create file lock: ${lockPath}`)
+    this.name = 'FileLockError'
+  }
 }
 
 interface LockOwner {
@@ -44,51 +66,70 @@ export async function withFileLock<T>(
   const staleMs = options.staleMs ?? DEFAULT_STALE_MS
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
 
-  const acquired = await acquire(lockPath, staleMs, timeoutMs)
+  const outcome = await acquire(lockPath, staleMs, timeoutMs)
+  if (!outcome.ok && options.requireLock) throw new FileLockError(lockPath, outcome.reason)
   try {
     return await operation()
   } finally {
-    if (acquired) await release(lockPath)
+    if (outcome.ok) await release(lockPath)
   }
 }
 
 /**
- * Returns whether the lock is actually held. A false return means we timed out
- * and are proceeding anyway: blocking a session write forever because some
- * other process is wedged is worse than the interleaving we are guarding
- * against, and every writer underneath is either an append or a tmp+rename.
+ * Returns whether the lock is actually held, and why not when it is not.
+ *
+ * `timeout` means a live peer holds it; `unavailable` means the lock file
+ * cannot be created at all (read-only directory, a file where one has to be).
+ * Callers that do not require the lock proceed either way: blocking a session
+ * write forever because some other process is wedged is worse than the
+ * interleaving we are guarding against, and their writes are appends or
+ * tmp+rename.
  */
-async function acquire(lockPath: string, staleMs: number, timeoutMs: number): Promise<boolean> {
+async function acquire(
+  lockPath: string,
+  staleMs: number,
+  timeoutMs: number,
+): Promise<{ ok: true } | { ok: false; reason: FileLockFailure }> {
   const deadline = Date.now() + timeoutMs
   let delay = POLL_MIN_MS
 
-  await mkdir(dirname(lockPath), { recursive: true })
+  try {
+    await mkdir(dirname(lockPath), { recursive: true })
+  } catch {
+    // No directory to hold the lock file; waiting cannot fix that.
+    return { ok: false, reason: 'unavailable' }
+  }
 
   for (;;) {
-    if (await tryCreate(lockPath)) return true
+    const created = await tryCreate(lockPath)
+    if (created === 'acquired') return { ok: true }
+    if (created === 'unavailable') return { ok: false, reason: 'unavailable' }
     if (await stealIfStale(lockPath, staleMs)) continue
-    if (Date.now() >= deadline) return false
+    if (Date.now() >= deadline) return { ok: false, reason: 'timeout' }
     await sleep(delay)
     delay = Math.min(delay * 2, POLL_MAX_MS)
   }
 }
 
-async function tryCreate(lockPath: string): Promise<boolean> {
+async function tryCreate(lockPath: string): Promise<'acquired' | 'busy' | 'unavailable'> {
+  let handle
   try {
-    const handle = await open(lockPath, 'wx', 0o600)
-    const owner: LockOwner = { pid: process.pid, host: hostname(), acquiredAt: Date.now() }
-    try {
-      await handle.writeFile(JSON.stringify(owner), 'utf8')
-    } finally {
-      await handle.close()
-    }
-    return true
+    handle = await open(lockPath, 'wx', 0o600)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return false
-    // A lock we cannot create at all (read-only dir, permissions) must not stop
-    // the write it was guarding.
-    return false
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') return 'busy'
+    // A lock we cannot create at all will not appear by waiting.
+    return 'unavailable'
   }
+
+  try {
+    const owner: LockOwner = { pid: process.pid, host: hostname(), acquiredAt: Date.now() }
+    await handle.writeFile(JSON.stringify(owner), 'utf8')
+  } catch {
+    // The file is ours either way; the owner block only helps staleness checks.
+  } finally {
+    await handle.close().catch(() => {})
+  }
+  return 'acquired'
 }
 
 /** Removes a lock whose holder is demonstrably gone. */

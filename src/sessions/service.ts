@@ -372,40 +372,51 @@ export class SessionStore {
   }
 
   async repairRecords(sessionIdOrPrefix: string): Promise<RepairRecordsResult> {
+    // A draft has no file and no index row. Repairing it on disk would write a
+    // file the next `materializeDraft` overwrites with the unrepaired draft.
+    const draft = this.resolveDraft(sessionIdOrPrefix)
+    if (draft) {
+      const repaired = ensureToolResultPairing(draft.records)
+      if (repaired.diagnostics.length > 0) draft.records = repaired.records
+      return { repairedCount: repaired.diagnostics.length, diagnostics: repaired.diagnostics }
+    }
+
     const session = await this.resolve(sessionIdOrPrefix)
     if (!session) throw new Error(`Unknown session: ${sessionIdOrPrefix}`)
 
-    const loaded = await this.loadRecordsWithDiagnostics(session.id)
-    const repaired = ensureToolResultPairing(loaded.records)
-    if (repaired.diagnostics.length === 0) {
-      return { repairedCount: 0, diagnostics: [] }
-    }
-
-    const jsonlPath = this.sessionJsonlPath(session.id)
-    const nextContent = repaired.records.map((record) => JSON.stringify(record)).join('\n') + '\n'
-    // Under the lock like every other full rewrite: tmp+rename is crash-safe
-    // but not interleave-safe, so a concurrent append between the read above
-    // and this rename would be dropped.
-    await this.withJsonlLock(session.id, () => writeFileAtomic(jsonlPath, nextContent))
-
-    const now = new Date().toISOString()
-    await this.withIndexLock(async () => {
-      const index = await this.readIndexUnlocked()
-      const currentMeta = index.sessions.find((item) => item.id === session.id) ?? session
-      const meta: SessionMeta = {
-        ...this.deriveMetaFromRecords(session.id, repaired.records, currentMeta),
-        updatedAt: now,
-        ...(currentMeta.checkpoints ? { checkpoints: currentMeta.checkpoints } : {}),
-        ...(currentMeta.compactFailureCount ? { compactFailureCount: currentMeta.compactFailureCount } : {}),
+    // The whole read → repair → rewrite cycle is one lock period. Reading
+    // before taking the lock let an append land in between, after which the
+    // rewrite wrote back records that predated it and the new turn was gone.
+    return this.withJsonlLock(session.id, async () => {
+      const loaded = await this.loadRecordsWithDiagnostics(session.id)
+      const repaired = ensureToolResultPairing(loaded.records)
+      if (repaired.diagnostics.length === 0) {
+        return { repairedCount: 0, diagnostics: [] }
       }
-      this.replaceIndexSession(index, meta)
-      await writeJsonFile(this.indexPath(), index)
-    })
 
-    return {
-      repairedCount: repaired.diagnostics.length,
-      diagnostics: repaired.diagnostics,
-    }
+      const jsonlPath = this.sessionJsonlPath(session.id)
+      const nextContent = repaired.records.map((record) => JSON.stringify(record)).join('\n') + '\n'
+      await writeFileAtomic(jsonlPath, nextContent)
+
+      const now = new Date().toISOString()
+      await this.withIndexLock(async () => {
+        const index = await this.readIndexUnlocked()
+        const currentMeta = index.sessions.find((item) => item.id === session.id) ?? session
+        const meta: SessionMeta = {
+          ...this.deriveMetaFromRecords(session.id, repaired.records, currentMeta),
+          updatedAt: now,
+          ...(currentMeta.checkpoints ? { checkpoints: currentMeta.checkpoints } : {}),
+          ...(currentMeta.compactFailureCount ? { compactFailureCount: currentMeta.compactFailureCount } : {}),
+        }
+        this.replaceIndexSession(index, meta)
+        await writeJsonFile(this.indexPath(), index)
+      })
+
+      return {
+        repairedCount: repaired.diagnostics.length,
+        diagnostics: repaired.diagnostics,
+      }
+    })
   }
 
   async updateRecord(
@@ -1005,7 +1016,9 @@ export class SessionStore {
       // The in-process chain above orders our own writers cheaply; the file
       // lock is what keeps a second process out. Nested this way the syscalls
       // only happen once per critical section, not once per queued caller.
-      return await withFileLock(`${key}.lock`, operation)
+      // Strict: the index is rewritten whole, so running without the lock
+      // would drop the rows a peer added in between.
+      return await withFileLock(`${key}.lock`, operation, { requireLock: true })
     } finally {
       release()
       if (SessionStore.indexLocks.get(key) === queued) {
@@ -1027,7 +1040,10 @@ export class SessionStore {
 
     await ready
     try {
-      return await withFileLock(`${key}.lock`, operation)
+      // Every writer of a session file comes through here, the whole-file
+      // rewrites included: without the lock each would replace records the
+      // other just added. Failing is the only safe answer when it is taken.
+      return await withFileLock(`${key}.lock`, operation, { requireLock: true })
     } finally {
       release()
       if (SessionStore.jsonlLocks.get(key) === queued) {

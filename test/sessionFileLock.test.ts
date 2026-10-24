@@ -1,13 +1,14 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { fork } from 'node:child_process'
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { withFileLock } from '../src/sessions/fileLock.js'
+import { FileLockError, withFileLock } from '../src/sessions/fileLock.js'
 import { SessionStore } from '../src/sessions/service.js'
+import { getSessionsDir } from '../src/utils/paths.js'
 
 /**
  * `SessionStore`'s promise-chain mutexes are static fields: they order writers
@@ -163,4 +164,64 @@ process.send({ done: true })
   }
   assert.deepEqual(loaded.diagnostics.filter((d) => d.code === 'malformed_jsonl'), [],
     'interleaved appends must not tear a line')
+})
+
+test('requireLock fails instead of running the operation without the lock', async () => {
+  const dir = await lockDir()
+  const lockPath = path.join(dir, 'target.lock')
+  await writeFile(lockPath, JSON.stringify({ pid: process.pid, host: 'local', acquiredAt: Date.now() }), 'utf8')
+
+  let ran = false
+  await assert.rejects(
+    withFileLock(lockPath, async () => { ran = true }, { requireLock: true, staleMs: 60_000, timeoutMs: 100 }),
+    (error: unknown) => error instanceof FileLockError && error.reason === 'timeout',
+  )
+  assert.equal(ran, false, 'a strict caller must not run while a live peer holds the lock')
+})
+
+test('an uncreatable lock fails strictly and stays advisory by default', async () => {
+  const dir = await lockDir()
+  const blocker = path.join(dir, 'not-a-directory')
+  await writeFile(blocker, 'file', 'utf8')
+  const lockPath = path.join(blocker, 'target.lock')
+
+  let ran = false
+  await assert.rejects(
+    withFileLock(lockPath, async () => { ran = true }, { requireLock: true }),
+    (error: unknown) => error instanceof FileLockError && error.reason === 'unavailable',
+  )
+  assert.equal(ran, false)
+
+  // The default callers keep their existing policy: the write still runs.
+  await withFileLock(lockPath, async () => { ran = true })
+  assert.equal(ran, true)
+})
+
+test('a session append waits for the file lock instead of writing unlocked', async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-lock-store-'))
+  try {
+    const store = new SessionStore(cwd)
+    await store.init()
+    const session = await store.create()
+    const jsonlPath = path.join(getSessionsDir(cwd), `${session.id}.jsonl`)
+
+    let releaseHeld!: () => void
+    const held = new Promise<void>((resolve) => { releaseHeld = resolve })
+    const holder = withFileLock(`${jsonlPath}.lock`, () => held)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    let settled = false
+    const append = store.appendRecord(session.id, {
+      type: 'message', id: 'blocked', role: 'user', content: 'blocked', createdAt: new Date().toISOString(),
+    }).finally(() => { settled = true })
+
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(settled, false, 'the record must not be written without the lock')
+
+    releaseHeld()
+    await Promise.all([holder, append])
+    assert.ok((await store.loadRecords(session.id)).some((record) => record.id === 'blocked'))
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
 })
