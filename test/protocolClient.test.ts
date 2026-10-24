@@ -39,6 +39,7 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 function snapshot(overrides: Partial<SessionControllerSnapshot> = {}): SessionControllerSnapshot {
   return {
     isStreaming: false,
+    switching: false,
     usage: { lastRequest: null, total: { inputTokens: 1, cacheReadInputTokens: 2, outputTokens: 3 } },
     taskSnapshot: undefined,
     spinnerSubText: undefined,

@@ -100,6 +100,7 @@ export class SessionClient {
 
   private snapshot: SessionControllerSnapshot = Object.freeze({
     isStreaming: false,
+    switching: false,
     usage: createEmptySessionUsage(),
     taskSnapshot: undefined,
     spinnerSubText: undefined,
@@ -794,6 +795,7 @@ export class SessionClient {
     if (
       !contextChanged
       && previous.isStreaming === next.isStreaming
+      && previous.switching === next.switching
       && previous.spinnerSubText === next.spinnerSubText
       && previous.turnOutputTokens === next.turnOutputTokens
       && usage === previous.usage
@@ -802,6 +804,7 @@ export class SessionClient {
 
     this.snapshot = Object.freeze({
       isStreaming: next.isStreaming,
+      switching: next.switching,
       usage,
       taskSnapshot,
       spinnerSubText: next.spinnerSubText,

@@ -113,6 +113,8 @@ export interface QueuedSubmissionHandoff {
 /** The pull-based half of the controller, shaped for `useSyncExternalStore`. */
 export interface SessionControllerSnapshot {
   readonly isStreaming: boolean
+  /** A session switch has begun and not finished; the lane takes no new turn. */
+  readonly switching: boolean
   readonly usage: SessionUsage
   readonly taskSnapshot: TaskDisplaySnapshot | undefined
   readonly spinnerSubText: string | undefined
@@ -287,26 +289,31 @@ export class SessionController {
    * covers the file-snapshot stage as well as the provider request; the
    * distinction is kept at the caller, which only needs "not now".
    */
-  busyKind(): 'turn' | 'compaction' | undefined {
+  busyKind(): 'turn' | 'switch' | 'compaction' | undefined {
+    if (this.switching) return 'switch'
     if (this.streaming) return 'turn'
     if (this.compacting) return 'compaction'
     return undefined
   }
 
   /**
-   * Claims the lane for a switch, or refuses when one is already in flight.
+   * Claims the lane for a switch, or refuses while anything else owns it.
    *
-   * Synchronous on purpose: both callers check and claim before their first
-   * await, so the claim is what serializes them. `endSessionSwitch` must run in
-   * a `finally` — a switch that failed halfway must not wedge the lane.
+   * The claim is synchronous and comes before the caller's first await; that is
+   * what stops a turn or a compaction from starting while a switch is still
+   * resolving the target. `endSessionSwitch` must run in a `finally`.
    */
   beginSessionSwitch(): void {
     if (this.switching) throw new Error('会话正在切换，请稍候。')
+    if (this.streaming) throw new Error('当前回合仍在进行，请先停止再切换会话。')
+    if (this.compacting) throw new Error('上下文正在压缩，请等它结束再切换会话。')
     this.switching = true
+    this.publish()
   }
 
   endSessionSwitch(): void {
     this.switching = false
+    this.publish()
   }
 
   subscribe = (listener: () => void): (() => void) => {
@@ -368,6 +375,8 @@ export class SessionController {
   }
 
   async submit(input: UserInput, options?: AgentRunOverrides, handoff?: QueuedSubmissionHandoff): Promise<void> {
+    if (this.switching) throw new Error('会话正在切换，请稍候。')
+    if (this.compacting) throw new Error('上下文正在压缩，请稍候。')
     if (this.streaming) {
       throw new Error('A turn is already running; queue the message instead of submitting it.')
     }
@@ -412,11 +421,14 @@ export class SessionController {
    * turn's file-history snapshot is the one its message already opened.
    */
   async retryTurn(failureId: string): Promise<void> {
+    if (this.switching) throw new Error('会话正在切换，请稍候。')
+    if (this.compacting) throw new Error('上下文正在压缩，请稍候。')
     const { records } = await this.store.loadRecordsWithDiagnostics(this.session.id)
-    // Checked after the load: a turn may have started while it ran.
-    if (this.streaming) {
-      throw new Error('A turn is already running.')
-    }
+    // Checked again after the load: a turn or a switch may have started while it ran.
+    const busy = this.busyKind()
+    if (busy === 'turn') throw new Error('A turn is already running.')
+    if (busy === 'switch') throw new Error('会话正在切换，请稍候。')
+    if (busy === 'compaction') throw new Error('上下文正在压缩，请稍候。')
     const index = records.findIndex((record) => record.type === 'turn_failure' && record.id === failureId)
     const failure = records[index]
     const superseded = records.slice(index + 1).some((record) =>
@@ -464,12 +476,10 @@ export class SessionController {
     const sessionId = this.session.id
     let failed = false
 
-    this.emit(turn.start)
-
+    // Reserved before the announcement, and inside the `try`: an event listener
+    // that reacts by switching or stopping must find this turn already owning
+    // the lane, and a listener that throws must not leave it reserved.
     this.streaming = true
-    // Registered before `prepare`, not after it: a Stop during the file
-    // snapshot has nothing to abort otherwise, and the snapshot must finish
-    // rather than be raced and left writing into the next turn's history.
     const ac = new AbortController()
     this.abortController = ac
     this.spinnerSubText = undefined
@@ -487,6 +497,7 @@ export class SessionController {
     // the guard above existed, and would now reject every later turn as well.
     // Ordering inside is unchanged: publish, then snapshot, then run.
     try {
+      this.emit(turn.start)
       this.publish()
       this.refreshFixedContext()
 
@@ -619,6 +630,9 @@ export class SessionController {
    * than waiting for the next request to report it.
    */
   async compact(instructions?: string): Promise<CompactCheckResult> {
+    if (this.switching) throw new Error('会话正在切换，请稍候。')
+    if (this.compacting) throw new Error('上下文正在压缩，请稍候。')
+    if (this.streaming) throw new Error('当前回合仍在进行，请先停止。')
     this.compacting = true
     try {
       const result = await this.getSession().loop.compact(instructions)
@@ -660,6 +674,11 @@ export class SessionController {
    * Resets everything that is scoped to a session, including token totals.
    */
   retarget(session: SessionMeta, records: readonly SessionRecord[]): void {
+    // The owning guard, not only the switch wrapper: a live turn or compaction
+    // still writes through this controller, and swapping the session under it
+    // would land those writes in the new session's log and ledger.
+    if (this.streaming) throw new Error('当前回合仍在进行，请先停止再切换会话。')
+    if (this.compacting) throw new Error('上下文正在压缩，请等它结束再切换会话。')
     this.session = session
     this.lastToolUseIdByTool.clear()
     this.activeToolProgress.clear()
@@ -1167,6 +1186,7 @@ export class SessionController {
   private buildSnapshot(): SessionControllerSnapshot {
     return Object.freeze({
       isStreaming: this.streaming,
+      switching: this.switching,
       usage: this.usage,
       taskSnapshot: this.taskSnapshot,
       spinnerSubText: this.spinnerSubText,
@@ -1181,6 +1201,7 @@ export class SessionController {
     const previous = this.snapshot
     if (
       next.isStreaming === previous.isStreaming
+      && next.switching === previous.switching
       && next.usage === previous.usage
       && next.taskSnapshot === previous.taskSnapshot
       && next.spinnerSubText === previous.spinnerSubText

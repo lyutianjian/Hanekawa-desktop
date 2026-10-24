@@ -41,6 +41,8 @@ interface Harness {
   setContextUsedTokens: (contextUsedTokens: number | undefined) => void
   /** Sets the turn state rather than toggling it; the queue pump reads the edge. */
   setStreaming: (value: boolean) => void
+  /** Holds the lane as a switch in flight would, and releases it on false. */
+  setSwitching: (value: boolean) => void
   setUsageTotal: (total: TokenUsage) => void
   setLastRequestUsage: (
     lastRequest: { inputTokens: number; cacheReadInputTokens: number; outputTokens: number } | null,
@@ -156,6 +158,8 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   let submitFailure: string | undefined
   /** Whether that failure lands after the user record exists. */
   let submitFailsAfterAcceptance = false
+  /** A switch the host has claimed and not finished. */
+  let switchingState = false
   let snapshot: {
     isStreaming: boolean
     usage: { lastRequest: TokenUsage | null; total: TokenUsage }
@@ -176,9 +180,16 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
   const controller = {
     beginSessionSwitch: () => {
       if (switching) throw new Error('会话正在切换，请稍候。')
+      if (snapshot.isStreaming) throw new Error('当前回合仍在进行，请先停止再切换会话。')
       switching = true
+      switchingState = true
+      for (const listener of [...snapshotListeners]) listener()
     },
-    endSessionSwitch: () => { switching = false },
+    endSessionSwitch: () => {
+      switching = false
+      switchingState = false
+      for (const listener of [...snapshotListeners]) listener()
+    },
     onEvent: (listener: (event: SessionEvent) => void) => {
       eventListeners.add(listener)
       return () => eventListeners.delete(listener)
@@ -188,7 +199,7 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
       return () => snapshotListeners.delete(listener)
     },
     getSnapshot: () => snapshot,
-    busyKind: () => (snapshot.isStreaming ? 'turn' : undefined),
+    busyKind: () => (switchingState ? 'switch' : snapshot.isStreaming ? 'turn' : undefined),
     getSubagentProgress: () => new Map([['agent-1', 'Reading file']]),
     // The third parameter is the queue's hand-off. The real controller fires
     // `onAccepted` when the user record lands; this stub writes no records, so
@@ -429,6 +440,10 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
      */
     setStreaming: (value: boolean) => {
       snapshot = { ...snapshot, isStreaming: value }
+      for (const listener of [...snapshotListeners]) listener()
+    },
+    setSwitching: (value: boolean) => {
+      switchingState = value
       for (const listener of [...snapshotListeners]) listener()
     },
     setUsageTotal: (total: TokenUsage) => {
@@ -821,10 +836,7 @@ test('summarize-rewind refuses a target with nothing on the far side', async () 
  * landed follows it. Cutting at the user record therefore keeps the enqueue and
  * drops the two records that proved the send.
  */
-async function seedRewindableQueue(
-  harness: Harness,
-  options: { pending?: boolean } = {},
-): Promise<ImageAttachmentRef> {
+async function seedRewindableQueue(harness: Harness): Promise<ImageAttachmentRef> {
   const image: ImageAttachmentRef = {
     id: 'img-q3',
     ownerSessionId: harness.sessionId,
@@ -837,15 +849,6 @@ async function seedRewindableQueue(
   const records: SessionRecord[] = [
     { type: 'message', id: 'm1', role: 'user', content: 'first', createdAt: '2026-01-01T00:00:00.000Z' },
     { type: 'message', id: 'm2', role: 'assistant', content: 'answer one', createdAt: '2026-01-01T00:00:01.000Z' },
-    ...(options.pending
-      ? [{
-        type: 'message_queue' as const,
-        id: 'q2-enqueue',
-        operation: 'enqueue' as const,
-        message: { id: 'q2', content: 'later', priority: 'later' as const, createdAt: '2026-01-01T00:00:01.500Z' },
-        createdAt: '2026-01-01T00:00:01.500Z',
-      }]
-      : []),
     {
       type: 'message_queue',
       id: 'q3-enqueue',
@@ -901,7 +904,8 @@ test('rewind retires the queued message whose send the cut removed', async () =>
   assert.deepEqual(harness.calls.restoreInputs[0]?.images, [image], 'with its attachments')
 
   // The proof is on disk: the original enqueue survives the cut, and the
-  // compensating dequeue follows it, so even a restart cannot replay the id.
+  // compensating dequeue follows it in the same rewrite, so even a restart
+  // cannot replay the id.
   const onDisk = await harness.store.loadRecords(harness.sessionId)
   assert.deepEqual(queueRecords(onDisk).map((record) => record.operation), ['enqueue', 'dequeue'])
   const compensation = queueRecords(onDisk)[1]
@@ -915,17 +919,78 @@ test('rewind retires the queued message whose send the cut removed', async () =>
   harness.dispose()
 })
 
-test('rewind retires only the sent message and leaves a real pending one', async () => {
+test('a pending message enqueued after the rewind target survives and is sent once', async () => {
   const harness = await createHarness()
-  await seedRewindableQueue(harness, { pending: true })
+  await seedRewindableQueue(harness)
+  // Held without a turn, so the message is genuinely pending when the rewind
+  // starts and its own enqueue sits after the target's user record.
+  harness.failNextSubmit('the active model cannot accept these images')
+  harness.send({ type: 'enqueue-message', id: 'q1', content: 'keep me' })
+  const enqueued = await waitFor(
+    () => harness.received.find((event) => event.type === 'reply' && event.id === 'q1'),
+    'the enqueue reply',
+  )
+  assert.ok(enqueued.type === 'reply')
+  const pending = (enqueued.result as { message: { id: string } }).message
 
   harness.send({ type: 'truncate-session', id: 'c1', messageId: 'm3' })
-  await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === 'c1'), 'the reply')
-  await waitFor(() => (harness.calls.submits.length > 0 ? true : undefined), 'the other pending message')
+  await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === 'c1'), 'the rewind reply')
+  await givePumpAChance()
+  assert.deepEqual(latestQueue(harness.received), ['keep me'],
+    'the cut dropped its enqueue, so the rewrite has to restore it')
+  assert.deepEqual(harness.calls.submits, [], 'and the paused head still holds the pump')
 
-  assert.deepEqual(harness.calls.submits, ['later'],
-    'the target is retired; the message the user still meant to send is not')
-  assert.deepEqual(harness.calls.restoreInputs.map((input) => input.text), ['second'])
+  // Releasing the refusal (a different runtime may accept it) sends it exactly once.
+  harness.send({ type: 'set-model', id: 'sm1', modelKey: 'other' })
+  await waitFor(() => (harness.calls.submits.length > 0 ? true : undefined), 'the preserved message')
+  await givePumpAChance()
+  assert.deepEqual(harness.calls.submits, ['keep me'], 'once, and never the already-sent target')
+  assert.deepEqual(latestQueue(harness.received), [])
+
+  const onDisk = await harness.store.loadRecords(harness.sessionId)
+  const restored = queueRecords(onDisk).filter((record) =>
+    record.operation === 'enqueue' && record.message.id === pending.id)
+  assert.equal(restored.length, 1, 'and its enqueue record survives the cut exactly once')
+  harness.dispose()
+})
+
+test('a message enqueued while a rewind is running survives and is sent once', async () => {
+  const harness = await createHarness()
+  await seedConversation(harness)
+
+  const original = harness.store.replaceRecords.bind(harness.store)
+  let releaseCut!: () => void
+  const cutGate = new Promise<void>((resolve) => { releaseCut = resolve })
+  let cutStarted = false
+  harness.store.replaceRecords = async (sessionId: string, records: SessionRecord[]) => {
+    cutStarted = true
+    await cutGate
+    return original(sessionId, records)
+  }
+
+  harness.send({ type: 'truncate-session', id: 'c1', messageId: 'm1' })
+  await waitFor(() => (cutStarted ? true : undefined), 'the rewrite to start')
+
+  // Typed while the rewrite holds the queue lock. Its own write has to wait for
+  // the rewrite rather than be replaced by it.
+  harness.send({ type: 'enqueue-message', id: 'q9', content: 'typed during rewind' })
+  await givePumpAChance()
+  assert.deepEqual(harness.calls.submits, [], 'nothing may be sent between the cut and its replay')
+
+  releaseCut()
+  await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === 'c1'), 'the rewind reply')
+  await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === 'q9'), 'the enqueue reply')
+  await waitFor(() => (harness.calls.submits.length > 0 ? true : undefined), 'the preserved message')
+  await givePumpAChance()
+  assert.deepEqual(harness.calls.submits, ['typed during rewind'], 'kept, and sent exactly once')
+  assert.deepEqual(latestQueue(harness.received), [])
+
+  const onDisk = await harness.store.loadRecords(harness.sessionId)
+  assert.ok(
+    queueRecords(onDisk).some((record) =>
+      record.operation === 'enqueue' && record.message.content === 'typed during rewind'),
+    'its record landed after the rewrite rather than inside the cut',
+  )
   harness.dispose()
 })
 
@@ -949,35 +1014,65 @@ test('summarize-from-here retires the queue id its cut orphans', async () => {
   harness.dispose()
 })
 
-test('the queue pump stays out of a rewind until the cut and its replay are done', async () => {
+test('two rewinds in the same tick settle to one complete rewrite', async () => {
+  const harness = await createHarness()
+  await seedRewindableQueue(harness)
+
+  harness.send({ type: 'truncate-session', id: 'c1', messageId: 'm2' })
+  harness.send({ type: 'truncate-session', id: 'c2', messageId: 'm4' })
+  await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === 'c1'), 'the first reply')
+  const second = await waitFor(
+    () => harness.received.find((event) => event.type === 'fail' && event.id === 'c2'),
+    'the second rewind to see the first one\'s log',
+  )
+  assert.ok(second.type === 'fail')
+  assert.match(second.message, /Message not found/)
+
+  const onDisk = await harness.store.loadRecords(harness.sessionId)
+  assert.deepEqual(onDisk.map((record) => record.id), ['m1'], 'the second ran against the rewritten log')
+  assert.deepEqual(replayMessageQueue(onDisk), [])
+  assert.deepEqual(harness.calls.submits, [])
+  harness.dispose()
+})
+
+test('a rewind is refused while the lane is busy, without touching the log', async () => {
   const harness = await createHarness()
   await seedConversation(harness)
+  const before = await harness.store.loadRecords(harness.sessionId)
 
-  const original = harness.store.truncateBeforeMessage.bind(harness.store)
-  let releaseCut!: () => void
-  const cutGate = new Promise<void>((resolve) => { releaseCut = resolve })
-  let cutStarted!: () => void
-  const started = new Promise<void>((resolve) => { cutStarted = resolve })
-  harness.store.truncateBeforeMessage = async (sessionId: string, messageId: string) => {
-    cutStarted()
-    await cutGate
-    return original(sessionId, messageId)
-  }
+  harness.setStreaming(true)
+  harness.send({ type: 'truncate-session', id: 'c1', messageId: 'm1' })
+  const truncate = await waitFor(
+    () => harness.received.find((event) => event.type === 'fail' && event.id === 'c1'),
+    'the truncate refusal',
+  )
+  assert.ok(truncate.type === 'fail')
+  assert.match(truncate.message, /无法回退/)
 
-  harness.send({ type: 'truncate-session', id: 'c1', messageId: 'm3' })
-  await started
+  harness.send({ type: 'summarize-rewind', id: 'c2', messageId: 'm1', decision: 'summarize-up-to-here' })
+  const summarize = await waitFor(
+    () => harness.received.find((event) => event.type === 'fail' && event.id === 'c2'),
+    'the summarize refusal',
+  )
+  assert.ok(summarize.type === 'fail')
+  assert.match(summarize.message, /无法回退/)
 
-  // Typed while the cut is in flight. Without the pause the idle pump would run
-  // it at once; the cut is about to remove the record that queued it.
-  harness.send({ type: 'enqueue-message', id: 'q9', content: 'typed during rewind' })
-  await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === 'q9'), 'the enqueue reply')
+  assert.deepEqual(await harness.store.loadRecords(harness.sessionId), before)
+  assert.deepEqual(harness.calls.summarized, [], 'and the summary call was never spent')
+  harness.dispose()
+})
+
+test('a switch in flight holds the queue, and releasing it sends once', async () => {
+  const harness = await createHarness()
+  harness.setSwitching(true)
+  harness.send({ type: 'enqueue-message', id: 'q1', content: 'waiting' })
+  await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === 'q1'), 'the enqueue reply')
   await givePumpAChance()
-  assert.deepEqual(harness.calls.submits, [], 'nothing may be sent between the cut and the replay')
+  assert.deepEqual(harness.calls.submits, [], 'no turn may start under a switch that is still resolving')
 
-  releaseCut()
-  await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === 'c1'), 'the rewind reply')
-  await givePumpAChance()
-  assert.deepEqual(harness.calls.submits, [], 'the replay no longer has the enqueue, so it cannot resurrect it')
+  harness.setSwitching(false)
+  await waitFor(() => (harness.calls.submits.length > 0 ? true : undefined), 'the message that waited')
+  assert.deepEqual(harness.calls.submits, ['waiting'])
   harness.dispose()
 })
 

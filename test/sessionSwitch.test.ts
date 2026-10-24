@@ -138,7 +138,6 @@ async function createSwitchHarness(): Promise<SwitchHarness> {
     },
     runtimeSlot: runtimeSlot as unknown as SessionSwitchDeps['runtimeSlot'],
     controller: {
-      busyKind: () => undefined,
       beginSessionSwitch: () => {
         if (switching) throw new Error('会话正在切换，请稍候。')
         switching = true
@@ -212,25 +211,23 @@ test('a new session hands the hook the draft id that did not exist before the ca
   assert.deepEqual(harness.stopped, [{ sessionId: previous.id, reason: 'Session cleared' }])
 })
 
-test('a busy controller refuses both switch entry points before any side effect', async () => {
+test('a refused claim leaves both switch entry points without side effects', async () => {
   const harness = await createSwitchHarness()
   const session = await harness.store.create('busy one')
-  const withBusy = (kind: 'turn' | 'compaction'): SessionSwitchDeps => ({
+  const refusedAtClaim: SessionSwitchDeps = {
     ...harness.deps,
     controller: {
-      busyKind: () => kind,
+      beginSessionSwitch: () => { throw new Error('当前回合仍在进行，请先停止再切换会话。') },
+      endSessionSwitch: () => { throw new Error('a refused claim must not be released') },
       retarget: () => harness.order.push('retarget'),
     } as unknown as SessionSwitchDeps['controller'],
-  })
-
-  for (const kind of ['turn', 'compaction'] as const) {
-    const expected = kind === 'turn' ? /先停止/ : /压缩/
-    await assert.rejects(() => switchToExistingSession(withBusy(kind), session.id), expected)
-    await assert.rejects(
-      () => switchToNewSession(withBusy(kind), { previousSessionId: session.id }),
-      expected,
-    )
   }
+
+  await assert.rejects(() => switchToExistingSession(refusedAtClaim, session.id), /先停止/)
+  await assert.rejects(
+    () => switchToNewSession(refusedAtClaim, { previousSessionId: session.id }),
+    /先停止/,
+  )
 
   assert.deepEqual(harness.order, [], 'no runtime was built and the controller was not retargeted')
   assert.deepEqual(harness.stopped, [], "the outgoing session's background tasks were left alone")
