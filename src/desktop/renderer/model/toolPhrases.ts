@@ -1,4 +1,5 @@
 import type { ActivityStep, TaskOp } from './transcript.js'
+import { isMemoryIndex, memoryOp, memorySlug, type MemoryOp } from './memoryOps.js'
 
 /**
  * How a tool call reads as an action, shared by the live status line (「读取
@@ -62,6 +63,8 @@ const TARGET_MAX = 40
  */
 export function callParts(step: CallStep, fullPath = false): { readonly verb: string; readonly target: string; readonly bare: boolean } {
   if (step.tool.taskOps !== undefined) return { verb: taskPhrase(step.tool.taskOps), target: '', bare: false }
+  const memory = memoryOp(step)
+  if (memory !== undefined) return memoryParts(step, memory)
   const phrase = step.toolName === undefined ? undefined : PHRASES[step.toolName]
   if (phrase === undefined) {
     const name = step.tool.displayName || step.toolName || '工具'
@@ -73,6 +76,17 @@ export function callParts(step: CallStep, fullPath = false): { readonly verb: st
   const oneLine = raw.replace(/\s+/g, ' ').trim()
   const target = phrase.target === 'file' && !fullPath ? oneLine.split(/[\\/]/).pop()! : bashWord(step, oneLine)
   return { verb: phrase.verb, target, bare: step.toolName === 'Bash' && !!step.tool.description?.trim() }
+}
+
+const MEMORY_VERBS: Readonly<Record<MemoryOp, string>> = {
+  recall: '调取记忆', search: '查找记忆', save: '保存记忆', update: '更新记忆', delete: '删除记忆',
+}
+
+/** 「保存记忆 user-role」; the index is named for what touching it does, 「整理记忆索引」. */
+function memoryParts(step: CallStep, op: MemoryOp): { readonly verb: string; readonly target: string; readonly bare: boolean } {
+  if (isMemoryIndex(step)) return { verb: op === 'recall' ? '调取记忆索引' : '整理记忆索引', target: '', bare: false }
+  const target = op === 'search' ? (step.tool.useSummary.split(' · ')[0] ?? '') : memorySlug(step)
+  return { verb: MEMORY_VERBS[op], target, bare: false }
 }
 
 /** An undescribed command reads as its first word, 「运行 sed…」; the whole command is in the body. */
@@ -123,8 +137,14 @@ export function callPhrase(step: CallStep, approving = false): string {
 export function batchPhrase(running: readonly CallStep[]): string {
   const last = running[running.length - 1]!
   if (running.length === 1) return callPhrase(last)
+  if (running.every((step) => isRecall(step))) return `调取 ${running.length} 条记忆`
   const plural = last.toolName !== undefined && running.every((step) => step.toolName === last.toolName)
     ? PLURALS[last.toolName]
     : undefined
   return plural ? `${plural[0]} ${running.length} ${plural[1]}` : `${callPhrase(last)} 等 ${running.length} 项`
+}
+
+function isRecall(step: CallStep): boolean {
+  const op = memoryOp(step)
+  return (op === 'recall' || op === 'search') && !isMemoryIndex(step)
 }

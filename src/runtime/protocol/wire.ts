@@ -397,7 +397,7 @@ export interface PermissionRequestDto {
  * Without this a renderer is left guessing which key of `input` to show, which is
  * how the transcript ended up captioning half the tools with raw JSON.
  *
- * Three strings, so the whole thing is `structuredClone`-safe by construction.
+ * Plain strings and a flag, so the whole thing is `structuredClone`-safe by construction.
  * Nothing here is persisted — the projection runs over records on their way out,
  * so an old JSONL gets the same captions a new one does.
  */
@@ -408,6 +408,8 @@ export interface ToolDisplayDto {
   useSummary: string
   /** Present-tense spinner text, absent when the tool defines none. */
   activityDescription?: string
+  /** The call reads or changes a file in the project's memory directory, or searches it. */
+  memory?: true
 }
 
 /** Keyed by `ToolUseRecord.id` — not `toolUseId`, which is the *result*'s pointer. */

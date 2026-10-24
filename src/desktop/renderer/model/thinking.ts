@@ -1,5 +1,6 @@
 import { parseUnifiedPatch } from './diffRows.js'
 import type { ActivityRun, ActivityStep, TranscriptEntry } from './transcript.js'
+import { isMemoryIndex, memoryOp, memorySlug } from './memoryOps.js'
 
 /**
  * What the transcript's activity lines say, and which of them are open — as pure
@@ -110,7 +111,7 @@ export interface RunSummary {
   readonly aborted: boolean
 }
 
-type Category = 'cmd' | 'read' | 'edit' | 'search' | 'web' | 'agent' | 'todo' | 'plan' | 'other'
+type Category = 'cmd' | 'read' | 'edit' | 'search' | 'web' | 'agent' | 'todo' | 'plan' | 'memRecall' | 'memSave' | 'memDelete' | 'memIndex' | 'other'
 
 const CATEGORY_OF: Readonly<Record<string, Category>> = {
   Bash: 'cmd', BashOutput: 'cmd', KillShell: 'cmd', Monitor: 'cmd',
@@ -131,6 +132,10 @@ const CATEGORY_TEXT: Readonly<Record<Exclude<Category, 'todo'>, (count: number) 
   web: (count) => `浏览 ${count} 个网页`,
   agent: (count) => `运行 ${count} 个子代理`,
   plan: () => '提出计划',
+  memRecall: (count) => `调取 ${count} 条记忆`,
+  memSave: (count) => `保存 ${count} 条记忆`,
+  memDelete: (count) => `删除 ${count} 条记忆`,
+  memIndex: () => '整理记忆索引',
   other: (count) => `使用 ${count} 个工具`,
 }
 
@@ -138,6 +143,11 @@ function categoryOf(step: ActivityStep): Category | undefined {
   if (step.kind === 'thinking') return undefined
   if (step.kind === 'subagent') return 'agent'
   if (step.kind === 'task') return 'todo'
+  const memory = memoryOp(step)
+  if (memory !== undefined) {
+    if (isMemoryIndex(step)) return 'memIndex'
+    return memory === 'recall' || memory === 'search' ? 'memRecall' : memory === 'delete' ? 'memDelete' : 'memSave'
+  }
   return (step.toolName === undefined ? undefined : CATEGORY_OF[step.toolName]) ?? 'other'
 }
 
@@ -157,7 +167,7 @@ export function summarizeRun(run: ActivityRun): RunSummary {
     const keys = counts.get(category) ?? new Set<string>()
     counts.set(category, keys)
     // An edit counts files, not calls: the same path again is not another file.
-    keys.add(category === 'edit' && step.kind === 'tool' && step.tool.useSummary ? step.tool.useSummary : step.id)
+    keys.add(countKey(category, step))
     if (category === 'edit' && step.kind === 'tool' && step.status === 'done') {
       const patch = step.tool.detail === undefined ? undefined : parseUnifiedPatch(step.tool.detail)
       if (patch === undefined || patch.partial) readable = false
@@ -167,6 +177,8 @@ export function summarizeRun(run: ActivityRun): RunSummary {
       }
     }
   }
+  // The index only restates the memories beside it; alone, it is the run's whole story.
+  if (counts.size > 1) counts.delete('memIndex')
   const text = [...counts].map(([category, keys]) => (
     category === 'todo' ? '更新了待办' : CATEGORY_TEXT[category](keys.size)
   )).join('，')
@@ -176,6 +188,18 @@ export function summarizeRun(run: ActivityRun): RunSummary {
     failed: run.failedCount,
     aborted: run.status === 'aborted',
   }
+}
+
+/**
+ * What makes two steps the same thing counted once: an edited file is one file
+ * however many times it was edited, and a memory is one memory. A memory search
+ * has no file, so each search counts.
+ */
+function countKey(category: Category, step: ActivityStep): string {
+  if (step.kind !== 'tool') return step.id
+  if (category === 'edit' && step.tool.useSummary) return step.tool.useSummary
+  if ((category === 'memSave' || category === 'memDelete' || category === 'memRecall') && memoryOp(step) !== 'search') return memorySlug(step)
+  return step.id
 }
 
 /** A run with at least one thing that is not a thought: it folds to a summary line. */

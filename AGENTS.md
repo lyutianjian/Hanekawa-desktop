@@ -110,6 +110,7 @@ desktop/ -> runtime/ + harness/ -> config/providers/
 - Every popover closes three ways: a press outside it (`dom/dismiss.ts`'s `onPressOutside`, scoped to the popover **and its trigger**, never to the bar around them), `focusout`, and Escape. A `focusout` with `relatedTarget === null` is the view's own repaint and must be ignored, and a `focus()` inside a paint goes last — it fires `focusout` synchronously, and a handler that repaints in answer re-enters the paint.
 - Reuse the existing renderer model/view helpers, styling tokens, overlay behavior, and focus rules. Prefer pure model tests; DOM tests use `test/helpers/domStub.ts`.
 - Markdown math is split in two: `renderer/model/markdown.ts` only *finds* TeX (a `marked` extension on a private `Marked` instance, four delimiter pairs) and `dom/markdownView.ts` typesets it with `katex.render` — the DOM-tree form, never `renderToString`, which `dom/dom.ts`'s innerHTML ban rules out. `katex.css` and its woff2 are copied out of `node_modules` by `scripts/copy-desktop-assets.mjs`, woff/ttf sources stripped.
+- Shell code colouring lives in `renderer/model/syntax.ts`: Shiki's synchronous core with the JavaScript regex engine and only the shellscript grammar, its theme colours `var(--syntax-*)` strings mapped to `.syn-*` classes, so hex values exist only in the `styles.css` token blocks. Never switch it to `codeToHtml` or to async/worker highlighting.
 
 ## Workflow and conventions
 

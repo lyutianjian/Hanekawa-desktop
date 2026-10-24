@@ -47,6 +47,36 @@ test('a fence without a language marks its wrapper bare', () => {
   assert.ok(!labelled!.classes.includes('bare'))
 })
 
+function codeOf(view: StubView): StubView {
+  const code = descendants(view).find((node) => node.tagName === 'CODE')
+  assert.ok(code, 'no code element')
+  return code
+}
+
+const coloured = (view: StubView): string[] => descendants(view).flatMap((node) => node.classes.filter((name) => name.startsWith('syn-')))
+
+test('a shell fence is coloured by syntax, in any case, and keeps its text', () => {
+  const code = codeOf(render('```bash\necho "hi" $HOME\n```'))
+  assert.ok(coloured(code).includes('syn-string'))
+  assert.ok(coloured(code).includes('syn-variable'))
+  assert.equal(code.text, 'echo "hi" $HOME')
+  assert.ok(coloured(codeOf(render('```Bash\necho hi\n```'))).length > 0)
+})
+
+test('other fences stay plain', () => {
+  assert.deepEqual(coloured(codeOf(render('```ts\nlet a = 1\n```'))), [])
+  assert.deepEqual(coloured(codeOf(render('```\necho hi\n```'))), [])
+})
+
+test('a streaming shell fence stays coloured as it closes', () => {
+  const owner = stub.createContainer()
+  reconcile(owner, markdownChildren('```bash\necho a', owner))
+  reconcile(owner, markdownChildren('```bash\necho a && ls\n```', owner))
+  const code = codeOf(stub.inspect(owner))
+  assert.equal(code.text, 'echo a && ls')
+  assert.ok(coloured(code).length > 0)
+})
+
 test('a task item draws its state as a named icon, not as `[x]` text', () => {
   const marks = find(render('- [ ] todo\n- [x] done'), 'md-check')
   assert.deepEqual(marks.map((mark) => mark.classes), [['md-check'], ['md-check', 'done']])

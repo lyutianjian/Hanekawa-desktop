@@ -426,6 +426,10 @@ export function createSidebarView(
 
     const node = el('div', classes.join(' '))
     if (row.opening || row.badge === 'running') node.setAttribute('aria-busy', 'true')
+    // The row is rebuilt whenever its signature moves, which a streaming turn does
+    // per message; pinning the sheen's phase to the page clock makes a rebuilt row
+    // pick up where the old one was instead of replaying from the start.
+    if (row.badge === 'running') node.style.setProperty('--sheen-delay', `${-performance.now()}ms`)
     node.dataset.sessionId = row.sessionId
     node.dataset.index = String(index)
     node.id = sessionRowId(row.sessionId)

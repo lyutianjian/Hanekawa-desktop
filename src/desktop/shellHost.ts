@@ -40,7 +40,7 @@ import { importSkill } from '../services/skills/importSkill.js'
 import { readUserInstructions, writeUserInstructions } from '../services/context/projectContext.js'
 import { peekSessions } from './recentProjects.js'
 import { UsageScanner } from './usageStats.js'
-import { getProjectDataDir, getSkillsDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
+import { getProjectDataDir, getProjectMemoryDir, getSkillsDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
 import type {
   DirectoryProject,
   DirectoryWorkspace,
@@ -1442,7 +1442,7 @@ export class ShellHost<
         if (!thread) throw new Error(`No thread ${command.threadId} in ${command.projectRoot}`)
         const read = await new SessionStore(cwd).loadRecordsIfChanged(thread.sessionId, command.since)
         if (read.records === undefined) return { unchanged: true, token: read.token } satisfies WireShellThreadTranscriptResult
-        const toolDisplays = projectToolDisplays(read.records)
+        const toolDisplays = projectToolDisplays(read.records, getProjectMemoryDir(cwd))
         return {
           unchanged: false,
           token: read.token,

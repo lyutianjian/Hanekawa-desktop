@@ -48,6 +48,7 @@ import {
   type WaitingRow,
 } from '../model/waiting.js'
 import { callParts } from '../model/toolPhrases.js'
+import { drawnSteps } from '../model/memoryOps.js'
 import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
 import type { ThreadNoteCard } from '../model/threadNotes.js'
 import { failureCopyText, failureDetailFolds, type TurnFailureCard } from '../model/turnFailure.js'
@@ -60,6 +61,7 @@ import { diffNode, diffStatNode, fileBadgeNode } from './diffView.js'
 import { append, el, reconcile, show, type Child } from './dom.js'
 import { icon, type IconName } from './icons.js'
 import { markdownChildren } from './markdownView.js'
+import { shellNodes } from './syntaxView.js'
 import { createPresence, finishPresenceWithin, type Presence } from './presence.js'
 import { motionDelay, motionPolicy } from './motion.js'
 import { createWorkingMark, type WorkingMark } from './workingMarkView.js'
@@ -1030,8 +1032,9 @@ function runNode(painter: Painter, run: ActivityRun, live: boolean): HTMLElement
     const lines = run.steps.map((step) => thinkingLine(painter, step as Extract<ActivityStep, { kind: 'thinking' }>))
     return painter.node(run.id, 'run thinking-run', lines, () => lines)
   }
-  if (!live && run.steps.length === 1) {
-    const row = stepNode(painter, run.steps[0]!)
+  const steps = drawnSteps(run.steps)
+  if (!live && steps.length === 1) {
+    const row = stepNode(painter, steps[0]!)
     return painter.node(run.id, 'run single', [row], () => [row])
   }
   const expanded = isExpanded(painter.disclosure, run.id)
@@ -1045,7 +1048,7 @@ function runNode(painter: Painter, run: ActivityRun, live: boolean): HTMLElement
 
 /** The card's rows, kept so they are not re-inserted with their run. */
 function cardNode(painter: Painter, run: ActivityRun): HTMLElement {
-  const rows = run.steps.map((step) => stepNode(painter, step))
+  const rows = drawnSteps(run.steps).map((step) => stepNode(painter, step))
   return painter.node(`card:${run.id}`, 'run-card', rows, () => rows)
 }
 
@@ -1525,7 +1528,11 @@ function rowLabel(step: ToolLike): { readonly text: string; readonly parts: Chil
   const { verb, target, bare } = callParts(step, step.toolName === undefined || !EDIT_TOOLS.has(step.toolName))
   if (target.length === 0) return { text: `${verb}${failed}`, parts: step.status === 'failed' ? [verb, mark] : [`${verb}${failed}`] }
   if (bare) return { text: `${target}${failed}`, parts: [target, mark] }
-  return { text: `${verb} ${target}${failed}`, parts: [`${verb} `, el('strong', '', target), mark] }
+  const note = step.tool.memoryNote
+  return {
+    text: `${verb} ${target}${failed}${note ? ` · ${note}` : ''}`,
+    parts: [`${verb} `, el('strong', '', target), mark, note ? el('span', 'step-note', note) : undefined],
+  }
 }
 
 /** What the Agent call is called to the reader: the task it was given, else its type. */
@@ -1567,7 +1574,8 @@ function stepAccessibleName(step: ToolLike, label: { readonly text: string }, st
  * rows; the head already says what file and how much.
  *
  * The shell family is a terminal block (T14): the command's own output with its
- * ANSI escapes stripped, on the card surface. Its head already says what ran and
+ * ANSI escapes stripped, on the card surface, under the command coloured by
+ * shell syntax. Its head already says what ran and
  * how long, so the body is the output alone — except a failure's error code,
  * which §6.2 gives a line of its own above the block. The whole block reddens
  * with the step's `failed` class, the stylesheet's half of that rule.
@@ -1617,7 +1625,7 @@ function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => 
       : el(
         'div',
         'step-command',
-        el('pre', 'step-command-text', `$ ${command}`),
+        el('pre', 'step-command-text', el('span', 'step-command-prompt', '$ '), ...shellNodes(command)),
         copyButton('step-command-copy', '复制命令', () => painter.onCopy(command)),
       )
     // Still running: the command alone, so the abbreviated row can always be opened.

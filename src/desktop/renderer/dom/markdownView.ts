@@ -3,20 +3,21 @@ import katex from 'katex'
 import type { MdBlock, MdInline, MdListItem } from '../model/markdown.js'
 import { parseMarkdownBlocks, parseMarkdownSegments } from '../model/markdown.js'
 import { REDUCED_MOTION_QUERY } from '../model/reducedMotion.js'
+import { isShellLang } from '../model/syntax.js'
 import { el, append } from './dom.js'
 import { button } from './controls.js'
 import { copyText } from './clipboard.js'
 import { copyButton } from './copyButton.js'
 import { icon } from './icons.js'
+import { shellNodes } from './syntaxView.js'
 
 /**
  * `MdBlock[]` to nodes. Every decision — what is a link, what is literal text —
  * was already made by the parser, so this file is nothing but element building,
  * and it uses `el()` exclusively: no `innerHTML`, no `insertAdjacentHTML`.
  *
- * No syntax highlighting: the TUI's highlighter (`cli-highlight`) emits ANSI and
- * is Node-only, so a browser-side one is its own decision rather than something
- * to smuggle in here. A fenced block gets its language as a label instead.
+ * Shell fences are coloured by `dom/syntaxView.ts`; every other language only
+ * gets its name as a label.
  *
  * Maths is the one exception to "nothing but element building", and it is not a
  * hole in the rule above: `katex.render()` clears its target with `textContent`
@@ -171,7 +172,8 @@ function blockNode(block: MdBlock): HTMLElement {
       // `bare`: no label line for the copy button to sit on, so the code makes room.
       const wrapper = el('div', block.lang ? 'md-code' : 'md-code bare')
       if (block.lang) wrapper.appendChild(el('div', 'md-code-lang', block.lang))
-      wrapper.appendChild(el('pre', undefined, el('code', undefined, block.text)))
+      const code = isShellLang(block.lang) ? el('code', undefined, ...shellNodes(block.text)) : el('code', undefined, block.text)
+      wrapper.appendChild(el('pre', undefined, code))
       wrapper.appendChild(codeCopyButton(block.text))
       return wrapper
     }

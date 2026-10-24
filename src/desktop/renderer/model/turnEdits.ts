@@ -60,7 +60,7 @@ export function collectTurnEdits(entries: readonly TranscriptEntry[], ends: Read
     if (entry.kind === 'item' && entry.item.kind === 'user') userMessageId ??= entry.item.id
     if (entry.kind === 'run') {
       for (const step of entry.run.steps) {
-        if (step.kind !== 'tool' || step.status !== 'done' || step.toolName === undefined || !EDIT_TOOLS.has(step.toolName)) continue
+        if (step.kind !== 'tool' || step.status !== 'done' || step.toolName === undefined || !EDIT_TOOLS.has(step.toolName) || step.tool.memory === true) continue
         const detail = step.tool.detail
         const patch = detail === undefined ? undefined : parseUnifiedPatch(detail)
         const path = detail === undefined ? undefined : patchPath(detail)

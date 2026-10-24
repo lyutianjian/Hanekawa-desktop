@@ -18,6 +18,9 @@
   "dependencies": {
     "@anthropic-ai/sdk": "latest",
     "@modelcontextprotocol/sdk": "latest",
+    "@shikijs/core": "^4.5.0",
+    "@shikijs/engine-javascript": "^4.5.0",
+    "@shikijs/langs": "^4.5.0",
     "diff": "^9.0.0",
     "fast-glob": "latest",
     "fuse.js": "^7.4.1",

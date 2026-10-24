@@ -192,6 +192,10 @@ export interface ToolStepDetail {
    * one falls back to the old `Read → contents` single line.
    */
   readonly captioned?: boolean
+  /** The call works on the project's memory (`ToolDisplayDto.memory`). */
+  readonly memory?: true
+  /** A memory `Write`: the `description` line of the frontmatter it wrote. */
+  readonly memoryNote?: string
 }
 
 export type PlanDecision = 'approve_restore_keep' | 'approve_auto_keep' | 'approve_bypass_keep' | 'reject'
@@ -1019,6 +1023,7 @@ function recordItems(record: SessionRecord, context: ItemContext = {}): Transcri
         // visible for as long as the user is actually being asked.
         ...(context.approved?.has(record.id) === true ? {} : { awaitingApproval: true }),
         ...(dto ? { captioned: true } : {}),
+        ...(dto?.memory ? { memory: true, ...memoryNote(record.tool, record.input) } : {}),
         ...(record.tool === AGENT_TOOL ? agentTask(record.input) : {}),
         ...(record.tool === 'Bash' || record.tool === 'Monitor' ? bashInput(record.input) : {}),
         ...(record.tool === ASK_TOOL ? askedQuestions(record.input) : {}),
@@ -1441,6 +1446,15 @@ function foldTaskCalls(first: TranscriptItem, next: TranscriptItem): TranscriptI
     ...(first.failed === true || next.failed === true ? { failed: true } : {}),
     tool: { ...first.tool!, ...next.tool!, taskOps: [...first.tool!.taskOps!, ...next.tool!.taskOps!] },
   }
+}
+
+/** A memory `Write`'s frontmatter `description`, the line that says what the memory is. */
+function memoryNote(tool: string, input: unknown): { memoryNote?: string } {
+  const content = tool === 'Write' && typeof input === 'object' && input !== null ? (input as { content?: unknown }).content : undefined
+  if (typeof content !== 'string') return {}
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(content)?.[1]
+  const note = frontmatter === undefined ? undefined : /^description:\s*(.+)$/m.exec(frontmatter)?.[1]?.trim()
+  return note ? { memoryNote: note } : {}
 }
 
 function bashInput(input: unknown): { description?: string; command?: string } {

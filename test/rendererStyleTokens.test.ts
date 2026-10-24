@@ -327,6 +327,9 @@ function tokenValue(name: string, from: Map<string, string> = tokens): string {
   return value
 }
 
+/** Diff and syntax colours carry meaning, so they sit outside the agreed neutral palette. */
+const isContentColour = (name: string): boolean => name.startsWith('--diff-') || name.startsWith('--syntax-')
+
 test('the palette is the one that was agreed, value for value', () => {
   // Pinned the way `test/tuiTheme.test.ts` pins the terminal palette: the point
   // of a token is that it is a decision, and a decision that can be edited
@@ -337,7 +340,7 @@ test('the palette is the one that was agreed, value for value', () => {
   // is the brand at hairline weight — so these pins are the equality itself,
   // and the tokens they resolve to carry the hexes.
   assert.deepEqual(
-    Object.fromEntries([...tokens].filter(([name]) => !name.startsWith('--diff-'))),
+    Object.fromEntries([...tokens].filter(([name]) => !isContentColour(name))),
     {
       '--surface-base': '#1a1a19',
       '--surface-canvas': '#151515',
@@ -441,6 +444,8 @@ test('the palette is the one that was agreed, value for value', () => {
       // declared here so an un-hovered row resolves to a still animation.
       '--marquee-shift': '0px',
       '--marquee-duration': '0s',
+      // A running row's sheen phase, written per row from the page clock.
+      '--sheen-delay': '0s',
       '--marquee-gap': '48px',
       '--mark-size': '20px',
       '--mark-sheet': 'none',
@@ -497,7 +502,7 @@ test('the palette is the one that was agreed, value for value', () => {
   // shadows no longer are: light dims with a warm cast and shadows with the
   // paper's own pigment (design_guidance.md 二.2).
   assert.deepEqual(
-    Object.fromEntries([...lightTokens].filter(([name]) => !name.startsWith('--diff-'))),
+    Object.fromEntries([...lightTokens].filter(([name]) => !isContentColour(name))),
     {
       '--surface-base': '#f3f3f0',
       '--surface-canvas': '#fcfcfb',
@@ -601,6 +606,8 @@ test('the palette is the one that was agreed, value for value', () => {
       // declared here so an un-hovered row resolves to a still animation.
       '--marquee-shift': '0px',
       '--marquee-duration': '0s',
+      // A running row's sheen phase, written per row from the page clock.
+      '--sheen-delay': '0s',
       '--marquee-gap': '48px',
       '--mark-size': '20px',
       '--mark-sheet': 'none',
@@ -811,7 +818,7 @@ test('surfaces and text stay neutral; accents and links do not, in both themes',
     let chromatics = 0
     for (const [name, value] of palette) {
       if (!value.startsWith('#')) continue // aliases resolve to a token checked below
-      if (name.startsWith('--diff-')) continue // content colours, exempt (see the sheet)
+      if (isContentColour(name)) continue // content colours, exempt (see the sheet)
 
       const isNeutral = NEUTRAL_PREFIXES.some((prefix) => name.startsWith(prefix))
       const isChromatic = CHROMATIC.some((prefix) => name.startsWith(prefix))

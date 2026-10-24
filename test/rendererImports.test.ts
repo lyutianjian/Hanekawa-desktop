@@ -84,8 +84,14 @@ const ALLOWED_SHARED_IMPORTS = [
  * `exports` map with an ESM branch, and the renderer uses only `render()`, which
  * builds a DOM tree. Its string form, `renderToString`, is the one this codebase
  * could not accept — `dom/markdownView.ts` says so at the call site.
+ *
+ * The three `@shikijs/*` entries are Shiki's synchronous core, its JavaScript
+ * regex engine (no wasm) and the one grammar the renderer colours, shellscript —
+ * never the `shiki` bundle with every language and theme. `model/syntax.ts` takes
+ * only token data from `codeToTokensBase`; none of the APIs that emit an HTML
+ * string are used.
  */
-const ALLOWED_PACKAGES = ['diff', 'fuse.js', 'katex', 'marked']
+const ALLOWED_PACKAGES = ['@shikijs/core', '@shikijs/engine-javascript', '@shikijs/langs/shellscript', 'diff', 'fuse.js', 'katex', 'marked']
 
 const FORBIDDEN_LAYERS = /(^|\/)(harness|services|sessions|commands|tui)\//
 

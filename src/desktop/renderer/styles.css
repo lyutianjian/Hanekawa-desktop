@@ -299,6 +299,9 @@
      animation rather than an invalid one. */
   --marquee-shift: 0px;
   --marquee-duration: 0s;
+  /* A running row's sheen phase, written per row by `dom/sidebarView.ts` from the
+     page clock so a rebuilt row continues the sweep rather than restarting it. */
+  --sheen-delay: 0s;
   /* The blank between the two copies of a scrolling name. Not written by the
      view — it is a constant both sides need, and `MARQUEE_GAP` is the other
      half of it. */
@@ -437,6 +440,21 @@
   --diff-add-bg: #1f3a24;
   --diff-del-fg: #ff4d6a;
   --diff-del-bg: #4a1c26;
+
+  /* --- syntax ---
+     Code colouring's content colours, exempt from the neutrality rule like
+     `--diff-*`. Values from the Claude desktop app's code theme. */
+  --syntax-comment: #818898;
+  --syntax-punctuation: #d3d7de;
+  --syntax-keyword: #cc7bf4;
+  --syntax-string: #9be963;
+  --syntax-regex: #96e35f;
+  --syntax-number: #5eeded;
+  --syntax-property: #f47b85;
+  --syntax-attr: #f0757f;
+  --syntax-function: #70b8ff;
+  --syntax-variable: #fbad60;
+  --syntax-parameter: #f7ab5f;
 }
 
 /* --- light theme ---
@@ -495,6 +513,18 @@
   --diff-add-bg: #e7f1e3;
   --diff-del-fg: #a3283f;
   --diff-del-bg: #f7e8e8;
+
+  --syntax-comment: #6e7687;
+  --syntax-punctuation: #2b303b;
+  --syntax-keyword: #8100c2;
+  --syntax-string: #008000;
+  --syntax-regex: #078307;
+  --syntax-number: #007f80;
+  --syntax-property: #b80a18;
+  --syntax-attr: #bd0f1e;
+  --syntax-function: #0051c2;
+  --syntax-variable: #b24a00;
+  --syntax-parameter: #b84f05;
 }
 
 /* --- platform ---
@@ -2507,6 +2537,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   background-clip: text;
   color: transparent;
   animation: sheen var(--motion-running) linear infinite;
+  animation-delay: var(--sheen-delay);
 }
 /* The glow riding the band: a blurred copy of the name lit only where the band is,
    on the same clock. Dark theme only — a blurred dark halo on a light rail reads
@@ -2524,6 +2555,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   color: transparent;
   filter: blur(3px);
   animation: sheen var(--motion-running) linear infinite;
+  animation-delay: var(--sheen-delay);
 }
 /* A turn that ended out of sight: the same blue dot as an unread thread row. */
 .session-badge.unread { color: var(--accent-info); }
@@ -3050,6 +3082,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
   text-overflow: ellipsis;
 }
 .step-label strong { font-weight: 600; color: var(--text-secondary); }
+/* A memory's own one-line description, quieter than the row it trails; it is
+   the first thing the label's ellipsis clips. */
+.step-label .step-note { margin-left: var(--space-2); color: var(--text-tertiary); }
 .step-head .icon {
   width: 11px;
   height: 11px;
@@ -3207,6 +3242,20 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .step-command-copy:hover { color: var(--text-secondary); }
 .step-command-copy:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .step-command-copy .icon { width: 13px; height: 13px; }
+.step-command-prompt { color: var(--text-tertiary); user-select: none; }
+
+/* The kinds `model/syntax.ts` assigns; shared by the command bubble and Markdown code blocks. */
+.syn-comment { color: var(--syntax-comment); }
+.syn-punctuation { color: var(--syntax-punctuation); }
+.syn-keyword { color: var(--syntax-keyword); }
+.syn-string { color: var(--syntax-string); }
+.syn-regex { color: var(--syntax-regex); }
+.syn-number { color: var(--syntax-number); }
+.syn-property { color: var(--syntax-property); }
+.syn-attr { color: var(--syntax-attr); }
+.syn-function { color: var(--syntax-function); }
+.syn-variable { color: var(--syntax-variable); }
+.syn-parameter { color: var(--syntax-parameter); }
 .step-terminal {
   max-height: 320px;
   margin: 0;
@@ -3385,8 +3434,8 @@ body.resizing #browser-resizer::after { opacity: 1; }
 /* The read family's body (T16): the file the tool read, one numbered row per
    line — the same card-and-hairline content shell the terminal block and the
    search list get, capped and scrolling inside itself (§6.2 块内滚动). No
-   syntax highlighting (§6.4 暂不做): colour here would have to be a
-   highlighter's, and that is a dependency this sheet does not take. */
+   syntax highlighting (§6.4 暂不做): a file's contents stay plain on purpose;
+   colouring is only for shell (`model/syntax.ts`). */
 .step-code {
   display: flex;
   flex-direction: column;

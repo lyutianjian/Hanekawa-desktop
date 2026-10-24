@@ -773,6 +773,20 @@ test('opened, a run is a card with a row per step; a thought between tools is a 
   assert.deepEqual(run.children[1]!.children.map((row) => row.classes), [['step', 'tool', 'running', 'collapsed']])
 })
 
+test('a memory save names the memory and trails its description', (t) => {
+  const view = mount(t)
+  const [user, read] = turnItems()
+  const save: TranscriptItem = {
+    ...read!,
+    toolName: 'Write',
+    tool: { ...read!.tool!, displayName: 'Write', useSummary: '/home/.myagent/projects/p/memory/user-role.md', memory: true, memoryNote: '用户是后端工程师' },
+  }
+  view.render(transcript([user!, save]), NO_DISCLOSURE)
+  const head = rowOf(view).children[0]
+  assert.equal(head?.children[0]?.text, '保存记忆 user-role用户是后端工程师')
+  assert.equal(head?.attributes.get('aria-label'), '保存记忆 user-role · 用户是后端工程师 · 完成')
+})
+
 test('a tool row is a button whose body exists only while it is open', (t) => {
   const view = mount(t)
   view.render(transcript(turnItems()), opened('call-1'))
@@ -1209,6 +1223,26 @@ test('a described Bash step puts the full command in its own bubble above the ou
   const bubble = parts(body)[0]!
   assert.equal(bubble.children[0]?.text, `$ ${command}`)
   assert.equal(parts(body)[2]?.text, 'ok 42 passed\n3 failed')
+  view.stub.click(bubble.children[1]!.node)
+  assert.deepEqual(view.copied, [command])
+  await Promise.resolve()
+  t.mock.timers.tick(5000)
+})
+
+test('the bubble colours the command by shell syntax behind a plain prompt, and copies it bare', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const view = mount(t)
+  const command = 'git commit -m "msg"'
+  view.render(transcript([bashStep({ command })]), opened('bash-1'))
+
+  const bubble = parts(rowOf(view)?.children[1])[0]!
+  const text = bubble.children[0]!
+  assert.equal(text.className, 'step-command-text')
+  assert.equal(text.children[0]?.className, 'step-command-prompt')
+  assert.equal(text.children[0]?.text, '$ ')
+  assert.ok(text.children.some((child) => child.className === 'syn-function' && child.text.includes('git')))
+  assert.ok(text.children.some((child) => child.className === 'syn-string' && child.text.includes('"msg"')))
+  assert.equal(text.text, `$ ${command}`)
   view.stub.click(bubble.children[1]!.node)
   assert.deepEqual(view.copied, [command])
   await Promise.resolve()

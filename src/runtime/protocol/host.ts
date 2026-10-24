@@ -27,7 +27,7 @@ import { refreshRuntimeSlot, resolveRuntimeModelKeyAfterConfigChange, type Provi
 import { MISSING_MODEL_ISSUE } from '../errors.js'
 import { canPumpQueue, canWakeForNotifications, handOffQueuedMessage, notificationInput } from '../queuePump.js'
 import { projectDisplayName, projectRootKey } from '../projectDirectory.js'
-import { isGlobalWorkspaceRoot } from '../../utils/paths.js'
+import { getProjectMemoryDir, isGlobalWorkspaceRoot } from '../../utils/paths.js'
 import { isSystemReminderBlock } from '../../harness/systemReminder.js'
 import { SessionRecordLedger } from '../recordLedger.js'
 import { buildRewindSummaryRewrite } from '../rewindSummary.js'
@@ -124,7 +124,7 @@ function toWireCommandInfo(command: CommandDefinition): WireCommandInfo {
  * turn and vanish on `/resume`. `undefined` rather than `{}` keeps the key off
  * the wire entirely for the common case, and gives a consumer one shape to test.
  */
-export function projectToolDisplays(records: Iterable<SessionRecord>): ToolDisplays | undefined {
+export function projectToolDisplays(records: Iterable<SessionRecord>, memoryDir?: string): ToolDisplays | undefined {
   let displays: ToolDisplays | undefined
   for (const record of records) {
     if (record.type !== 'tool_use') continue
@@ -135,16 +135,30 @@ export function projectToolDisplays(records: Iterable<SessionRecord>): ToolDispl
       displayName: name,
       useSummary: summary,
       ...(activity ? { activityDescription: activity } : {}),
+      ...(memoryDir !== undefined && isMemoryCall(record.tool, record.input, memoryDir) ? { memory: true } : {}),
     }
   }
   return displays
 }
 
+const MEMORY_FILE_TOOLS: ReadonlySet<string> = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'Delete'])
+
+/** A file tool on a file directly in `memoryDir`, or a search rooted at it. */
+export function isMemoryCall(tool: string, input: unknown, memoryDir: string): boolean {
+  if (typeof input !== 'object' || input === null) return false
+  const { filePath, path: searchPath } = input as { filePath?: unknown; path?: unknown }
+  const dir = path.resolve(memoryDir)
+  if (MEMORY_FILE_TOOLS.has(tool)) return typeof filePath === 'string' && path.dirname(path.resolve(filePath)) === dir
+  if (tool === 'Grep' || tool === 'Glob') return typeof searchPath === 'string' && path.resolve(searchPath) === dir
+  return false
+}
+
 /** The reply-side shorthand: same payload, plus the projection when it is non-empty. */
 function withToolDisplays<T extends { records: readonly SessionRecord[] }>(
   payload: T,
+  memoryDir: string,
 ): T & { toolDisplays?: ToolDisplays } {
-  const toolDisplays = projectToolDisplays(payload.records)
+  const toolDisplays = projectToolDisplays(payload.records, memoryDir)
   return toolDisplays ? { ...payload, toolDisplays } : payload
 }
 
@@ -314,6 +328,11 @@ export class SessionHost implements CoordinationLaneControl {
   /** The last lane state announced, so listeners fire on change only. */
   private lastStateKey = ''
   private readonly teardown: Array<() => void> = []
+
+  /** Tool displays mark calls on this directory as memory work. */
+  private get memoryDir(): string {
+    return getProjectMemoryDir(this.project.cwd)
+  }
   private session: SessionMeta
   private disposed = false
   private taskPostTimer: ReturnType<typeof setTimeout> | undefined
@@ -403,9 +422,9 @@ export class SessionHost implements CoordinationLaneControl {
    */
   private postSessionEvent(event: SessionEvent): void {
     const displays = event.type === 'record'
-      ? projectToolDisplays([event.record])
+      ? projectToolDisplays([event.record], this.memoryDir)
       : event.type === 'transcript-reset'
-        ? projectToolDisplays(event.records)
+        ? projectToolDisplays(event.records, this.memoryDir)
         : undefined
     this.post({ type: 'session-event', event, ...(displays ? { toolDisplays: displays } : {}) })
   }
@@ -786,7 +805,7 @@ export class SessionHost implements CoordinationLaneControl {
     switch (command.type) {
       case 'hello': {
         const records = [...this.ledger.list()]
-        const toolDisplays = projectToolDisplays(records)
+        const toolDisplays = projectToolDisplays(records, this.memoryDir)
         this.postSnapshot()
         this.postRuntimeSnapshot()
         this.postBackgroundTasks()
@@ -838,7 +857,7 @@ export class SessionHost implements CoordinationLaneControl {
       case 'reload': {
         const records = await this.controller.reload()
         this.ledger.rebase(records)
-        return withToolDisplays({ records }) satisfies WireReloadResult
+        return withToolDisplays({ records }, this.memoryDir) satisfies WireReloadResult
       }
 
       case 'retarget':
@@ -952,7 +971,7 @@ export class SessionHost implements CoordinationLaneControl {
         if (target?.type === 'message' && !isSystemReminderBlock(target.content)) {
           this.controller.restoreInput(target.displayContent ?? target.content, target.images)
         }
-        return withToolDisplays({ records }) satisfies WireRewindResult
+        return withToolDisplays({ records }, this.memoryDir) satisfies WireRewindResult
       }
 
       case 'summarize-rewind': {
@@ -967,7 +986,7 @@ export class SessionHost implements CoordinationLaneControl {
           summarize: (records) => this.runtimeSlot.requireCurrent().loop.summarizeRecordsForRewind(records),
         })
         await this.project.store.replaceRecords(this.session.id, rewrite.nextRecords)
-        return withToolDisplays({ records: await this.afterRewind() }) satisfies WireRewindResult
+        return withToolDisplays({ records: await this.afterRewind() }, this.memoryDir) satisfies WireRewindResult
       }
 
       case 'set-model':
@@ -1395,7 +1414,7 @@ export class SessionHost implements CoordinationLaneControl {
       session: result.session,
       records: result.records,
       notices,
-    }) satisfies WireSessionSwitchResult
+    }, this.memoryDir) satisfies WireSessionSwitchResult
   }
 
   /**
@@ -1556,7 +1575,7 @@ export class SessionHost implements CoordinationLaneControl {
       session,
       records: records.records,
       notices: this.startupNotices(records.diagnostics),
-    }) satisfies WireOpenPaneResult
+    }, this.memoryDir) satisfies WireOpenPaneResult
   }
 
   /**
