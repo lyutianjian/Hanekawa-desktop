@@ -33,6 +33,7 @@ const MOTION_TOKENS = {
   "--motion-popover-in": "200ms",
   "--motion-popover-out": "120ms",
   "--motion-disclosure": "200ms",
+  "--motion-disclosure-out": "150ms",
   "--motion-layout": "280ms",
   "--motion-panel-in": "300ms",
   "--motion-text-in": "300ms",

@@ -216,6 +216,7 @@
   --motion-popover-in: 200ms;
   --motion-popover-out: 120ms;
   --motion-disclosure: 200ms;
+  --motion-disclosure-out: 150ms;
   --motion-layout: 280ms;
   --motion-panel-in: 300ms;
   --motion-text-in: 300ms;
@@ -3007,10 +3008,15 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .run.single > .step > .step-head:hover { background: none; color: var(--text-primary); }
 .run.single > .step > .step-head.static:hover { color: var(--text-tertiary); }
 .run.single > .step > .step-body {
+  border: 0 solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
+/* Open states only: this selector outranks the disclosure's closing rule, which
+   must zero the spacing for the fold to reach 0 instead of stalling on it. */
+.run.single > .step > .step-body:not(.presence-closing, .presence-closed) {
   margin-top: var(--space-2);
   padding-top: var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-width: 1px;
 }
 /* The working mark: one frame of a vertical sprite strip. `dom/workingMarkView.ts`
    names the sheet, its frame count and the frame through custom properties; a
@@ -7383,15 +7389,19 @@ body.projects-open #browser-resizer,
   transform: none;
   transition: height var(--motion-disclosure) var(--ease-snap),
     padding-top var(--motion-disclosure) var(--ease-snap), padding-bottom var(--motion-disclosure) var(--ease-snap),
-    margin-top var(--motion-disclosure) var(--ease-snap), margin-bottom var(--motion-disclosure) var(--ease-snap);
+    margin-top var(--motion-disclosure) var(--ease-snap), margin-bottom var(--motion-disclosure) var(--ease-snap),
+    border-top-width var(--motion-disclosure) var(--ease-snap), border-bottom-width var(--motion-disclosure) var(--ease-snap);
 }
 .presence[data-presence="disclosure"].presence-closed,
 .presence[data-presence="disclosure"].presence-closing {
-  transition-duration: var(--motion-disclosure);
-  transition-timing-function: var(--ease-snap);
+  /* Accelerating out: a decelerating fold spends its last frames on the last
+     few pixels and reads as a stall before the row lets go. */
+  transition-duration: var(--motion-disclosure-out);
+  transition-timing-function: var(--ease-exit);
   height: 0;
   padding-block: 0;
   margin-block: 0;
+  border-block-width: 0;
   opacity: 1;
   transform: none;
 }
