@@ -152,8 +152,8 @@ const WINDOW_CHROME = {
   // canvas — `#titlebar::before` with the side panel shut, the panel's gutter
   // with it open, and the settings screen's full-width strip. A base-coloured
   // overlay read as a grey tab stuck onto the corner.
-  dark: { color: '#1c1c1c', symbolColor: '#a6a6a5', height: TITLEBAR_HEIGHT },
-  light: { color: '#fdfdfd', symbolColor: '#575756', height: TITLEBAR_HEIGHT },
+  dark: { color: '#151515', symbolColor: '#c3c2b7', height: TITLEBAR_HEIGHT },
+  light: { color: '#fcfcfb', symbolColor: '#52514e', height: TITLEBAR_HEIGHT },
 } as const
 
 /**
@@ -161,7 +161,7 @@ const WINDOW_CHROME = {
  * theme: `body`'s `--surface-base`. Hand-kept beside `WINDOW_CHROME` for the
  * same reason — no stylesheet reaches a window that has not loaded one yet.
  */
-const WINDOW_BACKGROUND = { dark: '#242424', light: '#f3f3f2' } as const
+const WINDOW_BACKGROUND = { dark: '#1a1a19', light: '#f3f3f0' } as const
 
 // A plain annotation rather than `as unknown as`: `ipcMain` really is
 // assignable to `MainSideIpc`, and letting the compiler confirm that is what
@@ -602,7 +602,11 @@ async function ensureShell(): Promise<Shell> {
     // `backgroundColor` is what the frame is painted with before the first
     // frame arrives; without it the app opens as a white flash. Both start on
     // the theme the renderer last reported, so a light launch is light.
-    backgroundColor: WINDOW_BACKGROUND[theme],
+    // macOS draws the frame (title bar and sidebar) as the system's sidebar
+    // material; the window stays clear so `body`'s translucent fill lets it through.
+    ...(process.platform === 'darwin'
+      ? { vibrancy: 'sidebar' as const, visualEffectState: 'active' as const, backgroundColor: '#00000000' }
+      : { backgroundColor: WINDOW_BACKGROUND[theme] }),
     titleBarStyle: 'hidden',
     titleBarOverlay: process.platform === 'darwin' ? { height: TITLEBAR_HEIGHT } : WINDOW_CHROME[theme],
     webPreferences: {
@@ -836,7 +840,7 @@ async function ensureShell(): Promise<Shell> {
       // The window's own fill shows wherever the document has not painted yet:
       // the edge a Windows resize drag uncovers, a reload's first frame. Left
       // dark under a light theme, it flashed black there.
-      window.setBackgroundColor(WINDOW_BACKGROUND[theme])
+      if (process.platform !== 'darwin') window.setBackgroundColor(WINDOW_BACKGROUND[theme])
       // Remembered for the next launch's first frame.
       if (windowState.theme !== theme || windowState.themePreference !== preference) {
         windowState = { ...windowState, theme, themePreference: preference }
