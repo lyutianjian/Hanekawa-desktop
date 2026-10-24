@@ -152,8 +152,8 @@ const WINDOW_CHROME = {
   // canvas — `#titlebar::before` with the side panel shut, the panel's gutter
   // with it open, and the settings screen's full-width strip. A base-coloured
   // overlay read as a grey tab stuck onto the corner.
-  dark: { color: '#151515', symbolColor: '#c3c2b7', height: TITLEBAR_HEIGHT },
-  light: { color: '#fcfcfb', symbolColor: '#52514e', height: TITLEBAR_HEIGHT },
+  dark: { color: '#151515', symbolColor: '#bfbfbf', height: TITLEBAR_HEIGHT },
+  light: { color: '#fcfcfc', symbolColor: '#515151', height: TITLEBAR_HEIGHT },
 } as const
 
 /**
@@ -161,7 +161,7 @@ const WINDOW_CHROME = {
  * theme: `body`'s `--surface-base`. Hand-kept beside `WINDOW_CHROME` for the
  * same reason — no stylesheet reaches a window that has not loaded one yet.
  */
-const WINDOW_BACKGROUND = { dark: '#1a1a19', light: '#f3f3f0' } as const
+const WINDOW_BACKGROUND = { dark: '#1a1a1a', light: '#f2f2f2' } as const
 
 // A plain annotation rather than `as unknown as`: `ipcMain` really is
 // assignable to `MainSideIpc`, and letting the compiler confirm that is what

@@ -335,7 +335,7 @@ test('the palette is the one that was agreed, value for value', () => {
   // Pinned the way `test/tuiTheme.test.ts` pins the terminal palette: the point
   // of a token is that it is a decision, and a decision that can be edited
   // without anything noticing is a preference. The 2026 redesign's values
-  // (design_guidance.md 二.2/二.3): one warm-neutral ladder, a two-rung clay
+  // (design_guidance.md 二.2/二.3): one neutral grey ladder, a two-rung clay
   // brand, no wash. `--link` and `--focus-ring` are pinned as the aliases they
   // now are — links are brand-coloured *text* (the strong rung), the focus ring
   // is the brand at hairline weight — so these pins are the equality itself,
@@ -343,19 +343,19 @@ test('the palette is the one that was agreed, value for value', () => {
   assert.deepEqual(
     Object.fromEntries([...tokens].filter(([name]) => !isContentColour(name))),
     {
-      '--surface-base': '#1a1a19',
+      '--surface-base': '#1a1a1a',
       '--surface-canvas': '#151515',
-      '--surface-card': '#20201f',
-      '--surface-hover': '#2c2c2a',
-      '--surface-active': '#383835',
+      '--surface-card': '#202020',
+      '--surface-hover': '#2b2b2b',
+      '--surface-active': '#373737',
       '--surface-knob': '#ffffff',
       '--surface-scrim': 'rgba(0, 0, 0, 0.55)',
       // The image viewer's own dim: a viewer asks nothing, so nothing behind it
       // needs to stay readable. See `#lightbox.modal-layer::before`.
       '--surface-scrim-strong': 'rgba(0, 0, 0, 0.88)',
-      '--text-primary': '#f9f9f7',
-      '--text-secondary': '#c3c2b7',
-      '--text-tertiary': '#97958d',
+      '--text-primary': '#f8f8f8',
+      '--text-secondary': '#bfbfbf',
+      '--text-tertiary': '#939393',
       '--link': 'var(--accent-brand-text)',
       '--accent-brand': '#d97757',
       '--accent-brand-strong': '#d97757',
@@ -370,8 +370,8 @@ test('the palette is the one that was agreed, value for value', () => {
       '--text-danger': 'var(--accent-danger)',
       '--text-warn': 'var(--accent-warn)',
       '--text-success': 'var(--accent-review)',
-      '--border-subtle': '#2c2c2a',
-      '--border-strong': '#454442',
+      '--border-subtle': '#2b2b2b',
+      '--border-strong': '#444444',
       '--focus-ring': 'var(--accent-brand)',
       '--shadow-float': '0 6px 20px rgba(0, 0, 0, 0.45)',
       '--shadow-modal': '0 16px 48px rgba(0, 0, 0, 0.6)',
@@ -505,19 +505,19 @@ test('the palette is the one that was agreed, value for value', () => {
   assert.deepEqual(
     Object.fromEntries([...lightTokens].filter(([name]) => !isContentColour(name))),
     {
-      '--surface-base': '#f3f3f0',
-      '--surface-canvas': '#fcfcfb',
-      '--surface-card': '#f9f9f7',
-      '--surface-hover': '#f0efec',
-      '--surface-active': '#e7e6e1',
+      '--surface-base': '#f2f2f2',
+      '--surface-canvas': '#fcfcfc',
+      '--surface-card': '#f8f8f8',
+      '--surface-hover': '#efefef',
+      '--surface-active': '#e5e5e5',
       // Carried through from `:root`, deliberately: the knob sits on the
       // accent track in both themes, so it is white in both.
       '--surface-knob': '#ffffff',
       '--surface-scrim': 'rgba(26, 26, 26, 0.3)',
       '--surface-scrim-strong': 'rgba(26, 26, 26, 0.92)',
       '--text-primary': '#131313',
-      '--text-secondary': '#52514e',
-      '--text-tertiary': '#6d6b67',
+      '--text-secondary': '#515151',
+      '--text-tertiary': '#6b6b6b',
       '--link': 'var(--accent-brand-text)',
       '--accent-brand': '#d97757',
       '--accent-brand-strong': '#d97757',
@@ -532,8 +532,8 @@ test('the palette is the one that was agreed, value for value', () => {
       '--text-danger': 'var(--accent-danger)',
       '--text-warn': 'var(--accent-warn)',
       '--text-success': 'var(--accent-review)',
-      '--border-subtle': '#e7e6e1',
-      '--border-strong': '#d2d1c7',
+      '--border-subtle': '#e5e5e5',
+      '--border-strong': '#cfcfcf',
       '--focus-ring': 'var(--accent-brand)',
       '--shadow-float': '0 6px 20px rgba(26, 26, 26, 0.08), 0 1px 2px rgba(26, 26, 26, 0.06)',
       '--shadow-modal': '0 16px 48px rgba(26, 26, 26, 0.16)',
