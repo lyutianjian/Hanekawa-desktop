@@ -3,7 +3,7 @@ import { z } from 'zod/v3'
 import type { Tool } from '../../harness/types.js'
 import { resolveToolPath } from '../../utils/paths.js'
 import { requireFreshRead } from '../fileState.js'
-import { resolveSafeTarget } from '../pathSafety.js'
+import { assertTargetUnchanged, resolveSafeTarget } from '../pathSafety.js'
 import { trackFileEdit } from '../trackFileEdit.js'
 import { DESCRIPTION } from './prompt.js'
 
@@ -35,8 +35,12 @@ export const deleteFileTool: Tool = {
       return resolved.error
     }
     await trackFileEdit(context, absolute)
-    // The canonical parent + the requested name: unlinking the final component
-    // removes the link itself, exactly as `rm` on the addressed path does.
+    const changed = await assertTargetUnchanged(resolved.target, filePath)
+    if (changed) {
+      return changed
+    }
+    // Unlinking the parent-resolved path removes that final component, so a
+    // deleted symlink is the link itself, as `rm` on the addressed path was.
     await rm(resolved.target.canonical, { force: false })
     context.readFiles.delete(absolute)
     context.readFileState?.delete(absolute)

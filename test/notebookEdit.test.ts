@@ -473,7 +473,7 @@ test('MultiEdit tool rejects .ipynb files', async () => {
   }
 })
 
-// ── B46: the notebook's own encoding, line endings and trailing newline ───────
+// ── The notebook's own encoding, line endings and trailing newline ─────────────
 
 test('NotebookEdit preserves BOM, CRLF, the trailing newline and the file mode', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))

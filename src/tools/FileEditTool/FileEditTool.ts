@@ -76,11 +76,11 @@ export const editFileTool: Tool = {
     }
 
     const meta = await resolveTextFileMeta(absolute, context)
+    await trackFileEdit(context, absolute)
     const changed = await assertTargetUnchanged(target, filePath)
     if (changed) {
       return changed
     }
-    await trackFileEdit(context, absolute)
     await writeTextFile(target.canonical, nextContent, meta)
     await rememberReadFile(absolute, nextContent, context, meta)
     const label = matches.length > 1

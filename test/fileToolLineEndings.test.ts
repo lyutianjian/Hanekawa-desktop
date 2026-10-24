@@ -9,7 +9,8 @@ import { editFileTool } from '../src/tools/FileEditTool/FileEditTool.js'
 import { multiEditTool } from '../src/tools/MultiEditTool/MultiEditTool.js'
 import { writeFileTool } from '../src/tools/FileWriteTool/FileWriteTool.js'
 import { grepTool } from '../src/tools/GrepTool/GrepTool.js'
-import { applyLineEndings, detectLineEndings } from '../src/tools/textFile.js'
+import fs from 'node:fs/promises'
+import { applyLineEndings, detectLineEndings, writeTextFile } from '../src/tools/textFile.js'
 
 function context(cwd: string) {
   return { cwd, sessionId: 's1', readFiles: new Set<string>(), readFileState: new Map<string, ReadFileState>() }
@@ -365,5 +366,68 @@ test('a failed atomic write keeps the original bytes, mode and read state', asyn
     assert.equal((await stat(file)).mode & 0o777, 0o600)
     assert.deepEqual(await readdir(dir), ['a.txt'])
     assert.equal(ctx.readFileState?.get(file), remembered)
+  })
+})
+
+const UTF8_LF = { encoding: 'utf8' as const, bom: false, lineEndings: 'LF' as const }
+
+async function fileHandlePrototype(dir: string) {
+  const probePath = path.join(dir, 'handle-probe')
+  const probe = await fs.open(probePath, 'w')
+  await probe.close()
+  await fs.rm(probePath)
+  return Object.getPrototypeOf(probe) as { writeFile(...args: unknown[]): Promise<void>; chmod(...args: unknown[]): Promise<void> }
+}
+
+test('a failing write discards the temp file and keeps the target', async (t) => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'a.txt')
+    await writeFile(file, 'old\n', 'utf8')
+    await chmod(file, 0o600)
+    t.mock.method(await fileHandlePrototype(dir), 'writeFile', async () => {
+      throw new Error('disk full')
+    })
+
+    await assert.rejects(writeTextFile(file, 'new\n', UTF8_LF))
+
+    assert.equal(await readFile(file, 'utf8'), 'old\n')
+    assert.equal((await stat(file)).mode & 0o777, 0o600)
+    assert.deepEqual(await readdir(dir), ['a.txt'])
+  })
+})
+
+test('a failing chmod leaves the old file and the read state in place', async (t) => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'a.txt')
+    await writeFile(file, 'old\n', 'utf8')
+    await chmod(file, 0o600)
+    const ctx = context(dir)
+    await readFileTool.execute({ filePath: 'a.txt' }, ctx)
+    const remembered = ctx.readFileState?.get(file)
+    t.mock.method(await fileHandlePrototype(dir), 'chmod', async () => {
+      throw new Error('chmod denied')
+    })
+
+    await assert.rejects(writeFileTool.execute({ filePath: 'a.txt', content: 'new\n' }, ctx))
+
+    assert.equal(await readFile(file, 'utf8'), 'old\n')
+    assert.equal((await stat(file)).mode & 0o777, 0o600)
+    assert.deepEqual(await readdir(dir), ['a.txt'])
+    assert.equal(ctx.readFileState?.get(file), remembered)
+  })
+})
+
+test('a failing rename keeps the target and removes the temp file', async (t) => {
+  await withTempDir(async (dir) => {
+    const file = path.join(dir, 'a.txt')
+    await writeFile(file, 'old\n', 'utf8')
+    t.mock.method(fs, 'rename', async () => {
+      throw new Error('rename denied')
+    })
+
+    await assert.rejects(writeTextFile(file, 'new\n', UTF8_LF))
+
+    assert.equal(await readFile(file, 'utf8'), 'old\n')
+    assert.deepEqual(await readdir(dir), ['a.txt'])
   })
 })

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import test from 'node:test'
@@ -13,8 +13,14 @@ import { createRiskContext } from '../src/harness/risk/paths.js'
 import { getGlobalMyAgentDir } from '../src/utils/paths.js'
 import { assertTargetUnchanged, resolveSafeTarget } from '../src/tools/pathSafety.js'
 
-function context(cwd: string) {
-  return { cwd, sessionId: 's1', readFiles: new Set<string>(), readFileState: new Map<string, ReadFileState>() }
+function context(cwd: string, onTrack?: (filePath: string) => Promise<void>) {
+  return {
+    cwd,
+    sessionId: 's1',
+    readFiles: new Set<string>(),
+    readFileState: new Map<string, ReadFileState>(),
+    ...(onTrack ? { trackFileEdit: onTrack } : {}),
+  }
 }
 
 /** Under the disposable home: the system temp dirs count as workspace. */
@@ -138,7 +144,7 @@ test('a directory swapped for a symlink before the write is refused', async (t) 
 
   const changed = await assertTargetUnchanged(safe.target, 'sub/file.txt')
   assert.equal(changed?.ok, false)
-  assert.match(changed!.content, /became a symlink/)
+  assert.match(changed!.content, /changed after it was checked/)
 })
 
 test('a target that becomes a symlink before the write is refused', async (t) => {
@@ -157,6 +163,137 @@ test('a target that becomes a symlink before the write is refused', async (t) =>
 
   const changed = await assertTargetUnchanged(safe.target, 'a.txt')
   assert.equal(changed?.ok, false)
-  assert.match(changed!.content, /became a symbolic link/)
+  assert.match(changed!.content, /changed after it was checked/)
   assert.equal(await readFile(destination, 'utf8'), 'keep\n')
+})
+test('a write is refused when the parent becomes a link after the snapshot', async (t) => {
+  const root = await scratch(t)
+  const project = path.join(root, 'project')
+  const sub = path.join(project, 'sub')
+  const outside = path.join(root, 'outside')
+  await mkdir(sub, { recursive: true })
+  await mkdir(outside)
+
+  const ctx = context(project, async () => {
+    await rename(sub, path.join(project, 'sub-moved'))
+    await symlink(outside, sub)
+  })
+
+  const result = await writeFileTool.execute({ filePath: 'sub/a.txt', content: 'x\n' }, ctx)
+
+  assert.equal(result.ok, false)
+  assert.match(result.content, /changed after it was checked/)
+  assert.deepEqual(await readdir(outside), [])
+})
+
+test('a write is refused when a file appears where none was at resolution', async (t) => {
+  const root = await scratch(t)
+  const file = path.join(root, 'a.txt')
+  const ctx = context(root, async () => {
+    await writeFile(file, 'other\n', 'utf8')
+  })
+
+  const result = await writeFileTool.execute({ filePath: 'a.txt', content: 'x\n' }, ctx)
+
+  assert.equal(result.ok, false)
+  assert.match(result.content, /changed after it was checked/)
+  assert.equal(await readFile(file, 'utf8'), 'other\n')
+})
+
+test('an edit is refused when the target file is replaced after the snapshot', async (t) => {
+  const root = await scratch(t)
+  const file = path.join(root, 'a.txt')
+  await writeFile(file, 'old\n', 'utf8')
+  const ctx = context(root, async () => {
+    await rm(file)
+    await writeFile(file, 'replacement\n', 'utf8')
+  })
+  await readFileTool.execute({ filePath: 'a.txt' }, ctx)
+
+  const result = await editFileTool.execute({ filePath: 'a.txt', oldString: 'old', newString: 'new' }, ctx)
+
+  assert.equal(result.ok, false)
+  assert.match(result.content, /changed after it was checked/)
+  assert.equal(await readFile(file, 'utf8'), 'replacement\n')
+})
+
+test('a delete is refused when the parent becomes a link after the snapshot', async (t) => {
+  const root = await scratch(t)
+  const project = path.join(root, 'project')
+  const sub = path.join(project, 'sub')
+  const outside = path.join(root, 'outside')
+  await mkdir(sub, { recursive: true })
+  await mkdir(outside)
+  await writeFile(path.join(sub, 'a.txt'), 'keep\n', 'utf8')
+  await writeFile(path.join(outside, 'a.txt'), 'outside\n', 'utf8')
+
+  const ctx = context(project, async () => {
+    await rename(sub, path.join(project, 'sub-moved'))
+    await symlink(outside, sub)
+  })
+  await readFileTool.execute({ filePath: 'sub/a.txt' }, ctx)
+
+  const result = await deleteFileTool.execute({ filePath: 'sub/a.txt' }, ctx)
+
+  assert.equal(result.ok, false)
+  assert.match(result.content, /changed after it was checked/)
+  assert.equal(await readFile(path.join(project, 'sub-moved', 'a.txt'), 'utf8'), 'keep\n')
+  assert.equal(await readFile(path.join(outside, 'a.txt'), 'utf8'), 'outside\n')
+})
+
+test('delete still unlinks the symlink itself', async (t) => {
+  const root = await scratch(t)
+  const destination = path.join(root, 'destination.txt')
+  await writeFile(destination, 'keep\n', 'utf8')
+  const link = path.join(root, 'link.txt')
+  await symlink(destination, link)
+  const ctx = context(root)
+  await readFileTool.execute({ filePath: 'link.txt' }, ctx)
+
+  const result = await deleteFileTool.execute({ filePath: 'link.txt' }, ctx)
+
+  assert.equal(result.ok, true, result.content)
+  await assert.rejects(lstat(link), /ENOENT/)
+  assert.equal(await readFile(destination, 'utf8'), 'keep\n')
+})
+
+test('an unreadable ancestor fails closed instead of being written through', async (t) => {
+  if (process.getuid?.() === 0) return
+  const root = await scratch(t)
+  const inner = path.join(root, 'locked', 'inner')
+  await mkdir(inner, { recursive: true })
+  await chmod(path.join(root, 'locked'), 0o000)
+  try {
+    const result = await writeFileTool.execute({ filePath: 'locked/inner/a.txt', content: 'x\n' }, context(root))
+
+    assert.equal(result.ok, false)
+    assert.match(result.content, /could not be resolved safely/)
+    assert.equal(result.errorDetails && (result.errorDetails as { reason?: string }).reason, 'path_unresolvable')
+  } finally {
+    await chmod(path.join(root, 'locked'), 0o700)
+  }
+})
+
+test('a dangling symlink ancestor fails closed', async (t) => {
+  const root = await scratch(t)
+  await symlink(path.join(root, 'missing'), path.join(root, 'dangling'))
+
+  const result = await writeFileTool.execute({ filePath: 'dangling/a.txt', content: 'x\n' }, context(root))
+
+  assert.equal(result.ok, false)
+  assert.match(result.content, /could not be resolved safely/)
+  assert.match(result.content, /does not resolve/)
+  await assert.rejects(lstat(path.join(root, 'dangling', 'a.txt')))
+})
+
+test('a path whose parent is a file fails closed', async (t) => {
+  const root = await scratch(t)
+  const file = path.join(root, 'file.txt')
+  await writeFile(file, 'x\n', 'utf8')
+
+  const result = await writeFileTool.execute({ filePath: 'file.txt/a.txt', content: 'y\n' }, context(root))
+
+  assert.equal(result.ok, false)
+  assert.match(result.content, /could not be resolved safely/)
+  assert.equal(await readFile(file, 'utf8'), 'x\n')
 })

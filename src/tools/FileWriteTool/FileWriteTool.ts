@@ -56,13 +56,13 @@ export const writeFileTool: Tool = {
     const meta = exists
       ? await resolveTextFileMeta(absolute, context)
       : { encoding: 'utf8' as BufferEncoding, bom: false, lineEndings: 'LF' as const }
+    await trackFileEdit(context, absolute)
+    // The last check before the write proper, after the snapshot has been
+    // taken: the snapshot must reflect what the write is about to replace.
     const changed = await assertTargetUnchanged(target, filePath)
     if (changed) {
       return changed
     }
-    await trackFileEdit(context, absolute)
-    // Atomic write to the resolved target: no symlink is followed at the
-    // rename, and the file keeps its mode (see `writeTextFile`).
     await writeTextFile(target.canonical, content, meta)
     await rememberReadFile(absolute, content, context, meta)
     return {

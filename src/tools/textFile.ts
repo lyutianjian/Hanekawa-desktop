@@ -1,4 +1,4 @@
-import { open, rename, stat, unlink } from 'node:fs/promises'
+import fs from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 
 export type LineEndings = 'CRLF' | 'LF'
@@ -59,7 +59,7 @@ export function applyLineEndings(content: string, endings: LineEndings): string 
  * second open (see `fileState.readFileAndRemember`).
  */
 export async function readTextFile(absolute: string): Promise<TextFileRead> {
-  const fh = await open(absolute, 'r')
+  const fh = await fs.open(absolute, 'r')
   try {
     return await readTextFromHandle(fh)
   } finally {
@@ -126,7 +126,7 @@ async function writeAtomically(absolute: string, data: Buffer): Promise<void> {
   const tmpPath = `${absolute}.tmp.${randomUUID()}`
   let created = false
   try {
-    const handle = await open(tmpPath, 'wx', mode ?? 0o666)
+    const handle = await fs.open(tmpPath, 'wx', mode ?? 0o666)
     created = true
     try {
       await handle.writeFile(data)
@@ -134,16 +134,16 @@ async function writeAtomically(absolute: string, data: Buffer): Promise<void> {
     } finally {
       await handle.close()
     }
-    await rename(tmpPath, absolute)
+    await fs.rename(tmpPath, absolute)
     created = false
   } finally {
-    if (created) await unlink(tmpPath).catch(() => {})
+    if (created) await fs.unlink(tmpPath).catch(() => {})
   }
 }
 
 async function existingMode(absolute: string): Promise<number | undefined> {
   try {
-    const fileStat = await stat(absolute)
+    const fileStat = await fs.stat(absolute)
     return fileStat.mode & 0o777
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
