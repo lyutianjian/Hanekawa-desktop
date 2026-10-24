@@ -172,7 +172,13 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
     spinnerSubText: undefined,
   }
 
+  let switching = false
   const controller = {
+    beginSessionSwitch: () => {
+      if (switching) throw new Error('会话正在切换，请稍候。')
+      switching = true
+    },
+    endSessionSwitch: () => { switching = false },
     onEvent: (listener: (event: SessionEvent) => void) => {
       eventListeners.add(listener)
       return () => eventListeners.delete(listener)

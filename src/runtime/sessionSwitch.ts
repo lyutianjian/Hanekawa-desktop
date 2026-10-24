@@ -61,6 +61,18 @@ export async function switchToExistingSession(
   sessionId: string,
 ): Promise<SessionSwitchResult> {
   assertNotBusy(deps.controller)
+  deps.controller.beginSessionSwitch()
+  try {
+    return await applyExistingSwitch(deps, sessionId)
+  } finally {
+    deps.controller.endSessionSwitch()
+  }
+}
+
+async function applyExistingSwitch(
+  deps: SessionSwitchDeps,
+  sessionId: string,
+): Promise<SessionSwitchResult> {
   const meta = await deps.host.store.resolve(sessionId)
   if (!meta) throw new Error(`Unknown session: ${sessionId}`)
 
@@ -89,6 +101,18 @@ export async function switchToNewSession(
   options: { previousSessionId: string; title?: string },
 ): Promise<SessionSwitchResult> {
   assertNotBusy(deps.controller)
+  deps.controller.beginSessionSwitch()
+  try {
+    return await applyNewSwitch(deps, options)
+  } finally {
+    deps.controller.endSessionSwitch()
+  }
+}
+
+async function applyNewSwitch(
+  deps: SessionSwitchDeps,
+  options: { previousSessionId: string; title?: string },
+): Promise<SessionSwitchResult> {
   deps.runtimeSlot.current?.loop.clearCachedSections()
   await deps.backgroundTasks.stopAll(options.previousSessionId, 'Session cleared')
 

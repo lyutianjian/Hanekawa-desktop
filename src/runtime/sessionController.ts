@@ -213,6 +213,12 @@ export class SessionController {
    * while the compactor is rewriting the same session.
    */
   private compacting = false
+  /**
+   * A session switch has begun and not finished. Its purpose is the same-tick
+   * race: two switch commands arrive as separate detached runs, and the busy
+   * check alone would let both through before either retargets.
+   */
+  private switching = false
   private usage: SessionUsage = createEmptySessionUsage()
   /**
    * What the current run has already folded into `usage.total` request by
@@ -285,6 +291,22 @@ export class SessionController {
     if (this.streaming) return 'turn'
     if (this.compacting) return 'compaction'
     return undefined
+  }
+
+  /**
+   * Claims the lane for a switch, or refuses when one is already in flight.
+   *
+   * Synchronous on purpose: both callers check and claim before their first
+   * await, so the claim is what serializes them. `endSessionSwitch` must run in
+   * a `finally` — a switch that failed halfway must not wedge the lane.
+   */
+  beginSessionSwitch(): void {
+    if (this.switching) throw new Error('会话正在切换，请稍候。')
+    this.switching = true
+  }
+
+  endSessionSwitch(): void {
+    this.switching = false
   }
 
   subscribe = (listener: () => void): (() => void) => {
