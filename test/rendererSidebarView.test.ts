@@ -87,6 +87,16 @@ const find = (root: StubView, className: string): StubView | undefined =>
 const sessionRows = (root: StubView): StubView[] =>
   descendants(root).filter((node) => node.classes.includes('session-row'))
 
+/** The text of each drawn row, so a failed comparison prints strings rather than the stub graph. */
+const rowTexts = (root: StubView): string[] => sessionRows(root).map((row) => row.text)
+
+/** Under a folded {@link tieredState}: the session on screen and nothing else. */
+const onlyActiveRow = (root: StubView): void => {
+  const texts = rowTexts(root)
+  assert.equal(texts.length, 1, `a folded workspace drew ${JSON.stringify(texts)}`)
+  assert.ok(texts[0]!.includes('正在显示'), `a folded workspace drew ${JSON.stringify(texts)}`)
+}
+
 /** One project with three sessions: the visible one, a background lane, history. */
 function tieredState(): Partial<SidebarState> {
   const root = '/w/app'
@@ -240,13 +250,13 @@ test('every workspace gets a folding heading, single project included', (t) => {
   assert.deepEqual(intents, [{ kind: 'toggle-project', projectRoot: '/w/app' }])
 })
 
-test('a folded workspace draws its heading and none of its rows', (t) => {
+test('a folded workspace draws its heading and only the session on screen', (t) => {
   const { render, root } = mount(t)
   render(viewOf({ ...tieredState(), collapsedProjects: new Set(['/w/app']) }))
 
   const group = find(root(), 'project-group')
   assert.ok(group?.classes.includes('collapsed'))
-  assert.deepEqual(sessionRows(root()), [], 'a folded workspace still drew its sessions')
+  onlyActiveRow(root())
   // The `+` survives the fold: "new session here" is about the project, not
   // about whichever of its sessions happen to be on screen.
   assert.ok(find(root(), 'project-new'))
@@ -288,7 +298,7 @@ test('a folding group keeps its rows until the fold arrives', (t) => {
   stub.dispatch(body.node, 'transitionend', { propertyName: 'background-color' })
   assert.equal(sessionRows(root()).length, 3, 'a bubbled transition settled the fold')
   stub.dispatch(body.node, 'transitionend', { propertyName: 'grid-template-rows' })
-  assert.deepEqual(sessionRows(root()), [], 'the settled fold left its rows in the DOM')
+  onlyActiveRow(root())
 
   // And back: the rows are rebuilt before the track has height to show them in.
   render(viewOf(tieredState()))
@@ -306,7 +316,7 @@ test('a group fold that never animates still settles, and cannot leak a timer', 
   render(open())
   render(shut())
   t.mock.timers.tick(SIDEBAR_COLLAPSE_FALLBACK_MS + 1)
-  assert.deepEqual(sessionRows(root()), [], 'the fold never arrived and the rows stayed')
+  onlyActiveRow(root())
 
   // A fold reversed mid-flight: the timer that belonged to the interrupted move
   // must not fire on the group that replaced it and empty a group the user just

@@ -255,6 +255,22 @@ test('cd tracking follows subshells and pushd/popd', () => {
   assert.equal(bashLevel('cd src && cat ../package.json'), 'readonly')
 })
 
+test('a switch flag does not swallow the operand that follows it', () => {
+  // `-a`/`-b`/`-c`/`-l` are switches, not value flags. Reading them as value
+  // flags ate the pattern as a value and left the path unjudged, so
+  // `grep -a . .env` — which prints the file — graded readonly.
+  for (const flag of ['-a', '-b', '-c', '-l', '-i -c']) {
+    assert.equal(bashLevel(`grep ${flag} needle .env`), 'risky', `grep ${flag} .env`)
+    assert.equal(bashLevel(`grep ${flag} needle ${path.join(homedir(), '.ssh', 'id_rsa')}`), 'critical', `grep ${flag} key`)
+    assert.equal(bashLevel(`grep ${flag} needle package.json`), 'readonly', `grep ${flag} package.json`)
+  }
+  // The flags that do take a value still skip it, so the value is not the path.
+  for (const flag of ['-e', '-m 1', '-A 3', '-d skip']) {
+    assert.equal(bashLevel(`grep ${flag} needle ${path.join(homedir(), '.ssh', 'id_rsa')}`), 'critical', `grep ${flag} key`)
+    assert.equal(bashLevel(`grep ${flag} needle src/a.ts`), 'readonly', `grep ${flag} src/a.ts`)
+  }
+})
+
 test('file tools classify by path', () => {
   const read = { name: 'Read', riskLevel: 'safe', isReadOnly: true } as Tool
   const write = { name: 'Write', riskLevel: 'confirm' } as Tool

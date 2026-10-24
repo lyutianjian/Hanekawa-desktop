@@ -59,7 +59,7 @@ const bare: TranscriptItem = { ...RUNNING_BASH, id: 'c', tool: { displayName: 'B
 const said: TranscriptItem = { id: 'a1', kind: 'assistant', text: '先看一下。', turnId: TURN }
 
 test('an idle session says nothing at all', () => {
-  assert.deepEqual(activity([USER, DONE_BASH], false), { row: undefined, mark: undefined })
+  assert.deepEqual(activity([USER, DONE_BASH], false), { row: undefined, mark: undefined, place: 'line' })
 })
 
 test('what the status reads, by priority', () => {
@@ -70,10 +70,11 @@ test('what the status reads, by priority', () => {
     ['after a paragraph', '处理中', turn([DONE_BASH, said])],
     ['a finished thought', '处理中', turn([{ ...THINKING, pending: false }])],
     ['a running call, in words', '跑测试', turn([THINKING, RUNNING_BASH])],
-    ['a bare command keeps its verb and only its first word', '运行 npm…', turn([bare])],
+    ['an undescribed command says only that a command runs', '正在运行命令', turn([bare])],
+    ['and only that when it waits on approval', '等待你确认 · 运行命令', turn([{ ...bare, tool: { ...bare.tool!, awaitingApproval: true } }])],
     ['one tool in parallel is counted', '读取 3 个文件', turn([read('r1', 'a.ts'), read('r2', 'b.ts'), read('r3', 'c.ts')])],
     ['a mix names the last', '读取 a.ts 等 2 项', turn([RUNNING_BASH, read('r1', 'a.ts')])],
-    ['an unknown tool falls back to its name', '调用 x - y', turn([mcp])],
+    ['a tool with no phrase of its own says only that a tool runs', '正在运行工具', turn([mcp])],
     ['an approval outranks running calls', '等待你确认 · 写入 a.ts', turn([asking, RUNNING_BASH])],
     ['a question outranks an approval', '正在提问 · 数据库', turn([asking]), { asking: '数据库' }],
     ['a compaction outranks a question', '正在压缩上下文', turn([RUNNING_BASH]), { asking: '数据库', phase: { kind: 'compacting' } }],
@@ -251,4 +252,36 @@ test('a running sub-agent names the status, though it is no run’s step', () =>
   assert.equal(activity(turn([agent]))?.row?.label, '子代理 · 扫一遍 tools/')
   const asking = { ...agent, tool: { ...agent.tool!, awaitingApproval: true } }
   assert.equal(activity(turn([asking]))?.row?.label, '等待你确认 · 子代理 · 扫一遍 tools/')
+})
+
+test('where the status is said: the turn’s tool group, or its own line', () => {
+  const group = { run: `run:${RUNNING_BASH.id}` }
+  const draft = { draftCall: { name: 'Bash', input: '' } }
+  const cases: Array<[string, unknown, readonly TranscriptItem[], Partial<WaitingInput>?, boolean?]> = [
+    ['before the first step', 'line', [USER], {}, true],
+    ['a thought in progress', 'line', turn([THINKING])],
+    ['a finished thought', 'line', turn([{ ...THINKING, pending: false }])],
+    ['a running call', group, turn([THINKING, RUNNING_BASH])],
+    ['between two tools', group, turn([DONE_BASH])],
+    ['the next call of the group being written', group, turn([DONE_BASH]), draft],
+    ['an approval in the group', { run: `run:${asking.id}` }, turn([asking])],
+    ['text after the group', 'line', turn([DONE_BASH, said])],
+    ['a draft arriving', 'line', [USER, DRAFT('好的')], {}, true],
+    ['a compaction', 'line', turn([RUNNING_BASH]), { phase: { kind: 'compacting' } }],
+    ['a question', 'line', turn([RUNNING_BASH]), { asking: '数据库' }],
+    ['another turn’s group', 'line', turn([{ ...RUNNING_BASH, turnId: 't0' }])],
+  ]
+  for (const [name, want, items, extra, noTurn] of cases) {
+    assert.deepEqual(activity(items, true, noTurn ? undefined : TURN, extra).place, want, name)
+  }
+  const interrupted: TranscriptItem = { id: 'stop', kind: 'notice', text: 'Interrupted.', turnId: TURN, interrupt: true }
+  assert.equal(activity(turn([RUNNING_BASH, interrupted])).place, 'line')
+})
+
+test('with a checklist on screen the status keeps its own line, thinking included', () => {
+  const taskCard = { rows: [{ id: '1', status: 'in_progress' as const, label: '改侧栏' }], hiddenBefore: 0, openAfter: 0 }
+  for (const items of [turn([THINKING]), turn([RUNNING_BASH]), turn([DONE_BASH])]) {
+    assert.equal(activity(items, true, TURN, { taskCard }).place, 'line')
+  }
+  assert.equal(activity(turn([THINKING]), true, TURN, { taskCard }).row?.label, '正在思考')
 })

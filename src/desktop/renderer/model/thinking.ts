@@ -66,14 +66,23 @@ export const EDIT_TOOLS: ReadonlySet<string> = new Set(['Edit', 'MultiEdit', 'Wr
 
 // --- thoughts ----------------------------------------------------------------
 
-/** The sentences of a thought: split after 。！？, after `.!?` and a space, and at line breaks. */
+/** Where a thought's sentences end: after 。！？, after `.!?` and a space, and at line breaks. */
+const SENTENCE_BREAK = /(?<=[。！？])|(?<=[.!?])\s+|\n+/
+
 function sentences(text: string): string[] {
-  return text.split(/(?<=[。！？])|(?<=[.!?])\s+|\n+/).map((part) => part.trim()).filter((part) => part.length > 0)
+  return text.split(SENTENCE_BREAK).map((part) => part.trim()).filter((part) => part.length > 0)
 }
 
 /** The first sentence of a thought — what its sealed line says. */
 export function thoughtFirstSentence(text: string): string {
   return sentences(text)[0] ?? ''
+}
+
+/** What follows the first sentence: an open thought's body, under the line that says the first. */
+export function thoughtRest(text: string): string {
+  const trimmed = text.trimStart()
+  const boundary = SENTENCE_BREAK.exec(trimmed)
+  return boundary === null ? '' : trimmed.slice(boundary.index + boundary[0].length).trim()
 }
 
 /** The sealed line: the first sentence, or the generic name when nothing was said. */

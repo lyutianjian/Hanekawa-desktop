@@ -9,7 +9,7 @@ import {
   type TurnPhase,
 } from './transcript.js'
 import { batchPhrase, callPhrase, type CallStep } from './toolPhrases.js'
-import { EDIT_TOOLS } from './thinking.js'
+import { EDIT_TOOLS, runHasTools } from './thinking.js'
 import { markSpecFor, peekField, type MarkSpec } from './workingMark.js'
 import type { TaskCard } from './tasks.js'
 
@@ -21,6 +21,9 @@ import type { TaskCard } from './tasks.js'
  * a pending question > a call awaiting approval > the running calls > the thought
  * in progress > a call whose arguments are streaming (「正在编写 a.ts」) > a draft
  * arriving (「正在输出」) > 「处理中」, the gap between steps.
+ *
+ * Where it is said (`place`): on the head of the tool group the turn is in, or as a
+ * line of its own.
  *
  * DOM-free, like every other `model/` unit: the clock and the timers live in the view.
  */
@@ -61,14 +64,21 @@ export interface WaitingRow {
   readonly thinkingSince?: number
 }
 
+/**
+ * `line`: the status line at the transcript's end. `{ run }`: the head of that tool
+ * group, which is the transcript's last entry.
+ */
+export type StatusPlace = 'line' | { readonly run: string }
+
 export interface TurnActivity {
-  /** The status line; `undefined` exactly when the turn is not running. */
+  /** The status; `undefined` exactly when the turn is not running. */
   readonly row: WaitingRow | undefined
   /** What the working mark beside the status shows; `undefined` exactly when there is no status. */
   readonly mark: MarkSpec | undefined
+  readonly place: StatusPlace
 }
 
-const IDLE: TurnActivity = { row: undefined, mark: undefined }
+const IDLE: TurnActivity = { row: undefined, mark: undefined, place: 'line' }
 const PLAIN: MarkSpec = { body: 'default', state: 'working' }
 
 /** How long the wait has to last before the counter is worth showing. */
@@ -122,34 +132,37 @@ export function rowLabel(row: WaitingRow, now: number): string {
 export function turnActivity(entries: readonly TranscriptEntry[], input: WaitingInput): TurnActivity {
   if (!input.isStreaming) return IDLE
   const row = (label: string, extra?: Partial<WaitingRow>): WaitingRow => ({ label, startedAt: input.startedAt, ...extra })
-  if (input.phase) return { row: row(phaseLabel(input.phase)), mark: PLAIN }
+  if (input.phase) return { row: row(phaseLabel(input.phase)), mark: PLAIN, place: 'line' }
   const asking = input.asking === undefined ? undefined : `${ASKING_LABEL} · ${input.asking}`
   const last = entries[entries.length - 1]
   const run = last?.kind === 'run' && last.run.status !== 'aborted' && input.turnId !== undefined && last.run.turnId === input.turnId
     ? last.run
     : undefined
-  if (asking !== undefined) return { row: row(asking), mark: { body: 'default', state: 'blocked' } }
+  if (asking !== undefined) return { row: row(asking), mark: { body: 'default', state: 'blocked' }, place: 'line' }
   // A sub-agent is no run's step, so its own wait is named here.
   if (last?.kind === 'item' && last.item.pending === true && isAgentCall(last.item) && last.item.turnId === input.turnId) {
     const step = toStep(last.item) as CallStep
     return step.tool.awaitingApproval === true
-      ? { row: row(`等待你确认 · ${callPhrase(step)}`), mark: { body: 'default', state: 'blocked' } }
-      : { row: row(callPhrase(step)), mark: PLAIN }
+      ? { row: row(`等待你确认 · ${callPhrase(step, true)}`), mark: { body: 'default', state: 'blocked' }, place: 'line' }
+      : { row: row(callPhrase(step)), mark: PLAIN, place: 'line' }
   }
   const mark = markSpecFor(run ?? latestRun(entries, input.turnId), input.draftCall)
+  // Until text follows it, the turn's tool group carries the status, even between its
+  // steps. With a checklist on screen the status stays its own line, under the card.
+  const place: StatusPlace = input.taskCard === undefined && run !== undefined && runHasTools(run) ? { run: run.id } : 'line'
   if (run) {
     const calls = run.steps.filter(isRunningCall)
     const waiting = calls.filter((step) => step.tool.awaitingApproval === true).at(-1)
-    if (waiting) return { row: row(`等待你确认 · ${callPhrase(waiting)}`), mark }
-    if (calls.length > 0) return { row: row(batchPhrase(calls)), mark }
+    if (waiting) return { row: row(`等待你确认 · ${callPhrase(waiting, true)}`), mark, place }
+    if (calls.length > 0) return { row: row(batchPhrase(calls)), mark, place }
     const thought = run.steps[run.steps.length - 1]
     if (thought?.kind === 'thinking' && thought.pending === true) {
-      return { row: row(WAITING_LABEL, { thinkingSince: thought.startedAt ?? input.startedAt }), mark }
+      return { row: row(WAITING_LABEL, { thinkingSince: thought.startedAt ?? input.startedAt }), mark, place: 'line' }
     }
   }
-  if (input.draftCall !== undefined) return { row: row(draftLabel(input.draftCall)), mark }
-  if (last?.kind === 'item' && isArriving(last.item)) return { row: row(WRITING_LABEL), mark }
-  return { row: row(PROCESSING_LABEL), mark }
+  if (input.draftCall !== undefined) return { row: row(draftLabel(input.draftCall)), mark, place }
+  if (last?.kind === 'item' && isArriving(last.item)) return { row: row(WRITING_LABEL), mark, place }
+  return { row: row(PROCESSING_LABEL), mark, place }
 }
 
 /** A call the model is still writing: 「正在编写 a.ts」 for an edit, 「正在准备命令」 for the shell. */

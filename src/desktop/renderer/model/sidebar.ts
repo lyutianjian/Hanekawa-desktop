@@ -241,6 +241,11 @@ export interface SidebarGroup {
   readonly rows: readonly SidebarRow[]
 }
 
+/** The rows a group shows: all of them, or only the session on screen while folded shut. */
+export function visibleGroupRows(group: SidebarGroup): readonly SidebarRow[] {
+  return group.collapsed ? group.rows.filter((row) => row.active) : group.rows
+}
+
 export interface SidebarView {
   /**
    * The pinned section above the groups: one entry per coordination project, in
@@ -649,7 +654,7 @@ export function sidebarView(state: SidebarState): SidebarView {
   // The pinned coordinators are drawn above every group, so they lead here too.
   const rows = [
     ...coordination.flatMap((group) => (group.coordinator ? [group.coordinator] : [])),
-    ...ordered.filter((group) => !group.collapsed).flatMap((group) => group.rows),
+    ...ordered.flatMap(visibleGroupRows),
   ]
 
   // `groups` is empty only when there is genuinely nothing; a collapsed group is
@@ -1077,8 +1082,7 @@ export function sidebarRenderSignature(view: SidebarView): string {
       `g:${group.projectRoot}${group.projectName}${group.collapsed ? '1' : '0'}${group.isGlobal ? 'g' : '-'}`
         + `${group.menuOpen ? 'm' : '-'}${group.confirmingRemove ? 'r' : '-'}${group.rows.length}${group.active ? 'a' : '-'}`,
     )
-    if (group.collapsed) continue
-    for (const row of group.rows) {
+    for (const row of visibleGroupRows(group)) {
       parts.push(
         `r:${row.sessionId}${row.lane ?? ''}${row.badge}${row.active ? '1' : '0'}`
           + `${row.confirmingDelete ? '1' : '0'}${row.opening ? 'o' : '-'}${row.title}${row.messageCount}`

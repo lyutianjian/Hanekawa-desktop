@@ -215,27 +215,28 @@ test('a search that hides the active session leaves its heading unmarked', () =>
 
 // --- folding ----------------------------------------------------------------
 
-test('a folded workspace keeps its rows but contributes none to the cursor', () => {
+test('a folded workspace keeps its rows but shows only the session on screen', () => {
   // The heading still says how many are inside (`group.rows`), but `rows` is the
   // index space for the cursor and `Ctrl+1`–`9`, and both have to mean what is on
-  // screen.
-  const state = stateWith({
+  // screen: a folded group draws the active session under its heading, and only
+  // while it stays active.
+  const base = {
     projects: [project('/a', 'alpha', [session('a1'), session('a2')]), project('/b', 'beta', [session('b1')])],
     lanes: [lane('1', 'a1', '/a'), lane('2', 'b1', '/b')],
     collapsedProjects: new Set(['/a']),
-  })
+  }
+  const state = stateWith({ ...base, activeLane: '1' })
   const view = sidebarView(state)
 
   assert.deepEqual(view.groups.map((group) => group.collapsed), [true, false])
   assert.equal(view.groups[0]!.rows.length, 2, 'the folded group still knows what it holds')
-  assert.deepEqual(view.rows.map((row) => row.sessionId), ['b1'])
-  assert.deepEqual(view.liveRows.map((row) => row.lane), ['2'])
-  assert.deepEqual(sidebarChordToIntent({ key: '1', ctrlKey: true }, state, 'win32'), { kind: 'switch', lane: '2' })
-  assert.deepEqual(
-    sidebarChordToIntent({ key: '2', ctrlKey: true }, state, 'win32'),
-    { kind: 'none' },
-    'the folded workspace\u2019s lane is not reachable by chord',
-  )
+  assert.deepEqual(view.rows.map((row) => row.sessionId), ['a1', 'b1'])
+  assert.deepEqual(sidebarChordToIntent({ key: '1', ctrlKey: true }, state, 'win32'), { kind: 'switch', lane: '1' })
+
+  // Switching away folds it back in.
+  const away = stateWith({ ...base, activeLane: '2' })
+  assert.deepEqual(sidebarView(away).rows.map((row) => row.sessionId), ['b1'])
+  assert.deepEqual(sidebarChordToIntent({ key: '2', ctrlKey: true }, away, 'win32'), { kind: 'none' })
 })
 
 test('folding every workspace is not the empty state', () => {

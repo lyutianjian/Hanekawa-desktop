@@ -30,7 +30,10 @@ const VALUE_FLAGS: Record<string, ReadonlySet<string>> = {
   tail: new Set(['-n', '-c']),
   cut: new Set(['-d', '-f', '-c', '-b']),
   column: new Set(['-s', '-c', '-o']),
-  grep: new Set(['-e', '-f', '-a', '-b', '-c', '-m', '-A', '-B', '-C', '-D', '-d', '--include', '--exclude', '--exclude-dir', '--label', '--regexp', '--file', '--max-count', '--context']),
+  // `-a`/`-b`/`-c` are switches (`--text`, `--byte-offset`, `--count`); listing
+  // them as value flags ate the pattern and left the path unjudged, so
+  // `grep -a . .env` — which prints the file — graded readonly.
+  grep: new Set(['-e', '-f', '-m', '-A', '-B', '-C', '-D', '-d', '--include', '--exclude', '--exclude-dir', '--label', '--regexp', '--file', '--max-count', '--context']),
   rg: new Set(['-e', '-f', '-g', '-t', '-T', '-A', '-B', '-C', '-m', '-M', '-j', '-r', '-E', '--regexp', '--file', '--glob', '--iglob', '--type', '--type-not', '--type-add', '--context', '--max-count', '--max-columns', '--threads', '--max-depth', '--maxdepth', '--replace', '--sort', '--sortr', '--encoding', '--max-filesize', '--ignore-file', '--pre-glob', '--color', '--colors']),
   fd: new Set(['-e', '-t', '-E', '-d', '-S', '-o', '-j', '-c', '--extension', '--type', '--exclude', '--max-depth', '--min-depth', '--exact-depth', '--size', '--changed-within', '--changed-before', '--owner', '--threads', '--max-results', '--color', '--path-separator', '--base-directory', '--search-path', '--ignore-file', '--format']),
 }

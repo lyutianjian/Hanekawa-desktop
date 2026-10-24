@@ -2260,10 +2260,8 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .project-heading:focus-visible,
 .project-new:focus-visible,
 .project-more:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
-/* Where the session count used to be. A number told the user what they could
-   already see; this is the action they came to the heading for, so unlike
-   `.session-actions` it does not hide until hover — a project with no sessions
-   has nothing else on screen to reveal it. */
+/* Where the session count used to be. Quiet until the row is hovered or
+   focused, like `.session-actions`. */
 .project-actions {
   flex: 0 0 auto;
   display: flex;
@@ -2285,14 +2283,17 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 .project-new:hover:enabled,
 .project-more:hover { color: var(--text-primary); background: var(--surface-hover); }
-/* The menu's visible way in. Quiet until the row is hovered or focused, like
-   `.session-actions`, and kept while its menu is open so it reads as the
-   trigger the menu hangs off. */
+/* `⋯` stays while its menu is open so it reads as the trigger the menu hangs off. */
+.project-new,
 .project-more { opacity: 0; }
+.project-row:hover .project-new,
+.project-row:focus-within .project-new,
 .project-row:hover .project-more,
 .project-row:focus-within .project-more,
 .project-more[aria-expanded="true"] { opacity: 1; }
-.project-new:disabled { opacity: var(--opacity-disabled); cursor: default; }
+.project-row:hover .project-new:disabled,
+.project-row:focus-within .project-new:disabled { opacity: var(--opacity-disabled); }
+.project-new:disabled { cursor: default; }
 /* The heading's context menu. Same card as `.titlebar-menu`. `.sidebar-list` is
    the scroller, so an absolutely positioned popover here would be clipped by its
    `overflow`; a fixed one is not, and anchoring it to the heading row keeps it
@@ -2860,7 +2861,8 @@ body.resizing #browser-resizer::after { opacity: 1; }
    A run of work folds to one quiet line — 「已运行 2 个命令，读取 2 个文件」 — and
    opens into a bordered card with a row per step. A thought outside a run is the
    same line with its first sentence on it. While the turn works, the last line of
-   the transcript is its status: mark, elapsed time, tokens, then the words.
+   the transcript is its status: mark, the words, then elapsed time and tokens —
+   the time ahead of the words while a thought streams.
    `model/waiting.ts` decides what it says. */
 .run {
   min-width: 0;
@@ -2883,18 +2885,25 @@ body.resizing #browser-resizer::after { opacity: 1; }
   background: none;
   color: var(--text-tertiary);
   font: inherit;
+  /* Every one-line activity line — thought, run, status, row — is one size. */
+  font-size: var(--type-ui);
   text-align: left;
   cursor: pointer;
 }
-.run-line:hover { color: var(--text-secondary); }
 .run-line:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; border-radius: var(--radius-sm); }
 .waiting {
   color: var(--text-secondary);
-  font-size: var(--type-meta);
+  font-size: var(--type-ui);
   user-select: none;
 }
 .thinking { min-width: 0; margin-bottom: var(--space-3); }
 .thinking-run > .thinking:last-child { margin-bottom: 0; }
+/* Open, the line is the first sentence of the body below it: whole, in the body's
+   colour, at the folded line's size so the toggle does not reflow it. */
+.thinking.open > .run-line { color: var(--text-secondary); }
+.thinking.open > .run-line .line-text { white-space: normal; overflow-wrap: anywhere; }
+.run-line:hover,
+.thinking.open > .run-line:hover { color: var(--text-primary); }
 .thinking.live:not(.open) > .run-line .line-text,
 .transcript .item.compaction.pending .line-text {
   background: linear-gradient(90deg, var(--text-tertiary) 35%, var(--text-primary) 50%, var(--text-tertiary) 65%);
@@ -2911,6 +2920,10 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 .line-meta { flex: none; color: var(--text-tertiary); }
 .waiting .line-meta { display: flex; gap: 6px; color: inherit; }
+.waiting.thinking .line-elapsed { order: -1; }
+.waiting.thinking .line-mark { order: -2; }
+.waiting:not(.thinking) .line-elapsed::before,
+.waiting.thinking .line-elapsed::after { content: '·'; color: var(--text-tertiary); }
 .line-sep { color: var(--text-tertiary); }
 /* 「N 个后台任务」: the status line's last element, a quiet text button. */
 .line-tasks {
@@ -2941,6 +2954,26 @@ body.resizing #browser-resizer::after { opacity: 1; }
   transition: transform var(--motion-disclosure) var(--ease-snap);
 }
 .run.open > .run-line .icon { transform: rotate(90deg); }
+/* The run the turn is in: its line is the status, the mark in the column like the status line's. */
+.run-line.live { color: var(--text-secondary); }
+.run-line.live .line-meta { display: flex; gap: 6px; }
+/* A settled run of one step is that step's row alone: a plain line like a run's,
+   whose body opens into the card's frame. */
+.run.single > .step > .step-head {
+  width: auto;
+  max-width: 100%;
+  min-height: 0;
+  padding: 0;
+  line-height: var(--leading-dense);
+}
+.run.single > .step > .step-head:hover { background: none; color: var(--text-primary); }
+.run.single > .step > .step-head.static:hover { color: var(--text-tertiary); }
+.run.single > .step > .step-body {
+  margin-top: var(--space-2);
+  padding-top: var(--space-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+}
 /* The working mark: one frame of a vertical sprite strip. `dom/workingMarkView.ts`
    names the sheet, its frame count and the frame through custom properties; a
    running animation writes `transform` over the held frame. Layers other than the
@@ -3047,7 +3080,6 @@ body.resizing #browser-resizer::after { opacity: 1; }
   min-height: 0;
   align-self: flex-start;
   padding: 0;
-  font-size: inherit;
   line-height: var(--leading-dense);
 }
 .agent-entry .step-head:hover { background: none; color: var(--text-secondary); }
@@ -3076,7 +3108,8 @@ body.resizing #browser-resizer::after { opacity: 1; }
   margin-top: var(--space-1);
   color: var(--text-secondary);
   overflow-wrap: anywhere;
-  line-height: var(--leading-prose);
+  font-size: var(--type-ui);
+  line-height: var(--leading-dense);
 }
 .thinking-body > :first-child { margin-top: 0; }
 .thinking-body > :last-child { margin-bottom: 0; }

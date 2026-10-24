@@ -13,6 +13,7 @@ import {
   thoughtFirstSentence,
   thoughtLabel,
   thoughtLiveLabel,
+  thoughtRest,
   toggleDisclosure,
 } from '../src/desktop/renderer/model/thinking.js'
 import type { DisclosureState } from '../src/desktop/renderer/model/thinking.js'
@@ -39,6 +40,13 @@ test('a thought reads as its first sentence, live or sealed, and never as a half
   // Nothing said yet.
   assert.equal(thoughtLabel(''), THINKING_DONE_FALLBACK)
   assert.equal(thoughtLiveLabel('  \n'), THINKING_LIVE_LABEL)
+})
+
+test('an open thought\'s body is what follows the first sentence', () => {
+  assert.equal(thoughtRest('先确认目录。再看运行时。\n\n**设计**上只用一色。'), '再看运行时。\n\n**设计**上只用一色。')
+  assert.equal(thoughtRest('open design.md first. Then read'), 'Then read')
+  assert.equal(thoughtRest('标题\n正文'), '正文')
+  assert.equal(thoughtRest('只有一句'), '')
 })
 
 const tool = (id: string, toolName: string, extra: Partial<Extract<ActivityStep, { kind: 'tool' }>> & { useSummary?: string; detail?: string } = {}): ActivityStep => {

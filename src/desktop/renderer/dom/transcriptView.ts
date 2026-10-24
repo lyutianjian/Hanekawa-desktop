@@ -7,8 +7,10 @@ import {
   isExpanded,
   runHasTools,
   summarizeRun,
+  THINKING_LIVE_LABEL,
   thoughtLabel,
   thoughtLiveLabel,
+  thoughtRest,
   type DisclosureState,
   type RunSummary,
 } from '../model/thinking.js'
@@ -331,9 +333,9 @@ export function createTranscriptView(
     container.scrollTop = container.scrollHeight
   }
 
-  // The status line's pieces. Kept rather than looked up: the line is a node
-  // reused by key like every other, so the elements its fill built are still the
-  // ones on screen, and the clock is the only thing that writes into them.
+  // The status's pieces, wherever it is drawn — its own line or a tool group's head.
+  // Kept rather than looked up: every paint hands over the ones it placed, and the
+  // clock is the only thing that writes into them.
   let clockNode: HTMLElement | undefined
   let labelNode: HTMLElement | undefined
   let status: { readonly row: WaitingRow; readonly tokens: number | undefined } | undefined
@@ -342,9 +344,9 @@ export function createTranscriptView(
   let clock: ReturnType<typeof setInterval> | undefined
   let clockFrom: number | undefined
   // The mark's carrier, kept the way `clockNode` is. One controller, created at
-  // the first status line. Its node has two homes — the status line and the jump
-  // button — and `syncJump` is the only place that decides which, because the
-  // scroll and resize paths have no paint to tell them what the turn is doing.
+  // the first status line; `syncJump` decides whether it sits here or in the jump
+  // button, from the two values below, because the scroll and resize paths have
+  // no paint to tell them what the turn is doing.
   let markHost: HTMLElement | undefined
   let mark: WorkingMark | undefined
   /** A turn is in flight (`activity.isStreaming`), as of the last paint. */
@@ -371,7 +373,7 @@ export function createTranscriptView(
     const shown = meta.join('\n')
     if (shown === metaShown) return
     metaShown = shown
-    clockNode.replaceChildren(...meta.flatMap((part) => [el('span', undefined, part), el('span', 'line-sep', '·')]))
+    clockNode.replaceChildren(...meta.flatMap((part, index) => [index > 0 ? el('span', 'line-sep', '·') : undefined, el('span', undefined, part)]).filter((node) => node !== undefined))
   }
 
   /**
@@ -403,22 +405,31 @@ export function createTranscriptView(
    * Where the button is, and — because it is the one thing every scroll, resize
    * and repaint agrees on — where the turn's single working mark lives.
    *
-   * While the turn runs and the reader is looking back, the mark is the button's:
-   * that is the only place it can be seen, since the status line it normally sits
-   * on is below the fold. Reaching the tail hands it back. The move is a reparent
-   * of one node, which keeps the animation it was on (verified in
+   * The button stands down once the status line's mark spot is near the view —
+   * which can be well before the tail, since the anchor's pad sits below that
+   * line. While it shows during a turn, the mark is the button's. The move
+   * is a reparent of one node, which keeps the animation it was on (verified in
    * `rendererWorkingMark.test.ts`), so coming back does not replay `grow`.
    */
   function syncJump(): void {
-    const visible = !atTail()
+    const visible = !atTail() && !inView(markHost)
     show(jump, visible)
     jump.classList.toggle('is-working', visible && running)
-    // While the reader looks back during a turn, the button is the only place the
-    // mark can be seen: the status line it normally sits on is below the fold.
     const carrier = visible ? jumpMark : markHost
     if (!running) mark?.end()
     else if (liveMark !== undefined && carrier !== undefined) (mark ??= createWorkingMark()).attach(carrier, liveMark)
     else mark?.hide()
+  }
+
+  /**
+   * In view, or within `MARK_RETURN_SLACK` below the fold. Unmeasurable counts
+   * as out of view, so the button keeps the mark.
+   */
+  function inView(node: HTMLElement | undefined): boolean {
+    const inner = node && box(node)
+    const outer = box(container)
+    return inner !== undefined && outer !== undefined
+      && inner.top >= outer.top && inner.bottom <= outer.bottom + MARK_RETURN_SLACK
   }
 
   /**
@@ -602,6 +613,9 @@ export function createTranscriptView(
           && (node.contains(selection.anchorNode) || node.contains(selection.focusNode))) selected.add(id)
       }
       const afterPaint: Array<() => void> = []
+      // A paint that draws no status hands nothing over, and nothing stale stays live.
+      const shownClock = clockNode
+      clockNode = labelNode = markHost = undefined
       const painter = createPainter(cache, refs, disclosures, seenDisclosures, disclosure, {
         ...handlers,
         onToggle(id, expanded) {
@@ -623,7 +637,8 @@ export function createTranscriptView(
       // 回退 rewinds to the turn's opening message, so only the newest settled turn offers it.
       const lastTurn = activity?.isStreaming === true ? undefined : Math.max(-1, ...footers.keys())
       const cards = new Map([...edits].map(([index, turn]) => [index, editsCardNode(painter, turn, index === lastTurn)]))
-      const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index), activity !== undefined, cards.get(index)))
+      const liveRun = typeof live.place === 'object' ? live.place.run : undefined
+      const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index), activity !== undefined, cards.get(index), liveRun))
       // Built before `prune`, or its key would count as dead on the very paint
       // that asked for it. A kept line keeps the spans its fill handed over.
       status = live.row ? { row: live.row, tokens: activity?.outputTokens } : undefined
@@ -631,13 +646,11 @@ export function createTranscriptView(
       // `blocked` is the mark's word for a turn waiting on the user: a question or an approval.
       const card = activity?.taskCard && (live.mark?.state === 'blocked' ? pausedTaskCard(activity.taskCard) : activity.taskCard)
       if (card) nodes.push(taskCardNode(painter, card))
-      if (live.row) nodes.push(waitingNode(painter, tasks))
+      if (live.row && live.place === 'line') nodes.push(waitingNode(painter, tasks, live.row.thinkingSince !== undefined))
       else if (tasks > 0 && painter.onOpenBackgroundTasks) nodes.push(idleStatusNode(painter, tasks))
-      if (!live.row) {
-        clockNode = labelNode = markHost = undefined
-        gate = undefined
-        metaShown = ''
-      }
+      if (!live.row) gate = undefined
+      // A fresh span starts empty, whatever the old one showed.
+      if (clockNode !== shownClock) metaShown = ''
       painter.prune()
       const placed = nodes.flatMap((node, index) => {
         const footer = footers.get(index)
@@ -649,8 +662,8 @@ export function createTranscriptView(
       reconcile(column, [...(header ? [header] : []), ...placed, ...(trailer ? [trailer] : [])])
       for (const run of afterPaint) run()
       runClock(live.row?.startedAt)
-      // After the reconcile, so both carriers are in the document when the mark
-      // moves into one of them.
+      // Read by the `syncJump` at the end of this paint, after the reconcile has
+      // put both carriers in the document.
       running = activity?.isStreaming === true
       liveMark = live.mark
 
@@ -714,27 +727,24 @@ export function createTranscriptView(
   }
 }
 
+/** About five transcript lines: the float button stands down this far before the status line scrolls in. */
+const MARK_RETURN_SLACK = 100
+
 /** An idle session: no turn, no clock, no live line. */
 const IDLE: WaitingInput = { isStreaming: false, startedAt: undefined, turnId: undefined }
 
 /**
- * The status line, the transcript's last while the turn runs: mark, counter and
- * words, whatever the steps above it are. Built once and filled by the clock
+ * The status line, the transcript's last while the turn runs: mark, words and
+ * counter — the counter ahead of the words while a thought streams — whatever the steps above it are. Built once and filled by the clock
  * (`paintStatus`), so the words can be held back from flickering.
  *
  * `.transcript` is `aria-live="polite"`, so the label is spoken and the counter
  * is `aria-hidden`, or a screen reader would read a new number ten times a second.
  */
-function waitingNode(painter: Painter, tasks: number): HTMLElement {
-  return painter.node('waiting', 'waiting', [tasks], () => [
-    markNode(painter, 'waiting'),
-    elapsedNode(painter, 'waiting'),
-    painter.node('waiting:text', 'line-text', [], (span) => {
-      painter.keepLabel(span)
-      return []
-    }, () => el('span')),
-    tasksButton(painter, tasks),
-  ])
+function waitingNode(painter: Painter, tasks: number, thinking: boolean): HTMLElement {
+  // Built outside the fill: every paint has to hand its carriers over again.
+  const pieces = [markNode(painter, 'waiting'), labelNode(painter, 'waiting'), elapsedNode(painter, 'waiting')]
+  return painter.node('waiting', thinking ? 'waiting thinking' : 'waiting', [tasks, ...pieces], () => [...pieces, tasksButton(painter, tasks)])
 }
 
 /** The status line between turns: no mark, no clock, only the button for tasks that outlived the turn. */
@@ -779,6 +789,13 @@ function elapsedNode(painter: Painter, key: string): HTMLElement {
     return []
   }, () => el('span'))
   painter.keepClock(node)
+  return node
+}
+
+/** The status words' span, empty as painted: the clock writes them (`paintStatus`). */
+function labelNode(painter: Painter, key: string): HTMLElement {
+  const node = painter.node(`${key}:text`, 'line-text', [], () => [], () => el('span'))
+  painter.keepLabel(node)
   return node
 }
 
@@ -991,8 +1008,8 @@ function sameSignature(a: readonly unknown[], b: readonly unknown[]): boolean {
 
 // --- entries -----------------------------------------------------------------
 
-function entryNode(painter: Painter, entry: TranscriptEntry, footer: TurnFooter | undefined, inTurn: boolean, card: HTMLElement | undefined): HTMLElement {
-  return entry.kind === 'run' ? runNode(painter, entry.run) : itemNode(painter, entry.item, footer, inTurn, card)
+function entryNode(painter: Painter, entry: TranscriptEntry, footer: TurnFooter | undefined, inTurn: boolean, card: HTMLElement | undefined, liveRun: string | undefined): HTMLElement {
+  return entry.kind === 'run' ? runNode(painter, entry.run, entry.run.id === liveRun) : itemNode(painter, entry.item, footer, inTurn, card)
 }
 
 /**
@@ -1003,16 +1020,24 @@ function entryNode(painter: Painter, entry: TranscriptEntry, footer: TurnFooter 
  * nothing here, and a paint that rebuilt the line re-inserts the line alone — the
  * card, and every animation and scroll anchor under it, is left where it stands.
  * A run with no tool in it is just its thoughts, each a line of its own.
+ *
+ * The run the turn is in (`live`) has the status on its line instead of its
+ * summary. Once settled, a run of one step is that step's row alone.
  */
-function runNode(painter: Painter, run: ActivityRun): HTMLElement {
+function runNode(painter: Painter, run: ActivityRun, live: boolean): HTMLElement {
   if (!runHasTools(run)) {
     const lines = run.steps.map((step) => thinkingLine(painter, step as Extract<ActivityStep, { kind: 'thinking' }>))
     return painter.node(run.id, 'run thinking-run', lines, () => lines)
   }
+  if (!live && run.steps.length === 1) {
+    const row = stepNode(painter, run.steps[0]!)
+    return painter.node(run.id, 'run single', [row], () => [row])
+  }
   const expanded = isExpanded(painter.disclosure, run.id)
   const classes = ['run']
   if (expanded) classes.push('open')
-  const head = runLine(painter, run, summarizeRun(run), expanded)
+  if (live) classes.push('live')
+  const head = live ? liveRunLine(painter, run, summarizeRun(run), expanded) : runLine(painter, run, summarizeRun(run), expanded)
   const card = painter.disclose(`card:${run.id}`, expanded, head, () => cardNode(painter, run))
   return painter.node(run.id, classes.join(' '), [head, card], () => [head, card])
 }
@@ -1062,6 +1087,33 @@ function runLine(
   )
 }
 
+/**
+ * The line of the run the turn is in: the mark, the status words and the clock,
+ * which the view writes after the paint. Named for what the run has done so far,
+ * so a reader is not told every word the status passes through.
+ */
+function liveRunLine(painter: Painter, run: ActivityRun, summary: RunSummary, expanded: boolean): HTMLElement {
+  const headKey = `run-head:${run.id}`
+  const ref = painter.ref(headKey, expanded)
+  const name = summary.text ? `正在进行 · ${summary.text}` : '正在进行'
+  const mark = markNode(painter, headKey)
+  const label = labelNode(painter, headKey)
+  const elapsed = elapsedNode(painter, headKey)
+  return painter.node(
+    headKey,
+    'run-line live',
+    [name, expanded, mark, label, elapsed],
+    (node) => {
+      node.title = name
+      node.setAttribute('aria-label', name)
+      node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
+      label.setAttribute('aria-hidden', 'true')
+      return [mark, label, elapsed, icon('chevron-right')]
+    },
+    () => button('run-line', '', name, () => painter.onToggle(run.id, ref.expanded)),
+  )
+}
+
 /** `+12 −3`, each count in its own colour. */
 function diffStat(added: number, deleted: number): Child[] {
   return [el('span', 'stat-add', `+${added}`), ' ', el('span', 'stat-del', `−${deleted}`)]
@@ -1077,7 +1129,7 @@ function diffStat(added: number, deleted: number): Child[] {
  * could not be selected or copied (a drag on a button is a click), it was drawn
  * as raw text with its markdown showing, and a screen reader heard it all as
  * the button's name. The line is now only the toggle and keeps its first
- * sentence; the body is markdown like an answer, and is absent while folded.
+ * sentence; the body is the rest, markdown like an answer, absent while folded.
  */
 function thinkingLine(
   painter: Painter,
@@ -1103,9 +1155,11 @@ function thinkingLine(
       },
       () => button('run-line', '', label, () => painter.onToggle(step.id, ref.expanded)),
     )
-    if (!expanded) return [head]
-    const body = painter.node(`thinking-body:${step.id}`, 'thinking-body md', [step.text], (node) =>
-      markdownChildren(step.text, node))
+    // The line already says the first sentence, so the body continues from the next one.
+    const rest = label === THINKING_LIVE_LABEL ? step.text : thoughtRest(step.text)
+    if (!expanded || rest === '') return [head]
+    const body = painter.node(`thinking-body:${step.id}`, 'thinking-body md', [rest], (node) =>
+      markdownChildren(rest, node))
     return [head, body]
   })
 }

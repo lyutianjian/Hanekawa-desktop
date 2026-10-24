@@ -99,8 +99,16 @@ export function taskPhrase(ops: readonly TaskOp[]): string {
   return parts.join('，') || '查看任务'
 }
 
-/** 「读取 waiting.ts」, for the live line: the target is clipped to one short phrase. */
-export function callPhrase(step: CallStep): string {
+/**
+ * 「读取 waiting.ts」, for the live line: the target is clipped to one short phrase.
+ * A command the model did not describe, and a tool with no phrase of its own, say
+ * only what kind of thing runs — 「运行命令」 when it waits on the user's approval.
+ */
+export function callPhrase(step: CallStep, approving = false): string {
+  const generic = step.toolName === 'Bash' && !step.tool.description?.trim() ? '命令'
+    : step.tool.taskOps === undefined && (step.toolName === undefined || PHRASES[step.toolName] === undefined) ? '工具'
+    : undefined
+  if (generic !== undefined) return `${approving ? '' : '正在'}运行${generic}`
   const { verb, target, bare } = callParts(step)
   if (target.length === 0) return verb
   const clipped = target.length > TARGET_MAX ? `${target.slice(0, TARGET_MAX - 1)}…` : target

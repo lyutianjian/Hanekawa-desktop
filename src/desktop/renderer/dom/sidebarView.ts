@@ -13,6 +13,7 @@ import {
   newSessionIntent,
   sidebarContentMounted,
   sidebarRenderSignature,
+  visibleGroupRows,
   type SidebarCoordinationGroup,
   type SidebarGroup,
   type SidebarIntent,
@@ -268,6 +269,8 @@ export function createSidebarView(
     /** The animated track. `rows` is its single, shrinkable child. */
     readonly body: HTMLElement
     readonly rows: HTMLElement
+    /** Below the track: a folded group's session on screen, which stays visible. */
+    readonly kept: HTMLElement
     /** The fold state this group was last drawn in. */
     shut: boolean
     /** The fold finished moving, so the rows are gone from the DOM. */
@@ -315,6 +318,7 @@ export function createSidebarView(
     const body = el('div', 'project-body')
     const rows = el('div', 'project-rows')
     body.appendChild(rows)
+    const kept = el('div', 'project-rows')
     wrapper.appendChild(head)
     // Anchored to `head` by the stylesheet and out of the flow, so opening it
     // does not move the rows beneath.
@@ -323,6 +327,7 @@ export function createSidebarView(
       rovingFocus(event, Array.from(menu.children) as HTMLElement[], true, () => {}))
     followPointer(menu, '.project-menu-item')
     wrapper.appendChild(body)
+    wrapper.appendChild(kept)
     // A group first drawn shut has nothing to animate out and no rows to keep:
     // it starts settled, so the first paint is a heading and nothing else.
     const entry: GroupNodes = {
@@ -333,6 +338,7 @@ export function createSidebarView(
       menuShown: false,
       body,
       rows,
+      kept,
       shut: group.collapsed,
       settled: group.collapsed,
     }
@@ -695,8 +701,7 @@ export function createSidebarView(
         actions.appendChild(yes)
         actions.appendChild(no)
       } else {
-        // Replaces the session count. A number told the user something they could
-        // already see; this is the action they came to the heading for.
+        // Replaces the session count. Last in the row, after `⋯`.
         const add = button('project-new', '', canCreate ? `在 ${group.projectName} 新建会话` : CREATE_BLOCKED_HINT, () =>
           onIntent(newSessionIntent(group.projectRoot)),
           { enabled: canCreate, icon: 'plus' },
@@ -736,7 +741,7 @@ export function createSidebarView(
         more.addEventListener('keydown', (event) => {
           if (event.key === 'Enter' || event.key === ' ') entry.focusMenu = true
         })
-        if (!group.confirmingRemove) actions.appendChild(more)
+        if (!group.confirmingRemove) actions.insertBefore(more, actions.firstChild)
         entry.more = more
       }
       replace(entry.head, headingRow)
@@ -767,6 +772,13 @@ export function createSidebarView(
     // The class the fold transitions on, toggled on the surviving wrapper.
     entry.wrapper.classList.toggle('collapsed', group.collapsed)
 
+    const rowNodes = (rows: readonly SidebarRow[]): HTMLElement[] => rows.map((row) => {
+      const index = indexOf(row)
+      return rowNode(row, index, index >= 0 && index === selectedIndex)
+    })
+    // The session on screen leaves the track while it folds, so no row is drawn twice.
+    reconcile(entry.kept, group.collapsed ? rowNodes(visibleGroupRows(group)) : [])
+
     if (entry.shut && entry.settled) {
       // Rest: the fold is over and the rows are not merely hidden but gone, so
       // no button behind a shut heading can be reached with Tab.
@@ -777,15 +789,11 @@ export function createSidebarView(
     // have a height to travel to. A collapsing group's rows are already out of
     // `view.rows`, so `indexOf` answers -1 for them — which must not read as the
     // "no cursor" index and paint every one of them selected.
-    const children: HTMLElement[] = []
-    for (const row of group.rows) {
-      const index = indexOf(row)
-      children.push(rowNode(row, index, index >= 0 && index === selectedIndex))
-    }
+    const children = rowNodes(group.collapsed ? group.rows.filter((row) => !row.active) : group.rows)
     // A project kept for its own sake rather than for its sessions has to say
     // so; an empty group with nothing under the heading reads as a load that
     // has not finished.
-    if (children.length === 0) children.push(el('div', 'project-empty', '还没有会话'))
+    if (group.rows.length === 0) children.push(el('div', 'project-empty', '还没有会话'))
     reconcile(entry.rows, children)
     return entry.wrapper
   }
