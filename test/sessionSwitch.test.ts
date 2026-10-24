@@ -137,6 +137,7 @@ async function createSwitchHarness(): Promise<SwitchHarness> {
     },
     runtimeSlot: runtimeSlot as unknown as SessionSwitchDeps['runtimeSlot'],
     controller: {
+      busyKind: () => undefined,
       retarget: (session: { id: string }) => order.push(`retarget:${session.id}`),
     } as unknown as SessionSwitchDeps['controller'],
     backgroundTasks: {
@@ -203,6 +204,30 @@ test('a new session hands the hook the draft id that did not exist before the ca
     'replace',
   ], 'the cached Environment section goes first; the swap still goes last')
   assert.deepEqual(harness.stopped, [{ sessionId: previous.id, reason: 'Session cleared' }])
+})
+
+test('a busy controller refuses both switch entry points before any side effect', async () => {
+  const harness = await createSwitchHarness()
+  const session = await harness.store.create('busy one')
+  const withBusy = (kind: 'turn' | 'compaction'): SessionSwitchDeps => ({
+    ...harness.deps,
+    controller: {
+      busyKind: () => kind,
+      retarget: () => harness.order.push('retarget'),
+    } as unknown as SessionSwitchDeps['controller'],
+  })
+
+  for (const kind of ['turn', 'compaction'] as const) {
+    const expected = kind === 'turn' ? /先停止/ : /压缩/
+    await assert.rejects(() => switchToExistingSession(withBusy(kind), session.id), expected)
+    await assert.rejects(
+      () => switchToNewSession(withBusy(kind), { previousSessionId: session.id }),
+      expected,
+    )
+  }
+
+  assert.deepEqual(harness.order, [], 'no runtime was built and the controller was not retargeted')
+  assert.deepEqual(harness.stopped, [], "the outgoing session's background tasks were left alone")
 })
 
 test('the hook is optional, and leaving it out changes nothing else', async () => {

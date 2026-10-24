@@ -60,6 +60,7 @@ export async function switchToExistingSession(
   deps: SessionSwitchDeps,
   sessionId: string,
 ): Promise<SessionSwitchResult> {
+  assertNotBusy(deps.controller)
   const meta = await deps.host.store.resolve(sessionId)
   if (!meta) throw new Error(`Unknown session: ${sessionId}`)
 
@@ -87,6 +88,7 @@ export async function switchToNewSession(
   deps: SessionSwitchDeps,
   options: { previousSessionId: string; title?: string },
 ): Promise<SessionSwitchResult> {
+  assertNotBusy(deps.controller)
   deps.runtimeSlot.current?.loop.clearCachedSections()
   await deps.backgroundTasks.stopAll(options.previousSessionId, 'Session cleared')
 
@@ -100,6 +102,23 @@ export async function switchToNewSession(
   deps.host.store.discardDraft(options.previousSessionId)
 
   return { session: meta, records: [], diagnostics: [] }
+}
+
+/**
+ * Refuses a switch while the lane is still working.
+ *
+ * Placed before every other statement in both entry points, not merely before
+ * the swap: a turn keeps appending through the controller and the loop, so a
+ * switch that began first would still let the old turn land its failure,
+ * rollback or usage in the new session. The check is synchronous and the turn's
+ * busy flag is set before its first await, so no interleaving can slip past it.
+ */
+function assertNotBusy(controller: SessionController): void {
+  const busy = controller.busyKind()
+  if (busy === undefined) return
+  throw new Error(busy === 'compaction'
+    ? '上下文正在压缩，请等它结束再切换会话。'
+    : '当前回合仍在进行，请先停止再切换会话。')
 }
 
 async function applySwitch(

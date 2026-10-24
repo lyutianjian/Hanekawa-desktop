@@ -186,6 +186,30 @@ export class MessageQueue implements SteerSource {
     })
   }
 
+  /**
+   * Retires a queued message the log no longer proves was consumed.
+   *
+   * A rewind can cut away both the user record that stamped
+   * `sourceQueuedMessageId` and the `dequeue` written after it, while the
+   * original `enqueue` stays behind. By then the message is long gone from the
+   * live snapshot, so `consume`/`discard` would skip it and the next replay
+   * would resurrect it; this always writes the record.
+   */
+  async markConsumed(messageId: string): Promise<void> {
+    return this.serialize(async () => {
+      await this.persist(this.sessionId, {
+        id: randomUUID(),
+        type: 'message_queue',
+        operation: 'dequeue',
+        messageId,
+        createdAt: new Date().toISOString(),
+      })
+      if (this.snapshot.some((message) => message.id === messageId)) {
+        this.replaceSnapshot(this.snapshot.filter((message) => message.id !== messageId))
+      }
+    })
+  }
+
   /** Drops several messages, one `dequeue` record per id still present. */
   async discard(ids: readonly string[]): Promise<void> {
     return this.serialize(async () => {

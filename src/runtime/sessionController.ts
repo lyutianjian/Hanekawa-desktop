@@ -207,6 +207,12 @@ export class SessionController {
   private pendingAcceptance: { messageId: string; notify: () => void } | undefined
 
   private streaming = false
+  /**
+   * `/compact` runs between turns, so it never raises `streaming`. Shared
+   * through {@link busyKind} with the session-switch guard, which must refuse
+   * while the compactor is rewriting the same session.
+   */
+  private compacting = false
   private usage: SessionUsage = createEmptySessionUsage()
   /**
    * What the current run has already folded into `usage.total` request by
@@ -267,6 +273,19 @@ export class SessionController {
   // --- pull state -----------------------------------------------------------
 
   getSnapshot = (): SessionControllerSnapshot => this.snapshot
+
+  /**
+   * What the lane is in the middle of, for callers that must not retarget it.
+   *
+   * `streaming` is raised before `prepare` awaits and before any I/O, so this
+   * covers the file-snapshot stage as well as the provider request; the
+   * distinction is kept at the caller, which only needs "not now".
+   */
+  busyKind(): 'turn' | 'compaction' | undefined {
+    if (this.streaming) return 'turn'
+    if (this.compacting) return 'compaction'
+    return undefined
+  }
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -361,7 +380,7 @@ export class SessionController {
         if (handoff) this.pendingAcceptance = { messageId, notify: handoff.onAccepted }
       },
       run: (signal) => loop.run(input, signal, messageId, runOverrides),
-      restore: (signal) => this.tryRestoreInterruptedPrompt(signal, messageId, input),
+      restore: (signal, sessionId) => this.tryRestoreInterruptedPrompt(signal, messageId, input, sessionId),
     })
   }
 
@@ -406,21 +425,36 @@ export class SessionController {
     start: Extract<SessionEvent, { type: 'turn-start' }>
     prepare?: () => Promise<void>
     run: (signal: AbortSignal) => Promise<AgentRunResult>
-    restore?: (signal: AbortSignal) => Promise<boolean>
+    restore?: (signal: AbortSignal, sessionId: string) => Promise<boolean>
   }): Promise<void> {
     const agentSession = this.getSession()
     const loop = agentSession.loop
     const { messageId } = turn.start
     const origin: TurnOrigin = turn.start.origin ?? 'user'
+    /**
+     * The session this turn belongs to, fixed at its start.
+     *
+     * A failure, a rollback or the usage settle may land after a retarget — the
+     * guard in `sessionSwitch.ts` makes that a bug rather than a race, but the
+     * record of what happened belongs to the session that ran, never to
+     * whichever session the controller happens to drive when the write happens.
+     */
+    const sessionId = this.session.id
     let failed = false
 
     this.emit(turn.start)
 
     this.streaming = true
+    // Registered before `prepare`, not after it: a Stop during the file
+    // snapshot has nothing to abort otherwise, and the snapshot must finish
+    // rather than be raced and left writing into the next turn's history.
+    const ac = new AbortController()
+    this.abortController = ac
     this.spinnerSubText = undefined
     this.turnOutputTokens = undefined
+    this.didRollback = false
+    this.loopStartMs = Date.now()
 
-    const ac = new AbortController()
     let completedResult: AgentRunResult | undefined
 
     // The `try` starts here rather than after the checkpoint so that *every*
@@ -435,16 +469,24 @@ export class SessionController {
       this.refreshFixedContext()
 
       await turn.prepare?.()
+      // Checked, not raced: a stop that arrived while the snapshot was being
+      // written must not start the provider, but the snapshot itself is left to
+      // finish instead of being abandoned into the next turn's history.
+      if (ac.signal.aborted) throw abortError(ac.signal.reason)
 
-      this.abortController = ac
-      this.didRollback = false
-      this.loopStartMs = Date.now()
       // Zeroed before the first request of this run, not after the last one: an
       // aborted or failed run never reaches the settle below, and a leftover
       // accumulator would be subtracted from the *next* run's total.
       this.runReportedUsage = createEmptyUsage()
       const result = await turn.run(ac.signal)
       completedResult = result
+      // A retarget is refused while this turn runs, so this can only be true if
+      // that guard was bypassed: the numbers still belong to the session that
+      // spent them, never to the one now in the controller.
+      if (this.session.id !== sessionId) {
+        this.publish()
+        return
+      }
       this.usage = {
         // Already live from `handleRequestUsage`; this is the settle, not the
         // first sighting. Falling back to what is there rather than to null
@@ -465,25 +507,25 @@ export class SessionController {
     } catch (err: unknown) {
       // The OpenAI SDK reports a cancelled request as `APIUserAbortError`, not `AbortError`.
       if (ac.signal.aborted || (err instanceof Error && (err.name === 'AbortError' || (err as Error & { aborted?: boolean }).aborted))) {
-        const restored = await turn.restore?.(ac.signal) ?? false
+        const restored = await turn.restore?.(ac.signal, sessionId) ?? false
         if (restored) {
           this.didRollback = true
         } else {
           this.emit({
             type: 'notice',
             level: 'system',
-            content: await formatInterruptMessage(this.store, this.session.id, messageId),
+            content: await formatInterruptMessage(this.store, sessionId, messageId),
           })
         }
       } else {
         failed = true
-        await this.recordTurnFailure(err, messageId, agentSession)
+        await this.recordTurnFailure(err, messageId, agentSession, sessionId)
       }
     } finally {
       this.emit({ type: 'active-model', model: loop.getActiveModel() })
 
       this.pendingAcceptance = undefined
-      this.abortController = null
+      if (this.abortController === ac) this.abortController = null
       this.lastToolUseIdByTool.clear()
       this.activeToolProgress.clear()
       this.subagentProgress.clear()
@@ -518,7 +560,12 @@ export class SessionController {
    * word for word: labelling those as an image problem would be a lie. A write
    * that fails must not hide the failure itself, so it falls back to a notice.
    */
-  private async recordTurnFailure(err: unknown, userMessageId: string, agentSession: AgentSession): Promise<void> {
+  private async recordTurnFailure(
+    err: unknown,
+    userMessageId: string,
+    agentSession: AgentSession,
+    sessionId: string,
+  ): Promise<void> {
     const active = agentSession.loop.getActiveModel()
     // After a fallback the runtime's endpoint is no longer the one that failed.
     const endpoint = active.modelKey === agentSession.modelKey ? agentSession.modelConfig.baseUrl : undefined
@@ -536,8 +583,10 @@ export class SessionController {
       createdAt: new Date().toISOString(),
     }
     try {
-      await this.store.appendRecord(this.session.id, record)
-      this.handleRecord(record)
+      await this.store.appendRecord(sessionId, record)
+      // The ledger belongs to whatever session the controller drives now; a
+      // failure from the session it just left must not enter it.
+      if (this.session.id === sessionId) this.handleRecord(record)
     } catch {
       this.emit({ type: 'notice', level: 'error', content: record.error })
     }
@@ -548,13 +597,18 @@ export class SessionController {
    * than waiting for the next request to report it.
    */
   async compact(instructions?: string): Promise<CompactCheckResult> {
-    const result = await this.getSession().loop.compact(instructions)
-    if (result.compacted) {
-      this.usage = { ...this.usage, total: addTokenUsage(this.usage.total, result.usage) }
-      this.usageAnchorRecordId = undefined
-      this.publish()
+    this.compacting = true
+    try {
+      const result = await this.getSession().loop.compact(instructions)
+      if (result.compacted) {
+        this.usage = { ...this.usage, total: addTokenUsage(this.usage.total, result.usage) }
+        this.usageAnchorRecordId = undefined
+        this.publish()
+      }
+      return result
+    } finally {
+      this.compacting = false
     }
-    return result
   }
 
   /** Hands a prompt that left the conversation back to the composer. */
@@ -1027,6 +1081,7 @@ export class SessionController {
     signal: AbortSignal,
     userMessageId: string,
     input: UserInput,
+    sessionId: string,
   ): Promise<boolean> {
     // A wake turn's reminders are not a draft to hand back, and dropping them
     // would lose the result they report.
@@ -1035,10 +1090,14 @@ export class SessionController {
     try {
       const records = await rollbackInterruptedPromptIfSynthetic({
         store: this.store,
-        sessionId: this.session.id,
+        sessionId,
         userMessageId,
       })
       if (!records) return false
+      // The rollback still happened on the session that ran. Rebuilding the
+      // controller — ledger, cache, transcript, draft — belongs to that session
+      // only; doing it after a switch would hand its records to the new one.
+      if (this.session.id !== sessionId) return false
 
       this.getSession().loop.invalidateRecordsCache()
       this.ledger.rebase(records)
@@ -1114,6 +1173,13 @@ export class SessionController {
   private emit(event: SessionEvent): void {
     for (const listener of [...this.eventListeners]) listener(event)
   }
+}
+
+function abortError(reason: unknown): Error {
+  const error = new Error('Aborted during turn preparation')
+  error.name = 'AbortError'
+  ;(error as Error & { reason?: unknown }).reason = reason
+  return error
 }
 
 function debugFileHistory(message: string): void {

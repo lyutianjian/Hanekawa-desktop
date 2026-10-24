@@ -138,7 +138,15 @@ export function createHostCommandContext(deps: HostCommandContextDeps): CommandC
     openEffortPicker: () => deps.emit({ kind: 'open-surface', surface: 'effort-picker' }),
     openProviderPanel: () => deps.emit({ kind: 'open-surface', surface: 'provider-panel' }),
     openBackgroundTasks: () => deps.emit({ kind: 'open-surface', surface: 'background-tasks' }),
-    openResumePicker: () => deps.emit({ kind: 'open-surface', surface: 'resume-picker' }),
+    openResumePicker: () => {
+      // The switch itself refuses while a turn runs; the picker would only lead
+      // the user to a choice that fails, so say why here.
+      if (controller.busyKind() !== undefined) {
+        deps.emit({ kind: 'write-line', text: '当前会话仍在执行任务，请先停止再切换会话。', tone: 'error' })
+        return
+      }
+      deps.emit({ kind: 'open-surface', surface: 'resume-picker' })
+    },
     openRewindPanel: () => deps.emit({ kind: 'open-surface', surface: 'rewind-panel' }),
 
     clearMessages: () => deps.startNewSession(),

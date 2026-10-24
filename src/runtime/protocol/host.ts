@@ -314,6 +314,13 @@ export class SessionHost implements CoordinationLaneControl {
   /** A pump run has taken a message but not finished handing it off. See `canPumpQueue`. */
   private pumping = false
   /**
+   * How many rewinds are between their file cut and their replay. The queue
+   * must not move in that window: the cut can leave an `enqueue` whose
+   * `dequeue` it removed, and pumping it would send a message the compensation
+   * is about to retire.
+   */
+  private queuePauseDepth = 0
+  /**
    * The queued message the runtime refused, and the runtime that refused it.
    *
    * Paired with the `AgentSession` rather than the model key so *any* runtime
@@ -642,7 +649,7 @@ export class SessionHost implements CoordinationLaneControl {
     if (this.disposed) return
     const state = {
       pending: this.messages.getSnapshot().length,
-      running: this.pumping,
+      running: this.pumping || this.queuePauseDepth > 0,
       turnActive: this.controller.getSnapshot().isStreaming,
       uiBlocked: this.pendingKinds.size > 0 || !this.runtimeSlot.current,
       headMessageId: this.messages.peek()?.id,
@@ -959,36 +966,62 @@ export class SessionHost implements CoordinationLaneControl {
       case 'restore-code':
         return this.controller.getFileHistoryService().rewindTo(command.messageId)
 
-      case 'truncate-session': {
-        const target = (await this.project.store.loadRecords(this.session.id)).find(
-          (record) => record.type === 'message' && record.role === 'user' && record.id === command.messageId,
-        )
-        const result = await this.project.store.truncateBeforeMessage(this.session.id, command.messageId)
-        // Thrown rather than reported: a rewind that silently did nothing would
-        // leave the caller showing a transcript the file no longer matches.
-        if (!result.success) throw new Error(result.error ?? 'Failed to truncate session')
-        const records = await this.afterRewind()
-        // The cut removed the prompt itself; hand it back to edit and resend.
-        if (target?.type === 'message' && !isSystemReminderBlock(target.content)) {
-          this.controller.restoreInput(target.displayContent ?? target.content, target.images)
-        }
-        return withToolDisplays({ records }, this.memoryDir) satisfies WireRewindResult
-      }
-
-      case 'summarize-rewind': {
-        const loaded = await this.project.store.loadRecordsWithDiagnostics(this.session.id)
-        const rewrite = await buildRewindSummaryRewrite({
-          records: loaded.records,
-          targetMessageId: command.messageId,
-          decision: command.decision,
-          // Goes through `AgentLoop.enqueue`, the same single in-flight slot as
-          // `run()`. Sent mid-turn it waits for that turn to finish, so this
-          // reply can be arbitrarily slow; nothing about it is a fast path.
-          summarize: (records) => this.runtimeSlot.requireCurrent().loop.summarizeRecordsForRewind(records),
+      case 'truncate-session':
+        return this.whileQueuePaused(async () => {
+          const loaded = await this.project.store.loadRecords(this.session.id)
+          const target = loaded.find(
+            (record) => record.type === 'message' && record.role === 'user' && record.id === command.messageId,
+          )
+          const result = await this.project.store.truncateBeforeMessage(this.session.id, command.messageId)
+          // Thrown rather than reported: a rewind that silently did nothing would
+          // leave the caller showing a transcript the file no longer matches.
+          if (!result.success) throw new Error(result.error ?? 'Failed to truncate session')
+          // After the cut, because the cut may be why the proof is gone: a queued
+          // message's user record carried `sourceQueuedMessageId` and its
+          // `dequeue` followed it, while the `enqueue` came before both. Writing
+          // this before the cut would cut it away too.
+          if (target?.type === 'message' && target.sourceQueuedMessageId) {
+            await this.messages.markConsumed(target.sourceQueuedMessageId)
+          }
+          const records = await this.afterRewind()
+          // The cut removed the prompt itself; hand it back to edit and resend.
+          if (target?.type === 'message' && !isSystemReminderBlock(target.content)) {
+            this.controller.restoreInput(target.displayContent ?? target.content, target.images)
+          }
+          return withToolDisplays({ records }, this.memoryDir) satisfies WireRewindResult
         })
-        await this.project.store.replaceRecords(this.session.id, rewrite.nextRecords)
-        return withToolDisplays({ records: await this.afterRewind() }, this.memoryDir) satisfies WireRewindResult
-      }
+
+      case 'summarize-rewind':
+        return this.whileQueuePaused(async () => {
+          const loaded = await this.project.store.loadRecordsWithDiagnostics(this.session.id)
+          const target = loaded.records.find(
+            (record) => record.type === 'message' && record.role === 'user' && record.id === command.messageId,
+          )
+          const rewrite = await buildRewindSummaryRewrite({
+            records: loaded.records,
+            targetMessageId: command.messageId,
+            decision: command.decision,
+            // Goes through `AgentLoop.enqueue`, the same single in-flight slot as
+            // `run()`. Sent mid-turn it waits for that turn to finish, so this
+            // reply can be arbitrarily slow; nothing about it is a fast path.
+            summarize: (records) => this.runtimeSlot.requireCurrent().loop.summarizeRecordsForRewind(records),
+          })
+          // `summarize-from-here` cuts the target's user record but keeps the
+          // `enqueue` that precedes it, so without this the queue would replay
+          // the target as unsent. The other decision keeps the user record (and
+          // with it the proof), so it needs nothing.
+          if (command.decision === 'summarize-from-here' && target?.type === 'message' && target.sourceQueuedMessageId) {
+            rewrite.nextRecords.push({
+              id: randomUUID(),
+              type: 'message_queue',
+              operation: 'dequeue',
+              messageId: target.sourceQueuedMessageId,
+              createdAt: new Date().toISOString(),
+            })
+          }
+          await this.project.store.replaceRecords(this.session.id, rewrite.nextRecords)
+          return withToolDisplays({ records: await this.afterRewind() }, this.memoryDir) satisfies WireRewindResult
+        })
 
       case 'set-model': {
         const effort = this.applyModel(command.modelKey)
@@ -1367,6 +1400,23 @@ export class SessionHost implements CoordinationLaneControl {
       },
       emit: this.emitCommandEffect,
     })
+  }
+
+  /**
+   * Holds the queue across a rewind's cut, compensation and replay.
+   *
+   * A depth rather than a flag, and paused rather than cancelled: two rewinds
+   * may overlap, and an in-flight hand-off has already been accepted — only the
+   * *next* one must wait. The tail re-check is what finally releases them.
+   */
+  private async whileQueuePaused<T>(operation: () => Promise<T>): Promise<T> {
+    this.queuePauseDepth += 1
+    try {
+      return await operation()
+    } finally {
+      this.queuePauseDepth -= 1
+      if (this.queuePauseDepth === 0) this.pumpQueue()
+    }
   }
 
   /**
