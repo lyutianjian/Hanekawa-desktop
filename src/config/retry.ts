@@ -199,35 +199,88 @@ export function calculateRetryDelay(
   return calculateDelay(attempt, baseDelayMs, maxDelayMs, jitterFactor)
 }
 
-/**
- * Classify a thrown error into a retry category. The status field comes from
- * Anthropic/OpenAI SDK errors; the message-fallback handles cases where the
- * SDK doesn't set status (network errors, stream timeouts).
- */
-export function classifyError(error: unknown): RetryErrorCategory {
-  if (!(error instanceof Error)) return 'unknown'
-  // SDK network failures and timeouts ("Connection error.", "Request timed out.") carry no status.
-  if (error instanceof OpenAI.APIConnectionError || error instanceof Anthropic.APIConnectionError) return 'transient'
+// The codes the message fallback always covered; read from `error.code` so an
+// SDK error with an empty message still reads as a dropped connection.
+const TRANSIENT_CODES = new Set(['ECONNRESET', 'ECONNREFUSED', 'EPIPE'])
 
-  const status = (error as Error & { status?: number }).status
+/**
+ * A status token only counts when the message names it as a status — a bare
+ * number in an error text is usually a token count or a duration, and the
+ * number inside a larger word ("5290", "215290") is not a status at all.
+ */
+const MESSAGE_STATUS_TOKEN =
+  /(?:^|\b(?:http(?:\s+status)?|status|statuscode|code|error|got|received|returned|responded(?:\s+with)?)\b\s*[:=]?\s*|\()(\d{3})\b/i
+
+function structuredStatus(error: Error): number | undefined {
+  const candidate = error as Error & { status?: unknown; statusCode?: unknown }
+  for (const value of [candidate.status, candidate.statusCode]) {
+    if (typeof value === 'number' && Number.isInteger(value) && value >= 100 && value < 600) return value
+  }
+  return undefined
+}
+
+function categoryForStatus(status: number): RetryErrorCategory | undefined {
   if (status === 401 || status === 403) return 'auth'
   if (status === 429) return 'rate_limit'
   if (status === 529) return 'overload'
-  if (status !== undefined && status >= 500 && status < 600) return 'server_error'
+  // A request timeout is the one 4xx that means "ask again".
+  if (status === 408) return 'transient'
+  if (status >= 500 && status < 600) return 'server_error'
+  if (status >= 400 && status < 500) return 'unknown'
+  return undefined
+}
+
+function messageStatus(message: string): number | undefined {
+  const match = MESSAGE_STATUS_TOKEN.exec(message)
+  if (!match) return undefined
+  const status = Number(match[1])
+  return status >= 100 && status < 600 ? status : undefined
+}
+
+function networkCode(error: Error): string | undefined {
+  const direct = (error as { code?: unknown }).code
+  if (typeof direct === 'string') return direct
+  const cause = (error as { cause?: { code?: unknown } }).cause
+  return typeof cause?.code === 'string' ? cause.code : undefined
+}
+
+/**
+ * Classify a thrown error into a retry category. A structured status from the
+ * Anthropic/OpenAI SDK is authoritative and is never overruled by numbers or
+ * words in the message: a 400 "prompt is too long: 215290 tokens" is a failed
+ * request, not an overload, and "could not generate" is not a rate limit.
+ * Text rules run only when the error carries no status, and they match a
+ * status token or a real limit phrase rather than any digit or the "rate"
+ * inside "generate".
+ */
+export function classifyError(error: unknown): RetryErrorCategory {
+  if (!(error instanceof Error)) return 'unknown'
+  // A cancellation is the caller's decision, not a transient fault. The SDKs'
+  // abort errors carry no status and only the message "Request was aborted."
+  if (error.name === 'AbortError'
+    || error instanceof OpenAI.APIUserAbortError
+    || error instanceof Anthropic.APIUserAbortError) {
+    return 'unknown'
+  }
+  // SDK network failures and timeouts ("Connection error.", "Request timed out.") carry no status.
+  if (error instanceof OpenAI.APIConnectionError || error instanceof Anthropic.APIConnectionError) return 'transient'
+
+  const status = structuredStatus(error)
+  if (status !== undefined) return categoryForStatus(status) ?? 'unknown'
+
+  const code = networkCode(error)?.toUpperCase()
+  if (code !== undefined && TRANSIENT_CODES.has(code)) return 'transient'
 
   const msg = error.message.toLowerCase()
-  // Order matters: 401/403 should be unambiguous, but if status was missing
-  // and the message clearly indicates auth, treat it as auth.
-  if (msg.includes('401') || msg.includes('unauthorized')) return 'auth'
-  if (msg.includes('403') || msg.includes('forbidden')) return 'auth'
-  if (msg.includes('overload') || msg.includes('529')) return 'overload'
-  if (msg.includes('rate') || msg.includes('429')) return 'rate_limit'
-  if (msg.includes('timeout')) return 'transient'
+  const msgStatus = messageStatus(msg)
+  if (msgStatus !== undefined) return categoryForStatus(msgStatus) ?? 'unknown'
+
+  if (msg.includes('unauthorized') || msg.includes('forbidden')) return 'auth'
+  if (msg.includes('overload')) return 'overload'
+  if (/\brate[ _-]?limit/.test(msg) || msg.includes('too many requests')) return 'rate_limit'
+  if (msg.includes('timeout') || msg.includes('timed out')) return 'transient'
   if (msg.includes('stream ended')) return 'transient'
   if (msg.includes('econnreset') || msg.includes('econnrefused') || msg.includes('epipe')) return 'transient'
-  if (msg.includes('500') || msg.includes('502') || msg.includes('503') || msg.includes('504')) {
-    return 'server_error'
-  }
   return 'unknown'
 }
 

@@ -61,6 +61,65 @@ test('classifyError returns unknown for non-Error and unmatched messages', () =>
   assert.equal(classifyError(new Error('something weird happened')), 'unknown')
 })
 
+test('classifyError trusts a structured status over numbers in the message', () => {
+  const cases: Array<[Error & { status?: number }, RetryErrorCategory]> = [
+    [httpError(400, 'prompt is too long: 215290 tokens > 150000 maximum'), 'unknown'],
+    [httpError(400, 'could not generate a response'), 'unknown'],
+    [httpError(400, 'invalid request: rate limit setting is out of range'), 'unknown'],
+    [httpError(413, 'request too large: 160000 tokens'), 'unknown'],
+    [httpError(404, 'model not found'), 'unknown'],
+    // An explicit 4xx stays non-retryable even when its wording sounds transient.
+    [httpError(400, 'upstream is overloaded'), 'unknown'],
+    [httpError(400, 'Read timeout'), 'unknown'],
+    [httpError(429, 'requests per minute exceeded'), 'rate_limit'],
+    // 408 is the one 4xx that a retry can fix, and it already was retried when
+    // the message said "timed out".
+    [httpError(408, 'Request timed out.'), 'transient'],
+    [httpError(500, 'internal error'), 'server_error'],
+    [httpError(529, 'overloaded'), 'overload'],
+  ]
+  for (const [error, expected] of cases) {
+    assert.equal(classifyError(error), expected, `for ${error.status} ${error.message}`)
+  }
+})
+
+test('classifyError message rules match whole status tokens and real limit phrases only', () => {
+  const cases: Array<[Error, RetryErrorCategory]> = [
+    // Numbers inside a larger token must never be read as an HTTP status.
+    [new Error('usage was 215290 tokens'), 'unknown'],
+    [new Error('max output 150000 was exceeded'), 'unknown'],
+    [new Error('upstream reported 5290'), 'unknown'],
+    // "generate"/"rate" substrings must not imply rate limiting.
+    [new Error('could not generate output'), 'unknown'],
+    [new Error('generated 120 items'), 'unknown'],
+    [new Error('rate limit exceeded'), 'rate_limit'],
+    [new Error('ratelimit_exceeded'), 'rate_limit'],
+    [new Error('Too many requests, please slow down'), 'rate_limit'],
+    [new Error('got 429 from upstream'), 'rate_limit'],
+    [new Error('got 529 from server'), 'overload'],
+    [new Error('server is overloaded'), 'overload'],
+    [new Error('upstream returned 503'), 'server_error'],
+    [new Error('connect ECONNREFUSED 127.0.0.1:443'), 'transient'],
+    [new Error('Unauthorized: bad key'), 'auth'],
+  ]
+  for (const [error, expected] of cases) {
+    assert.equal(classifyError(error), expected, `for ${error.message}`)
+  }
+})
+
+test('classifyError reads a connection code even without a message', () => {
+  const error = Object.assign(new Error(''), { code: 'ECONNRESET' })
+  assert.equal(classifyError(error), 'transient')
+})
+
+test('classifyError treats a user cancellation as non-retryable', () => {
+  const aborted = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })
+  assert.equal(classifyError(aborted), 'unknown')
+  // The SDKs' own abort error carries no status and only the message "Request was aborted."
+  assert.equal(classifyError(new OpenAI.APIUserAbortError()), 'unknown')
+  assert.equal(classifyError(new Anthropic.APIUserAbortError()), 'unknown')
+})
+
 // ---- isRetryableError (back-compat) --------------------------------------
 
 test('isRetryableError still reports retryable categories as true', () => {
@@ -283,6 +342,26 @@ test('withRetry never retries unknown errors', async () => {
   await assert.rejects(
     () => withRetry(op, { baseDelayMs: 0, jitterFactor: 0, maxDelayMs: 0 }),
     /mystery/,
+  )
+  assert.equal(calls.length, 1)
+})
+
+test('withRetry makes one request for an oversized 400 and never triggers fallback', async () => {
+  const error = httpError(400, 'prompt is too long: 215290 tokens > 150000 maximum')
+  const { op, calls } = makeOperation([error, error, error])
+  await assert.rejects(
+    () => withRetry(op, { maxRetries: 10, baseDelayMs: 0, jitterFactor: 0, maxDelayMs: 0 }),
+    (err: unknown) => err === error,
+  )
+  assert.equal(calls.length, 1)
+})
+
+test('withRetry does not retry a request the caller cancelled mid-flight', async () => {
+  const aborted = Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })
+  const { op, calls } = makeOperation([aborted, aborted])
+  await assert.rejects(
+    () => withRetry(op, { maxRetries: 10, baseDelayMs: 0, jitterFactor: 0, maxDelayMs: 0 }),
+    (err: Error) => err.name === 'AbortError',
   )
   assert.equal(calls.length, 1)
 })
