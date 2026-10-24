@@ -27,10 +27,10 @@ export interface FileLockOptions {
    * Fail instead of running the operation without the lock.
    *
    * The default keeps the lock advisory: a session write must not be wedged
-   * forever by a peer that crashed or lost the file, and the writes it guards
-   * are appends and tmp+rename, which survive an interleaving. A caller that
-   * replaces a whole file must not take that risk — running unlocked there
-   * silently drops whatever a peer wrote in between — so it asks to fail.
+   * forever behind a peer that crashed and left its lock file behind. A caller
+   * whose operation replaces or derives from a whole file cannot accept that
+   * degradation — running unlocked there silently drops whatever a peer wrote
+   * in between — so it asks to fail.
    */
   requireLock?: boolean
 }
@@ -78,12 +78,11 @@ export async function withFileLock<T>(
 /**
  * Returns whether the lock is actually held, and why not when it is not.
  *
- * `timeout` means a live peer holds it; `unavailable` means the lock file
- * cannot be created at all (read-only directory, a file where one has to be).
- * Callers that do not require the lock proceed either way: blocking a session
- * write forever because some other process is wedged is worse than the
- * interleaving we are guarding against, and their writes are appends or
- * tmp+rename.
+ * `timeout` means a live peer holds it; `unavailable` means a lock file could
+ * not be created and owned (read-only directory, a file where one has to be,
+ * an owner block that did not land). Callers that do not require the lock
+ * proceed either way: blocking a session write forever because some other
+ * process is wedged is worse than the interleaving we are guarding against.
  */
 async function acquire(
   lockPath: string,
@@ -112,7 +111,7 @@ async function acquire(
 }
 
 async function tryCreate(lockPath: string): Promise<'acquired' | 'busy' | 'unavailable'> {
-  let handle
+  let handle: Awaited<ReturnType<typeof open>>
   try {
     handle = await open(lockPath, 'wx', 0o600)
   } catch (error) {
@@ -121,15 +120,42 @@ async function tryCreate(lockPath: string): Promise<'acquired' | 'busy' | 'unava
     return 'unavailable'
   }
 
+  const owner: LockOwner = { pid: process.pid, host: hostname(), acquiredAt: Date.now() }
+  const content = JSON.stringify(owner)
+  let created: { dev: number; ino: number } | undefined
   try {
-    const owner: LockOwner = { pid: process.pid, host: hostname(), acquiredAt: Date.now() }
-    await handle.writeFile(JSON.stringify(owner), 'utf8')
+    const stats = await handle.stat()
+    created = { dev: stats.dev, ino: stats.ino }
+    await handle.writeFile(content, 'utf8')
+    // A short write would leave the owner block unreadable, and staleness then
+    // sees no live pid and steals a lock this process is still holding.
+    if ((await handle.stat()).size !== Buffer.byteLength(content)) {
+      throw new Error(`File lock owner was not written in full: ${lockPath}`)
+    }
+    await handle.close()
+    return 'acquired'
   } catch {
-    // The file is ours either way; the owner block only helps staleness checks.
+    // Owning the file is not holding the lock: the owner block is what makes
+    // it ours. Close it, drop the file only while the path is still the one
+    // created here, and report unavailable rather than claim a lock.
+    await discardCreatedLock(lockPath, handle, created)
+    return 'unavailable'
+  }
+}
+
+async function discardCreatedLock(
+  lockPath: string,
+  handle: Awaited<ReturnType<typeof open>>,
+  created: { dev: number; ino: number } | undefined,
+): Promise<void> {
+  try {
+    if (!created) return
+    const current = await stat(lockPath).catch(() => undefined)
+    if (!current || current.dev !== created.dev || current.ino !== created.ino) return
+    await unlink(lockPath).catch(() => {})
   } finally {
     await handle.close().catch(() => {})
   }
-  return 'acquired'
 }
 
 /** Removes a lock whose holder is demonstrably gone. */

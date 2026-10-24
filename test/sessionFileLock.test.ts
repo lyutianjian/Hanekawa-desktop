@@ -1,8 +1,10 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { fork } from 'node:child_process'
+import fs from 'node:fs'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -223,5 +225,98 @@ test('a session append waits for the file lock instead of writing unlocked', asy
     assert.ok((await store.loadRecords(session.id)).some((record) => record.id === 'blocked'))
   } finally {
     await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+/**
+ * Makes the next `open` return a file handle whose owner block does not land.
+ * The lock file itself is created for real, which is the state a failed write
+ * leaves behind.
+ */
+function stubOwnerPersistence(mode: 'write-throws' | 'partial-write' | 'close-throws'): () => void {
+  const realOpen = fs.promises.open
+  fs.promises.open = (async (file: string, flags: string, fileMode: number) => {
+    const handle = await realOpen(file, flags, fileMode)
+    return {
+      stat: () => handle.stat(),
+      writeFile: async (data: string) => {
+        if (mode === 'partial-write') await handle.writeFile(data.slice(0, 5), 'utf8')
+        if (mode === 'close-throws') {
+          await handle.writeFile(data, 'utf8')
+          return
+        }
+        throw new Error('owner write failed')
+      },
+      close: async () => {
+        await handle.close()
+        if (mode === 'close-throws') throw new Error('handle close failed')
+      },
+    }
+  }) as unknown as typeof fs.promises.open
+  syncBuiltinESMExports()
+  return () => {
+    fs.promises.open = realOpen
+    syncBuiltinESMExports()
+  }
+}
+
+test('an owner block that did not land is not a held lock, and leaves no file', async () => {
+  for (const mode of ['write-throws', 'partial-write'] as const) {
+    const dir = await lockDir()
+    const lockPath = path.join(dir, 'target.lock')
+    const restore = stubOwnerPersistence(mode)
+    try {
+      let ran = false
+      await assert.rejects(
+        withFileLock(lockPath, async () => { ran = true }, { requireLock: true }),
+        (error: unknown) => error instanceof FileLockError && error.reason === 'unavailable',
+        `${mode}: strict acquisition must fail`,
+      )
+      assert.equal(ran, false, `${mode}: the operation must not run`)
+      assert.equal(existsSync(lockPath), false, `${mode}: no ownerless lock file may be left`)
+    } finally {
+      restore()
+    }
+
+    let ranAfter = false
+    await withFileLock(lockPath, async () => { ranAfter = true }, { requireLock: true })
+    assert.equal(ranAfter, true, `${mode}: the path is usable once owner persistence works`)
+    assert.equal(existsSync(lockPath), false, `${mode}: the retry releases normally`)
+  }
+})
+
+test('an unclosable lock handle is not reported as held', async () => {
+  const dir = await lockDir()
+  const lockPath = path.join(dir, 'target.lock')
+  const restore = stubOwnerPersistence('close-throws')
+  try {
+    let ran = false
+    await assert.rejects(
+      withFileLock(lockPath, async () => { ran = true }, { requireLock: true }),
+      (error: unknown) => error instanceof FileLockError && error.reason === 'unavailable',
+    )
+    assert.equal(ran, false)
+    assert.equal(existsSync(lockPath), false, 'the half-owned lock file is removed')
+  } finally {
+    restore()
+  }
+
+  let ranAfter = false
+  await withFileLock(lockPath, async () => { ranAfter = true }, { requireLock: true })
+  assert.equal(ranAfter, true)
+  assert.equal(existsSync(lockPath), false)
+})
+
+test('the default policy still runs when the owner block cannot be written', async () => {
+  const dir = await lockDir()
+  const lockPath = path.join(dir, 'target.lock')
+  const restore = stubOwnerPersistence('write-throws')
+  try {
+    let ran = false
+    await withFileLock(lockPath, async () => { ran = true })
+    assert.equal(ran, true, 'advisory callers keep their bounded degradation')
+    assert.equal(existsSync(lockPath), false, 'cleanup is the same for both policies')
+  } finally {
+    restore()
   }
 })
