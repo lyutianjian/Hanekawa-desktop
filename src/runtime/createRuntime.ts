@@ -5,10 +5,10 @@ import { composeProjectContext, readUserInstructions } from '../services/context
 import type { ConfigService, ModelConfig, ThinkingConfig } from '../config/service.js'
 import type { EffortLevel, EffortValue } from '../config/effort.js'
 import type { RoutingRole } from '../config/routing.js'
-import { coordinationSettings, validateSettings, type MyAgentSettings } from '../config/settings.js'
+import { validateSettings, type MyAgentSettings } from '../config/settings.js'
 import { COORDINATOR_ROLE_PROMPT } from '../prompts/coordinatorPrompt.js'
 import { CoordinationStore } from '../services/coordination/threadStore.js'
-import { formatCoordinationUpdate, formatCoordinatorRestore } from './coordination/messages.js'
+import { formatCoordinationUpdate, formatCoordinatorRestore, formatThreadTaskRestore } from './coordination/messages.js'
 import { AgentLoop, type ActiveModelRuntime } from '../harness/loop.js'
 import { ContextBuilder } from '../harness/contextBuilder.js'
 import { priceUsage } from '../harness/usage.js'
@@ -351,11 +351,12 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     })
 
     // Only the coordinator lane reads the board; a superseded coordinator
-    // (the pointer moved on) consumes nothing.
-    const coordStore = role === 'coordinator'
-      ? new CoordinationStore(cwd, { lifecycle: () => coordinationSettings(getSettings()) })
+    // (the pointer moved on) consumes nothing. A thread reads its own row, for
+    // the task it must pick up again after a compaction summarized it away.
+    const coordStore = role === 'coordinator' || role === 'thread'
+      ? new CoordinationStore(cwd, { lifecycle: () => config.getCoordination() })
       : undefined
-    const coordinatorHooks = coordStore
+    const coordinationHooks = coordStore && role === 'coordinator'
       ? {
           rolePrompt: COORDINATOR_ROLE_PROMPT,
           compactPromptVariant: 'coordinator' as const,
@@ -375,7 +376,24 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
             return text
           },
         }
-      : {}
+      : coordStore && role === 'thread'
+        ? {
+            compactPromptVariant: 'thread' as const,
+            taskRestore: async (input: { lastInstruction?: { text: string; recordId: string } }) => {
+              const { threads } = await coordStore.read()
+              const thread = threads.find((row) => row.sessionId === runtimeSession.id)
+              if (!thread) return undefined
+              return formatThreadTaskRestore({
+                threadId: thread.threadId,
+                title: thread.title,
+                brief: thread.brief,
+                ...(thread.background ? { background: thread.background } : {}),
+                ...(thread.worktree ? { branch: thread.worktree.branch } : {}),
+                ...(input.lastInstruction ? { lastInstruction: input.lastInstruction } : {}),
+              })
+            },
+          }
+        : {}
 
     const toolContext: ToolContext = {
       cwd: workingDir,
@@ -404,7 +422,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     void rememberShownFiles([projectContext, snapshot.memoryIndex ?? ''].join('\n\n'), toolContext)
 
     loop = new AgentLoop({
-      ...coordinatorHooks,
+      ...coordinationHooks,
       provider: targetProvider,
       model: targetModelConfig.model,
       modelKey,

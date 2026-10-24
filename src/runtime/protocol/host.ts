@@ -23,7 +23,8 @@ import { readGitBranch } from '../gitBranch.js'
 import { listGitBranches, switchGitBranch } from '../gitBranches.js'
 import { applyPermissionModeTransition } from '../permissionMode.js'
 import { buildModelPickerOptions } from '../modelPicker.js'
-import { refreshRuntimeSlot, resolveRuntimeModelKeyAfterConfigChange, type ProviderConfigChangeScope } from '../providerRuntime.js'
+import { refreshRuntimeSlot, resolveRuntimeSelectionAfterConfigChange, type ProviderConfigChangeScope } from '../providerRuntime.js'
+import { logSessionSelection } from '../sessionSelection.js'
 import { MISSING_MODEL_ISSUE } from '../errors.js'
 import { canPumpQueue, canWakeForNotifications, handOffQueuedMessage, notificationInput } from '../queuePump.js'
 import { projectDisplayName, projectRootKey } from '../projectDirectory.js'
@@ -989,15 +990,31 @@ export class SessionHost implements CoordinationLaneControl {
         return withToolDisplays({ records: await this.afterRewind() }, this.memoryDir) satisfies WireRewindResult
       }
 
-      case 'set-model':
-        return { modelKey: command.modelKey, effort: this.applyModel(command.modelKey) }
+      case 'set-model': {
+        const effort = this.applyModel(command.modelKey)
+        // A coordination session's pick outlives the lane: it is what reopening
+        // and an app restart resolve through. An ordinary session keeps its
+        // current behaviour — nothing is persisted, and the launch opens on the
+        // default model as it always did.
+        if (this.isCoordinationSession()) {
+          await this.project.store.updateCoordination(this.session.id, { modelOverride: command.modelKey })
+        }
+        return { modelKey: command.modelKey, effort }
+      }
 
       case 'set-effort': {
         const applied = this.runtimeSlot.setEffort(command.level)
         let persisted = false
         if (command.persist && isEffortLevel(applied)) {
           try {
-            await saveEffortLevel(applied)
+            // A coordination session's effort is its own pick; moving the
+            // global default from inside one thread would retarget every
+            // project.
+            if (this.isCoordinationSession()) {
+              await this.project.store.updateCoordination(this.session.id, { effortOverride: applied })
+            } else {
+              await saveEffortLevel(applied)
+            }
             persisted = true
           } catch {
             // Non-critical, and the live slot already took the change.
@@ -1247,6 +1264,12 @@ export class SessionHost implements CoordinationLaneControl {
     if (sessionSwitchBlocked(this.scope.role)) {
       throw new Error(`A ${this.scope.role} session cannot switch to another session`)
     }
+  }
+
+  /** A session whose model comes from a coordination role rather than the main model. */
+  private isCoordinationSession(): boolean {
+    const role = this.session.coordination?.role
+    return role === 'coordinator' || role === 'thread'
   }
 
   /** The `set-model` body, shared with `CoordinationLaneControl.setModel`. Returns the effort reapplied. */
@@ -1651,6 +1674,8 @@ export class SessionHost implements CoordinationLaneControl {
   refreshAfterConfigChange(options: {
     rebuild: boolean
     scope: ProviderConfigChangeScope
+    /** Re-apply the session's resolved effort (a coordination role's setting changed). */
+    refreshEffort?: boolean
   }): { rebuilt: boolean; modelKey: string | undefined } {
     const currentKey = this.runtimeSlot.current?.modelKey
     if (!options.rebuild) return { rebuilt: false, modelKey: currentKey }
@@ -1662,12 +1687,21 @@ export class SessionHost implements CoordinationLaneControl {
     }
     // Rebuilt here rather than asked of the client: that hooks are captured
     // at runtime-construction time is host trivia a renderer should not know.
-    const nextKey = resolveRuntimeModelKeyAfterConfigChange(this.project.config, currentKey, options.scope)
+    const selection = resolveRuntimeSelectionAfterConfigChange({
+      config: this.project.config,
+      currentModelKey: currentKey,
+      scope: options.scope,
+      session: this.session,
+      defaultEffort: this.project.initialEffort ?? this.project.configuredEffortLevel,
+    })
+    logSessionSelection(this.session, selection)
     refreshRuntimeSlot({
       config: this.project.config,
       runtimeSlot: this.runtimeSlot,
       createRuntime: this.scope.createRuntime,
-      modelKey: nextKey,
+      modelKey: selection.modelKey,
+      ...(selection.issue ? { issue: selection.issue } : {}),
+      ...(options.refreshEffort ? { effort: selection.effort } : {}),
       session: this.session,
       records: this.ledger.list(),
     })

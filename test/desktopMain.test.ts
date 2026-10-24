@@ -189,7 +189,17 @@ function fakeScope(): SessionScope {
 function fakeProject(cwd = '/tmp/fixture'): ProjectRuntime {
   return {
     cwd,
-    config: {} as never,
+    // The runtime snapshot resolves which rule chose the model, so the fake
+    // answers the four calls that path makes.
+    config: {
+      get: () => ({ models: {}, defaultModel: 'main' }),
+      getModel: () => ({ model: 'test-model' }),
+      resolveModelReference: (reference: string | undefined) => reference,
+      resolveModelKeyFor: () => 'main',
+      getRouting: () => ({ main: 'main' }),
+      resolveCoordinationModelKey: () => ({ modelKey: 'main' }),
+      getCoordination: () => ({ quietDays: 3, autoResolveDays: 7 }),
+    } as never,
     // Real, because `ProjectRuntime.commands` is what the host resolves slash
     // commands through and the cast at the bottom of this function would hide
     // a missing one until something actually ran `/help`.

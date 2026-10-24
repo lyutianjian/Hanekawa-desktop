@@ -5,7 +5,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test, { type TestContext } from 'node:test'
-import type { CoordinationSettings } from '../src/config/settings.js'
+import type { CoordinationDays } from '../src/config/coordination.js'
 import type { CoordinationLaneControl } from '../src/runtime/protocol/coordinationHost.js'
 import {
   CoordinationService,
@@ -48,7 +48,7 @@ async function setup(t: TestContext, options: { git?: boolean } = {}) {
   const lanes = new Map<string, FakeControl>()
   const opened: Array<{ sessionId: string; activate: boolean }> = []
   const notices: Array<{ title: string; body: string; sessionId: string }> = []
-  const settings: CoordinationSettings = { threadModel: 'thread-model' }
+  const days: CoordinationDays = { quietDays: 2 }
   const port: CoordinationPort = {
     storeFor: () => sessions,
     laneControl: (id) => lanes.get(id),
@@ -59,7 +59,7 @@ async function setup(t: TestContext, options: { git?: boolean } = {}) {
       return control
     },
     notify: (n) => { notices.push(n) },
-    settings: () => settings,
+    days: () => days,
   }
   const calls: string[] = []
   const engine: CoordinationEngineHooks = {
@@ -73,7 +73,7 @@ async function setup(t: TestContext, options: { git?: boolean } = {}) {
   const caller = { sessionId: coordinatorId, projectDir: cwd }
   const store = service.coordinationStore(cwd)
   const thread = async (id: string) => (await store.read()).threads.find((th) => th.threadId === id)!
-  return { cwd, git, sessions, lanes, port, engine, opened, notices, settings, calls, service, caller, store, thread, coordinatorId }
+  return { cwd, git, sessions, lanes, port, engine, opened, notices, days, calls, service, caller, store, thread, coordinatorId }
 }
 
 const request = { title: 'Fix the bug', brief: 'Fix it', background: 'b'.repeat(80), writesCode: false }
@@ -94,7 +94,10 @@ test('startThread in the shared directory sets the role before opening the lane'
   assert.equal(meta?.coordination?.workingDir, undefined)
   assert.deepEqual(s.opened, [{ sessionId: started.sessionId, activate: false }])
   const lane = s.lanes.get(started.sessionId)!
-  assert.deepEqual(lane.models, ['thread-model'])
+  // The model is resolved when the lane's runtime is built; the service must
+  // not open the lane and then patch a different model onto it.
+  assert.deepEqual(lane.models, [])
+  assert.equal(meta?.coordination?.modelOverride, undefined)
   assert.match(lane.enqueued[0]!, /Task:\nFix it/)
   assert.equal((await s.thread(started.threadId)).status, 'running')
   assert.deepEqual(s.calls, ['begin', 'end'])
@@ -260,10 +263,12 @@ test('ensureCoordinator creates once and recreates when the session is gone', as
   const next = await s.service.ensureCoordinator(s.cwd)
   assert.notEqual(next, s.coordinatorId)
   assert.equal(await s.store.getCoordinatorSessionId(), next)
-  s.settings.coordinatorModel = 'coord-model'
   await s.sessions.delete(next)
   const third = await s.service.ensureCoordinator(s.cwd)
-  assert.deepEqual(s.lanes.get(third)!.models, ['coord-model'])
+  assert.equal((await s.sessions.resolve(third))?.coordination?.role, 'coordinator')
+  // No model or effort setting forces a lane open any more: the model is
+  // resolved when the coordinator is actually opened.
+  assert.equal(s.lanes.get(third), undefined)
 })
 
 test('reseedCoordinator seeds a new session from the last summary and moves the pointer once', async (t) => {
@@ -340,16 +345,22 @@ test('onThreadsChanged fires on store writes until unsubscribed', async (t) => {
   assert.equal(seen.length, n)
 })
 
-test('coordinator and thread effort are applied with the model', async (t) => {
+test('opening a coordinator or thread lane applies no temporary pick', async (t) => {
   const s = await setup(t)
-  s.settings.threadEffort = 'low'
-  s.settings.coordinatorEffort = 'high'
   const started = await s.service.startThread(s.caller, request)
-  assert.deepEqual(s.lanes.get(started.sessionId)!.efforts, ['low'])
+  assert.deepEqual(s.lanes.get(started.sessionId)!.efforts, [])
   await s.store.setCoordinatorSessionId('gone')
   const fresh = await s.service.ensureCoordinator(s.cwd)
   assert.notEqual(fresh, s.coordinatorId)
-  assert.deepEqual(s.lanes.get(fresh)!.efforts, ['high'])
+  assert.equal(s.lanes.get(fresh), undefined)
+})
+
+test('an explicit thread model is recorded before the lane opens', async (t) => {
+  const s = await setup(t)
+  const started = await s.service.startThread(s.caller, { ...request, model: 'picked' })
+  const meta = await s.sessions.resolve(started.sessionId)
+  assert.equal(meta?.coordination?.modelOverride, 'picked')
+  assert.deepEqual(s.opened, [{ sessionId: started.sessionId, activate: false }])
 })
 
 test('a new coordinator starts nothing; startSurvey opens one survey thread and no coordinator turn', async (t) => {

@@ -29,7 +29,9 @@ export {
   nextPermissionMode,
   syncPlanModeManagerForPermissionModeChange,
 } from './permissionMode.js'
-export { resolveRuntimeModelKeyAfterConfigChange } from './providerRuntime.js'
+export { resolveRuntimeSelectionAfterConfigChange } from './providerRuntime.js'
+export { resolveSessionModelSelection } from './sessionSelection.js'
+export type { SessionModelSelection } from './sessionSelection.js'
 export type { ProviderConfigChangeScope } from './providerRuntime.js'
 export { activateModelKey, switchModel } from './modelSwitch.js'
 export type { ModelSwitchDeps } from './modelSwitch.js'

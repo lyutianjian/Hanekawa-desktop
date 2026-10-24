@@ -379,7 +379,7 @@ test('only the coordinator loop gets the role prompt and coordination hooks; a s
   const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
   const coordinator = await host.openScope(await coordinationSession(store, cwd, { role: 'coordinator' }))
   const thread = await host.openScope(await coordinationSession(store, cwd, { role: 'thread', threadId: 't1' }))
-  type Opts = { rolePrompt?: string; compactPromptVariant?: string; consumeCoordinationUpdate?: () => Promise<unknown>; coordinationRestore?: unknown }
+  type Opts = { rolePrompt?: string; compactPromptVariant?: string; consumeCoordinationUpdate?: () => Promise<unknown>; coordinationRestore?: unknown; taskRestore?: unknown }
   const optsOf = (r: AgentSession): Opts => (r.loop as unknown as { options: Opts }).options
   const coordRuntime = coordinator.createRuntime('main', coordinator.session)
   const threadRuntime = thread.createRuntime('main', thread.session)
@@ -390,13 +390,23 @@ test('only the coordinator loop gets the role prompt and coordination hooks; a s
   assert.equal(c.compactPromptVariant, 'coordinator')
   assert.equal(typeof c.consumeCoordinationUpdate, 'function')
   assert.equal(typeof c.coordinationRestore, 'function')
-  for (const r of [threadRuntime, normalRuntime]) {
-    const o = optsOf(r)
-    assert.equal(o.rolePrompt, undefined)
-    assert.equal(o.compactPromptVariant, undefined)
-    assert.equal(o.consumeCoordinationUpdate, undefined)
-    assert.equal(o.coordinationRestore, undefined)
-  }
+  assert.equal(c.taskRestore, undefined)
+
+  // A thread restores its own task, never the board.
+  const t = optsOf(threadRuntime)
+  assert.equal(t.rolePrompt, undefined)
+  assert.equal(t.compactPromptVariant, 'thread')
+  assert.equal(t.consumeCoordinationUpdate, undefined)
+  assert.equal(t.coordinationRestore, undefined)
+  assert.equal(typeof t.taskRestore, 'function')
+
+  // An ordinary session gets none of it.
+  const n = optsOf(normalRuntime)
+  assert.equal(n.rolePrompt, undefined)
+  assert.equal(n.compactPromptVariant, undefined)
+  assert.equal(n.consumeCoordinationUpdate, undefined)
+  assert.equal(n.coordinationRestore, undefined)
+  assert.equal(n.taskRestore, undefined)
 
   const coordStore = new CoordinationStore(cwd)
   await coordStore.setCoordinatorSessionId(coordinator.session.id)

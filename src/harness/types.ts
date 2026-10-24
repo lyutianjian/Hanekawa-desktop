@@ -174,8 +174,22 @@ export interface CompactBoundaryRecord {
   /**
    * The restore built when this boundary was consumed, stored verbatim so every
    * later request (and a resumed session) replays the same cached bytes.
+   * Boundaries written before the restore was split keep it whole and trimmable.
    */
   restoredContext?: string
+  /**
+   * The protected half of the restore: task/board continuity and the notice.
+   * A request never trims this while anything trimmable is left.
+   */
+  restoredContinuity?: string
+  /** The trimmable half: file, skill and tool-list bodies restored for continuity. */
+  restoredFiles?: string
+  /**
+   * What the summary continues, captured before the history was compacted — the
+   * latest real user or coordinator instruction, which outranks the task a
+   * thread was originally given.
+   */
+  continuation?: { lastInstruction?: { text: string; recordId: string } }
   createdAt: string
   turnId?: string
   /** Tool names discovered via ToolSearch before compaction — survives compaction. */
@@ -918,6 +932,12 @@ export interface AgentRunResult {
 export interface ContextChatMessage {
   kind: 'message'
   message: ChatMessage
+  /**
+   * Load-bearing context — a compaction summary, the continuation restored with
+   * it. The budget keeps it while any trimmable item is left, because dropping
+   * it silently changes what the model is working on.
+   */
+  pinned?: boolean
 }
 
 export interface ContextToolUse {

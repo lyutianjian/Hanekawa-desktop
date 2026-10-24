@@ -2051,12 +2051,13 @@ test('agent loop consumes pending post-compact restore after a successful build'
     name: 'fake',
     async createMessage(request) {
       const contextItems = request.contextItems ?? []
-      assert.ok(contextItems.some(
-        (item) => item.kind === 'message'
-          && item.message.id === 'compact-1:restore'
-          && !item.message.transient
-          && /# restoredSkill debugging\nDebug skill body/.test(item.message.content),
-      ))
+      const restoreItem = (id: string) => contextItems.find((item) => item.kind === 'message' && item.message.id === id)
+      // The notice and the file bodies are separate items: one is protected,
+      // the other gives way first under budget pressure.
+      assert.ok(restoreItem('compact-1:restore'))
+      const files = restoreItem('compact-1:restore-files')
+      assert.ok(files && files.kind === 'message' && !files.message.transient)
+      assert.match(files.kind === 'message' ? files.message.content : '', /# restoredSkill debugging\nDebug skill body/)
       return { content: 'done', toolCalls: [] }
     },
   }
@@ -2083,7 +2084,7 @@ test('agent loop consumes pending post-compact restore after a successful build'
   const boundary = records.find((record) => record.id === 'compact-1')
   assert.equal(boundary?.type, 'compact_boundary')
   assert.equal(boundary?.type === 'compact_boundary' ? boundary.postCompactRestore : undefined, 'consumed')
-  assert.match(boundary?.type === 'compact_boundary' ? boundary.restoredContext ?? '' : '', /Debug skill body/)
+  assert.match(boundary?.type === 'compact_boundary' ? boundary.restoredFiles ?? '' : '', /Debug skill body/)
 })
 
 test('compact() summarizes between turns and the next turn starts from the boundary', async () => {
@@ -2176,7 +2177,7 @@ test('compactBeforeSend forces compaction on iteration 0 with the variant, roleP
   const boundary = forced.records.find((record) => record.type === 'compact_boundary')
   assert.equal(boundary?.type, 'compact_boundary')
   assert.match(boundary?.type === 'compact_boundary' ? boundary.summary : '', /forced summary/)
-  assert.match(boundary?.type === 'compact_boundary' ? boundary.restoredContext ?? '' : '', /^<system-reminder>\nBOARD: t1 running/)
+  assert.match(boundary?.type === 'compact_boundary' ? boundary.restoredContinuity ?? '' : '', /^<system-reminder>\nBOARD: t1 running/)
   const compactRequest = forced.requests.find((request) => displayCacheSource(request.cacheSource!) === 'compact')
   const serialized = JSON.stringify(compactRequest)
   assert.ok(serialized.includes(JSON.stringify(getCompactPrompt(undefined, 'coordinator')).slice(1, 80)))

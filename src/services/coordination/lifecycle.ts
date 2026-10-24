@@ -12,17 +12,14 @@
  * - A negative or non-finite setting is treated as the default; 0 disables that rule.
  */
 
+import { DEFAULT_AUTO_RESOLVE_DAYS, DEFAULT_QUIET_DAYS, type CoordinationDays } from '../../config/coordination.js'
 import type { ThreadStatus } from './types.js'
 
 export type { ThreadStatus }
 
-export const DEFAULT_QUIET_DAYS = 3
-export const DEFAULT_AUTO_RESOLVE_DAYS = 7
+export { DEFAULT_AUTO_RESOLVE_DAYS, DEFAULT_QUIET_DAYS }
 
-export interface LifecycleSettings {
-  quietDays?: number
-  autoResolveDays?: number
-}
+export type LifecycleSettings = CoordinationDays
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000
 

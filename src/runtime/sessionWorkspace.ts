@@ -1,6 +1,7 @@
 import type { SessionMeta } from '../sessions/service.js'
 import { RuntimeSlot } from './runtimeSlot.js'
 import { refreshRuntimeSlot } from './providerRuntime.js'
+import { resolveSessionModelSelection, logSessionSelection } from './sessionSelection.js'
 import { SessionController, type SessionControllerDeps } from './sessionController.js'
 import {
   switchToExistingSession,
@@ -120,15 +121,20 @@ export function createSessionPane(
   scope: SessionScope,
   options: CreateSessionPaneOptions = {},
 ): SessionPane {
-  const runtimeSlot = new RuntimeSlot(
-    undefined,
-    project.initialEffort ?? project.configuredEffortLevel,
-  )
+  // One answer for every way a session arrives: new, reopened, restored after a
+  // restart, or rebuilt after a settings refresh. A shell-supplied key still
+  // wins for the pane it is adopting.
+  const selection = resolveSessionModelSelection(project.config, scope.session, {
+    defaultEffort: project.initialEffort ?? project.configuredEffortLevel,
+  })
+  logSessionSelection(scope.session, selection)
+  const runtimeSlot = new RuntimeSlot(undefined, selection.effort)
   refreshRuntimeSlot({
     config: project.config,
     runtimeSlot,
     createRuntime: scope.createRuntime,
-    modelKey: options.modelKey ?? project.initialModelKey,
+    modelKey: options.modelKey ?? selection.modelKey,
+    ...(selection.issue ? { issue: selection.issue } : {}),
     session: scope.session,
     records: scope.existingRecords,
   })

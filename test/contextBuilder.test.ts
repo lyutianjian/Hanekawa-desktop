@@ -540,13 +540,13 @@ test('ContextBuilder builds the post-compact restore from recent files and skill
       ]),
     }
     const restore = await builder.buildPostCompactRestore(toolContext)
-    assert.ok(restore)
-    assert.ok(restore.includes(`# restoredFile ${file}`))
-    assert.match(restore, /export const a = 2/)
-    assert.doesNotMatch(restore, /export const a = 1/)
+    assert.ok(restore.files)
+    assert.ok(restore.files.includes(`# restoredFile ${file}`))
+    assert.match(restore.files, /export const a = 2/)
+    assert.doesNotMatch(restore.files, /export const a = 1/)
     assert.equal(toolContext.readFileState.get(file)?.content, 'export const a = 2')
-    assert.match(restore, /restoredSkill debugging/)
-    assert.match(restore, /Debug skill body/)
+    assert.match(restore.files, /restoredSkill debugging/)
+    assert.match(restore.files, /Debug skill body/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -613,11 +613,11 @@ test('ContextBuilder limits restored files by recency and budget', async () => {
       readFiles: new Set(),
       readFileState,
     })
-    assert.ok(restore)
-    assert.equal((restore.match(/# restoredFile/g) ?? []).length, 5)
-    assert.match(restore, /file-6/)
-    assert.doesNotMatch(restore, /file-0/)
-    assert.doesNotMatch(restore, /stale 6/)
+    assert.ok(restore.files)
+    assert.equal((restore.files.match(/# restoredFile/g) ?? []).length, 5)
+    assert.match(restore.files, /file-6/)
+    assert.doesNotMatch(restore.files, /file-0/)
+    assert.doesNotMatch(restore.files, /stale 6/)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -638,9 +638,9 @@ test('ContextBuilder applies restore file budget after refreshing from disk', as
         [file, { content: 'small cached content', timestamp: 1, mtimeMs: 1, size: 20 }],
       ]),
     })
-    assert.ok(restore)
-    assert.match(restore, /\[\.\.\. restored content truncated for context budget \.\.\.\]/)
-    assert.ok(restore.length < 30_000)
+    assert.ok(restore.files)
+    assert.match(restore.files, /\[\.\.\. restored content truncated for context budget \.\.\.\]/)
+    assert.ok(restore.files.length < 30_000)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -661,8 +661,8 @@ test('ContextBuilder notes restored files that are no longer accessible', async 
     }
 
     const restore = await builder.buildPostCompactRestore(toolContext)
-    assert.ok(restore)
-    assert.match(restore, new RegExp(`previously read file ${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} is no longer accessible`))
+    assert.ok(restore.files)
+    assert.match(restore.files, new RegExp(`previously read file ${file.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} is no longer accessible`))
     assert.equal(toolContext.readFiles.has(file), false)
     assert.equal(toolContext.readFileState.has(file), false)
   } finally {
@@ -857,8 +857,9 @@ test('ContextBuilder places rolePrompt before the dynamic boundary and omits it 
 
 test('buildPostCompactRestore puts leading first and returns content with nothing else to restore', async () => {
   const builder = new ContextBuilder(undefined, contextWindow(5000))
-  assert.equal(await builder.buildPostCompactRestore(undefined), undefined)
+  assert.deepEqual(await builder.buildPostCompactRestore(undefined), {})
   const restore = await builder.buildPostCompactRestore(undefined, 'LEADING-BLOCK')
-  assert.ok(restore)
-  assert.match(restore, /^<system-reminder>\nLEADING-BLOCK\n\nPrior conversation was compacted/)
+  assert.ok(restore.continuity)
+  assert.equal(restore.files, undefined)
+  assert.match(restore.continuity, /^<system-reminder>\nLEADING-BLOCK\n\nPrior conversation was compacted/)
 })

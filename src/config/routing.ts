@@ -6,10 +6,12 @@
  *  - models:        a model id + reference to an endpoint (or legacy inline endpoint fields)
  *
  * Plus a `routing` map from semantic role to a **model key**:
- *  - main:     the main loop
- *  - plan:     used while permissionMode === 'plan'
- *  - compact:  used by autoCompact and tool-use summarizer
- *  - subagent: per subagent_type (general / explore / plan / fork / ...)
+ *  - main:        the main loop
+ *  - plan:        used while permissionMode === 'plan'
+ *  - compact:     used by autoCompact and tool-use summarizer
+ *  - coordinator: the project's coordination session
+ *  - thread:      sessions a coordinator starts for one task
+ *  - subagent:    per subagent_type (general / explore / plan / fork / ...)
  *
  * The router accepts an `'inherit'` sentinel to mean "fall back to the parent /
  * main loop model", which is essential for fork-style sub-agents that share
@@ -53,6 +55,8 @@ export interface Routing {
   main?: RoutedModel
   plan?: RoutedModel
   compact?: RoutedModel
+  coordinator?: RoutedModel
+  thread?: RoutedModel
   subagent?: SubagentRouting
 }
 
@@ -65,10 +69,12 @@ export interface Routing {
  * that is true for a config the user has not spoken about. A user who wants a
  * cheaper compaction model still has the dedicated `compactModel` setting.
  */
-export const DEFAULT_ROUTING: Required<Pick<Routing, 'main' | 'plan' | 'compact'>> & { subagent: Required<Pick<SubagentRouting, 'general' | 'fork' | 'explore' | 'plan'>> } = {
+export const DEFAULT_ROUTING: Required<Pick<Routing, 'main' | 'plan' | 'compact' | 'coordinator' | 'thread'>> & { subagent: Required<Pick<SubagentRouting, 'general' | 'fork' | 'explore' | 'plan'>> } = {
   main: 'inherit',
   plan: 'inherit',
   compact: 'inherit',
+  coordinator: 'inherit',
+  thread: 'inherit',
   subagent: {
     general: 'inherit',
     fork: 'inherit',
@@ -86,6 +92,8 @@ export function mergeRouting(...sources: (Routing | undefined)[]): Routing {
     main: DEFAULT_ROUTING.main,
     plan: DEFAULT_ROUTING.plan,
     compact: DEFAULT_ROUTING.compact,
+    coordinator: DEFAULT_ROUTING.coordinator,
+    thread: DEFAULT_ROUTING.thread,
     subagent: { ...DEFAULT_ROUTING.subagent },
   }
 
@@ -94,6 +102,8 @@ export function mergeRouting(...sources: (Routing | undefined)[]): Routing {
     if (source.main !== undefined) result.main = source.main
     if (source.plan !== undefined) result.plan = source.plan
     if (source.compact !== undefined) result.compact = source.compact
+    if (source.coordinator !== undefined) result.coordinator = source.coordinator
+    if (source.thread !== undefined) result.thread = source.thread
     if (source.subagent) {
       result.subagent = { ...result.subagent, ...source.subagent }
     }
@@ -106,6 +116,8 @@ export type RoutingRole =
   | { kind: 'main' }
   | { kind: 'plan' }
   | { kind: 'compact' }
+  | { kind: 'coordinator' }
+  | { kind: 'thread' }
   | { kind: 'subagent'; type: string }
 
 /**
@@ -122,6 +134,10 @@ export function pickRoutedModel(routing: Routing | undefined, role: RoutingRole)
       return r.plan
     case 'compact':
       return r.compact
+    case 'coordinator':
+      return r.coordinator
+    case 'thread':
+      return r.thread
     case 'subagent': {
       const subagent = r.subagent ?? {}
       // Type-specific override first, then fall through to general, then inherit.

@@ -49,7 +49,6 @@ function snapshotOf(): WireSettingsSnapshot {
         { behavior: 'deny', local: [], inherited: [] },
       ],
     },
-    agents: [],
     skills: [],
     skillsDir: 'C:\\repo\\alpha\\.myagent\\skills',
     mcpServers: [],
@@ -166,7 +165,7 @@ test('the nav draws one section per group, labelled, in order', (t) => {
   )
   assert.deepEqual(
     groups.map((group) => findAll(group, 'settings-nav-item').map((item) => item.text)),
-    [['通用', '个性化', '外观'], ['模型与服务商', '技能和 MCP'], ['权限', 'Agent']],
+    [['通用', '个性化', '外观'], ['模型与服务商', '技能和 MCP'], ['权限']],
   )
 })
 
@@ -175,7 +174,7 @@ test('the close button sits in the card, outside the replaced region', (t) => {
   const closeBefore = findOne(view(), 'settings-close').node
   assert.equal(child(view(), 'settings-panel').children.at(-1)?.node, closeBefore)
   // The column is what gets rebuilt; the close button is not.
-  render(stateOf({ category: 'agent' }))
+  render(stateOf({ category: 'permissions' }))
   assert.equal(findOne(view(), 'settings-close').node, closeBefore)
 })
 

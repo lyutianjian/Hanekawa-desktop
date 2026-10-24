@@ -141,3 +141,5 @@ test('a raw token budget is shown verbatim rather than forced onto the ladder', 
   assert.equal(view.entries[1]!.value, '24000')
   assert.equal(view.entries[1]!.rows.every((row) => !row.current), true)
 })
+
+

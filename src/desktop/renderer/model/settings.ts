@@ -3,7 +3,6 @@ import {
   USER_INSTRUCTIONS_MAX_CHARS,
   type SettingsCategory,
   type SettingsChange,
-  type WireAgentDefinitionInfo,
   type WireContextManagementField,
   type WireEndpointInfo,
   type McpServerConfig,
@@ -22,7 +21,6 @@ import { isPrimaryModifier } from './desktopShortcuts.js'
 import { providerLabel } from './providerLabels.js'
 import { DEFAULT_THEME_PREFERENCE, THEME_PREFERENCES, type ThemePreference } from './theme.js'
 import { EFFORT_LABELS, PERMISSION_MODE_LABELS as COMPOSER_MODE_LABELS } from './composer.js'
-import { agentDescription } from './builtinLabels.js'
 import {
   VALID_EFFORT_LEVELS,
   normalizeSupportedEfforts,
@@ -252,7 +250,6 @@ export const CATEGORY_LABELS: Record<SettingsCategory, string> = {
   provider: '模型与服务商',
   extensions: '技能和 MCP',
   permissions: '权限',
-  agent: 'Agent',
   general: '通用',
   personalization: '个性化',
   appearance: '外观',
@@ -290,7 +287,6 @@ function groupOf(category: SettingsCategory): SettingsGroup {
     case 'extensions':
       return 'integration'
     case 'permissions':
-    case 'agent':
       return 'coding'
   }
 }
@@ -405,6 +401,11 @@ export interface SettingsCard {
    * environment switches) that the note itself leaves out on purpose.
    */
   readonly noteHint?: string
+  /**
+   * Things the screen has to say but the user cannot change here — a migration
+   * that could not pick a value, say. Rendered under the note, above the rows.
+   */
+  readonly warnings?: readonly string[]
   readonly rows: readonly SettingsRow[]
   /** Shown in place of rows when there are none. */
   readonly empty?: string
@@ -581,13 +582,12 @@ export interface SettingsEditor {
   readonly intentOnCancel: SettingsIntent
 }
 
-const PROJECT_SCOPED: ReadonlySet<SettingsCategory> = new Set(['extensions', 'permissions', 'agent', 'general'])
+const PROJECT_SCOPED: ReadonlySet<SettingsCategory> = new Set(['extensions', 'permissions', 'general'])
 
 const ALL_CATEGORIES: readonly SettingsCategory[] = [
   'provider',
   'extensions',
   'permissions',
-  'agent',
   'general',
   'personalization',
   'appearance',
@@ -781,9 +781,6 @@ function projectOne(snapshot: WireSettingsSnapshot, change: SettingsChange): Wir
             entry.type === change.type ? { ...entry, value: change.value } : entry,
           ),
         },
-        agents: snapshot.agents.map((agent) =>
-          agent.type === change.type ? { ...agent, routing: change.value } : agent,
-        ),
       }
     case 'set-skill-enabled':
       return {
@@ -881,7 +878,6 @@ function projectOne(snapshot: WireSettingsSnapshot, change: SettingsChange): Wir
       return { ...snapshot, userInstructions: change.content }
     // Actions and the key clear: nothing on screen can be predicted from them.
     case 'clear-endpoint-key':
-    case 'reload-agent-definitions':
     case 'reload-skills':
     case 'import-skill':
     case 'reconnect-mcp':
@@ -948,7 +944,6 @@ export function pendingRowIds(pending: readonly PendingMutation[]): Set<string> 
         break
       case 'set-subagent-routing':
         ids.add(`routing:subagent:${change.type}`)
-        ids.add(`agent:${change.type}`)
         break
       case 'set-skill-enabled':
         ids.add(`skill:${change.name}`)
@@ -961,13 +956,13 @@ export function pendingRowIds(pending: readonly PendingMutation[]): Set<string> 
         ids.add(`context:${change.field}`)
         break
       case 'set-coordination-model':
-        ids.add(`agent:coordination-${change.role}-model`)
+        ids.add(`provider:coordination-${change.role}-model`)
         break
       case 'set-coordination-effort':
-        ids.add(`agent:coordination-${change.role}-effort`)
+        ids.add(`provider:coordination-${change.role}-effort`)
         break
       case 'set-coordination-days':
-        ids.add(`agent:coordination-${change.field}`)
+        ids.add(`provider:coordination-${change.field}`)
         break
       case 'set-startup-permission-mode':
         ids.add('permissions:mode')
@@ -1144,8 +1139,6 @@ function cardsFor(category: HostCategory, snapshot: WireSettingsSnapshot): Setti
       return extensionsCards(snapshot)
     case 'permissions':
       return permissionCards(snapshot)
-    case 'agent':
-      return agentCards(snapshot)
     case 'general':
       return generalCards(snapshot)
     case 'personalization':
@@ -1224,7 +1217,7 @@ const SAVED_GLOBAL = '保存在全局配置，所有项目共用。'
 const SAVED_LOCAL = '保存在本项目。'
 
 function providerCards(snapshot: WireSettingsSnapshot): SettingsCard[] {
-  return [providersCard(snapshot), routingCard(snapshot)]
+  return [providersCard(snapshot), routingCard(snapshot), coordinationCard(snapshot)]
 }
 
 /** The row for hand-written models that name no endpoint. */
@@ -1511,48 +1504,9 @@ function permissionGroupCard(group: WirePermissionGroup, localPath: string): Set
   }
 }
 
-// --- agents -------------------------------------------------------------------
+// --- coordination -------------------------------------------------------------
 
-function agentCards(snapshot: WireSettingsSnapshot): SettingsCard[] {
-  const choices = routingOptions(snapshot)
-  return [
-    coordinationCard(snapshot),
-    {
-      id: 'agents',
-      title: '子代理',
-      note: '定义来自项目里的代理文件，这里只读；选用的模型保存在全局配置。',
-      noteHint: `定义：.myagent/agents/*.md\n模型路由：${snapshot.saveTarget}`,
-      empty: '没有可用的子代理定义',
-      rows: snapshot.agents.map((agent) => ({
-        id: `agent:${agent.type}`,
-        label: agent.type,
-        detail: agentDetail(agent),
-        control: {
-          kind: 'select' as const,
-          value: agent.routing,
-          choices,
-          intentOnChange: (value: string): SettingsIntent => ({
-            kind: 'set-subagent-routing',
-            type: agent.type,
-            value,
-          }),
-        },
-      })),
-      footerButtons: [
-        {
-          label: '重新加载定义',
-          title: '重新读取 .myagent/agents/，并让已开的会话用上新定义',
-          intent: { kind: 'reload-agent-definitions' },
-          changeKind: 'reload-agent-definitions',
-        },
-      ],
-    },
-  ]
-}
-
-// --- project coordination ------------------------------------------------------
-
-const COORDINATION_INHERIT_CHOICE = { value: INHERIT, label: '跟随默认' }
+const COORDINATION_INHERIT_CHOICE = { value: INHERIT, label: '跟随全局主模型' }
 const COORDINATION_DAY_LABELS = { quietDays: '安静天数', autoResolveDays: '自动结案天数' } as const
 const COORDINATION_DAY_DETAILS = {
   quietDays: '线程这么多天没有动静后算作安静。0 表示关闭。',
@@ -1578,7 +1532,7 @@ function coordinationCard(snapshot: WireSettingsSnapshot): SettingsCard {
   ]
   const rows: SettingsRow[] = roles.flatMap(({ role, name, model, effort }) => [
     {
-      id: `agent:coordination-${role}-model`,
+      id: `provider:coordination-${role}-model`,
       label: `${name}模型`,
       control: {
         kind: 'select' as const,
@@ -1588,7 +1542,7 @@ function coordinationCard(snapshot: WireSettingsSnapshot): SettingsCard {
       },
     },
     {
-      id: `agent:coordination-${role}-effort`,
+      id: `provider:coordination-${role}-effort`,
       label: `${name}思考强度`,
       control: {
         kind: 'select' as const,
@@ -1600,7 +1554,7 @@ function coordinationCard(snapshot: WireSettingsSnapshot): SettingsCard {
   ])
   for (const field of ['quietDays', 'autoResolveDays'] as const) {
     rows.push({
-      id: `agent:coordination-${field}`,
+      id: `provider:coordination-${field}`,
       label: COORDINATION_DAY_LABELS[field],
       detail: COORDINATION_DAY_DETAILS[field],
       control: {
@@ -1613,32 +1567,11 @@ function coordinationCard(snapshot: WireSettingsSnapshot): SettingsCard {
   }
   return {
     id: 'coordination',
-    title: '项目调度',
-    note: `${SAVED_LOCAL}「跟随默认」表示沿用主对话的设置。`,
+    title: '线程调度',
+    note: `${SAVED_GLOBAL}「跟随全局主模型」表示使用全局主模型，不继承某个会话的临时选择。`,
+    ...(c.migrationFindings?.length ? { warnings: [...c.migrationFindings] } : {}),
     rows,
   }
-}
-
-/** Every mode an agent file may name, not just the three the startup select offers. */
-const AGENT_PERMISSION_MODE_LABELS: Record<string, string> = {
-  ...PERMISSION_MODE_LABELS,
-  plan: COMPOSER_MODE_LABELS.plan,
-  readonly: COMPOSER_MODE_LABELS.readonly,
-}
-
-function agentDetail(agent: WireAgentDefinitionInfo): string {
-  const parts = [agent.builtIn ? '内置' : '自定义', agentDescription(agent)]
-  // Absent means every tool, which is the opposite of "no tools" — spelling it
-  // out is the only way the row cannot be read backwards.
-  parts.push(agent.tools ? `工具：${agent.tools.join('、')}` : '工具：全部')
-  // `readonly` would say 只读 twice: the flag below already says it.
-  if (agent.permissionMode && !(agent.permissionMode === 'readonly' && agent.isReadOnlyAgent)) {
-    parts.push(`权限模式：${AGENT_PERMISSION_MODE_LABELS[agent.permissionMode] ?? agent.permissionMode}`)
-  }
-  if (agent.model) parts.push(`模型：${agent.model}`)
-  if (agent.isReadOnlyAgent) parts.push('只读')
-  if (agent.maxTurns !== undefined) parts.push(`最多 ${agent.maxTurns} 轮`)
-  return parts.join(' · ')
 }
 
 // --- general and the context budget -------------------------------------------
@@ -2623,7 +2556,6 @@ export type SettingsIntent =
   | { kind: 'new-permission-rule'; behavior: PermissionBehavior }
   | { kind: 'remove-permission-rule'; behavior: PermissionBehavior; entry: string }
   | { kind: 'set-startup-permission-mode'; mode: 'default' | 'auto' | 'bypass' }
-  | { kind: 'reload-agent-definitions' }
   | { kind: 'set-cache-ttl'; enabled: boolean }
   | { kind: 'set-thinking'; enabled: boolean }
   | { kind: 'set-coordination-model'; role: 'coordinator' | 'thread'; value: string }
@@ -3173,11 +3105,6 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
         state: { ...cleared, busy: true },
         changes: [{ scope: 'permissions', kind: 'set-startup-permission-mode', mode: intent.mode }],
       }
-    case 'reload-agent-definitions':
-      return {
-        state: { ...cleared, busy: true },
-        changes: [{ scope: 'agent', kind: 'reload-agent-definitions' }],
-      }
     case 'set-cache-ttl':
       return {
         state: { ...cleared, busy: true },
@@ -3191,18 +3118,18 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
     case 'set-coordination-model':
       return {
         state: { ...cleared, busy: true },
-        changes: [{ scope: 'agent', kind: 'set-coordination-model', role: intent.role, value: intent.value }],
+        changes: [{ scope: 'provider', kind: 'set-coordination-model', role: intent.role, value: intent.value }],
       }
     case 'set-coordination-effort': {
       const value = intent.value as EffortLevel | typeof INHERIT
       if (value !== INHERIT && !VALID_EFFORT_LEVELS.includes(value)) {
         return {
-          state: { ...state, error: '思考强度无效。', errorRows: [`agent:coordination-${intent.role}-effort`], openMenu: undefined },
+          state: { ...state, error: '思考强度无效。', errorRows: [`provider:coordination-${intent.role}-effort`], openMenu: undefined },
         }
       }
       return {
         state: { ...cleared, busy: true },
-        changes: [{ scope: 'agent', kind: 'set-coordination-effort', role: intent.role, value }],
+        changes: [{ scope: 'provider', kind: 'set-coordination-effort', role: intent.role, value }],
       }
     }
     case 'set-coordination-days': {
@@ -3214,14 +3141,14 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
           state: {
             ...state,
             error: `${label}必须是不小于 0 的整数。`,
-            errorRows: [`agent:coordination-${intent.field}`],
+            errorRows: [`provider:coordination-${intent.field}`],
             openMenu: undefined,
           },
         }
       }
       return {
         state: { ...cleared, busy: true },
-        changes: [{ scope: 'agent', kind: 'set-coordination-days', field: intent.field, value: parsed }],
+        changes: [{ scope: 'provider', kind: 'set-coordination-days', field: intent.field, value: parsed }],
       }
     }
     case 'set-context-value': {

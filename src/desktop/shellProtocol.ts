@@ -354,7 +354,6 @@ export type SettingsCategory =
   | 'provider'
   | 'extensions'
   | 'permissions'
-  | 'agent'
   | 'general'
   | 'personalization'
   | 'appearance'
@@ -441,33 +440,11 @@ export interface WirePermissionsInfo {
 }
 
 /**
- * An agent definition as the screen shows it: read-only, field by field.
- *
- * Projected rather than shipped because `BaseAgentDefinition` carries
- * `getSystemPrompt` — a function, which `structuredClone` refuses outright.
- */
-export interface WireAgentDefinitionInfo {
-  type: string
-  description: string
-  /** A built-in cannot be edited by editing a file; a custom one can. */
-  builtIn: boolean
-  permissionMode?: string
-  /** Absent means every tool: the definition says `tools: ['*']` or nothing. */
-  tools?: string[]
-  model?: string
-  /** Absent means no turn cap. */
-  maxTurns?: number
-  isReadOnlyAgent: boolean
-  /** `routing.subagent[type]`, or `inherit`. The one editable field here. */
-  routing: string
-}
-
-/**
  * One skill as the screen shows it.
  *
- * A projection for the same reason `WireAgentDefinitionInfo` is one: a
- * `SkillDefinition` carries the whole `SKILL.md` body and its hook commands,
- * neither of which a settings row has any use for.
+ * Projected rather than shipped because a `SkillDefinition` carries the whole
+ * `SKILL.md` body and its hook commands, neither of which a settings row has any
+ * use for.
  */
 export interface WireSkillInfo {
   name: string
@@ -540,6 +517,12 @@ export interface WireCoordinationSettingsInfo {
   threadEffort?: EffortLevel
   quietDays: number
   autoResolveDays: number
+  /**
+   * What the one-time migration of the retired per-project values could not
+   * settle: a field several projects disagreed on, or a value that no longer
+   * resolves. Absent after a clean migration, so the card shows nothing.
+   */
+  migrationFindings?: readonly string[]
 }
 
 export interface WireGeneralInfo {
@@ -578,7 +561,6 @@ export interface WireSettingsSnapshot {
   /** The built-in subagent types unioned with any the routing already names. */
   subagentTypes: string[]
   permissions: WirePermissionsInfo
-  agents: WireAgentDefinitionInfo[]
   skills: WireSkillInfo[]
   /** `.myagent/skills/` — the skills card names the directory it is reading. */
   skillsDir: string
@@ -642,14 +624,17 @@ export type SettingsChange =
    */
   | { scope: 'permissions'; kind: 'set-permission-entries'; behavior: 'allow' | 'deny' | 'ask'; entries: string[] }
   | { scope: 'permissions'; kind: 'set-startup-permission-mode'; mode: 'default' | 'auto' | 'bypass' }
-  /** An action, not a write: re-reads `.myagent/agents/` and rebuilds runtimes. */
-  | { scope: 'agent'; kind: 'reload-agent-definitions' }
-  /** Local layer. `'inherit'` clears the setting; otherwise a model key from the snapshot. */
-  | { scope: 'agent'; kind: 'set-coordination-model'; role: 'coordinator' | 'thread'; value: string }
-  /** Local layer. `'inherit'` clears the setting. */
-  | { scope: 'agent'; kind: 'set-coordination-effort'; role: 'coordinator' | 'thread'; value: EffortLevel | 'inherit' }
-  /** Local layer; an integer >= 0, where 0 turns the rule off. */
-  | { scope: 'agent'; kind: 'set-coordination-days'; field: 'quietDays' | 'autoResolveDays'; value: number }
+  /**
+   * Global, like every other coordination setting: the card lives on the
+   * 「模型与服务商」page and saves to `config.json`, so the scope is `provider`
+   * (`routing.<role>` for a model, `agent.coordination` for the rest).
+   * `'inherit'` clears the setting.
+   */
+  | { scope: 'provider'; kind: 'set-coordination-model'; role: 'coordinator' | 'thread'; value: string }
+  /** Global. `'inherit'` clears the setting. */
+  | { scope: 'provider'; kind: 'set-coordination-effort'; role: 'coordinator' | 'thread'; value: EffortLevel | 'inherit' }
+  /** Global; an integer >= 0, where 0 turns the rule off. */
+  | { scope: 'provider'; kind: 'set-coordination-days'; field: 'quietDays' | 'autoResolveDays'; value: number }
   | { scope: 'general'; kind: 'set-cache-ttl'; enabled: boolean }
   | { scope: 'general'; kind: 'set-thinking'; enabled: boolean }
   | { scope: 'personalization'; kind: 'set-user-instructions'; content: string }

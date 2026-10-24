@@ -52,6 +52,8 @@ test('provider errors read as a plain-language cause', () => {
     [{ error: 'Overloaded', status: 529 }, 'overloaded'],
     [{ error: 'Internal server error', status: 500 }, 'server'],
     [{ error: 'prompt is too long: 250000 tokens', status: 400 }, 'context'],
+    // The host's own refusal, before any request went out.
+    [{ error: 'This request cannot be sent: the compaction summary and the task it continues take 9000 tokens', code: 'context_overflow' }, 'context'],
     [{ error: 'messages: bad shape', status: 400 }, 'rejected'],
     [{ error: 'something odd' }, 'unknown'],
   ]

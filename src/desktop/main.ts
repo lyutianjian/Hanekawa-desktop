@@ -77,7 +77,7 @@ import {
   SHUTDOWN_DEADLINE_MS,
   type ProjectEntry,
 } from '../runtime/projectDirectory.js'
-import { isGlobalWorkspaceRoot } from '../utils/paths.js'
+import { isGlobalWorkspaceRoot, userHome } from '../utils/paths.js'
 import {
   recordProjectOpen,
   resolveStartupRoot,
@@ -99,7 +99,9 @@ import { createCoordinationTools } from '../tools/coordinationTools.js'
 import { CoordinationService } from '../runtime/coordination/service.js'
 import { CoordinationWakeEngine } from '../runtime/coordination/wakeEngine.js'
 import type { CoordinationLaneControl } from '../runtime/protocol/coordinationHost.js'
-import { coordinationSettings } from '../config/settings.js'
+import { ConfigService } from '../config/service.js'
+import type { CoordinationDays } from '../config/coordination.js'
+import { migrateCoordinationSettings } from '../config/coordinationMigration.js'
 import { openInEditor } from './openInEditor.js'
 import { appMenuTemplate, isPageMenuChord } from './appMenu.js'
 import { contextMenuTemplate } from './contextMenu.js'
@@ -221,6 +223,25 @@ const browserHost = new DesktopBrowserHost({
 const browserTool = createBrowserTool(browserHost)
 
 /**
+ * The global config, as the coordination path reads it.
+ *
+ * Loaded once at startup, and used as the fallback when no project is open;
+ * with a project open its own `ConfigService` is already the fresher copy, so a
+ * settings edit is visible to the next lifecycle decision without a reload
+ * here.
+ */
+const settingsConfig = new ConfigService(userHome())
+
+/** The two day counts every project shares. */
+function coordinationDays(): CoordinationDays {
+  const [entry] = directory.entries()
+  return (entry ? entry.project.config : settingsConfig).getCoordination()
+}
+
+/** What the retired per-project values could not settle; shown in 线程调度. */
+let coordinationMigrationFindings: string[] = []
+
+/**
  * Project coordination: the wake engine, the service the seven tools call,
  * and the tools themselves. Module-level for the browser's reason — the tools
  * go to `bootstrap()` before any window exists — so every lane lookup reads
@@ -251,7 +272,7 @@ const coordination = new CoordinationService(
     laneControl: (sessionId) => shell?.host.laneControlFor(sessionId),
     openLane: (cwd, sessionId, options) => openCoordinationLane(cwd, sessionId, options.activate),
     notify: (notice) => notifyCoordination(notice),
-    settings: (cwd) => coordinationSettings(directory.get(cwd)?.project.getSettings() ?? {}),
+    days: () => coordinationDays(),
   },
   coordinationEngine,
 )
@@ -324,6 +345,7 @@ if (!app.requestSingleInstanceLock()) {
     windowState = await loadWindowState(windowStateFile())
     nativeTheme.themeSource = windowState.themePreference
     try {
+      await migrateCoordinationOnce()
       await openProject(await resolveStartupProject())
     } catch (error) {
       if (error instanceof RuntimeStartupError) {
@@ -858,6 +880,7 @@ async function ensureShell(): Promise<Shell> {
     },
     browser: browserTabs,
     coordination,
+    coordinationMigrationFindings: () => coordinationMigrationFindings,
     isQuitting: () => quitting,
     onAllLanesClosed: () => {
       // The last lane of the single window is the single-window equivalent of
@@ -1096,4 +1119,29 @@ async function resolveStartupProject(): Promise<string> {
   const explicit = explicitCwd()
   if (explicit !== undefined) return explicit
   return (await resolveStartupRoot()).root
+}
+
+/**
+ * Promotes the retired per-project scheduling values once, before any project
+ * opens.
+ *
+ * Fail-open: a migration that cannot finish logs and leaves the old files
+ * untouched; the next launch retries. Nothing here blocks the app from
+ * starting on the global config that is already there.
+ */
+async function migrateCoordinationOnce(): Promise<void> {
+  try {
+    await settingsConfig.load()
+    const result = await migrateCoordinationSettings({
+      config: settingsConfig,
+      roots: await loadRecentProjects(),
+    })
+    coordinationMigrationFindings = result.findings
+    for (const finding of result.findings) console.warn(`[hanekawa] 调度设置迁移：${finding}`)
+  } catch (error) {
+    // Not "migrated": the old files are untouched and the next launch retries,
+    // so the screen says so rather than showing a clean card.
+    coordinationMigrationFindings = [`旧调度设置迁移没有完成（${(error as Error).message}），下次启动会重试。`]
+    console.error('[hanekawa] 调度设置迁移失败：', error)
+  }
 }

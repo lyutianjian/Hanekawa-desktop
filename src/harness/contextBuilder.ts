@@ -4,7 +4,7 @@ import path from 'node:path'
 import type { ChatMessage, ModelContextItem, SessionRecord, Tool, ToolContext } from './types.js'
 import type { PermissionMode } from './permissions.js'
 import { PromptComposer } from '../prompts/composer.js'
-import { countTextTokens, type ContextManagementConfig } from '../prompts/budget.js'
+import { countTextTokens, type ContextManagementConfig, type ContextSelectionPlan } from '../prompts/budget.js'
 import { compactBoundaryToMessage } from './compact.js'
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from './cacheControl.js'
 import { SystemPromptSectionCache } from './sections.js'
@@ -61,6 +61,8 @@ export interface BuiltContext {
   systemBlocks?: string[]
   messages: ChatMessage[]
   contextItems: ModelContextItem[]
+  /** What the budget kept and what it could not make fit. */
+  selection: ContextSelectionPlan
 }
 
 export type SectionKey =
@@ -245,6 +247,7 @@ export class ContextBuilder {
       systemBlocks,
       messages: instructions ? [instructions.message, ...built.messages] : built.messages,
       contextItems: instructions ? [instructions, ...built.contextItems] : built.contextItems,
+      selection: built.selection,
     }
   }
 
@@ -291,11 +294,37 @@ export class ContextBuilder {
 
     for (const record of visibleRecords) {
       if (record.type === 'compact_boundary') {
+        // The summary and the continuation restored with it are what the model
+        // keeps working on; the file bodies beside them are convenience.
         contextItems.push({
           kind: 'message',
           message: compactBoundaryToMessage(record),
+          pinned: true,
         })
-        if (record.restoredContext) {
+        if (record.restoredContinuity) {
+          contextItems.push({
+            kind: 'message',
+            message: {
+              id: `${record.id}:restore`,
+              role: 'user',
+              content: record.restoredContinuity,
+              createdAt: record.createdAt,
+            },
+            pinned: true,
+          })
+        }
+        if (record.restoredFiles) {
+          contextItems.push({
+            kind: 'message',
+            message: {
+              id: `${record.id}:restore-files`,
+              role: 'user',
+              content: record.restoredFiles,
+              createdAt: record.createdAt,
+            },
+          })
+        }
+        if (!record.restoredContinuity && !record.restoredFiles && record.restoredContext) {
           contextItems.push({
             kind: 'message',
             message: {
@@ -532,12 +561,29 @@ export class ContextBuilder {
   /**
    * The post-compact restore, built once and stored on the boundary record so
    * every later request replays the same bytes as part of the cached prefix.
+   *
+   * Two parts, because they have different standing: the continuity half (the
+   * task, the board, the date-sensitive restatements passed as `leading`) is
+   * what the model must keep working on, while file and skill bodies are a
+   * convenience that must give way to it when the window is tight. `availableTokens`
+   * is what the whole restore may take; the file part gets what is left.
    */
-  async buildPostCompactRestore(toolContext: ToolContext | undefined, leading?: string): Promise<string | undefined> {
+  async buildPostCompactRestore(
+    toolContext: ToolContext | undefined,
+    leading?: string,
+    options: { availableTokens?: number } = {},
+  ): Promise<{ continuity?: string; files?: string }> {
+    const continuityText = wrapInSystemReminder([
+      ...(leading?.trim() ? [leading.trim()] : []),
+      'Prior conversation was compacted. The following recently used context has been restored for continuity:',
+    ].join('\n\n'))
+    const fileBudget = options.availableTokens === undefined
+      ? RESTORE_FILE_TOKENS
+      : Math.max(0, Math.min(RESTORE_FILE_TOKENS, options.availableTokens - countTextTokens(continuityText)))
     const fileRestoreLimits = {
       maxEntries: 5,
       maxTokensPerEntry: 5_000,
-      totalBudget: 50_000,
+      totalBudget: fileBudget,
     }
     const restoredFiles = selectRestoreEntries(toolContext?.readFileState, fileRestoreLimits)
     const refreshed = await refreshRestoredFiles(restoredFiles, toolContext)
@@ -545,7 +591,7 @@ export class ContextBuilder {
     const restoredSkills = selectRestoreEntries(toolContext?.invokedSkills, {
       maxEntries: Number.POSITIVE_INFINITY,
       maxTokensPerEntry: 5_000,
-      totalBudget: 25_000,
+      totalBudget: Math.min(RESTORE_SKILL_TOKENS, fileBudget),
     })
 
     // Restore discovered tool names from ToolSearch
@@ -554,19 +600,23 @@ export class ContextBuilder {
       ? `Previously discovered tools via ToolSearch (available for immediate use): ${[...discoveredNames].join(', ')}`
       : undefined
 
-    if (refreshedFiles.length === 0 && refreshed.inaccessibleFiles.length === 0 && restoredSkills.length === 0 && !discoveredBlock && !leading?.trim()) return undefined
-
-    const innerContent = [
-      ...(leading?.trim() ? [leading.trim()] : []),
-      'Prior conversation was compacted. The following recently used context has been restored for continuity:',
+    const fileBlocks = [
       ...refreshedFiles.map((entry) => `# restoredFile ${entry.name}\n${entry.content}`),
       ...refreshed.inaccessibleFiles.map((name) => `Note: previously read file ${name} is no longer accessible.`),
       ...restoredSkills.map((entry) => `# restoredSkill ${entry.name}\n${entry.content}`),
       ...(discoveredBlock ? [discoveredBlock] : []),
-    ].join('\n\n')
-    return wrapInSystemReminder(innerContent)
+    ]
+    const hasContinuity = Boolean(leading?.trim())
+    if (fileBlocks.length === 0 && !hasContinuity) return {}
+    return {
+      continuity: continuityText,
+      ...(fileBlocks.length > 0 ? { files: wrapInSystemReminder(fileBlocks.join('\n\n')) } : {}),
+    }
   }
 }
+
+const RESTORE_FILE_TOKENS = 50_000
+const RESTORE_SKILL_TOKENS = 25_000
 
 /**
  * The standing reminder for the current permission mode. It rides the uncached

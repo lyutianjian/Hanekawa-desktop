@@ -119,7 +119,51 @@ Format the output as:
 There may be additional summarization instructions provided in the included context. If so, follow them when creating the summary.
 `
 
-export type CompactPromptVariant = 'default' | 'coordinator'
+const THREAD_COMPACT_PROMPT = `Your task is to create a summary of this coordination thread so that you can continue its assigned task after compaction without losing what was decided.
+
+Your summary should include the following sections:
+
+1. Assigned Task and Current Scope: The task this thread was started with, and the scope in force now. Later instructions from the user or the coordinator override the original wording; say so where they differ.
+2. Acceptance Criteria: What counts as done, quoted verbatim where the wording matters.
+3. Work Completed: What is finished and verified, and where its result lives (files, commits, branch).
+4. Work Remaining: What is still to do, in order, including anything explicitly deferred.
+5. Open Questions and Blockers: Questions asked and not yet answered, and anything that stopped progress.
+6. Cancellations and Conclusions: Work the user or the coordinator cancelled, replaced or declared finished. Do not restore it as pending.
+
+State the branch you work on when you have a worktree. Compaction does not mean the task is finished. Do not claim completion you cannot support from the conversation.
+
+Format the output as:
+
+<summary>
+1. Assigned Task and Current Scope:
+   [...]
+
+2. Acceptance Criteria:
+   [...]
+
+3. Work Completed:
+   [...]
+
+4. Work Remaining:
+   [...]
+
+5. Open Questions and Blockers:
+   [...]
+
+6. Cancellations and Conclusions:
+   [...]
+</summary>
+
+There may be additional summarization instructions provided in the included context. If so, follow them when creating the summary.
+`
+
+export type CompactPromptVariant = 'default' | 'coordinator' | 'thread'
+
+const COMPACT_PROMPTS: Record<CompactPromptVariant, string> = {
+  default: BASE_COMPACT_PROMPT,
+  coordinator: COORDINATOR_COMPACT_PROMPT,
+  thread: THREAD_COMPACT_PROMPT,
+}
 
 /**
  * Returns the full structured compact prompt for LLM-based summarization.
@@ -133,7 +177,7 @@ export function getCompactPrompt(
   customInstructions?: string,
   variant: CompactPromptVariant = 'default',
 ): string {
-  let prompt = variant === 'coordinator' ? COORDINATOR_COMPACT_PROMPT : BASE_COMPACT_PROMPT
+  let prompt = COMPACT_PROMPTS[variant]
   if (customInstructions && customInstructions.trim() !== '') {
     prompt += `\n\nAdditional Instructions:\n${customInstructions}`
   }

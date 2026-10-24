@@ -9,6 +9,7 @@ import {
   getEffectiveContextWindowSize,
   getManualCompactThreshold,
   getMicroCompactThreshold,
+  planContextItems,
   selectContextItemsForContext,
   selectMessagesForContext,
 } from '../src/prompts/budget.js'
@@ -126,6 +127,25 @@ test('context management keeps newest context items and repairs tool pairing', (
   assert.ok(truncated.some((item) => item.kind === 'message' && item.message.id === 'new'))
   assert.ok(truncated.some((item) => item.kind === 'tool_use' && item.id === 'call-1'))
   assert.ok(truncated.some((item) => item.kind === 'tool_result' && item.toolUseId === 'call-1'))
+})
+
+test('a plan names what it dropped, by record id', () => {
+  // The budget diagnostic answers "what did this request leave behind?"; the
+  // count alone cannot say which old result or message went missing.
+  const now = new Date().toISOString()
+  const items: ModelContextItem[] = [
+    { kind: 'message', message: { id: 'old-user', role: 'user', content: 'old '.repeat(2000), createdAt: now } },
+    { kind: 'tool_use', id: 'call-9', tool: 'Read', input: { filePath: 'a.txt' } },
+    { kind: 'tool_result', toolUseId: 'call-9', tool: 'Read', ok: true, content: 'body '.repeat(2000) },
+    { kind: 'message', message: { id: 'new-user', role: 'user', content: 'read file', createdAt: now } },
+  ]
+
+  const plan = planContextItems(items, { contextWindow: 1100, summaryOutputTokens: 0 })
+  assert.ok(plan.trimmed.count > 0)
+  assert.ok(plan.trimmed.ids.includes('message:user:old-user'))
+  assert.ok(!plan.trimmed.ids.some((id) => id.endsWith('new-user')))
+  // A tool pair goes together, so the drop names both halves, never a dangling use.
+  if (plan.trimmed.ids.includes('tool_use:call-9')) assert.ok(plan.trimmed.ids.includes('tool_result:call-9'))
 })
 
 test('PromptComposer builds request messages', () => {

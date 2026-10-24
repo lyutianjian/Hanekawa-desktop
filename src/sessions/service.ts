@@ -6,6 +6,7 @@ import { getSessionsDir } from '../utils/paths.js'
 import { migrateLegacyProjectData, type LegacyDataFinding } from './legacyProjectData.js'
 import { readJsonFile, writeJsonFile, parseJsonLines, parseJsonLinesWithDiagnostics } from '../utils/json.js'
 import type { CoordinationRole, SessionRecord, TokenUsage } from '../harness/types.js'
+import type { EffortLevel } from '../config/effort.js'
 import type { MetricUsage, SessionMetricInput, SessionMetric } from '../harness/metrics.js'
 import { EMPTY_TOKEN_USAGE, addTokenUsage, promptTokens } from '../harness/usage.js'
 import { OtlpMetricExporter } from '../harness/otlp.js'
@@ -67,6 +68,14 @@ export interface SessionCoordination {
   threadId?: string
   /** The thread's worktree path. Absent means the project's cwd. */
   workingDir?: string
+  /**
+   * A model this session was explicitly started or switched to. Absent means
+   * "follow the global role", and a fallback the loop activates on its own is
+   * never written here.
+   */
+  modelOverride?: string
+  /** The same rule for effort: an explicit pick, not a clamped or inherited value. */
+  effortOverride?: EffortLevel
 }
 
 interface SessionState {
@@ -640,6 +649,35 @@ export class SessionStore {
       else delete next.coordination
       return next
     }, session ?? this.defaultMeta(sessionId))
+  }
+
+  /**
+   * Patches a coordination session's explicit model/effort picks.
+   *
+   * Merged inside the index lock rather than from the meta this call resolved:
+   * a thread's title or `workingDir` may have been written since, and replacing
+   * the group wholesale (`setCoordination`) would drop them. An `undefined`
+   * override is removed — that is what "follow the global role" means.
+   */
+  async updateCoordination(
+    sessionIdOrPrefix: string,
+    patch: { modelOverride?: string; effortOverride?: EffortLevel },
+  ): Promise<void> {
+    const session = await this.resolve(sessionIdOrPrefix)
+    if (!session?.coordination) return
+    await this.updateIndexSession(
+      session.id,
+      (current) => {
+        if (!current.coordination) return current
+        const coordination: SessionCoordination = { ...current.coordination }
+        if (patch.modelOverride === undefined) delete coordination.modelOverride
+        else coordination.modelOverride = patch.modelOverride
+        if (patch.effortOverride === undefined) delete coordination.effortOverride
+        else coordination.effortOverride = patch.effortOverride
+        return { ...current, coordination }
+      },
+      session,
+    )
   }
 
   /**

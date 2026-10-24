@@ -50,6 +50,42 @@ export function composeThreadKickoff(input: ThreadKickoffInput): string {
   ].join('\n')
 }
 
+export interface ThreadTaskRestoreInput {
+  threadId: string
+  title: string
+  brief: string
+  background?: string
+  branch?: string
+  /** The last real instruction the summary compacted, if one was captured. */
+  lastInstruction?: { text: string; recordId: string }
+}
+
+/**
+ * What a thread is working on, restored after its history was compacted.
+ *
+ * The original brief is the task's source, not its current state: a later
+ * instruction from the user or the coordinator — a change of scope, a
+ * cancellation, a decision that the work is done — wins wherever the two
+ * disagree, and compaction itself says nothing about the task being finished.
+ */
+export function formatThreadTaskRestore(input: ThreadTaskRestoreInput): string {
+  const parts = [
+    `Task continuity for thread ${input.threadId} (${input.title}).`,
+    'Task originally assigned:',
+    input.brief,
+  ]
+  if (input.background?.trim()) parts.push('Background:', input.background)
+  if (input.branch) parts.push(`- Work in your git worktree; commit your changes to branch ${input.branch}.`)
+  if (input.lastInstruction?.text.trim()) {
+    parts.push(
+      'The latest instruction that followed the original task. It outranks the original brief wherever they differ, and a cancellation, a change of goal or a conclusion that the work is finished stands:',
+      input.lastInstruction.text,
+    )
+  }
+  parts.push('The compaction does not mean the task is finished. Continue from where you left off; do not redo work already completed or cancelled.')
+  return parts.join('\n\n')
+}
+
 /** A thread's report as a note for the coordinator, sanitized and labelled as quoted data. */
 export function formatThreadNote(
   thread: Pick<ThreadRecord, 'title' | 'name'>,

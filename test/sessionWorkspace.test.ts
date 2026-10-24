@@ -83,10 +83,20 @@ async function createHarness(): Promise<Harness> {
     return scope
   }
 
+  const model = { model: 'claude-test', provider: 'anthropic' }
   const project = {
     cwd,
     store,
-    config: {},
+    // Just enough for the one model selection the pane resolves on creation.
+    config: {
+      get: () => ({ models: { sonnet: model }, defaultModel: 'sonnet' }),
+      getModel: (key: string) => (key === 'sonnet' ? model : undefined),
+      resolveModel: (key: string) => (key === 'sonnet' ? model : undefined),
+      resolveModelReference: (reference: string | undefined) => reference,
+      resolveModelKeyFor: () => 'sonnet',
+      getCoordination: () => ({ quietDays: 3, autoResolveDays: 7 }),
+      resolveCoordinationModelKey: () => ({ modelKey: 'sonnet' }),
+    },
     mcp: { connected: [], failed: [] },
     initialModelKey: 'sonnet',
     initialEffort: 'high',

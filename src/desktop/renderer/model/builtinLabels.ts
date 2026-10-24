@@ -1,16 +1,14 @@
 import type { WireCommandInfo } from '../../../runtime/protocol/wire.js'
-import type { WireAgentDefinitionInfo } from '../../shellProtocol.js'
 
 /**
- * Chinese captions for the built-in slash commands and sub-agents — display only.
+ * Chinese captions for the built-in slash commands — display only.
  *
- * The English descriptions stay where they are: a sub-agent's description is part
- * of the Agent tool's prompt, and the TUI speaks English. So this table is a
- * mirror applied at the last step, keyed by name *and* the English it replaces.
- * A skill or custom agent that reuses a built-in name carries its own
- * description, which does not match and so shows as written; an English line
- * edited at the source falls back to English rather than showing a stale
- * translation. `test/builtinLabels.test.ts` pins every `en` to its source.
+ * The English descriptions stay where they are, so this table is a mirror
+ * applied at the last step, keyed by name *and* the English it replaces. A
+ * skill that reuses a built-in command name carries its own description, which
+ * does not match and so shows as written; an English line edited at the source
+ * falls back to English rather than showing a stale translation.
+ * `test/builtinLabels.test.ts` pins every `en` to its source.
  */
 interface Caption {
   readonly en: string
@@ -37,22 +35,6 @@ export const COMMAND_DESCRIPTIONS: Readonly<Record<string, Caption>> = {
   attachments: { en: 'List or remove draft image attachments', zh: '查看或移除待发送的图片' },
 }
 
-export const AGENT_DESCRIPTIONS: Readonly<Record<string, Caption>> = {
-  general: { en: 'General-purpose read-only sub-agent for isolated research tasks.', zh: '通用只读子代理，用于独立的调研任务' },
-  fork: {
-    en: 'Read-only sub-agent fork that continues from the parent transcript, reading the parent\'s prompt cache when its request fits.',
-    zh: '只读分叉子代理，接着主对话记录继续工作；上下文放得下时直接读取主对话的提示缓存',
-  },
-  explore: {
-    en: 'Fast read-only code exploration agent for broad search, navigation, and codebase questions.',
-    zh: '快速只读的代码探索子代理，用于大范围搜索、定位和解答代码库问题',
-  },
-  plan: {
-    en: 'Read-only software planning agent for implementation strategy and trade-off analysis.',
-    zh: '只读规划子代理，用于制定实现方案和权衡取舍',
-  },
-}
-
 function caption(table: Readonly<Record<string, Caption>>, name: string, text: string): string {
   const entry = Object.hasOwn(table, name) ? table[name] : undefined
   return entry?.en === text ? entry.zh : text
@@ -60,11 +42,6 @@ function caption(table: Readonly<Record<string, Caption>>, name: string, text: s
 
 export function commandDescription(command: WireCommandInfo): string {
   return caption(COMMAND_DESCRIPTIONS, command.name, command.description)
-}
-
-/** A custom definition never borrows a built-in's caption, even under the same name. */
-export function agentDescription(agent: Pick<WireAgentDefinitionInfo, 'type' | 'builtIn' | 'description'>): string {
-  return agent.builtIn ? caption(AGENT_DESCRIPTIONS, agent.type, agent.description) : agent.description
 }
 
 /** The command list the renderer keeps, captioned once on arrival. */

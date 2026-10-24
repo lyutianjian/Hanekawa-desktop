@@ -73,27 +73,6 @@ function snapshotOf(overrides: Partial<WireSettingsSnapshot> = {}): WireSettings
         { behavior: 'deny', local: [], inherited: ['Bash(rm -rf:*)'] },
       ],
     },
-    agents: [
-      {
-        type: 'general',
-        description: 'General-purpose sub-agent.',
-        builtIn: true,
-        maxTurns: 30,
-        isReadOnlyAgent: true,
-        routing: 'inherit',
-      },
-      {
-        type: 'reviewer',
-        description: 'Reviews a diff.',
-        builtIn: false,
-        permissionMode: 'plan',
-        tools: ['Read', 'Grep'],
-        model: 'claude-big',
-        maxTurns: 12,
-        isReadOnlyAgent: true,
-        routing: 'big',
-      },
-    ],
     skills: [
       {
         name: 'release',
@@ -668,7 +647,7 @@ test('models that name no configured endpoint get their own row and keep their r
 // --- the view model ----------------------------------------------------------
 
 test('every category draws its own cards, and none draws a placeholder', () => {
-  for (const category of ['provider', 'extensions', 'permissions', 'agent', 'general', 'personalization', 'appearance'] as const) {
+  for (const category of ['provider', 'extensions', 'permissions', 'general', 'personalization', 'appearance'] as const) {
     const view = settingsView(openState({ category }))
     assert.ok(view.cards.length > 0 || view.editor, `${category} has no cards`)
     assert.ok(
@@ -678,7 +657,7 @@ test('every category draws its own cards, and none draws a placeholder', () => {
   }
   assert.deepEqual(
     settingsView(openState()).navGroups.flatMap((group) => group.items.map((item) => item.category)),
-    ['general', 'personalization', 'appearance', 'provider', 'extensions', 'permissions', 'agent'],
+    ['general', 'personalization', 'appearance', 'provider', 'extensions', 'permissions'],
   )
 })
 
@@ -694,7 +673,7 @@ test('the nav is three named sections, and every page lands in exactly one', () 
   )
   assert.deepEqual(
     groups.map((group) => group.items.map((item) => item.category)),
-    [['general', 'personalization', 'appearance'], ['provider', 'extensions'], ['permissions', 'agent']],
+    [['general', 'personalization', 'appearance'], ['provider', 'extensions'], ['permissions']],
   )
   // Each item carries the section it was filed under, so the DOM never has to
   // re-derive the grouping (two views of one list is how they come to disagree).
@@ -719,12 +698,12 @@ test('the query filters the nav to the pages that hold a match', () => {
 test('the selected page never leaves the nav, however unmatched it is', () => {
   // Otherwise a query can delete the row the user is standing on, and there is no
   // way back to it — which is also why the nav has no empty state.
-  const view = settingsView(openState({ category: 'agent', query: 'MCP' }))
+  const view = settingsView(openState({ category: 'permissions', query: 'MCP' }))
   const categories = view.navGroups.flatMap((group) => group.items.map((item) => item.category))
-  assert.ok(categories.includes('agent'), 'the selected page survives its own filter')
+  assert.ok(categories.includes('permissions'), 'the selected page survives its own filter')
   assert.ok(categories.includes('extensions'), 'and the page that actually matched is there too')
   const selected = view.navGroups.flatMap((group) => group.items).filter((item) => item.selected)
-  assert.deepEqual(selected.map((item) => item.category), ['agent'])
+  assert.deepEqual(selected.map((item) => item.category), ['permissions'])
 })
 
 test('a card that matches on its own title keeps all of its rows', () => {
@@ -799,13 +778,13 @@ test('typing does not disarm a pending delete or clear an error', () => {
 })
 
 test('clear-search empties the query and touches nothing else', () => {
-  const searching = applySettingsIntent(openState({ category: 'agent' }), {
+  const searching = applySettingsIntent(openState({ category: 'permissions' }), {
     kind: 'search',
     query: 'MCP',
   }).state
   const cleared = applySettingsIntent(searching, { kind: 'clear-search' })
   assert.equal(cleared.state.query, '')
-  assert.equal(cleared.state.category, 'agent')
+  assert.equal(cleared.state.category, 'permissions')
   assert.equal(cleared.changes, undefined, 'the filter is renderer-local')
   assert.equal(cleared.load, undefined)
 })
@@ -931,7 +910,7 @@ test('the view says where it saves in words, and keeps the path for the hover', 
 })
 
 test('no card note spells out a file path or an internal value', () => {
-  for (const category of ['provider', 'extensions', 'permissions', 'agent', 'general'] as const) {
+  for (const category of ['provider', 'extensions', 'permissions', 'general'] as const) {
     for (const card of settingsView(openState({ category })).cards) {
       assert.doesNotMatch(card.note ?? '', /[\\/]\.myagent|\.json|inherit|MYAGENT_|主循环/, `${category}/${card.id}`)
     }
@@ -1159,45 +1138,6 @@ test('the startup mode row says it does not reach an open session', () => {
   assert.match(card?.noteHint ?? '', /settings\.local\.json/)
 })
 
-// --- agents -------------------------------------------------------------------
-
-test('every agent definition gets a row, with its routing select', () => {
-  const card = settingsView(openState({ category: 'agent' })).cards.find((card) => card.id === 'agents')
-  const reviewer = card?.rows.find((row) => row.id === 'agent:reviewer')
-
-  assert.deepEqual(card?.rows.map((row) => row.id), ['agent:general', 'agent:reviewer'])
-  assert.ok(reviewer && reviewer.control.kind === 'select')
-  assert.equal(reviewer.control.value, 'big')
-  // Reuses the provider page's routing variant rather than inventing a second
-  // path to the same config field.
-  assert.deepEqual(reviewer.control.intentOnChange('inherit'), {
-    kind: 'set-subagent-routing',
-    type: 'reviewer',
-    value: 'inherit',
-  })
-  assert.deepEqual(
-    reviewer.control.choices,
-    routingOptions(snapshotOf()),
-    'the same choices the provider routing card offers',
-  )
-})
-
-test('an agent with no tool list says "all tools", not "no tools"', () => {
-  const card = settingsView(openState({ category: 'agent' })).cards.find((card) => card.id === 'agents')
-  assert.match(card?.rows.find((row) => row.id === 'agent:general')?.detail ?? '', /工具：全部/)
-  assert.match(card?.rows.find((row) => row.id === 'agent:reviewer')?.detail ?? '', /工具：Read、Grep/)
-  assert.match(card?.rows.find((row) => row.id === 'agent:general')?.detail ?? '', /内置/)
-  assert.match(card?.rows.find((row) => row.id === 'agent:reviewer')?.detail ?? '', /自定义/)
-})
-
-test('reloading definitions is one change and nothing else', () => {
-  const outcome = applySettingsIntent(openState({ category: 'agent' }), {
-    kind: 'reload-agent-definitions',
-  })
-  assert.deepEqual(outcome.changes, [{ scope: 'agent', kind: 'reload-agent-definitions' }])
-  assert.equal(outcome.state.busy, true)
-})
-
 // --- general, MCP and the context budget --------------------------------------
 
 test('an unset cache toggle reads as the on-by-default it is', () => {
@@ -1417,32 +1357,60 @@ test('a context number is validated here, so a typo is not a host error', () => 
   }
 })
 
-test('the 项目调度 card maps selects and day inputs to coordination changes', () => {
-  const state = openState({ category: 'agent', snapshot: snapshotOf({ coordination: { threadModel: 'a', quietDays: 7, autoResolveDays: 14 } }) })
-  const card = settingsView(state).cards.find((c) => c.title === '项目调度')
+test('the 线程调度 card maps selects and day inputs to coordination changes', () => {
+  const state = openState({ category: 'provider', snapshot: snapshotOf({ coordination: { threadModel: 'a', quietDays: 7, autoResolveDays: 14 } }) })
+  const card = settingsView(state).cards.find((c) => c.title === '线程调度')
   assert.ok(card)
   assert.deepEqual(card.rows.map((r) => r.id), [
-    'agent:coordination-coordinator-model',
-    'agent:coordination-coordinator-effort',
-    'agent:coordination-thread-model',
-    'agent:coordination-thread-effort',
-    'agent:coordination-quietDays',
-    'agent:coordination-autoResolveDays',
+    'provider:coordination-coordinator-model',
+    'provider:coordination-coordinator-effort',
+    'provider:coordination-thread-model',
+    'provider:coordination-thread-effort',
+    'provider:coordination-quietDays',
+    'provider:coordination-autoResolveDays',
   ])
+  // Global: this page never offers a project scope, and the card says so.
+  assert.equal(settingsView(state).projectChoices.length, 0)
+  assert.match(card.note ?? '', /保存在全局配置/)
   const threadModel = card.rows[2]!.control
   assert.ok(threadModel.kind === 'select')
   assert.equal(threadModel.value, 'a')
-  assert.equal(threadModel.choices[0]!.label, '跟随默认')
+  assert.equal(threadModel.choices[0]!.label, '跟随全局主模型')
 
   const days = applySettingsIntent(state, { kind: 'set-coordination-days', field: 'quietDays', value: '0' })
-  assert.deepEqual(days.changes, [{ scope: 'agent', kind: 'set-coordination-days', field: 'quietDays', value: 0 }])
-  assert.deepEqual([...pendingRowIds([{ change: days.changes![0]! } as PendingMutation])], ['agent:coordination-quietDays'])
+  assert.deepEqual(days.changes, [{ scope: 'provider', kind: 'set-coordination-days', field: 'quietDays', value: 0 }])
+  assert.deepEqual([...pendingRowIds([{ change: days.changes![0]! } as PendingMutation])], ['provider:coordination-quietDays'])
   for (const bad of ['', '-1', '1.5', 'x']) {
     const out = applySettingsIntent(state, { kind: 'set-coordination-days', field: 'quietDays', value: bad })
     assert.equal(out.changes, undefined, bad)
   }
   const effort = applySettingsIntent(state, { kind: 'set-coordination-effort', role: 'thread', value: 'inherit' })
-  assert.deepEqual(effort.changes, [{ scope: 'agent', kind: 'set-coordination-effort', role: 'thread', value: 'inherit' }])
+  assert.deepEqual(effort.changes, [{ scope: 'provider', kind: 'set-coordination-effort', role: 'thread', value: 'inherit' }])
+})
+
+test('a migration the retired values could not settle is shown on the 线程调度 card', () => {
+  // The migration only logs to the console; without this the user would never
+  // learn that two projects disagreed and nothing was chosen.
+  const settled = openState({ category: 'provider', snapshot: snapshotOf({}) })
+  assert.equal(
+    settingsView(settled).cards.find((c) => c.title === '线程调度')?.warnings,
+    undefined,
+  )
+
+  const conflicted = openState({
+    category: 'provider',
+    snapshot: snapshotOf({
+      coordination: {
+        quietDays: 7,
+        autoResolveDays: 14,
+        migrationFindings: ['threadModel 在多个项目里取值不同：a（/w/a）、b（/w/b）'],
+      },
+    }),
+  })
+  assert.deepEqual(
+    settingsView(conflicted).cards.find((c) => c.title === '线程调度')?.warnings,
+    ['threadModel 在多个项目里取值不同：a（/w/a）、b（/w/b）'],
+  )
 })
 
 // --- effects -----------------------------------------------------------------

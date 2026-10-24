@@ -2325,9 +2325,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .project-row:hover .project-more,
 .project-row:focus-within .project-more,
 .project-more[aria-expanded="true"] { opacity: 1; }
+.project-new:disabled,
 .project-row:hover .project-new:disabled,
-.project-row:focus-within .project-new:disabled { opacity: var(--opacity-disabled); }
-.project-new:disabled { cursor: default; }
+.project-row:focus-within .project-new:disabled { opacity: var(--opacity-disabled); cursor: default; }
 /* The heading's context menu. Same card as `.titlebar-menu`. `.sidebar-list` is
    the scroller, so an absolutely positioned popover here would be clipped by its
    `overflow`; a fixed one is not, and anchoring it to the heading row keeps it
@@ -6206,6 +6206,14 @@ body.projects-open #browser-resizer,
 .settings-card-note {
   padding-bottom: var(--space-2);
   color: var(--text-secondary);
+  font-size: var(--type-meta);
+}
+
+/* Something the user has to read before the rows make sense — a retired
+   per-project value the migration refused to choose for them. */
+.settings-card-warning {
+  padding-bottom: var(--space-2);
+  color: var(--text-danger);
   font-size: var(--type-meta);
 }
 

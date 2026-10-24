@@ -31,9 +31,14 @@ import type { RuntimeChannel } from '../src/runtime/protocol/channel.js'
 import { SessionStore, type SessionMeta } from '../src/sessions/service.js'
 import type { Config, ModelConfig } from '../src/config/service.js'
 import { mergeRouting, type Endpoint, type Routing } from '../src/config/routing.js'
+import {
+  resolveCoordination,
+  type CoordinationConfig,
+  type CoordinationRole,
+  type ResolvedCoordinationConfig,
+} from '../src/config/coordination.js'
 import { loadMergedSettings, localSettingsPath, type MyAgentSettings } from '../src/config/settings.js'
 import type { ContextManagementConfig } from '../src/prompts/budget.js'
-import { BUILT_IN_AGENT_DEFINITIONS, type BaseAgentDefinition } from '../src/tools/AgentTool/AgentTool.js'
 import type { McpConnectionStatus } from '../src/runtime/types.js'
 import { getSessionsDir } from '../src/utils/paths.js'
 
@@ -237,7 +242,7 @@ class FakeConfig {
     next[newKey] = model
     this.config.models = next
     const routing = this.getRouting()
-    for (const role of ['main', 'plan', 'compact'] as const) {
+    for (const role of ['main', 'plan', 'compact', 'coordinator', 'thread'] as const) {
       if (routing[role] === oldKey) routing[role] = newKey
     }
     this.config.routing = routing
@@ -299,6 +304,37 @@ class FakeConfig {
     }
   }
 
+  /** Mirrors the real service, validation included. */
+  getCoordination(): ResolvedCoordinationConfig {
+    return resolveCoordination(this.config.agent.coordination)
+  }
+
+  setCoordination(patch: CoordinationConfig): void {
+    const next: CoordinationConfig = { ...this.config.agent.coordination }
+    for (const [field, value] of Object.entries(patch) as Array<[keyof CoordinationConfig, unknown]>) {
+      if (value === undefined) {
+        delete next[field]
+        continue
+      }
+      if (field === 'quietDays' || field === 'autoResolveDays') {
+        if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+          throw new Error(`agent.coordination.${field} must be a non-negative integer.`)
+        }
+        next[field] = value
+        continue
+      }
+      next[field] = value as CoordinationConfig['coordinatorEffort']
+    }
+    this.config.agent = { ...this.config.agent, coordination: next }
+  }
+
+  setCoordinationRouting(role: CoordinationRole, value: string): void {
+    if (value !== 'inherit' && !this.config.models[value]) {
+      throw new Error(`routing.${role} names unknown model "${value}".`)
+    }
+    this.config.routing = { ...this.getRouting(), [role]: value }
+  }
+
   async save(): Promise<void> {
     this.saves += 1
     this.log.push('config-save')
@@ -311,12 +347,10 @@ class FakeProject implements ShellLaneProject {
   readonly openedScopes: SessionMeta[] = []
   readonly shutdowns: string[] = []
   reloads = 0
-  agentReloads = 0
   skillReloads = 0
   mcpReloads = 0
   /** The merged settings, as the last load read them off disk. */
   settings: MyAgentSettings = {}
-  agentDefinitions: BaseAgentDefinition[] = [...BUILT_IN_AGENT_DEFINITIONS]
   readonly mcp: McpConnectionStatus = { connected: [], failed: [] }
 
   constructor(
@@ -348,16 +382,6 @@ class FakeProject implements ShellLaneProject {
 
   getSettings(): MyAgentSettings {
     return this.settings
-  }
-
-  listAgentDefinitions(): readonly BaseAgentDefinition[] {
-    return this.agentDefinitions
-  }
-
-  async reloadAgentDefinitions(): Promise<number> {
-    this.agentReloads += 1
-    this.log.push(`reload-agents:${this.cwd}`)
-    return this.agentDefinitions.length
   }
 
   async reloadSkills(): Promise<number> {
@@ -749,10 +773,9 @@ const SETTINGS_CHANGE_SAMPLES = {
     kind: 'set-startup-permission-mode',
     mode: 'auto',
   },
-  'reload-agent-definitions': { scope: 'agent', kind: 'reload-agent-definitions' },
-  'set-coordination-model': { scope: 'agent', kind: 'set-coordination-model', role: 'coordinator', value: 'big' },
-  'set-coordination-effort': { scope: 'agent', kind: 'set-coordination-effort', role: 'thread', value: 'high' },
-  'set-coordination-days': { scope: 'agent', kind: 'set-coordination-days', field: 'quietDays', value: 5 },
+  'set-coordination-model': { scope: 'provider', kind: 'set-coordination-model', role: 'coordinator', value: 'big' },
+  'set-coordination-effort': { scope: 'provider', kind: 'set-coordination-effort', role: 'thread', value: 'high' },
+  'set-coordination-days': { scope: 'provider', kind: 'set-coordination-days', field: 'quietDays', value: 5 },
   'set-cache-ttl': { scope: 'general', kind: 'set-cache-ttl', enabled: true },
   'set-thinking': { scope: 'general', kind: 'set-thinking', enabled: false },
   'set-context-management': {
@@ -2178,10 +2201,13 @@ async function withSettingsDir(
 }
 
 async function readLocalLayer(cwd: string): Promise<Record<string, unknown>> {
-  return JSON.parse(await readFile(localSettingsPath(cwd), 'utf8')) as Record<
-    string,
-    unknown
-  >
+  try {
+    return JSON.parse(await readFile(localSettingsPath(cwd), 'utf8')) as Record<string, unknown>
+  } catch (error) {
+    // A global-only edit legitimately writes no local file at all.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    throw error
+  }
 }
 
 /** One open lane, so "did this rebuild anything" is observable. */
@@ -2283,55 +2309,60 @@ test('coordination settings: local layer, inherit clears, strict validation', as
     assert.deepEqual(defaults, { quietDays: 3, autoResolveDays: 7 })
 
     await h.client.changeSettings(h.entry.root, {
-      scope: 'agent', kind: 'set-coordination-model', role: 'coordinator', value: 'small',
+      scope: 'provider', kind: 'set-coordination-model', role: 'coordinator', value: 'small',
     })
     await h.client.changeSettings(h.entry.root, {
-      scope: 'agent', kind: 'set-coordination-effort', role: 'thread', value: 'high',
+      scope: 'provider', kind: 'set-coordination-effort', role: 'thread', value: 'high',
     })
     const result = await h.client.changeSettings(h.entry.root, {
-      scope: 'agent', kind: 'set-coordination-days', field: 'autoResolveDays', value: 0,
+      scope: 'provider', kind: 'set-coordination-days', field: 'autoResolveDays', value: 0,
     })
-    assert.deepEqual((await readLocalLayer(cwd)).coordination, {
-      coordinatorModel: 'small', threadEffort: 'high', autoResolveDays: 0,
-    })
+    // Global, not per project: the local layer is untouched and the config saves.
+    const local = await readLocalLayer(cwd)
+    assert.equal(local.coordination, undefined)
     assert.deepEqual(result.settings.coordination, {
       coordinatorModel: 'small', threadEffort: 'high', quietDays: 3, autoResolveDays: 0,
     })
     assert.equal(result.rebuiltLanes, 0)
-    assert.equal(h.project.config.saves, 0)
+    assert.equal(h.project.config.saves, 3)
+    assert.equal(h.project.config.config.routing?.coordinator, 'small')
+    assert.equal(h.project.config.config.agent.coordination?.threadEffort, 'high')
+    assert.equal(h.project.config.config.agent.coordination?.autoResolveDays, 0)
 
     await assert.rejects(
       h.client.changeSettings(h.entry.root, {
-        scope: 'agent', kind: 'set-coordination-model', role: 'thread', value: 'nope',
+        scope: 'provider', kind: 'set-coordination-model', role: 'thread', value: 'nope',
       }),
-      /No model named nope/,
+      /unknown model "nope"/,
     )
     for (const value of [1.5, -1]) {
       await assert.rejects(
         h.client.changeSettings(h.entry.root, {
-          scope: 'agent', kind: 'set-coordination-days', field: 'quietDays', value,
+          scope: 'provider', kind: 'set-coordination-days', field: 'quietDays', value,
         }),
       )
     }
     assert.equal(
       parseShellCommand({
         type: 'settings-change', id: 'x', projectRoot: 'r',
-        change: { scope: 'agent', kind: 'set-coordination-effort', role: 'thread', value: 'bogus' },
+        change: { scope: 'provider', kind: 'set-coordination-effort', role: 'thread', value: 'bogus' },
       }).ok,
       false,
     )
 
     const cleared = await h.client.changeSettings(h.entry.root, {
-      scope: 'agent', kind: 'set-coordination-model', role: 'coordinator', value: 'inherit',
+      scope: 'provider', kind: 'set-coordination-model', role: 'coordinator', value: 'inherit',
     })
     assert.equal(cleared.settings.coordination.coordinatorModel, undefined)
     await h.client.changeSettings(h.entry.root, {
-      scope: 'agent', kind: 'set-coordination-effort', role: 'thread', value: 'inherit',
+      scope: 'provider', kind: 'set-coordination-effort', role: 'thread', value: 'inherit',
     })
     await h.client.changeSettings(h.entry.root, {
-      scope: 'agent', kind: 'set-coordination-days', field: 'autoResolveDays', value: 7,
+      scope: 'provider', kind: 'set-coordination-days', field: 'autoResolveDays', value: 7,
     })
-    assert.deepEqual((await readLocalLayer(cwd)).coordination, { autoResolveDays: 7 })
+    assert.equal(h.project.config.config.routing?.coordinator, 'inherit')
+    assert.equal(h.project.config.config.agent.coordination?.threadEffort, undefined)
+    assert.equal((await readLocalLayer(cwd)).coordination, undefined)
   })
 })
 
@@ -2639,60 +2670,9 @@ test('reconnect-mcp reconnects once per project and writes nothing at all', asyn
   })
 })
 
-test('reloading agent definitions rebuilds the lanes, so the live Agent tool sees them', async () => {
+test('get-settings projects the context budget', async () => {
   await withSettingsDir({}, async (h) => {
-    await openOneLane(h)
-
-    const result = await h.client.changeSettings(h.entry.root, {
-      scope: 'agent',
-      kind: 'reload-agent-definitions',
-    })
-
-    assert.equal(h.project.agentReloads, 1)
-    assert.equal(h.project.config.saves, 0)
-    // A runtime hands its Agent tool the definitions that existed when it was
-    // built, so without this the reload only reaches the *next* runtime.
-    assert.equal(result.rebuiltLanes, 1)
-    assert.deepEqual(h.configRefreshes.map((refresh) => refresh.rebuild), [true])
-  })
-})
-
-test('get-settings projects the agent definitions and the context budget', async () => {
-  await withSettingsDir({}, async (h) => {
-    h.project.agentDefinitions = [
-      ...BUILT_IN_AGENT_DEFINITIONS,
-      {
-        type: 'reviewer',
-        description: 'Reviews a diff',
-        tools: ['Read'],
-        permissionMode: 'plan',
-        disallowedTools: ['Agent'],
-        maxTurns: 12,
-        isReadOnlyAgent: true,
-        getSystemPrompt: () => 'review it',
-      },
-    ]
-    h.project.config.config.routing = { main: 'big', subagent: { reviewer: 'small' } }
-
     const { settings } = await h.client.getSettings(h.entry.root)
-
-    const reviewer = settings.agents.find((agent) => agent.type === 'reviewer')
-    assert.deepEqual(reviewer, {
-      type: 'reviewer',
-      description: 'Reviews a diff',
-      builtIn: false,
-      permissionMode: 'plan',
-      tools: ['Read'],
-      maxTurns: 12,
-      isReadOnlyAgent: true,
-      routing: 'small',
-    })
-    const general = settings.agents.find((agent) => agent.type === 'general')
-    assert.equal(general?.builtIn, true)
-    assert.equal(general?.tools, undefined, 'no tool list means every tool, and the wire says so by omission')
-    // Functions cannot cross `structuredClone`, so the projection must be field
-    // by field — a spread would put `getSystemPrompt` on the wire.
-    assert.ok(!JSON.stringify(settings.agents).includes('review it'))
 
     assert.equal(settings.contextManagement.contextWindow, 272_000, 'merged over the defaults')
     assert.equal(settings.general.cacheTtl1h, undefined, 'unset is not false')

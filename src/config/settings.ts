@@ -3,7 +3,7 @@ import { join, dirname } from 'node:path'
 import { getGlobalMyAgentDir, getProjectDataDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
 import type { AgentConfig, ModelConfig } from './service.js'
 import type { Endpoint, Routing } from './routing.js'
-import { VALID_EFFORT_LEVELS, type EffortLevel } from './effort.js'
+import { type EffortLevel } from './effort.js'
 import type { HookCommand } from '../harness/hooks.js'
 import { permissionRuleToEntry, type PermissionRule } from '../harness/permissions.js'
 import type { McpServerConfig } from '../services/mcp/types.js'
@@ -67,26 +67,6 @@ export interface MyAgentSettings {
    * adaptive thinking config. `false` sends no `thinking` parameter at all.
    */
   thinking?: boolean
-  /** Models and cadence for coordinator and thread sessions. Field-wise across layers. */
-  coordination?: CoordinationSettings
-}
-
-export interface CoordinationSettings {
-  /** Model id or alias for the coordinator session. */
-  coordinatorModel?: string
-  coordinatorEffort?: EffortLevel
-  /** Default model for thread sessions. */
-  threadModel?: string
-  threadEffort?: EffortLevel
-  /** Non-negative; 0 disables. */
-  quietDays?: number
-  /** Non-negative; 0 disables. */
-  autoResolveDays?: number
-}
-
-/** The coordination group as written, with no defaults applied. */
-export function coordinationSettings(settings: MyAgentSettings): CoordinationSettings {
-  return settings.coordination ?? {}
 }
 
 interface LegacyMcpSettings {
@@ -313,19 +293,6 @@ function mergeSettings(...sources: MyAgentSettings[]): MyAgentSettings {
     if (source.thinking !== undefined) {
       result.thinking = source.thinking
     }
-
-    if (source.coordination) {
-      const coordination: CoordinationSettings = { ...result.coordination }
-      const next = source.coordination
-      if (next.coordinatorModel !== undefined) coordination.coordinatorModel = next.coordinatorModel
-      if (next.coordinatorEffort !== undefined) coordination.coordinatorEffort = next.coordinatorEffort
-      if (next.threadModel !== undefined) coordination.threadModel = next.threadModel
-      if (next.threadEffort !== undefined) coordination.threadEffort = next.threadEffort
-      if (next.quietDays !== undefined) coordination.quietDays = next.quietDays
-      if (next.autoResolveDays !== undefined) coordination.autoResolveDays = next.autoResolveDays
-      result.coordination = coordination
-    }
-
   }
 
   return result
@@ -420,10 +387,10 @@ export async function loadLocalSettings(cwd: string): Promise<MyAgentSettings> {
 
 /** The keys {@link updateLocalSettings} is allowed to rewrite. */
 export type LocalSettingsPatch = {
-  [K in 'permissions' | 'mcp' | 'skills' | 'cache' | 'thinking' | 'mcpServers' | 'coordination']?: MyAgentSettings[K]
+  [K in 'permissions' | 'mcp' | 'skills' | 'cache' | 'thinking' | 'mcpServers']?: MyAgentSettings[K]
 }
 
-const LOCAL_PATCH_KEYS = ['permissions', 'mcp', 'skills', 'cache', 'thinking', 'mcpServers', 'coordination'] as const
+const LOCAL_PATCH_KEYS = ['permissions', 'mcp', 'skills', 'cache', 'thinking', 'mcpServers'] as const
 
 /**
  * Rewrites the named keys in the local layer and leaves the rest of that file
@@ -613,23 +580,6 @@ export async function setLocalThinking(cwd: string, enabled: boolean): Promise<v
   await updateLocalSettings(cwd, { thinking: enabled })
 }
 
-/**
- * Merges coordination fields into the local layer. A field set to `undefined`
- * is deleted (back to inheriting); the group itself goes when nothing is left.
- */
-export async function setLocalCoordination(
-  cwd: string,
-  patch: { [K in keyof CoordinationSettings]?: CoordinationSettings[K] | undefined },
-): Promise<void> {
-  const local = await loadLocalSettings(cwd)
-  const next: CoordinationSettings = { ...local.coordination }
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === undefined) delete next[key as keyof CoordinationSettings]
-    else (next as Record<string, unknown>)[key] = value
-  }
-  await updateLocalSettings(cwd, { coordination: Object.keys(next).length > 0 ? next : undefined })
-}
-
 /** The 1-hour prompt-cache TTL, in the local layer. */
 export async function setLocalCacheTtl1h(cwd: string, enabled: boolean): Promise<void> {
   const local = await loadLocalSettings(cwd)
@@ -768,25 +718,6 @@ export function validateSettings(settings: MyAgentSettings): { valid: boolean; e
 
   if (settings.effortLevel !== undefined && !['low', 'medium', 'high', 'xhigh', 'max'].includes(settings.effortLevel)) {
     errors.push('effortLevel must be one of: low, medium, high, xhigh, max')
-  }
-
-  const coordination = settings.coordination
-  for (const name of ['coordinatorModel', 'threadModel'] as const) {
-    if (coordination?.[name] !== undefined && typeof coordination[name] !== 'string') {
-      errors.push(`coordination.${name} must be a string`)
-    }
-  }
-  for (const name of ['coordinatorEffort', 'threadEffort'] as const) {
-    const level = coordination?.[name]
-    if (level !== undefined && !(VALID_EFFORT_LEVELS as readonly unknown[]).includes(level)) {
-      errors.push(`coordination.${name} must be one of: ${VALID_EFFORT_LEVELS.join(', ')}`)
-    }
-  }
-  for (const name of ['quietDays', 'autoResolveDays'] as const) {
-    const days = coordination?.[name]
-    if (days !== undefined && (typeof days !== 'number' || !Number.isFinite(days) || days < 0)) {
-      errors.push(`coordination.${name} must be a finite number >= 0`)
-    }
   }
 
   if (settings.permissions?.mode !== undefined && !STARTUP_PERMISSION_MODES.includes(settings.permissions.mode as StartupPermissionMode)) {

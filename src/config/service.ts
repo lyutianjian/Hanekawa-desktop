@@ -5,6 +5,12 @@ import type { ModelPricing } from '../harness/types.js'
 import type { MyAgentSettings } from './settings.js'
 import type { ChatThinkingFormat } from './providers/openaiCompat.js'
 import {
+  resolveCoordination,
+  type CoordinationConfig,
+  type CoordinationRole,
+  type ResolvedCoordinationConfig,
+} from './coordination.js'
+import {
   EFFORT_RANK,
   VALID_EFFORT_LEVELS,
   normalizeSupportedEfforts,
@@ -113,6 +119,8 @@ export interface AgentConfig {
   system?: string
   contextManagement?: Partial<ContextManagementConfig>
   sessionDir?: string
+  /** Coordinator/thread effort and the thread lifecycle day counts. Global only. */
+  coordination?: CoordinationConfig
 }
 
 export interface Config {
@@ -260,7 +268,7 @@ export class ConfigService {
 
     const routing = this.config.routing
     if (routing) {
-      for (const role of ['main', 'plan', 'compact'] as const) {
+      for (const role of ROUTED_ROLES) {
         const value = routing[role]
         if (value !== undefined && isStaleTier(value)) {
           findings.push(`routing.${role} was the tier "${value}"; treating it as "inherit".`)
@@ -487,7 +495,7 @@ export class ConfigService {
     if (!routing) return
     for (const [role] of routingReferences(routing).filter(([, value]) => value === name)) {
       if (role.startsWith('subagent.')) routing.subagent![role.slice('subagent.'.length)] = 'inherit'
-      else routing[role as 'main' | 'plan' | 'compact'] = 'inherit'
+      else routing[role as DirectRouteRole] = 'inherit'
     }
   }
 
@@ -506,7 +514,7 @@ export class ConfigService {
 
     const routing = this.config.routing
     if (routing) {
-      for (const role of ['main', 'plan', 'compact'] as const) {
+      for (const role of ROUTED_ROLES) {
         if (routing[role] === oldKey) routing[role] = newKey
       }
       for (const [type, value] of Object.entries(routing.subagent ?? {})) {
@@ -554,7 +562,80 @@ export class ConfigService {
       contextManagement: { ...this.config.agent.contextManagement, ...sanitized },
     }
   }
+
+  /**
+   * The global coordination group, day defaults filled in.
+   *
+   * Read from `agent.coordination` and nowhere else: the six scheduling values
+   * are account-level, and a project layer that still names one is legacy data
+   * the migration consumes rather than a fallback source.
+   */
+  getCoordination(): ResolvedCoordinationConfig {
+    return resolveCoordination(this.config.agent.coordination)
+  }
+
+  /** Patches the group; an explicit `undefined` deletes that field. */
+  setCoordination(patch: CoordinationConfig): void {
+    const next: CoordinationConfig = { ...this.config.agent.coordination }
+    for (const [field, value] of Object.entries(patch) as Array<[keyof CoordinationConfig, unknown]>) {
+      if (value === undefined) {
+        delete next[field]
+        continue
+      }
+      if (field === 'quietDays' || field === 'autoResolveDays') {
+        if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+          throw new Error(`agent.coordination.${field} must be a non-negative integer.`)
+        }
+        next[field] = value
+        continue
+      }
+      if (typeof value !== 'string' || !VALID_EFFORT_LEVELS.includes(value as EffortLevel)) {
+        throw new Error(`agent.coordination.${field} must be one of: ${VALID_EFFORT_LEVELS.join(', ')}.`)
+      }
+      next[field] = value as EffortLevel
+    }
+    this.config.agent = { ...this.config.agent, coordination: next }
+  }
+
+  /**
+   * Sets one coordination routing role; `'inherit'` is stored as written.
+   *
+   * `allowUnknown` is for the migration: it promotes a legacy value even when
+   * no model currently answers to it, so the settings screen can show the
+   * broken reference instead of the value silently disappearing.
+   */
+  setCoordinationRouting(role: CoordinationRole, value: string, options: { allowUnknown?: boolean } = {}): void {
+    const trimmed = value.trim()
+    if (!trimmed) throw new Error(`routing.${role} needs a model key or "inherit".`)
+    if (trimmed !== 'inherit' && !options.allowUnknown && !this.resolveModel(trimmed)) {
+      throw new Error(`routing.${role} names unknown model "${trimmed}".`)
+    }
+    this.config.routing = { ...mergeRouting(this.config.routing), [role]: trimmed }
+  }
+
+  /**
+   * The model one coordination role runs on.
+   *
+   * Unlike {@link resolveModelKeyFor} this refuses to hide a broken role: a
+   * configured key that no longer resolves is reported as `invalid` so the
+   * session shows a configuration failure instead of quietly running on the
+   * main model. `undefined` with no `invalid` means "inherit", which resolves
+   * through the main-model rules.
+   */
+  resolveCoordinationModelKey(role: CoordinationRole): { modelKey?: string; invalid?: string } {
+    const routed = pickRoutedModel(this.getRouting(), { kind: role })
+    if (routed === undefined || routed === 'inherit') {
+      return { modelKey: this.resolveModelKeyFor({ kind: 'main' }, { currentModelKey: this.config.defaultModel }) }
+    }
+    if (this.resolveModel(routed)) return { modelKey: routed }
+    return { invalid: routed }
+  }
 }
+
+/** The routing keys that hold a model directly (subagents are nested). */
+const ROUTED_ROLES = ['main', 'plan', 'compact', 'coordinator', 'thread'] as const
+
+type DirectRouteRole = (typeof ROUTED_ROLES)[number]
 
 /**
  * Every `role -> value` pair in a routing map, subagents included, as
@@ -564,7 +645,7 @@ export class ConfigService {
 function routingReferences(routing: Routing | undefined): Array<[string, string]> {
   if (!routing) return []
   const pairs: Array<[string, string]> = []
-  for (const role of ['main', 'plan', 'compact'] as const) {
+  for (const role of ROUTED_ROLES) {
     const value = routing[role]
     if (value !== undefined) pairs.push([role, value])
   }
@@ -584,8 +665,16 @@ function configFromSettings(settings?: MyAgentSettings): Partial<Config> {
     ...(settings.defaultModel !== undefined ? { defaultModel: settings.defaultModel } : {}),
     ...(settings.fallbackModel !== undefined ? { fallbackModel: settings.fallbackModel } : {}),
     ...(settings.compactModel !== undefined ? { compactModel: settings.compactModel } : {}),
-    ...(settings.agent ? { agent: settings.agent } : {}),
+    // `agent.coordination` is global-only: a project layer naming it is legacy
+    // data the migration reads directly, never a source of runtime values.
+    ...(settings.agent ? { agent: stripCoordination(settings.agent) } : {}),
   }
+}
+
+function stripCoordination(agent: AgentConfig): AgentConfig {
+  if (!agent.coordination) return agent
+  const { coordination: _ignored, ...rest } = agent
+  return rest
 }
 
 function deepMergeConfig(base: Config, overrides: Partial<Config>): Config {

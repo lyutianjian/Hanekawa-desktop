@@ -8,7 +8,7 @@
 
 import { randomUUID } from 'node:crypto'
 import path from 'node:path'
-import type { CoordinationSettings } from '../../config/settings.js'
+import type { CoordinationDays } from '../../config/coordination.js'
 import type { SessionRecord } from '../../harness/types.js'
 import { applyLifecycle, effectiveThreadStatus } from '../../services/coordination/lifecycle.js'
 import { CoordinationStore, newThreadId } from '../../services/coordination/threadStore.js'
@@ -60,7 +60,13 @@ export interface CoordinationPort {
   /** Opens (or returns) the session's lane; `activate:false` leaves the visible lane alone. */
   openLane(cwd: string, sessionId: string, options: { activate: boolean }): Promise<CoordinationLaneControl>
   notify(input: { title: string; body: string; sessionId: string }): void
-  settings(cwd: string): CoordinationSettings
+  /**
+   * The global thread lifecycle day counts.
+   *
+   * No `cwd`: the two day settings are account-level, and a project-shaped
+   * signature here is what kept a per-project copy alive after the UI moved.
+   */
+  days(): CoordinationDays
 }
 
 /** The wake engine calls the service needs; `CoordinationWakeEngine` satisfies it. */
@@ -123,7 +129,7 @@ export class CoordinationService implements CoordinationHost {
     let store = this.stores.get(key)
     if (!store) {
       store = new CoordinationStore(cwd, {
-        lifecycle: () => this.port.settings(cwd),
+        lifecycle: () => this.port.days(),
         onWrite: () => {
           for (const listener of [...this.threadListeners]) {
             try {
@@ -151,7 +157,7 @@ export class CoordinationService implements CoordinationHost {
   async threadInfos(cwd: string): Promise<{ coordinatorSessionId?: string; openingThreadId?: string; started: boolean; threads: ThreadInfo[] }> {
     const store = this.coordinationStore(cwd)
     const file = await store.read()
-    const threads = applyLifecycle(file.threads, new Date(), this.port.settings(cwd))
+    const threads = applyLifecycle(file.threads, new Date(), this.port.days())
       .map((thread): ThreadInfo => ({
         ...this.summarize(thread),
         sessionId: thread.sessionId,
@@ -217,22 +223,20 @@ export class CoordinationService implements CoordinationHost {
       }
 
       const meta = await sessions.create(request.title)
-      // Before the lane opens: the session scope snapshots its role.
+      // Before the lane opens: the session scope snapshots its role, and the
+      // first runtime must already be built on the model the coordinator picked.
       await sessions.setCoordination(meta.id, {
         role: 'thread',
         projectKey: projectDataKey(cwd),
         threadId,
         ...(worktree ? { workingDir: worktree.cwd } : {}),
+        ...(request.model ? { modelOverride: request.model } : {}),
       })
       const record: ThreadRecord = { ...base, sessionId: meta.id, ...(worktree ? { worktree } : {}) }
       await store.upsertThread(record)
 
       try {
         const control = await this.port.openLane(cwd, meta.id, { activate: false })
-        const model = request.model ?? this.port.settings(cwd).threadModel
-        if (model) control.setModel(model)
-        const effort = this.port.settings(cwd).threadEffort
-        if (effort) control.setEffort(effort)
         await control.enqueueFromCoordinator(composeThreadKickoff({
           background: request.background,
           brief: request.brief,
@@ -287,7 +291,7 @@ export class CoordinationService implements CoordinationHost {
     await this.requireCoordinator(caller)
     const cwd = caller.projectDir
     const { threads } = await this.coordinationStore(cwd).read()
-    return applyLifecycle(threads, new Date(), this.port.settings(cwd)).map((thread) => this.summarize(thread))
+    return applyLifecycle(threads, new Date(), this.port.days()).map((thread) => this.summarize(thread))
   }
 
   async fetchThread(caller: CoordinationCaller, threadId: string, options: FetchThreadOptions = {}): Promise<FetchedThread> {
@@ -395,12 +399,8 @@ export class CoordinationService implements CoordinationHost {
     await sessions.setCoordination(meta.id, { role: 'coordinator', projectKey: projectDataKey(cwd) })
     await seed?.(meta.id)
     await this.coordinationStore(cwd).setCoordinatorSessionId(meta.id)
-    const model = this.port.settings(cwd).coordinatorModel
-    const effort = this.port.settings(cwd).coordinatorEffort
-    if (model || effort || options.alwaysOpen) {
-      const control = await this.port.openLane(cwd, meta.id, { activate: false })
-      if (model) control.setModel(model)
-      if (effort) control.setEffort(effort)
+    if (options.alwaysOpen) {
+      await this.port.openLane(cwd, meta.id, { activate: false })
     }
     return meta.id
   }
@@ -529,7 +529,7 @@ export class CoordinationService implements CoordinationHost {
     const thread = await this.findThread(cwd, threadId)
     const stale = (why: string) => new CoordinationError('THREAD_STALE', `Thread ${threadId} (${sanitizeTitle(thread.title)}) ${why}; start a new thread instead.`)
     if (thread.status === 'stale') throw stale('is stale: its session no longer exists')
-    if (effectiveThreadStatus(thread, new Date(), this.port.settings(cwd)) === 'resolved') {
+    if (effectiveThreadStatus(thread, new Date(), this.port.days()) === 'resolved') {
       throw new CoordinationError('THREAD_RESOLVED', `Thread ${threadId} (${sanitizeTitle(thread.title)}) is resolved and takes no more messages; start a new thread instead.`)
     }
     if (!thread.sessionId) throw stale('never started')

@@ -109,6 +109,16 @@ const runtimeHost = {
   cwd: process.cwd(),
   session: { id: 'child-session' },
   store: {},
+  // What the runtime snapshot reads to name the model's source.
+  config: {
+    get: () => ({ models: {}, defaultModel: 'main' }),
+    getModel: () => ({ model: 'test-model' }),
+    resolveModelReference: (reference) => reference,
+    resolveModelKeyFor: () => 'main',
+    getRouting: () => ({ main: 'main' }),
+    resolveCoordinationModelKey: () => ({ modelKey: 'main' }),
+    getCoordination: () => ({ quietDays: 3, autoResolveDays: 7 }),
+  },
   bridges,
   // Per-project slash commands. The child never sends \`run-command\`, but tsc
   // cannot see this string — keep it faithful, per todo.md (工作方法).

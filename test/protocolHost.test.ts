@@ -318,6 +318,8 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
         return input in { main: 1, fast: 1, broken: 1 } ? input : `${input}-resolved`
       },
       resolveModelReference: (reference: string | undefined) => reference,
+      resolveModelKeyFor: (_role: unknown, options?: { currentModelKey?: string }) =>
+        options?.currentModelKey ?? 'main',
       setDefaultModel: (name: string) => { calls.defaultModels.push(name) },
       save: async () => {},
     },

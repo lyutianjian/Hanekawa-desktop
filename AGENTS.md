@@ -65,6 +65,7 @@ desktop/ -> runtime/ + harness/ -> config/providers/
 - The shell pushes `coordination-threads` to the renderer, coalesced per root. Notes are wrapped in an app-added `<thread-note>` marker, parsed by `renderer/model/threadNotes.ts` into cards; keep the two in step.
 - Merges run in the app via git, never through the model: dirty main tree refuses, conflict runs `git merge --abort`.
 - Thread/coordinator sessions refuse `/clear`, `/resume` and session switches. Deleting a thread marks it stale; deleting the coordinator ends the project's coordination: every thread session and worktree and the coordination directory go with it.
+- The six scheduling settings are global only: `routing.coordinator` / `routing.thread` and `agent.coordination` in `config.json`, never a project layer or override. A session's explicit pick is `SessionMeta.coordination.modelOverride` / `effortOverride` — its own, never a project default — and `runtime/sessionSelection.ts` is the one resolver every open, rebuild, restart and cold-delivery path goes through. The retired per-project fields are read only by `config/coordinationMigration.ts`; a migrated conflict is reported where the user fixes it (the 线程调度 card), not resolved by picking a value.
 
 ## Loop, tools, and context
 

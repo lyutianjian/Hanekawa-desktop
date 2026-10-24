@@ -9,14 +9,13 @@ import { probeEndpoint } from '../config/providers/probe.js'
 import { carryJsonOnlyModelFields } from '../config/service.js'
 import type { Config, ModelConfig } from '../config/service.js'
 import type { Endpoint, Routing } from '../config/routing.js'
+import type { CoordinationConfig, CoordinationRole, ResolvedCoordinationConfig } from '../config/coordination.js'
 import {
   loadLocalSettings,
   loadSettingsLayers,
   localSettingsPath,
   setLocalCacheTtl1h,
   setLocalThinking,
-  coordinationSettings,
-  setLocalCoordination,
   setLocalPermissionEntries,
   setLocalStartupPermissionMode,
   setMcpServerTrustLocally,
@@ -33,9 +32,8 @@ import type { ProviderConfigChangeScope } from '../runtime/providerRuntime.js'
 import type { SessionMeta } from '../sessions/service.js'
 import { SessionStore } from '../sessions/service.js'
 import type { McpServerConfig } from '../services/mcp/index.js'
-import { BUILT_IN_AGENT_DEFINITIONS, type BaseAgentDefinition } from '../tools/AgentTool/AgentTool.js'
+import type { BaseAgentDefinition } from '../tools/AgentTool/AgentTool.js'
 import { SkillsService, type SkillDefinition } from '../services/skills/skillsService.js'
-import { DEFAULT_AUTO_RESOLVE_DAYS, DEFAULT_QUIET_DAYS } from '../services/coordination/lifecycle.js'
 import { importSkill } from '../services/skills/importSkill.js'
 import { readUserInstructions, writeUserInstructions } from '../services/context/projectContext.js'
 import { peekSessions } from './recentProjects.js'
@@ -84,7 +82,6 @@ import {
   type WireShellSettingsChangeResult,
   type WireShellSettingsResult,
   type WireSettingsSnapshot,
-  type WireAgentDefinitionInfo,
   type WireContextManagementInfo,
   type WireCoordinationSettingsInfo,
   type WireEndpointInfo,
@@ -176,6 +173,9 @@ export interface ShellLaneProject extends DirectoryProject {
     renameModel(oldKey: string, newKey: string): void
     setDefaultModel(name: string): void
     setContextManagement(patch: Partial<ContextManagementConfig>): void
+    getCoordination(): ResolvedCoordinationConfig
+    setCoordination(patch: CoordinationConfig): void
+    setCoordinationRouting(role: CoordinationRole, value: string): void
     resolveModel(name: string): ModelConfig | undefined
     getSaveTarget(): string
     save(): Promise<void>
@@ -187,9 +187,6 @@ export interface ShellLaneProject extends DirectoryProject {
    * is not enforcing is worse than a screen showing none.
    */
   getSettings(): MyAgentSettings
-  /** Read-only: the agent cards list these; editing them means editing files. */
-  listAgentDefinitions(): readonly BaseAgentDefinition[]
-  reloadAgentDefinitions(): Promise<number>
   /** Re-reads `.myagent/skills/` and re-registers their slash commands. */
   reloadSkills(): Promise<number>
   /** As it stands now. Mutated in place by `reloadMcpServers`, never replaced. */
@@ -237,7 +234,11 @@ export interface LaneOccupant {
    * and does nothing until the next launch, which is indistinguishable from
    * working.
    */
-  refreshAfterConfigChange(options: { rebuild: boolean; scope: ProviderConfigChangeScope }): void
+  refreshAfterConfigChange(options: {
+    rebuild: boolean
+    scope: ProviderConfigChangeScope
+    refreshEffort?: boolean
+  }): void
   /**
    * The model key this lane is mid-turn on, or `undefined` when it is idle.
    *
@@ -418,6 +419,12 @@ export interface ShellHostDeps<
    */
   onForgetProject?: (cwd: string) => Promise<void>
   /**
+   * Whatever the one-time promotion of the retired per-project scheduling
+   * values could not settle. Read live, so the 线程调度 card can say so where
+   * the user would fix it; absent when the migration ran clean.
+   */
+  coordinationMigrationFindings?: () => readonly string[]
+  /**
    * The browser's tab host, when this shell has one.
    *
    * Optional like every other Electron-shaped dependency here, and for the same
@@ -580,12 +587,9 @@ const SETTINGS_CHANGE_SCHEMAS = {
       mode: z.union([z.literal('default'), z.literal('auto'), z.literal('bypass')]),
     })
     .strict(),
-  'reload-agent-definitions': z
-    .object({ scope: z.literal('agent'), kind: z.literal('reload-agent-definitions') })
-    .strict(),
   'set-coordination-model': z
     .object({
-      scope: z.literal('agent'),
+      scope: z.literal('provider'),
       kind: z.literal('set-coordination-model'),
       role: z.enum(['coordinator', 'thread']),
       value: z.string().min(1),
@@ -593,7 +597,7 @@ const SETTINGS_CHANGE_SCHEMAS = {
     .strict(),
   'set-coordination-effort': z
     .object({
-      scope: z.literal('agent'),
+      scope: z.literal('provider'),
       kind: z.literal('set-coordination-effort'),
       role: z.enum(['coordinator', 'thread']),
       value: z.union([z.enum(VALID_EFFORT_LEVELS), z.literal('inherit')]),
@@ -601,7 +605,7 @@ const SETTINGS_CHANGE_SCHEMAS = {
     .strict(),
   'set-coordination-days': z
     .object({
-      scope: z.literal('agent'),
+      scope: z.literal('provider'),
       kind: z.literal('set-coordination-days'),
       field: z.enum(['quietDays', 'autoResolveDays']),
       value: z.number().int().min(0),
@@ -1883,7 +1887,13 @@ export class ShellHost<
     if (effect.rebuild) {
       for (const held of this.lanes.values()) {
         if (!affected.includes(held.project)) continue
-        held.occupant.refreshAfterConfigChange({ rebuild: true, scope: effect.scope })
+        const role = held.pane.getSession().coordination?.role
+        if (effect.onlyRoles && !(role && effect.onlyRoles.includes(role))) continue
+        held.occupant.refreshAfterConfigChange({
+          rebuild: true,
+          scope: effect.scope,
+          refreshEffort: effect.refreshEffort === true,
+        })
         rebuiltLanes += 1
       }
     }
@@ -2056,22 +2066,6 @@ export class ShellHost<
       ),
     }
 
-    const builtInTypes = new Set(BUILT_IN_AGENT_DEFINITIONS.map((definition) => definition.type))
-    const agents = entry.project.listAgentDefinitions().map((definition) => {
-      const info: WireAgentDefinitionInfo = {
-        type: definition.type,
-        description: definition.description,
-        builtIn: builtInTypes.has(definition.type),
-        isReadOnlyAgent: definition.isReadOnlyAgent,
-        routing: routing.subagent?.[definition.type] ?? 'inherit',
-      }
-      if (definition.permissionMode !== undefined) info.permissionMode = definition.permissionMode
-      if (definition.tools !== undefined) info.tools = [...definition.tools]
-      if (definition.model !== undefined) info.model = definition.model
-      if (definition.maxTurns !== undefined) info.maxTurns = definition.maxTurns
-      return info
-    })
-
     // Read off disk rather than through the runtime: `getSkills()` is already
     // filtered, and the card has to draw the switched-off ones too.
     const disabledSkills = disabledSkillNames(merged)
@@ -2116,13 +2110,12 @@ export class ShellHost<
       providers: [...SUPPORTED_PROVIDER_NAMES],
       subagentTypes,
       permissions,
-      agents,
       skills,
       skillsDir: getSkillsDir(entry.cwd),
       mcpServers,
       contextManagement,
       userInstructions: readUserInstructions(),
-      coordination: describeCoordination(merged),
+      coordination: describeCoordination(config, this.deps.coordinationMigrationFindings?.() ?? []),
       general: {
         localPath: localSettingsPath(entry.cwd),
         ...(merged.cache?.ttl1h !== undefined ? { cacheTtl1h: merged.cache.ttl1h } : {}),
@@ -2357,16 +2350,21 @@ function splitPermissionGroup(
 }
 
 /** One skill row: its frontmatter, minus the body and the hook commands. */
-/** Merged coordination settings with the default day counts filled in. */
-function describeCoordination(merged: ReturnType<ShellLaneProject['getSettings']>): WireCoordinationSettingsInfo {
-  const c = coordinationSettings(merged)
+/** The global coordination group: routing roles plus the two day counts. */
+function describeCoordination(
+  config: ShellLaneProject['config'],
+  migrationFindings: readonly string[],
+): WireCoordinationSettingsInfo {
+  const routing = config.getRouting()
+  const c = config.getCoordination()
   return {
-    ...(c.coordinatorModel !== undefined ? { coordinatorModel: c.coordinatorModel } : {}),
+    ...(routing.coordinator && routing.coordinator !== 'inherit' ? { coordinatorModel: routing.coordinator } : {}),
     ...(c.coordinatorEffort !== undefined ? { coordinatorEffort: c.coordinatorEffort } : {}),
-    ...(c.threadModel !== undefined ? { threadModel: c.threadModel } : {}),
+    ...(routing.thread && routing.thread !== 'inherit' ? { threadModel: routing.thread } : {}),
     ...(c.threadEffort !== undefined ? { threadEffort: c.threadEffort } : {}),
-    quietDays: c.quietDays ?? DEFAULT_QUIET_DAYS,
-    autoResolveDays: c.autoResolveDays ?? DEFAULT_AUTO_RESOLVE_DAYS,
+    quietDays: c.quietDays,
+    autoResolveDays: c.autoResolveDays,
+    ...(migrationFindings.length > 0 ? { migrationFindings: [...migrationFindings] } : {}),
   }
 }
 
@@ -2440,6 +2438,19 @@ interface SettingsChangeEffect {
    */
   scope: ProviderConfigChangeScope
   /**
+   * Rebuild only lanes whose session has one of these coordination roles.
+   *
+   * A global change to the thread model is not a reason to rebuild a coordinator
+   * or an ordinary session; without this every provider edit would churn every
+   * open runtime's prompt cache.
+   */
+  onlyRoles?: readonly ('coordinator' | 'thread')[]
+  /**
+   * Re-apply the session's resolved effort after the rebuild. Only a change to a
+   * role's effort sets it: every other edit must leave a manual pick alone.
+   */
+  refreshEffort?: boolean
+  /**
    * Runs after `reloadSettings()`. For anything that reads the settings the
    * runtime now holds — an MCP reconnect would otherwise re-apply the trust list
    * from before the edit.
@@ -2464,6 +2475,25 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
   pickDirectory?: ShellHostDeps<P, PaneLike, W>['onPickDirectory'],
 ): Promise<SettingsChangeEffect> {
   if (change.scope === 'provider') {
+    // The coordination roles are part of the global model configuration, so
+    // they ride the same save-and-fan-out path as every other provider edit.
+    // Only the sessions that follow the changed role are rebuilt: an explicit
+    // session pick must not be disturbed by a global change, and a running turn
+    // is deferred by `refreshAfterConfigChange` either way.
+    if (change.kind === 'set-coordination-model') {
+      const scope = applyProviderChange(entry.project.config, change)
+      return { saveConfig: true, rebuild: true, scope, onlyRoles: [change.role] }
+    }
+    if (change.kind === 'set-coordination-effort') {
+      const scope = applyProviderChange(entry.project.config, change)
+      return { saveConfig: true, rebuild: true, scope, onlyRoles: [change.role], refreshEffort: true }
+    }
+    if (change.kind === 'set-coordination-days') {
+      // The day counts are read live by every lifecycle decision, so nothing
+      // needs rebuilding — and saving must not reset thread activity.
+      applyProviderChange(entry.project.config, change)
+      return { saveConfig: true, rebuild: false, scope: 'models' }
+    }
     return {
       saveConfig: true,
       rebuild: true,
@@ -2483,34 +2513,6 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
       // its gate, so this reaches the *next* session rather than fighting with
       // the mode the user has toggled in an open one.
       await setLocalStartupPermissionMode(entry.cwd, change.mode)
-      return { saveConfig: false, rebuild: false, scope: 'models' }
-    case 'reload-agent-definitions':
-      await entry.project.reloadAgentDefinitions()
-      // A runtime hands its Agent tool the definitions that existed when it was
-      // built, so without the rebuild the reload only reaches the next one.
-      return { saveConfig: false, rebuild: true, scope: 'models' }
-    case 'set-coordination-model': {
-      if (change.value !== 'inherit' && entry.project.config.get().models[change.value] === undefined) {
-        throw new Error(`No model named ${change.value}`)
-      }
-      const value = change.value === 'inherit' ? undefined : change.value
-      await setLocalCoordination(
-        entry.cwd,
-        change.role === 'coordinator' ? { coordinatorModel: value } : { threadModel: value },
-      )
-      // Read live through `port.settings` when a coordinator or thread starts.
-      return { saveConfig: false, rebuild: false, scope: 'models' }
-    }
-    case 'set-coordination-effort': {
-      const value = change.value === 'inherit' ? undefined : change.value
-      await setLocalCoordination(
-        entry.cwd,
-        change.role === 'coordinator' ? { coordinatorEffort: value } : { threadEffort: value },
-      )
-      return { saveConfig: false, rebuild: false, scope: 'models' }
-    }
-    case 'set-coordination-days':
-      await setLocalCoordination(entry.cwd, { [change.field]: change.value })
       return { saveConfig: false, rebuild: false, scope: 'models' }
     case 'set-cache-ttl':
       await setLocalCacheTtl1h(entry.cwd, change.enabled)
@@ -2728,6 +2730,18 @@ function applyProviderChange(
       })
       return 'routing'
     }
+    case 'set-coordination-model':
+      config.setCoordinationRouting(change.role, change.value)
+      return 'routing'
+    case 'set-coordination-effort': {
+      const effort = change.value === 'inherit' ? undefined : change.value
+      if (change.role === 'coordinator') config.setCoordination({ coordinatorEffort: effort })
+      else config.setCoordination({ threadEffort: effort })
+      return 'routing'
+    }
+    case 'set-coordination-days':
+      config.setCoordination({ [change.field]: change.value })
+      return 'models'
     default:
       return assertNeverChange(change)
   }

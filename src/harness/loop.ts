@@ -15,7 +15,7 @@ import {
   promptTokens,
   reportsCacheCreation,
 } from './usage.js'
-import { autoCompactIfNeeded, compactNow, summarizeRecordsForContinuation, type CompactCheckInput, type CompactCheckResult } from './compact.js'
+import { autoCompactIfNeeded, compactBoundaryToMessage, compactNow, summarizeRecordsForContinuation, type CompactCheckInput, type CompactCheckResult } from './compact.js'
 import {
   prepareRecordsForRequestWithDiagnostics,
   requestTokenCountFromUsage,
@@ -31,17 +31,20 @@ import type { ImageAttachmentRef, UserInput } from '../media/types.js'
 import { mergeHooks, runLifecycleHooks, type Hooks, type LifecycleHookName } from './hooks.js'
 import { FallbackTriggeredError } from '../config/retry.js'
 import {
+  countTextTokens,
+  getAvailableContextTokens,
   getAutoCompactThreshold,
   getContextWindowForModel,
   getEffectiveContextWindowSize,
   type ContextManagementConfig,
 } from '../prompts/budget.js'
+import type { ContextSelectionPlan } from '../prompts/budget.js'
 import { ESCALATED_MAX_TOKENS, MODEL_CONTEXT_WINDOW_DEFAULT } from '../prompts/budget.js'
 import type { SkillDefinition } from '../services/skills/skillsService.js'
 import type { CacheRuntime } from './cacheControl.js'
 import type { PermissionMode } from './permissions.js'
 import type { PlanModeManager } from './planModeManager.js'
-import type { AgentRunResult, AttachmentBytesLoader, ChatMessage, MemoryIndexWatch, TurnFailureRecord, ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, RequestImageBytes, SessionRecord, SteerSource, Tool, ToolCall, ToolContext, ToolResultRecord, ToolUseSummaryRecord, TokenUsage, TurnOrigin } from './types.js'
+import type { AgentRunResult, AttachmentBytesLoader, ChatMessage, CompactBoundaryRecord, MemoryIndexWatch, TurnFailureRecord, ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, RequestImageBytes, SessionRecord, SteerSource, Tool, ToolCall, ToolContext, ToolResultRecord, ToolUseSummaryRecord, TokenUsage, TurnOrigin } from './types.js'
 import type { CompactPromptVariant } from '../prompts/compactPrompt.js'
 import { formatTaskLine, remainingTasksFromState, sortedTasks } from '../tools/taskFormat.js'
 import { describeShell } from '../tools/BashTool/BashTool.js'
@@ -273,12 +276,35 @@ export interface AgentLoopOptions {
   consumeCoordinationUpdate?(): Promise<{ content: string; ack(): Promise<void> } | undefined>
   /** Leading block of the post-compact restore (the coordinator board). */
   coordinationRestore?(): Promise<string | undefined>
+  /**
+   * Leading block of the post-compact restore for a task-bearing session: what
+   * it was asked to do, and the last real instruction the summary compacted.
+   * Supplied by the layer that owns the task record.
+   */
+  taskRestore?(input: { lastInstruction?: { text: string; recordId: string } }): Promise<string | undefined>
 }
 
 const MAX_RECOVERY_COUNT = 3
 const DEFAULT_FALLBACK_RETRY_DELAY_MS = 5 * 60 * 1000
 /** Safe calls in one response run at most this many at a time, so a burst of shell commands cannot swamp the machine. */
 const MAX_CONCURRENT_TOOL_CALLS = 10
+
+/**
+ * The parts of the context that cannot be dropped do not fit on their own, even
+ * after a compaction attempt. Sending anyway would answer with the wrong task
+ * in mind, so the turn stops and says so.
+ */
+export class ContextOverflowError extends Error {
+  readonly code = 'context_overflow'
+  constructor(readonly selection: ContextSelectionPlan, readonly usableContextWindow: number) {
+    super([
+      `This request cannot be sent: the compaction summary and the task it continues take ${selection.pinnedTokens} tokens,`,
+      `and only ${Math.max(0, selection.availableTokens)} of the model's ${usableContextWindow}-token window are left for them.`,
+      'Compaction could not shrink them further. Switch to a model with a larger context window, or start a new session.',
+    ].join(' '))
+    this.name = 'ContextOverflowError'
+  }
+}
 
 type TurnRetryStart = { readonly retryOf: Pick<TurnFailureRecord, 'id' | 'userMessageId'> }
 
@@ -763,6 +789,17 @@ export class AgentLoop {
     }
   }
 
+  private async taskRestore(
+    lastInstruction?: { text: string; recordId: string },
+  ): Promise<string | undefined> {
+    try {
+      return await this.options.taskRestore?.({ ...(lastInstruction ? { lastInstruction } : {}) })
+    } catch {
+      // A missing task record must not take the session's own summary with it.
+      return undefined
+    }
+  }
+
   private async runInternal(start: UserInput | TurnRetryStart, signal?: AbortSignal, messageId?: string): Promise<AgentRunResult> {
     let usage = { ...EMPTY_TOKEN_USAGE }
     let lastForegroundResponseUsage: TokenUsage | undefined
@@ -866,6 +903,15 @@ export class AgentLoop {
           ...(iteration === 0 && this.activeRunOverrides?.compactBeforeSend === true ? { force: true } : {}),
         }, signal)
         usage = addTokenUsage(usage, compactResult.usage)
+        logDiagnostics([{
+          code: 'context_compacted',
+          severity: 'info',
+          // Whether compaction fired, and — when it did — the token movement
+          // that justifies it. Never the summary text: that is session content.
+          message: compactResult.compacted
+            ? `compacted model=${this.activeModel.model} ${compactResult.metrics?.preTokens ?? '?'}->${compactResult.metrics?.postTokens ?? '?'}`
+            : `skipped model=${this.activeModel.model}`,
+        }])
 
       if (this.retryPrimaryIfReady(cacheSource)) {
         resetModelRequestState()
@@ -876,17 +922,47 @@ export class AgentLoop {
         if (this.consumeImageRequestStateChanged()) resetModelRequestState(false)
       }
 
-      const records = await this.materializePostCompactRestore(recordsBeforeCompact)
-      const baseRequest = await this.buildModelRequest(records, turnId, userMessage.id, cacheSource, {
+      let records = await this.materializePostCompactRestore(recordsBeforeCompact)
+      // Built once here and reused if a compaction has to run before this send:
+      // the tail is where the one-shot plan attachment and the turn's
+      // interruption note live, and a request that never went out must not
+      // spend them twice.
+      let tailContext: string[] | undefined
+      const transientUserContext = () => tailContext ??=
+        [this.options.planModeManager?.getActivePlanAttachment(), interruptionContext]
+          .filter((item): item is string => Boolean(item))
+      let built = await this.buildModelRequest(records, turnId, userMessage.id, cacheSource, {
         includeUserContext: true,
         permissionMode: this.options.permissionMode?.(),
-        // Called once the images are in: a one-shot attachment is not spent on
-        // a request that never got built.
-        transientUserContext: () => [this.options.planModeManager?.getActivePlanAttachment(), interruptionContext]
-          .filter((item): item is string => Boolean(item)),
+        transientUserContext,
       })
+      let compactedThisStep = compactResult.compacted
+      if (built.selection.overflowTokens > 0 && !compactedThisStep) {
+        // The summary and the continuation alone no longer fit. Compaction is
+        // the only thing that can shrink them, and it gets one attempt here.
+        const overflowCompact = await this.runCompaction(autoCompactIfNeeded, recordsBeforeCompact, turnId, userMessage.id, cacheSource, {
+          lastResponseTokenCount: progressive.lastResponseTokenCount,
+          lastResponseRecordCount: this.responseBaseline?.recordCount,
+          lastResponseRecordId: this.responseBaseline?.recordId,
+          force: true,
+        }, signal)
+        usage = addTokenUsage(usage, overflowCompact.usage)
+        compactedThisStep = overflowCompact.compacted
+        if (overflowCompact.compacted) {
+          records = await this.materializePostCompactRestore(await this.loadPreparedRecords(turnId, userMessage.id))
+          built = await this.buildModelRequest(records, turnId, userMessage.id, cacheSource, {
+            includeUserContext: true,
+            permissionMode: this.options.permissionMode?.(),
+            transientUserContext,
+          })
+        }
+        if (built.selection.overflowTokens > 0) {
+          throw new ContextOverflowError(built.selection, this.getContextBudget().usableContextWindow)
+        }
+      }
+      const baseRequest = built.request
       const requestRecordCount = records.length
-      const canReuseResponseTokenEstimate = !compactResult.compacted
+      const canReuseResponseTokenEstimate = !compactedThisStep
       pendingAssistantStreamContent = ''
 
       const modelRequest: ModelRequest = {
@@ -1818,7 +1894,7 @@ export class AgentLoop {
     userMessageId: string,
     cacheSource: CacheBreakSource,
     tail: { includeUserContext: boolean; permissionMode?: PermissionMode; transientUserContext?: () => string[] },
-  ): Promise<ModelRequest> {
+  ): Promise<{ request: ModelRequest; selection: ContextSelectionPlan }> {
     // The inherited half of the request, re-derived per iteration for the
     // same reason the session records are: the model serving this attempt
     // decides what its images become.
@@ -1838,6 +1914,7 @@ export class AgentLoop {
       permissionMode: tail.permissionMode,
       transientUserContext: tail.transientUserContext?.() ?? [],
     })
+    this.logContextBudget(built.selection)
 
     // Set provider name on tool context for ToolSearchTool dual-provider support
     this.options.toolContext.providerName = this.activeModel.providerName
@@ -1899,7 +1976,33 @@ export class AgentLoop {
       postCompactDiscoveredNames: this.options.toolContext._postCompactDiscoveredNames,
       ...(imageSend.imageBytes ? { imageBytes: imageSend.imageBytes } : {}),
     }
-    return this.options.inheritedRequest ? withInheritedPrefix(this.options.inheritedRequest, request) : request
+    return {
+      request: this.options.inheritedRequest ? withInheritedPrefix(this.options.inheritedRequest, request) : request,
+      selection: built.selection,
+    }
+  }
+
+  /**
+   * What the budget kept, what it dropped, and what could not fit at all.
+   *
+   * The counts and the dropped records' ids — enough to explain a request the
+   * model answered off-task — and nothing that would put session content, a
+   * file body or a credential in the log.
+   */
+  private logContextBudget(selection: ContextSelectionPlan): void {
+    const { count, ids } = selection.trimmed
+    logDiagnostics([{
+      code: 'context_budget',
+      severity: 'info',
+      message: [
+        `model=${this.activeModel.model}`,
+        `available=${selection.availableTokens}`,
+        `pinned=${selection.pinnedTokens}`,
+        `overflow=${selection.overflowTokens}`,
+        `trimmed=${count}`,
+        ...(ids.length > 0 ? [`dropped=${ids.join(',')}`] : []),
+      ].join(' '),
+    }])
   }
 
   /**
@@ -1990,7 +2093,7 @@ export class AgentLoop {
     userMessageId: string,
     signal: AbortSignal | undefined,
   ): Promise<ModelResponse> {
-    const base = await this.buildModelRequest(
+    const { request: base } = await this.buildModelRequest(
       records,
       turnId,
       userMessageId,
@@ -2019,21 +2122,36 @@ export class AgentLoop {
    * failed, this request still carries it (the next one rebuilds).
    */
   private async materializePostCompactRestore(records: SessionRecord[]): Promise<SessionRecord[]> {
-    const pendingIds = new Set((this.recordsCache ?? records)
-      .filter((record) => record.type === 'compact_boundary' && record.postCompactRestore === 'pending')
-      .map((record) => record.id))
-    if (pendingIds.size === 0) return records
+    const pending = (this.recordsCache ?? records)
+      .filter((record): record is CompactBoundaryRecord => record.type === 'compact_boundary' && record.postCompactRestore === 'pending')
+    if (pending.length === 0) return records
+    const pendingIds = new Set(pending.map((record) => record.id))
 
     // The summary may drop delivered memory updates; the opening index still
     // stands in the prefix, so restate everything since it.
-    const leading = [await this.coordinationRestore(), this.memoryRestore()].filter(Boolean).join('\n\n')
-    const restoredContext = await this.options.contextBuilder.buildPostCompactRestore(
+    const lastInstruction = pending.at(-1)?.continuation?.lastInstruction
+    const leading = [
+      await this.coordinationRestore(),
+      await this.taskRestore(lastInstruction),
+      this.memoryRestore(),
+    ].filter(Boolean).join('\n\n')
+    // The summary and the continuation are kept whatever else has to go, so the
+    // file bodies are built against what is left of the window, not a fixed cap.
+    const summaryTokens = pending.reduce((sum, record) => sum
+      + countTextTokens(compactBoundaryToMessage(record).content), 0)
+    const restored = await this.options.contextBuilder.buildPostCompactRestore(
       this.options.toolContext,
       leading || undefined,
+      { availableTokens: Math.max(0, getAvailableContextTokens(this.activeContextManagement) - summaryTokens) },
     )
     const consume = (record: SessionRecord): SessionRecord => {
       if (!pendingIds.has(record.id) || record.type !== 'compact_boundary' || record.postCompactRestore !== 'pending') return record
-      return { ...record, postCompactRestore: 'consumed', ...(restoredContext ? { restoredContext } : {}) }
+      return {
+        ...record,
+        postCompactRestore: 'consumed',
+        ...(restored.continuity ? { restoredContinuity: restored.continuity } : {}),
+        ...(restored.files ? { restoredFiles: restored.files } : {}),
+      }
     }
     for (const recordId of pendingIds) {
       try {

@@ -185,29 +185,123 @@ export function selectContextItemsForContext(
   config: Partial<ContextManagementConfig> = {},
   system?: string,
 ): ModelContextItem[] {
+  return planContextItems(items, config, system).items
+}
+
+/**
+ * What a request will carry, and what it cannot give up.
+ *
+ * Trimming walks from the newest item backwards, so an over-budget request used
+ * to lose its oldest items first — which is exactly where a compaction summary
+ * and the continuation restored with it sit. They are marked `pinned`: they are
+ * counted first and never trimmed while a trimmable item is left. `overflowTokens`
+ * reports the case no trimming can solve — the pinned content alone is larger
+ * than the window — so the caller can compact or stop instead of sending a
+ * request the model would answer with the wrong task in mind.
+ */
+export interface ContextSelectionPlan {
+  items: ModelContextItem[]
+  availableTokens: number
+  pinnedTokens: number
+  overflowTokens: number
+  /**
+   * What the budget dropped, identified by record where one exists. Kept on
+   * the plan rather than recomputed by the caller: this is the only point that
+   * still holds both the full list and the kept one.
+   */
+  trimmed: TrimmedItems
+}
+
+export interface TrimmedItems {
+  count: number
+  /** Capped: a log line naming every old tool result is not a log line. */
+  ids: string[]
+}
+
+/** How many dropped items a plan names. The count still reports all of them. */
+const MAX_TRIMMED_IDS = 20
+
+export function planContextItems(
+  items: ModelContextItem[],
+  config: Partial<ContextManagementConfig> = {},
+  system?: string,
+): ContextSelectionPlan {
   const availableTokens = getAvailableContextTokens(config, system)
+  const pinned = items.filter(isPinnedItem)
+  const pinnedTokens = pinned.reduce((sum, item) => sum + countContextItemTokens(item), 0)
+  // Only pinned content can overflow: everything else may be trimmed away. A
+  // window the system prompt has already exhausted reports nothing — there is
+  // no budget to compare against, and the send keeps its legacy shape.
+  const overflowTokens = availableTokens > 0 && pinnedTokens > availableTokens
+    ? pinnedTokens - availableTokens
+    : 0
 
   if (availableTokens <= 0) {
     const lastUserItem = [...items].reverse().find(
       (item) => item.kind === 'message' && item.message.role === 'user',
     )
-    return lastUserItem ? [lastUserItem] : []
+    const kept = new Set(pinned)
+    if (lastUserItem) kept.add(lastUserItem)
+    const itemsKept = items.filter((item) => kept.has(item))
+    return {
+      items: itemsKept,
+      availableTokens,
+      pinnedTokens,
+      overflowTokens,
+      trimmed: describeTrimmed(items, itemsKept),
+    }
   }
 
-  const result: ModelContextItem[] = []
-  let used = 0
+  const kept = new Set(pinned)
+  let used = pinnedTokens
+  let keptTrimmable = 0
 
   for (const item of [...items].reverse()) {
+    if (kept.has(item)) continue
     const tokens = countContextItemTokens(item)
     if (used + tokens > availableTokens) {
-      if (result.length > 0) break
+      if (keptTrimmable > 0) break
       continue
     }
-    result.push(item)
+    kept.add(item)
     used += tokens
+    keptTrimmable += 1
   }
 
-  return repairToolPairing(result.reverse())
+  const itemsKept = repairToolPairing(items.filter((item) => kept.has(item)))
+  return {
+    items: itemsKept,
+    availableTokens,
+    pinnedTokens,
+    overflowTokens,
+    trimmed: describeTrimmed(items, itemsKept),
+  }
+}
+
+function isPinnedItem(item: ModelContextItem): boolean {
+  return item.kind === 'message' && item.pinned === true
+}
+
+/** What the plan dropped, named by record id where the item has one. */
+function describeTrimmed(
+  items: readonly ModelContextItem[],
+  keptItems: readonly ModelContextItem[],
+): TrimmedItems {
+  const kept = new Set(keptItems)
+  const ids: string[] = []
+  let count = 0
+  for (const item of items) {
+    if (kept.has(item)) continue
+    count += 1
+    if (ids.length < MAX_TRIMMED_IDS) ids.push(itemIdentifier(item))
+  }
+  return { count, ids }
+}
+
+function itemIdentifier(item: ModelContextItem): string {
+  if (item.kind === 'tool_use') return `tool_use:${item.id}`
+  if (item.kind === 'tool_result') return `tool_result:${item.toolUseId}`
+  return `message:${item.message.role}:${item.message.id}`
 }
 
 export function countContextItemTokens(

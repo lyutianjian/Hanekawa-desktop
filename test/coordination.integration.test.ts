@@ -142,7 +142,7 @@ async function setup(t: TestContext, script: Script, options: { git?: boolean; s
     laneControl: (id) => lanes.get(id)?.host,
     openLane: async (dir, id, o) => (await openLane(dir, id, o)).host,
     notify: (n) => { notices.push(n.body) },
-    settings: () => ({}),
+    days: () => ({}),
   }, engine)
 
   async function openLane(dir: string, sessionId: string, o: { activate: boolean }): Promise<Lane> {
@@ -605,7 +605,7 @@ test('after a forced compaction the coordinator restore carries the board and th
   const boundary = records.find((r) => r.type === 'compact_boundary')
   assert.ok(boundary && boundary.type === 'compact_boundary', 'the forced compaction ran')
   assert.equal(boundary.postCompactRestore, 'consumed')
-  const restored = boundary.restoredContext ?? ''
+  const restored = boundary.restoredContinuity ?? ''
   assert.ok(restored.includes('Post-compaction restore'), restored)
   assert.ok(restored.includes('Restorable'), 'the restore carries the board')
   assert.ok(restored.includes('DURING-COMPACT report.'), 'the restore carries the queued note')
@@ -641,4 +641,89 @@ test('a tripped compaction breaker moves the pointer to a new coordinator; the o
   assert.equal(old.coordination?.role, 'coordinator')
   const seeded = (await h.project.store.loadRecords(pointer))[0]
   assert.ok(seeded && seeded.type === 'compact_boundary' && seeded.summary.includes(oldId))
+})
+
+test('a thread\'s first request already uses the model it was started with', async (t) => {
+  const threadModels: string[] = []
+  const h = await setup(t, async (call) => {
+    if (call.role === 'thread') threadModels.push(call.request.model)
+    return text(call.role === 'coordinator' ? 'Noted.' : 'Done.')
+  })
+  h.project.config.setModelConfig('worker', { provider: 'anthropic', model: 'worker-model', apiKey: 'test-key' })
+  await h.project.config.save()
+
+  await h.service.startThread(h.caller, {
+    title: 'Modeled',
+    brief: 'BRIEF-M',
+    background: BACKGROUND,
+    writesCode: false,
+    model: 'worker',
+  })
+  await h.settle()
+
+  // The control for the reopen probe below: creation already picks the right model.
+  assert.deepEqual(threadModels, ['worker-model'])
+})
+
+// T02: `startThreadIn` records the pick on the session before the lane opens,
+// and every later open resolves it again — so a lane rebuilt for a closed
+// thread answers with the same model it was started with.
+test('a thread reopened after its lane closed still uses the model it was started with', async (t) => {
+  const threadModels: string[] = []
+  const h = await setup(t, async (call) => {
+    if (call.role === 'thread') threadModels.push(call.request.model)
+    return text(call.role === 'coordinator' ? 'Noted.' : 'Done.')
+  })
+  h.project.config.setModelConfig('worker', { provider: 'anthropic', model: 'worker-model', apiKey: 'test-key' })
+  await h.project.config.save()
+
+  const started = await h.service.startThread(h.caller, {
+    title: 'Modeled',
+    brief: 'BRIEF-M',
+    background: BACKGROUND,
+    writesCode: false,
+    model: 'worker',
+  })
+  await h.settle()
+
+  h.lanes.get(started.sessionId)!.close()
+  await h.service.messageThread(h.caller, started.threadId, 'MORE work')
+  await h.settle()
+
+  assert.deepEqual(threadModels, ['worker-model', 'worker-model'])
+})
+
+test('a thread whose history was compacted reopens with its task and the latest instruction', async (t) => {
+  const threadRequests: string[] = []
+  const h = await setup(t, async (call) => {
+    if (call.role === 'thread') threadRequests.push(call.text)
+    return text(call.role === 'coordinator' ? 'Noted.' : 'Done.')
+  })
+  const started = await h.service.startThread(h.caller, {
+    title: 'Wired thread',
+    brief: 'BRIEF-WIRE keep going',
+    background: BACKGROUND,
+    writesCode: false,
+  })
+  await h.settle()
+
+  // As a compaction would leave it: the kickoff is summarized away, and the
+  // latest real instruction is captured on the boundary.
+  await h.project.store.appendRecord(started.sessionId, {
+    id: 'boundary-wire',
+    type: 'compact_boundary',
+    summary: 'SUMMARY-WIRE',
+    preTokens: 10,
+    postCompactRestore: 'pending',
+    continuation: { lastInstruction: { text: 'CANCEL the second half', recordId: 'gone' } },
+    createdAt: new Date().toISOString(),
+  })
+  h.lanes.get(started.sessionId)!.close()
+  await h.service.messageThread(h.caller, started.threadId, 'CANCEL the second half')
+  await h.settle()
+
+  const sent = threadRequests.at(-1)!
+  assert.ok(sent.includes('SUMMARY-WIRE'), 'the summary survives')
+  assert.ok(sent.includes('BRIEF-WIRE'), 'the task comes back from the thread record')
+  assert.ok(sent.includes('CANCEL the second half'), 'the latest instruction is restored with it')
 })

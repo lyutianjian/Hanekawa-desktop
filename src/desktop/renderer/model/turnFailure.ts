@@ -31,7 +31,10 @@ const COPY: Readonly<Record<TurnFailureKind, { reason: string; hint: string }>> 
   'rate-limit': { reason: '请求太频繁', hint: '被服务商限流了。等一会儿再重试。' },
   overloaded: { reason: '服务商暂时繁忙', hint: '稍后重试。' },
   server: { reason: '服务商出错了', hint: '问题在服务商那一侧。稍后重试。' },
-  context: { reason: '对话超出了模型的上下文', hint: '用 /compact 压缩对话，或开始新的会话。' },
+  context: {
+    reason: '对话超出了模型的上下文',
+    hint: '用 /compact 压缩对话、精简任务说明，或换一个上下文更大的模型。',
+  },
   rejected: { reason: '服务商拒绝了这次请求', hint: '详细原因见下方。' },
   unknown: { reason: '请求失败', hint: '详细原因见下方，也可以直接重试。' },
 }
@@ -57,7 +60,13 @@ export function classifyTurnFailure(input: { error: string; status?: number; cod
     return 'model'
   }
   if (status === 404) return 'endpoint'
-  if (/context[_ ]length|maximum context|prompt is too long|too many tokens|context window/.test(text)) return 'context'
+  // `ContextOverflowError`: the protected context alone no longer fits, so the
+  // turn stopped before sending. A provider-side context refusal reads the same
+  // way to the user, and both are fixed by the same three things.
+  if (code === 'context_overflow'
+    || /context[_ ]length|maximum context|prompt is too long|too many tokens|context window/.test(text)) {
+    return 'context'
+  }
   if (status === 429 || code === 'rate_limit_exceeded') return 'rate-limit'
   if (status === 529 || status === 503 || /overloaded/.test(text)) return 'overloaded'
   if (TIMEOUT_CODES.test(code) || /timed ?out|timeout/.test(text)) return 'timeout'

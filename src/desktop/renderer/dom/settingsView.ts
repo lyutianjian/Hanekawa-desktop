@@ -967,6 +967,9 @@ function cardNode(
   const section = node(`card:${card.id}`, 'section', 'settings-card')
   const children: Array<Node | null> = [el('div', 'settings-card-title', card.title)]
   if (card.note) children.push(hinted(el('div', 'settings-card-note', card.note), card.noteHint))
+  for (const warning of card.warnings ?? []) {
+    children.push(alerting(el('div', 'settings-card-warning', warning)))
+  }
   if (card.rows.length === 0 && card.empty) {
     children.push(el('div', 'settings-empty', card.empty))
   }

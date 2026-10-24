@@ -13,7 +13,6 @@ import {
   loadMergedSettings,
   localSettingsPath,
   setLocalCacheTtl1h,
-  setLocalCoordination,
   setLocalPermissionEntries,
   setLocalStartupPermissionMode,
   setMcpServerTrustLocally,
@@ -433,7 +432,7 @@ test('the project layer cannot pick the startup mode or pre-trust MCP servers', 
   )
 })
 
-test('coordination: fields merge across layers, each one independently', async () => {
+test('coordination: the retired project group is ignored at runtime', async () => {
   const home = process.env.USERPROFILE!
   await mkdir(path.join(home, '.myagent'), { recursive: true })
   await writeFile(
@@ -441,39 +440,16 @@ test('coordination: fields merge across layers, each one independently', async (
     JSON.stringify({ coordination: { quietDays: 5, threadModel: 'user-model' } }),
     'utf8',
   )
-  await withLocalLayer({ coordination: { autoResolveDays: 0 } }, async (cwd) => {
+  await withLocalLayer({ coordination: { autoResolveDays: 0, threadModel: 'local-model' } }, async (cwd) => {
     const merged = await loadMergedSettings(cwd)
-    assert.deepEqual(merged.coordination, { quietDays: 5, threadModel: 'user-model', autoResolveDays: 0 })
+    // The group is not part of the runtime settings any more: the migration
+    // reads the raw files, and nothing promotes them per project.
+    assert.equal('coordination' in merged, false)
 
-    await mkdir(path.dirname(localSettingsPath(cwd)), { recursive: true })
-    await writeFile(localSettingsPath(cwd), JSON.stringify({ coordination: { quietDays: 2 } }), 'utf8')
-    const overridden = await loadMergedSettings(cwd)
-    assert.equal(overridden.coordination?.quietDays, 2)
-    assert.equal(overridden.coordination?.autoResolveDays, 0)
-    assert.equal(overridden.coordination?.threadModel, 'user-model')
-  })
-})
-
-test('coordination: negative or non-finite days and non-string models are rejected', () => {
-  const invalid = (coordination: Record<string, unknown>) =>
-    validateSettings({ coordination } as MyAgentSettings)
-
-  assert.match(invalid({ quietDays: -1 }).errors.join('\n'), /coordination\.quietDays must be a finite number >= 0/)
-  assert.match(invalid({ autoResolveDays: Number.NaN }).errors.join('\n'), /coordination\.autoResolveDays/)
-  assert.match(invalid({ coordinatorModel: 3 }).errors.join('\n'), /coordination\.coordinatorModel must be a string/)
-  assert.match(invalid({ threadEffort: 'extreme' }).errors.join('\n'), /coordination\.threadEffort/)
-  assert.equal(invalid({ quietDays: 0, autoResolveDays: 7.5, threadModel: 'm' }).valid, true)
-})
-
-test('setLocalCoordination merges fields, deletes cleared ones, and drops an empty group', async () => {
-  await withLocalLayer({}, async (cwd) => {
-    await setLocalCoordination(cwd, { threadModel: 'small', quietDays: 2 })
-    await setLocalCoordination(cwd, { coordinatorEffort: 'high', quietDays: undefined })
-    assert.deepEqual((await loadLocalSettings(cwd)).coordination, {
-      threadModel: 'small',
-      coordinatorEffort: 'high',
-    })
-    await setLocalCoordination(cwd, { threadModel: undefined, coordinatorEffort: undefined })
-    assert.equal((await loadLocalSettings(cwd)).coordination, undefined)
+    const config = new ConfigService(cwd)
+    await config.load(merged)
+    assert.equal(config.getCoordination().quietDays, 3)
+    assert.equal(config.getCoordination().autoResolveDays, 7)
+    assert.equal(config.getRouting().thread, 'inherit')
   })
 })

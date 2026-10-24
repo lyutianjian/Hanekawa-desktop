@@ -12,7 +12,7 @@ import {
 import { getRecordsAfterLastCompact } from './requestPrep.js'
 import type { ImageTokenStrategy } from '../media/imageTokens.js'
 import { compactCacheSource } from './cacheBreakDetection.js'
-import { wrapInSystemReminder } from './systemReminder.js'
+import { isSystemReminderBlock, wrapInSystemReminder } from './systemReminder.js'
 import { getCompactPrompt, getSharedPrefixCompactPrompt, formatCompactSummary, type CompactPromptVariant } from '../prompts/compactPrompt.js'
 import {
   projectRecordsImagesToText,
@@ -186,12 +186,16 @@ async function compactRecords(
   const summary = await summarizeForAutoCompact(input, recordsToCompact, tokenCount)
   const postTokens = countTextTokens(summary.content)
   const compactDurationMs = Date.now() - compactStartedAt
+  // Captured before the records are summarized away: a thread's task outlives
+  // the boundary, and the latest real instruction outranks the original brief.
+  const lastInstruction = findLastUserInstruction(recordsToCompact)
   await input.appendRecord({
     id: randomUUID(),
     type: 'compact_boundary',
     summary: summary.content,
     preTokens: tokenCount,
     postCompactRestore: 'pending',
+    ...(lastInstruction ? { continuation: { lastInstruction } } : {}),
     ...(input.turnId ? { turnId: input.turnId } : {}),
     ...(input.discoveredToolNames && input.discoveredToolNames.size > 0
       ? { preCompactDiscoveredTools: [...input.discoveredToolNames] }
@@ -480,6 +484,25 @@ function formatRecordsForSummary(records: SessionRecord[]): string {
 
     return ''
   }).filter(Boolean).join('\n\n')
+}
+
+/**
+ * The latest words a human or the coordinator actually wrote to this session.
+ *
+ * Reminders, delivered updates and tool summaries ride user-role messages too,
+ * and none of them is an instruction: taking one for the last instruction would
+ * restate a date or a board row as the user's wish.
+ */
+export function findLastUserInstruction(
+  records: readonly SessionRecord[],
+): { text: string; recordId: string } | undefined {
+  for (let index = records.length - 1; index >= 0; index--) {
+    const record = records[index]
+    if (record?.type !== 'message' || record.role !== 'user') continue
+    if (record.transient || !record.content.trim() || isSystemReminderBlock(record.content)) continue
+    return { text: record.content, recordId: record.id }
+  }
+  return undefined
 }
 
 export function compactBoundaryToMessage(record: CompactBoundaryRecord): ChatMessage {
