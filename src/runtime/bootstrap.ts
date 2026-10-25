@@ -121,12 +121,10 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
   // through a getter, so the next runtime built picks up the new contents.
   let settings = await loadMergedSettings(cwd)
   const configuredEffortLevel = settings.effortLevel ?? 'high'
-  // Before the first load and never again: config.json is global-only now, so a
-  // project that still has its own file has to be folded into the global one or
-  // its endpoints and models would simply stop existing.
+  // Report legacy repository config without importing an untrusted source.
   const migrationFindings = await migrateProjectConfig(cwd)
   const config = new ConfigService(cwd)
-  await config.load(settings)
+  await config.load()
   const settingsValidation = validateShellSettings(settings)
   if (!settingsValidation.valid) {
     throw new RuntimeStartupError(
@@ -150,7 +148,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
   const modelConfig = startupModelKey ? config.getModel(startupModelKey) : undefined
   const modelDiagnostics = [
     ...migrationFindings.map((message) => ({
-      code: 'project_config_migrated',
+      code: 'project_config_ignored',
       severity: 'warning' as const,
       message,
     })),
@@ -226,8 +224,8 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
 
     const hooksChanged = JSON.stringify(next.hooks) !== JSON.stringify(settings.hooks)
     const previousConfig = JSON.stringify(config.get())
+    await config.load()
     settings = next
-    await config.load(settings)
     const configChanged = previousConfig !== JSON.stringify(config.get())
 
     clearProjectContextCache(cwd)

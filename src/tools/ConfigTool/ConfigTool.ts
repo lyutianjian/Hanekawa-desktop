@@ -1,10 +1,8 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { getGlobalMyAgentDir } from '../../utils/paths.js'
 import { z } from 'zod/v3'
 import type { Tool, ToolContext, ToolResult } from '../../harness/types.js'
 import type { MyAgentSettings } from '../../config/settings.js'
-import { loadMergedSettings, validateSettings } from '../../config/settings.js'
+import { loadMergedSettings, SettingsValidationError, updateUserSettings } from '../../config/settings.js'
+import { ConfigurationFileError } from '../../config/file.js'
 import { VALID_EFFORT_LEVELS, type EffortLevel } from '../../config/effort.js'
 import { DESCRIPTION } from './prompt.js'
 
@@ -101,31 +99,6 @@ const SUPPORTED_SETTINGS: SettingDef[] = [
 
 const SETTINGS_MAP = new Map(SUPPORTED_SETTINGS.map((s) => [s.key, s]))
 
-// ── Settings file I/O (atomic write) ───────────────────────────────────────────
-
-async function loadUserSettings(): Promise<MyAgentSettings> {
-  const settingsPath = join(getGlobalMyAgentDir(), 'settings.json')
-  try {
-    const raw = await readFile(settingsPath, 'utf-8')
-    return JSON.parse(raw) as MyAgentSettings
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
-    if (error instanceof SyntaxError) {
-      console.error(`[myagent] Warning: corrupted settings file ${settingsPath}: ${error.message}`)
-      return {}
-    }
-    throw error
-  }
-}
-
-async function saveUserSettings(settings: MyAgentSettings): Promise<void> {
-  const settingsPath = join(getGlobalMyAgentDir(), 'settings.json')
-  await mkdir(getGlobalMyAgentDir(), { recursive: true })
-  const tmpPath = `${settingsPath}.tmp`
-  await writeFile(tmpPath, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8')
-  await rename(tmpPath, settingsPath)
-}
-
 // ── Tool implementation ────────────────────────────────────────────────────────
 
 export const configTool: Tool = {
@@ -160,16 +133,18 @@ export const configTool: Tool = {
   async execute(input, context) {
     const { action, key, value } = input as { action: string; key?: string; value?: unknown }
 
-    if (action === 'list') {
-      return handleList(context)
-    }
-
-    if (action === 'get') {
-      return handleGet(key, context)
-    }
-
-    if (action === 'set') {
-      return handleSet(key, value, context)
+    try {
+      if (action === 'list') return await handleList(context)
+      if (action === 'get') return await handleGet(key, context)
+      if (action === 'set') return await handleSet(key, value, context)
+    } catch (error) {
+      if (error instanceof ConfigurationFileError) {
+        return { ok: false, content: error.message, errorCode: 'precondition_failed' }
+      }
+      if (error instanceof SettingsValidationError) {
+        return { ok: false, content: `Validation failed: ${error.errors.join('; ')}`, errorCode: 'invalid_input' }
+      }
+      throw error
     }
 
     return {
@@ -289,20 +264,7 @@ async function handleSet(key: string | undefined, value: unknown, context: ToolC
     }
   }
 
-  // Load current settings, apply change, validate, save
-  const current = await loadUserSettings()
-  def.set(current, coercedValue)
-
-  const validation = validateSettings(current)
-  if (!validation.valid) {
-    return {
-      ok: false,
-      content: `Validation failed: ${validation.errors.join('; ')}`,
-      errorCode: 'invalid_input',
-    }
-  }
-
-  await saveUserSettings(current)
+  await updateUserSettings((current) => { def.set(current, coercedValue) })
 
   const displayValue = JSON.stringify(coercedValue)
   return {

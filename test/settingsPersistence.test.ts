@@ -1,10 +1,12 @@
 import test, { beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises'
+import fs, { chmod, mkdtemp, mkdir, readdir, rm, readFile, stat, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { existsSync, mkdtempSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { getGlobalMyAgentDir } from '../src/utils/paths.js'
+import { getGlobalMyAgentDir, resolveExistingPrefix } from '../src/utils/paths.js'
+import { withFileLock } from '../src/sessions/fileLock.js'
 import { ConfigService } from '../src/config/service.js'
 import {
   validateSettings,
@@ -17,6 +19,7 @@ import {
   setLocalStartupPermissionMode,
   setMcpServerTrustLocally,
   setSkillEnabledLocally,
+  saveEffortLevel,
   updateLocalSettings,
 } from '../src/config/settings.js'
 
@@ -65,6 +68,100 @@ async function reload(cwd: string): Promise<ConfigService> {
   await config.load()
   return config
 }
+
+for (const layer of ['user', 'project', 'local'] as const) {
+  test(`corrupted ${layer} settings fail loading without changing the original bytes`, async () => {
+    await withProject(async (cwd) => {
+      const file = layer === 'user'
+        ? path.join(getGlobalMyAgentDir(), 'settings.json')
+        : layer === 'project' ? path.join(cwd, '.myagent', 'settings.json') : localSettingsPath(cwd)
+      const bytes = '{ "apiKey": "fake-secret-do-not-report", broken'
+      await mkdir(path.dirname(file), { recursive: true })
+      await writeFile(file, bytes)
+      await assert.rejects(() => loadMergedSettings(cwd), (error: Error) => {
+        assert.ok(error.message.includes(file))
+        assert.doesNotMatch(error.message, /fake-secret-do-not-report/)
+        return true
+      })
+      if (layer === 'user') await assert.rejects(() => saveEffortLevel('low'))
+      if (layer === 'local') {
+        await assert.rejects(() => updateLocalSettings(cwd, { thinking: false }))
+        await assert.rejects(() => setLocalPermissionEntries(cwd, 'allow', ['Read']))
+      }
+      assert.equal(await readFile(file, 'utf8'), bytes)
+    })
+  })
+}
+
+for (const bytes of ['null', '[]', '"text"']) {
+  test(`non-object local settings cannot be overwritten: ${bytes}`, async () => {
+    await withProject(async (cwd) => {
+      const file = localSettingsPath(cwd)
+      await mkdir(path.dirname(file), { recursive: true })
+      await writeFile(file, bytes)
+      await assert.rejects(() => updateLocalSettings(cwd, { thinking: false }))
+      assert.equal(await readFile(file, 'utf8'), bytes)
+    })
+  })
+}
+
+test('settings re-read inside the lock catches corruption that happened while waiting', async () => {
+  await withProject(async (cwd) => {
+    const file = localSettingsPath(cwd)
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, '{}')
+    let markLocked!: () => void
+    let release!: () => void
+    const locked = new Promise<void>((resolve) => { markLocked = resolve })
+    const released = new Promise<void>((resolve) => { release = resolve })
+    const holder = withFileLock(`${resolveExistingPrefix(file)}.lock`, async () => {
+      markLocked()
+      await released
+      await writeFile(file, '{ corrupted while waiting')
+    }, { requireLock: true })
+    await locked
+    const saving = assert.rejects(() => updateLocalSettings(cwd, { thinking: false }))
+    release()
+    await Promise.all([holder, saving])
+    assert.equal(await readFile(file, 'utf8'), '{ corrupted while waiting')
+  })
+})
+
+test('a failed settings rename leaves original bytes and permissions and cleans up the temporary file', async (t) => {
+  await withProject(async (cwd) => {
+    const file = localSettingsPath(cwd)
+    const bytes = '{ "thinking": true, "unknown": "keep" }\n'
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, bytes)
+    await chmod(file, 0o600)
+    t.mock.method(fs, 'rename', async () => { throw new Error('fixture rename failure') })
+    await assert.rejects(() => updateLocalSettings(cwd, { thinking: false }), /fixture rename failure/)
+    assert.equal(await readFile(file, 'utf8'), bytes)
+    if (process.platform !== 'win32') assert.equal((await stat(file)).mode & 0o777, 0o600)
+    assert.deepEqual(await readdir(path.dirname(file)), ['settings.local.json'])
+  })
+})
+
+test('settings cannot write without acquiring the lock', async (t) => {
+  await withProject(async (cwd) => {
+    const file = localSettingsPath(cwd)
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, '{ "thinking": true }')
+    const original = fs.open
+    t.mock.method(fs, 'open', async (...args: Parameters<typeof fs.open>) => {
+      if (String(args[0]).endsWith('.lock')) throw Object.assign(new Error('fixture lock denied'), { code: 'EACCES' })
+      return original(...args)
+    })
+    syncBuiltinESMExports()
+    try {
+      await assert.rejects(() => updateLocalSettings(cwd, { thinking: false }), /Cannot create file lock/)
+      assert.equal(await readFile(file, 'utf8'), '{ "thinking": true }')
+    } finally {
+      t.mock.restoreAll()
+      syncBuiltinESMExports()
+    }
+  })
+})
 
 test('an endpoint written through the screen survives a fresh load', async () => {
   await withProject(async (cwd, config) => {
@@ -396,7 +493,7 @@ test('a skill switched off above can be switched back on locally', async () => {
 test('a permissions edit does not write config.json', async () => {
   await withLocalLayer({}, async (cwd) => {
     const config = new ConfigService(cwd)
-    await config.load(await loadMergedSettings(cwd))
+    await config.load()
 
     await setLocalPermissionEntries(cwd, 'ask', ['Bash(git push:*)'])
 
@@ -447,7 +544,7 @@ test('coordination: the retired project group is ignored at runtime', async () =
     assert.equal('coordination' in merged, false)
 
     const config = new ConfigService(cwd)
-    await config.load(merged)
+    await config.load()
     assert.equal(config.getCoordination().quietDays, 3)
     assert.equal(config.getCoordination().autoResolveDays, 7)
     assert.equal(config.getRouting().thread, 'inherit')

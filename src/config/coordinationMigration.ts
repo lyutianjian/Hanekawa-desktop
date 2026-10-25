@@ -23,7 +23,7 @@
 
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { readJsonFile, writeJsonFile } from '../utils/json.js'
+import { readConfigurationFile, updateConfigurationFile } from './file.js'
 import { getGlobalMyAgentDir } from '../utils/paths.js'
 import { localSettingsPath } from './settings.js'
 import { VALID_EFFORT_LEVELS, type EffortLevel } from './effort.js'
@@ -81,10 +81,10 @@ export async function migrateCoordinationSettings(input: {
   // Read off disk rather than from `config.get()`: the loaded config has every
   // routing key materialized to `'inherit'`, and an explicit `inherit` has to
   // be told apart from "never configured".
-  const raw = await readJsonFile<{
+  const raw = await readConfigurationFile<{
     routing?: Record<string, unknown>
     agent?: { coordination?: Record<string, unknown> }
-  }>(config.getSaveTarget(), {})
+  }>(config.getSaveTarget()) ?? {}
   const explicit = {
     routing: raw.routing ?? {},
     coordination: raw.agent?.coordination ?? {},
@@ -184,19 +184,10 @@ async function readSettings(
   path: string,
   findings: string[],
 ): Promise<{ coordination?: unknown } | undefined> {
-  let raw: string
   try {
-    raw = await readFile(path, 'utf8')
+    return await readConfigurationFile<{ coordination?: unknown }>(path)
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    findings.push(`${path} 读取失败（${(error as Error).message}），已跳过迁移。`)
-    return undefined
-  }
-  try {
-    const parsed = JSON.parse(raw) as unknown
-    return parsed && typeof parsed === 'object' ? (parsed as { coordination?: unknown }) : undefined
-  } catch (error) {
-    findings.push(`${path} 不是合法 JSON（${(error as Error).message}），已跳过迁移。`)
+    findings.push(`${(error as Error).message} 已跳过迁移。`)
     return undefined
   }
 }
@@ -273,17 +264,18 @@ async function cleanSource(
   })
   if (removable.length === 0) return
 
-  const before = await readJsonFile<Record<string, unknown>>(source.path, {})
-  const remaining: Record<string, unknown> = { ...(before.coordination as Record<string, unknown> | undefined) }
-  for (const field of removable) delete remaining[field]
-
-  const next: Record<string, unknown> = { ...before }
-  if (Object.keys(remaining).length > 0) next.coordination = remaining
-  else delete next.coordination
-
   try {
-    await backupFile(source.path)
-    await writeJsonFile(source.path, next)
+    await updateConfigurationFile<Record<string, unknown>>(source.path, async (before) => {
+      const remaining: Record<string, unknown> = { ...(before.coordination as Record<string, unknown> | undefined) }
+      for (const field of removable) {
+        if (remaining[field] === source.coordination[field]) delete remaining[field]
+      }
+      const next: Record<string, unknown> = { ...before }
+      if (Object.keys(remaining).length > 0) next.coordination = remaining
+      else delete next.coordination
+      await backupFile(source.path)
+      return next
+    })
   } catch (error) {
     findings.push(`${source.path} 清理旧字段失败（${(error as Error).message}），下次启动会重试。`)
   }

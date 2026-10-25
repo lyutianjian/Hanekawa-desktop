@@ -676,7 +676,7 @@ export class SessionController {
   retarget(session: SessionMeta, records: readonly SessionRecord[]): void {
     // The owning guard, not only the switch wrapper: a live turn or compaction
     // still writes through this controller, and swapping the session under it
-    // would land those writes in the new session's log and ledger.
+    // would land their UI events and usage in the new session's ledger.
     if (this.streaming) throw new Error('当前回合仍在进行，请先停止再切换会话。')
     if (this.compacting) throw new Error('上下文正在压缩，请等它结束再切换会话。')
     this.session = session

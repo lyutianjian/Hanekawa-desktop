@@ -1,8 +1,8 @@
-import { readJsonFile, writeJsonFile } from '../utils/json.js'
+import { readConfigurationFile, updateConfigurationFile } from './file.js'
 import { getGlobalConfigPath } from '../utils/paths.js'
 import type { ContextManagementConfig } from '../prompts/budget.js'
 import type { ModelPricing } from '../harness/types.js'
-import type { MyAgentSettings } from './settings.js'
+import { loadUserSettings, type MyAgentSettings } from './settings.js'
 import type { ChatThinkingFormat } from './providers/openaiCompat.js'
 import {
   resolveCoordination,
@@ -164,16 +164,17 @@ export interface ConfigServiceOptions {
  * list do not belong to a directory — and a project layer on top of them was the
  * source of two separate failures: the same model had to be re-declared per
  * repo, and `getSaveTarget()` silently scattered API keys into whichever project
- * happened to have a `config.json`. A project's own file is migrated into the
- * global one and archived on first load; see `migrateProjectConfig.ts`.
+ * happened to have a `config.json`. Repository config is never automatically
+ * imported; see `migrateProjectConfig.ts`.
  *
  * Settings (`permissions`, `hooks`, `skills.disabled`, …) are unaffected: they
- * still layer global-then-project, and `configFromSettings` still stacks
- * *under* this file.
+ * still layer global-then-project. Only trusted global settings stack under
+ * this file; merged project settings never enter the account configuration.
  */
 export class ConfigService {
   private config: Config
   private configPath: string
+  private loadFailure: unknown
   /** Human-readable notes about tier-era config found by the last `load()`. */
   private legacyModelFindings: string[] = []
 
@@ -187,15 +188,21 @@ export class ConfigService {
     this.config = structuredClone(DEFAULT_CONFIG)
   }
 
-  async load(settings?: MyAgentSettings): Promise<void> {
-    const loaded = await readJsonFile<Partial<Config>>(this.configPath, {})
-    const settingsConfig = configFromSettings(settings)
-    this.config = deepMergeConfig(deepMergeConfig(DEFAULT_CONFIG, settingsConfig), loaded)
-    // The raw layers, not the merged result: `Config` no longer has a `profiles`
-    // field, so a tier-era file's profiles survive only as untyped extras on the
-    // objects we just read.
-    this.migrateMaxEffort()
-    this.legacyModelFindings = this.migrateLegacyTiers([settings, loaded])
+  async load(): Promise<void> {
+    const previous = this.config
+    try {
+      const loaded = await readConfigurationFile<Partial<Config>>(this.configPath) ?? {}
+      const userSettings = await loadUserSettings()
+      const settingsConfig = configFromSettings(userSettings)
+      this.config = deepMergeConfig(deepMergeConfig(DEFAULT_CONFIG, settingsConfig), loaded)
+      this.migrateMaxEffort()
+      this.legacyModelFindings = this.migrateLegacyTiers([userSettings, loaded])
+      this.loadFailure = undefined
+    } catch (error) {
+      this.config = previous
+      this.loadFailure = error
+      throw error
+    }
   }
 
   /**
@@ -309,7 +316,16 @@ export class ConfigService {
   }
 
   async save(): Promise<void> {
-    await writeJsonFile(this.getSaveTarget(), this.config)
+    if (this.loadFailure !== undefined) throw this.loadFailure
+    try {
+      await updateConfigurationFile<Partial<Config>>(this.getSaveTarget(), (current) => {
+        for (const key of ['endpoints', 'models', 'routing', 'defaultModel', 'fallbackModel', 'compactModel', 'agent'] as const) delete current[key]
+        return { ...current, ...this.config }
+      })
+    } catch (error) {
+      this.loadFailure = error
+      throw error
+    }
   }
 
   get(): Config {
@@ -534,10 +550,8 @@ export class ConfigService {
   /**
    * Patches `agent.contextManagement`, one field or several.
    *
-   * Written here rather than into a settings layer because `load()` stacks
-   * `config.json` *on top of* settings (`configFromSettings`), so a value
-   * written to `settings.local.json` would be silently overridden by any
-   * `config.json` that names the same field.
+   * Written here because context management is global configuration;
+   * project and local settings cannot provide it.
    *
    * Throws on a value that cannot mean anything, the way `removeModel` does:
    * these numbers feed the token budget, and a zero context window or a

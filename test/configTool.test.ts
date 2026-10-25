@@ -238,6 +238,25 @@ test('Config set preserves existing settings in file', async () => {
   }
 })
 
+test('Config never replaces corrupted user settings and reports a safe failure for each action', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const file = path.join(testHome!, '.myagent', 'settings.json')
+  const bytes = '{ "apiKey": "fake-secret-do-not-report", broken'
+  try {
+    await mkdir(path.dirname(file), { recursive: true })
+    await writeFile(file, bytes)
+    for (const action of ['get', 'list', 'set']) {
+      const result = await configTool.execute({ action, key: 'effortLevel', value: 'low' }, context(dir))
+      assert.equal(result.ok, false)
+      assert.ok(result.content.includes(file))
+      assert.doesNotMatch(result.content, /fake-secret-do-not-report/)
+      assert.equal(await readFile(file, 'utf8'), bytes)
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 // ── Unknown action ─────────────────────────────────────────────────────────────
 
 test('Config rejects unknown action', async () => {

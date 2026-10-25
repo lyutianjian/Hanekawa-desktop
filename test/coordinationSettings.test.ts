@@ -1,6 +1,7 @@
 import test, { beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import fs, { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { syncBuiltinESMExports } from 'node:module'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -203,6 +204,60 @@ test('a model the config does not know is promoted and reported', async () => {
   const result = await migrateCoordinationSettings({ config, roots: [root] })
   assert.equal(config.getRouting().coordinator, 'ghost')
   assert.match(result.findings.join('\n'), /目前没有名为 ghost 的模型/)
+})
+
+test('a corrupted global config stops migration before modifying the sources', async () => {
+  const config = await newConfig()
+  const root = await projectRoot()
+  const file = localSettingsPath(root)
+  await writeSettings(file, { coordination: { quietDays: 2 } })
+  const beforeSource = await readFile(file, 'utf8')
+  await mkdir(path.dirname(config.getSaveTarget()), { recursive: true })
+  await writeFile(config.getSaveTarget(), '{ corrupted config')
+  await assert.rejects(() => migrateCoordinationSettings({ config, roots: [root] }))
+  assert.equal(await readFile(config.getSaveTarget(), 'utf8'), '{ corrupted config')
+  assert.equal(await readFile(file, 'utf8'), beforeSource)
+})
+
+test('a source corrupted after migration reads it is not replaced by cleanup', async (t) => {
+  const config = await newConfig()
+  const root = await projectRoot()
+  const file = localSettingsPath(root)
+  await writeSettings(file, { coordination: { quietDays: 2 } })
+  const save = config.save.bind(config)
+  const bytes = '{ "apiKey": "fake-secret-do-not-report", broken'
+  t.mock.method(config, 'save', async () => {
+    await save()
+    await writeFile(file, bytes)
+  })
+  const result = await migrateCoordinationSettings({ config, roots: [root] })
+  assert.match(result.findings.join('\n'), /清理旧字段失败/)
+  assert.doesNotMatch(result.findings.join('\n'), /fake-secret-do-not-report/)
+  assert.equal(await readFile(file, 'utf8'), bytes)
+})
+
+test('a failed migration backup never overwrites the original config or cleans the source', async (t) => {
+  const config = await newConfig()
+  await config.save()
+  const root = await projectRoot()
+  const file = localSettingsPath(root)
+  await writeSettings(file, { coordination: { quietDays: 2 } })
+  const beforeConfig = await readFile(config.getSaveTarget(), 'utf8')
+  const beforeSource = await readFile(file, 'utf8')
+  const original = fs.writeFile
+  t.mock.method(fs, 'writeFile', async (...args: Parameters<typeof fs.writeFile>) => {
+    if (String(args[0]).endsWith(BACKUP)) throw Object.assign(new Error('fixture backup denied'), { code: 'EACCES' })
+    return original(...args)
+  })
+  syncBuiltinESMExports()
+  try {
+    await assert.rejects(() => migrateCoordinationSettings({ config, roots: [root] }), /fixture backup denied/)
+    assert.equal(await readFile(config.getSaveTarget(), 'utf8'), beforeConfig)
+    assert.equal(await readFile(file, 'utf8'), beforeSource)
+  } finally {
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  }
 })
 
 test('running the migration twice changes nothing the second time', async () => {

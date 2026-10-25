@@ -1819,7 +1819,7 @@ export class ShellHost<
    * obvious:
    *
    *  - **`save()` before `reloadSettings()`.** `reloadSettings` ends in
-   *    `config.load(settings)` (`bootstrap.ts`), which re-reads the config
+   *    `config.load()` (`bootstrap.ts`), which re-reads the config
    *    layers from disk. An in-memory mutation that has not been saved is
    *    *destroyed* by it. Swapping these two lines silently discards the user's
    *    edit while answering with a snapshot that looks right until the next pull.

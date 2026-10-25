@@ -28,7 +28,7 @@ import { restoreTaskStateFromRecords } from '../tools/taskState.js'
 import { rememberShownFiles } from '../tools/fileState.js'
 import type { SkillDefinition } from '../services/skills/skillsService.js'
 import type { BackgroundTaskRegistry } from '../services/backgroundTasks/registry.js'
-import type { UiBridges } from './bridges.js'
+import type { RecordProxy, UiBridges } from './bridges.js'
 import { RuntimeStartupError } from './errors.js'
 import type { ToolRegistry } from './toolRegistry.js'
 import type { AgentSession } from './types.js'
@@ -204,6 +204,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     attachmentBytes,
     onActiveSessionChange,
   } = deps
+  let activeSessionId: string | undefined
 
   // Read once per session id, not per runtime: a rebuild of an open session
   // keeps them, so an edit — the model's or the settings screen's — reaches the
@@ -260,6 +261,25 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     const planModel = createRoutedRuntime({ kind: 'plan' }, modelKey)
 
     const snapshot = snapshotFor(runtimeSession.id)
+    activeSessionId = runtimeSession.id
+    let disposed = false
+    // Disk writes use the runtime's fixed RecordStream. UI events must also
+    // stay with that session when an append or background callback arrives late.
+    const isCurrent = () => !disposed && activeSessionId === runtimeSession.id
+    const recordEvents: Pick<RecordProxy, 'onRecord' | 'onProgress' | 'onStreamEvent' | 'onRequestUsage'> = {
+      onRecord: (record) => {
+        if (isCurrent()) bridges.record.onRecord(record)
+      },
+      onProgress: (event) => {
+        if (isCurrent()) bridges.record.onProgress(event)
+      },
+      onStreamEvent: (event) => {
+        if (isCurrent()) bridges.record.onStreamEvent(event)
+      },
+      onRequestUsage: (usage, anchorRecordId) => {
+        if (isCurrent()) bridges.record.onRequestUsage(usage, anchorRecordId)
+      },
+    }
     const projectContext = composeProjectContext(snapshot.userInstructions, getProjectEntries())
     const watch = snapshot.memoryIndexWatch
     const recordStream = new JsonlRecordStream(store, runtimeSession.id)
@@ -272,7 +292,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       appendRecord: async (record) => {
         await recordStream.append(record)
         loop?.noteRecordAppended(record)
-        bridges.record.onRecord(record)
+        recordEvents.onRecord(record)
       },
       loadRecords: async () => recordStream.load(),
       openEnterPrompt: bridges.enterPlan.open,
@@ -319,7 +339,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       // Subagents follow the same switch as the main loop.
       thinking,
       compactModel,
-      onSubagentProgress: (event) => bridges.record.onProgress(event),
+      onSubagentProgress: recordEvents.onProgress,
       resolveSubagentModel: (subagentType, requestedModelKey) => requestedModelKey
         ? createActiveModelRuntime(requestedModelKey)
         : createRoutedRuntime(
@@ -340,10 +360,10 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     const runtimeToolRunner = new ToolRunner(runtimeTools, permissionGate, {
       onRecord: async (record) => {
         await recordStream.append(record)
-        bridges.record.onRecord(record)
+        recordEvents.onRecord(record)
       },
       onProgress: (event) => {
-        bridges.record.onProgress(event)
+        recordEvents.onProgress(event)
       },
     }, {
       preToolUse: getSettings().hooks?.preToolUse,
@@ -453,9 +473,9 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       getCompactFailureCount: async () => (await store.load(runtimeSession.id))?.compactFailureCount ?? 0,
       setCompactFailureCount: async (count) => store.setCompactFailureCount(runtimeSession.id, count),
       recordStream,
-      onRecord: (record) => bridges.record.onRecord(record),
-      onStreamEvent: (event) => bridges.record.onStreamEvent(event),
-      onRequestUsage: (usage, anchorRecordId) => bridges.record.onRequestUsage(usage, anchorRecordId),
+      onRecord: recordEvents.onRecord,
+      onStreamEvent: recordEvents.onStreamEvent,
+      onRequestUsage: recordEvents.onRequestUsage,
       consumePendingUserMessages: (midTurn) => backgroundTasks.consumeParentNotifications(runtimeSession.id, midTurn),
       steer: bridges.steer,
       ...(imageAttachments ? { imageAttachments } : {}),
@@ -472,6 +492,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       providerName: targetProvider.name,
       run: (input, signal, messageId, overrides) => activeLoop.run(input, signal, messageId, overrides),
       dispose: () => {
+        disposed = true
         toolRegistry.unregister(runtimeTools)
         permissionGate.clearPlanSlugProvider(planSlugProvider)
       },

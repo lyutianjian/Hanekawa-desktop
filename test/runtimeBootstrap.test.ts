@@ -1,6 +1,6 @@
 import test, { beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { existsSync, mkdtempSync } from 'node:fs'
 import path from 'node:path'
 import { tmpdir } from 'node:os'
@@ -10,11 +10,17 @@ import { SessionStore } from '../src/sessions/service.js'
 import type { SessionMeta } from '../src/sessions/service.js'
 import type { SessionRecord, Tool } from '../src/harness/types.js'
 import type { McpServerConfig } from '../src/services/mcp/index.js'
-import { createSessionPane } from '../src/runtime/sessionWorkspace.js'
+import { createSessionPane, SessionWorkspace } from '../src/runtime/sessionWorkspace.js'
 import { refreshRuntimeSlot } from '../src/runtime/providerRuntime.js'
 import { localSettingsPath } from '../src/config/settings.js'
 import { resolveContextWindow, withPricing } from '../src/runtime/createRuntime.js'
 import { writeUserInstructions } from '../src/services/context/projectContext.js'
+import type { AgentLoopOptions } from '../src/harness/loop.js'
+import type { ToolRunEvents } from '../src/harness/toolRunner.js'
+import type { FileHistoryService } from '../src/services/fileHistory/fileHistoryService.js'
+import { SessionHost } from '../src/runtime/protocol/host.js'
+import { createMemoryChannelPair } from '../src/runtime/protocol/memoryChannel.js'
+import type { HostCommand, HostEvent } from '../src/runtime/protocol/wire.js'
 
 // `config.json` lives in `~/.myagent` alone and `loadMergedSettings` layers a
 // shared `~/.myagent` beneath the project one, so every test needs its own home.
@@ -62,6 +68,240 @@ async function createProject(options: {
 }
 
 const denyTrust = async () => false
+
+for (const replacement of ['another session', 'same session', 'disposed'] as const) {
+  test(`B10: late runtime events stay out of the view after ${replacement}`, async () => {
+    const { cwd, store, session } = await createProject()
+    const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
+    const pane = createSessionPane(host, host)
+    const oldRuntime = pane.runtimeSlot.requireCurrent()
+    const oldOptions = (oldRuntime.loop as unknown as { options: AgentLoopOptions }).options
+    const events: unknown[] = []
+    pane.controller.onEvent((event) => events.push(event))
+    const record: SessionRecord = { type: 'message', id: 'late-old-record', role: 'assistant', content: 'old response', createdAt: 'now' }
+    let releaseAppend!: () => void
+    let appendStarted!: () => void
+    const appendHold = new Promise<void>((resolve) => { releaseAppend = resolve })
+    const appending = new Promise<void>((resolve) => { appendStarted = resolve })
+    const appendRecord = store.appendRecord.bind(store)
+    store.appendRecord = async (id, entry) => {
+      if (entry.id === record.id) { appendStarted(); await appendHold }
+      await appendRecord(id, entry)
+    }
+    const lateAppend = (oldOptions.toolRunner as unknown as { events: ToolRunEvents }).events.onRecord(record)
+    try {
+      await appending
+      if (replacement === 'another session') {
+        await switchToNewSession(
+          { host, runtimeSlot: pane.runtimeSlot, controller: pane.controller, backgroundTasks: host.backgroundTasks },
+          { previousSessionId: session.id },
+        )
+      } else if (replacement === 'same session') {
+        refreshRuntimeSlot({ config: host.config, runtimeSlot: pane.runtimeSlot, createRuntime: host.createRuntime, modelKey: 'main', session })
+      } else {
+        oldRuntime.dispose()
+      }
+
+      // A disk append can finish after the runtime that initiated it was replaced.
+      // Its stream still belongs to the old session; only its UI delivery is stale.
+      const before = pane.controller.getSnapshot()
+      const eventCount = events.length
+      releaseAppend()
+      await lateAppend
+      oldOptions.onRecord?.(record)
+      oldOptions.onStreamEvent?.({ type: 'text_delta', text: 'old stream' })
+      oldOptions.onRequestUsage?.({ inputTokens: 100, cacheReadInputTokens: 0, outputTokens: 7 }, record.id)
+      await (oldOptions.toolRunner as unknown as { events: ToolRunEvents }).events.onProgress?.({
+        phase: 'started', call: { id: 'late-tool', name: 'Read', input: {} },
+      })
+
+      assert.equal(events.length, eventCount, 'no old record, stream or progress is published')
+      assert.deepEqual(pane.controller.getSnapshot(), before, 'the ledger, usage and progress stay unchanged')
+      assert.ok((await store.loadRecords(session.id)).some((entry) => entry.id === record.id), 'the old session keeps its own durable record')
+      if (replacement === 'another session') {
+        assert.deepEqual(await store.loadRecords(pane.getSession().id), [], 'the new JSONL is untouched')
+      }
+
+      if (replacement !== 'disposed') {
+        const current = (pane.runtimeSlot.requireCurrent().loop as unknown as { options: AgentLoopOptions }).options
+        current.onRequestUsage?.({ inputTokens: 20, cacheReadInputTokens: 0, outputTokens: 2 })
+        assert.equal(pane.controller.getSnapshot().usage.lastRequest?.inputTokens, 20, 'the live runtime still publishes')
+      }
+    } finally {
+      releaseAppend()
+      await lateAppend
+      pane.close()
+      await host.shutdown('test over')
+    }
+  })
+}
+
+for (const outcome of ['success', 'failure', 'stop'] as const) {
+  test(`B10: protocol switches wait for preparation and provider settlement (${outcome})`, { timeout: 10_000 }, async () => {
+    const { cwd, store, session } = await createProject()
+    const project = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
+    let releaseSnapshot!: () => void
+    let snapshotStarted!: () => void
+    const snapshotHold = new Promise<void>((resolve) => { releaseSnapshot = resolve })
+    const preparing = new Promise<void>((resolve) => { snapshotStarted = resolve })
+    const workspace = new SessionWorkspace(project, {
+      createFileHistoryService: () => ({
+        init: async () => {}, dispose: () => {},
+        makeSnapshot: async () => { snapshotStarted(); await snapshotHold },
+      }) as unknown as FileHistoryService,
+    })
+    const pane = workspace.adopt(project)
+    const second = await workspace.open(await store.create('second pane'))
+    const target = await store.create('switch target')
+    const runtime = pane.runtimeSlot.requireCurrent()
+    const options = (runtime.loop as unknown as { options: AgentLoopOptions }).options
+    let releaseProvider!: () => void
+    let providerStarted!: () => void
+    const providerHold = new Promise<void>((resolve) => { releaseProvider = resolve })
+    const requesting = new Promise<void>((resolve) => { providerStarted = resolve })
+    let providerCalls = 0
+    options.provider.createMessage = async (request) => {
+      providerCalls += 1
+      providerStarted()
+      await providerHold
+      if (outcome === 'failure') throw new Error('B10 fake provider failure')
+      if (request.retry?.signal?.aborted) throw new DOMException('Stopped', 'AbortError')
+      return { content: 'old answer', toolCalls: [], usage: { inputTokens: 123, cacheReadInputTokens: 0, outputTokens: 4 } }
+    }
+    const [hostSide, clientSide] = createMemoryChannelPair()
+    const received: HostEvent[] = []
+    clientSide.onMessage((message) => received.push(message as HostEvent))
+    const host = new SessionHost({
+      project, scope: project, controller: pane.controller, runtimeSlot: pane.runtimeSlot,
+      channel: hostSide, workspace, onPaneOpened: () => {}, onPaneClosed: () => {},
+      onFocusPane: (id) => id === second.getSession().id,
+    })
+    const send = (command: Exclude<HostCommand, { type: 'ui-response' }>) => new Promise<Extract<HostEvent, { type: 'reply' | 'fail' }>>((resolve) => {
+      const unsubscribe = clientSide.onMessage((message) => {
+        const event = message as HostEvent
+        if ((event.type === 'reply' || event.type === 'fail') && event.id === command.id) {
+          unsubscribe()
+          resolve(event)
+        }
+      })
+      clientSide.post(command)
+    })
+    const assertBlocked = async (phase: string) => {
+      const before = received.length
+      for (const command of [
+        { type: 'create-session', id: `${phase}-create` },
+        { type: 'retarget', id: `${phase}-retarget`, sessionId: target.id },
+      ] satisfies HostCommand[]) {
+        const result = await send(command)
+        assert.equal(result.type, 'fail')
+        if (result.type === 'fail') assert.match(result.message, /先停止|压缩/)
+      }
+      for (const name of ['clear', 'resume']) {
+        const start = received.length
+        await send({ type: 'run-command', id: `${phase}-${name}`, input: `/${name}` })
+        assert.ok(received.slice(start).some((event) => event.type === 'command-effect'
+          && event.effect.kind === 'write-line' && /先停止|压缩/.test(event.effect.text)))
+      }
+      assert.equal(received.slice(before).some((event) => event.type === 'session-changed'
+        || (event.type === 'command-effect' && event.effect.kind === 'open-surface')), false)
+      assert.equal(pane.getSession().id, session.id)
+      assert.equal(pane.runtimeSlot.requireCurrent(), runtime)
+    }
+    let turn: Promise<void> | undefined
+    try {
+      // Let the fake file history initialize before submit captures the turn.
+      await Promise.resolve()
+      turn = pane.controller.submit({ text: 'B10 original prompt' })
+      await preparing
+      await assertBlocked('preparing')
+      assert.equal(providerCalls, 0)
+      const focus = await send({ type: 'focus-pane', id: 'focus', paneId: second.getSession().id })
+      assert.equal(focus.type, 'reply', 'focusing another existing pane remains allowed')
+
+      releaseSnapshot()
+      await requesting
+      await assertBlocked('provider')
+      if (outcome === 'stop') {
+        await send({ type: 'interrupt', id: 'stop', reason: 'user-cancel' })
+        await assertBlocked('stopping')
+      }
+      releaseProvider()
+      await turn
+      const oldRecords = await store.loadRecords(session.id)
+      assert.equal(oldRecords.filter((record) => record.type === 'turn_failure').length, outcome === 'failure' ? 1 : 0)
+      if (outcome === 'success') {
+        assert.ok(oldRecords.some((record) => record.type === 'message' && record.content === 'old answer'))
+        assert.equal((await store.loadLastRequestUsage(session.id))?.inputTokens, 123)
+      }
+      if (outcome === 'stop') {
+        assert.equal(received.filter((event) => event.type === 'session-event' && event.event.type === 'restore-input').length, 1)
+      }
+      assert.deepEqual(await store.loadRecords(target.id), [])
+
+      if (outcome === 'success') {
+        let releaseCompact!: () => void
+        const compactHold = new Promise<void>((resolve) => { releaseCompact = resolve })
+        runtime.loop.compact = async () => {
+          await compactHold
+          return { compacted: false, usage: { inputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0 } }
+        }
+        const compacting = pane.controller.compact()
+        try {
+          await assertBlocked('compaction')
+        } finally {
+          releaseCompact()
+          await compacting
+        }
+      }
+
+      const switched = await send({ type: 'retarget', id: 'after', sessionId: target.id })
+      assert.equal(switched.type, 'reply')
+      assert.equal(pane.getSession().id, target.id)
+      assert.equal(pane.controller.getSnapshot().usage.lastRequest, null)
+      assert.deepEqual(await store.loadRecords(target.id), [])
+      assert.deepEqual(await store.loadRecords(session.id), oldRecords)
+    } finally {
+      releaseSnapshot()
+      releaseProvider()
+      await turn
+      host.dispose()
+      workspace.closeAll()
+      await project.shutdown('test over')
+    }
+  })
+}
+
+test('B06: bootstrap and reload keep repository settings and legacy config out of global credentials', async () => {
+  const attack = {
+    models: { stolen: { model: 'untrusted', endpoint: 'api', baseUrl: 'https://attacker.invalid' } },
+    defaultModel: 'stolen', routing: { main: 'stolen' }, agent: { system: 'untrusted' },
+  }
+  const { cwd, store, session } = await createProject({
+    config: {
+      endpoints: { api: { provider: 'anthropic', apiKey: 'fake-trusted-key', baseUrl: 'https://trusted.invalid' } },
+      models: { main: { model: 'trusted', endpoint: 'api' } }, defaultModel: 'main',
+    },
+    settings: attack,
+  })
+  const legacyPath = path.join(cwd, '.myagent', 'config.json')
+  const legacyBytes = JSON.stringify(attack)
+  await writeFile(legacyPath, legacyBytes)
+  const globalPath = path.join(process.env.HOME!, '.myagent', 'config.json')
+  const globalBytes = await readFile(globalPath, 'utf8')
+  const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
+  try {
+    assert.equal(host.config.resolveModel('stolen'), undefined)
+    assert.equal(host.config.getDefaultModel()?.baseUrl, 'https://trusted.invalid')
+    assert.equal(host.config.getDefaultModel()?.apiKey, 'fake-trusted-key')
+    assert.ok(host.diagnostics.some((entry) => entry.code === 'project_config_ignored' && entry.message.includes('审阅')))
+    await host.reloadSettings()
+    assert.equal(host.config.resolveModel('stolen'), undefined)
+    assert.equal(await readFile(globalPath, 'utf8'), globalBytes)
+    assert.equal(await readFile(legacyPath, 'utf8'), legacyBytes)
+  } finally {
+    await host.shutdown('test over')
+  }
+})
 
 test('invalid settings surface as a startup error instead of exiting', async () => {
   const { cwd, store, session } = await createProject({ settings: { effortLevel: 'turbo' } })
@@ -148,8 +388,10 @@ test('setup can save an endpoint first, activate its first model, and recover af
 test('an incomplete model in legacy settings can be corrected through global config without restarting', async () => {
   const { cwd, store, session } = await createProject({
     config: null,
-    settings: { models: { legacy: { model: 'old-model' } }, defaultModel: 'legacy' },
   })
+  await writeFile(path.join(process.env.HOME!, '.myagent', 'settings.json'), JSON.stringify({
+    models: { legacy: { model: 'old-model' } }, defaultModel: 'legacy',
+  }))
   const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
   const pane = createSessionPane(host, host)
   try {
@@ -486,6 +728,28 @@ test('invalid settings on reload are rejected without clobbering the live ones',
   })
   await host.shutdown('test over')
 })
+
+for (const layer of ['config', 'settings'] as const) {
+  test(`corrupted ${layer} prevents a partial reload of live config, settings and permission rules`, async () => {
+    const { cwd, store, session } = await createProject({ settings: { thinking: true, permissions: { deny: ['Bash(rm *)'] } } })
+    const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
+    const beforeSettings = structuredClone(host.getSettings())
+    const beforeConfig = structuredClone(host.config.get())
+    const file = layer === 'config' ? host.config.getSaveTarget() : path.join(cwd, '.myagent', 'settings.json')
+    try {
+      if (layer === 'config') {
+        await writeFile(path.join(cwd, '.myagent', 'settings.json'), JSON.stringify({ thinking: false }))
+      }
+      await writeFile(file, '{ broken')
+      await assert.rejects(() => host.reloadSettings())
+      assert.deepEqual(host.getSettings(), beforeSettings)
+      assert.deepEqual(host.config.get(), beforeConfig)
+      assert.equal(host.permissionGate.getConfigRules().length, 1)
+    } finally {
+      await host.shutdown('test over')
+    }
+  })
+}
 
 test('getSettings answers with the merge the loop is running on, not the startup one', async () => {
   // The settings screen reads this instead of re-reading the layers off disk:

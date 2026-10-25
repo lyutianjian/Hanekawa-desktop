@@ -1,5 +1,6 @@
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { join, dirname } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { readConfigurationFile, updateConfigurationFile } from './file.js'
 import { getGlobalMyAgentDir, getProjectDataDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
 import type { AgentConfig, ModelConfig } from './service.js'
 import type { Endpoint, Routing } from './routing.js'
@@ -74,22 +75,14 @@ interface LegacyMcpSettings {
 }
 
 async function loadSettingsFile(filePath: string): Promise<MyAgentSettings> {
-  let content: string
-  try {
-    content = await readFile(filePath, 'utf-8')
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
-    throw error
-  }
-  try {
-    const settings = JSON.parse(content) as MyAgentSettings
-    // `acceptEdits` was renamed `auto`; it lands as `auto` on the next write.
-    if ((settings.permissions?.mode as string | undefined) === 'acceptEdits') settings.permissions!.mode = 'auto'
-    return settings
-  } catch (error) {
-    console.error(`[myagent] Warning: corrupted settings file ${filePath}: ${error instanceof Error ? error.message : String(error)}`)
-    return {}
-  }
+  const settings = await readConfigurationFile<MyAgentSettings>(filePath) ?? {}
+  if ((settings.permissions?.mode as string | undefined) === 'acceptEdits') settings.permissions!.mode = 'auto'
+  return settings
+}
+
+/** The trusted settings source for account-level configuration. */
+export async function loadUserSettings(): Promise<MyAgentSettings> {
+  return loadSettingsFile(join(getGlobalMyAgentDir(), 'settings.json'))
 }
 
 async function loadLegacyMcpSettings(cwd: string): Promise<MyAgentSettings> {
@@ -335,17 +328,36 @@ function withoutProjectTrustGrants(settings: MyAgentSettings): MyAgentSettings {
   return settings
 }
 
+/** Personal per-project settings are still not a source of global config. */
+function withoutOwnedConfig(settings: MyAgentSettings, filePath: string): MyAgentSettings {
+  const filtered = { ...settings }
+  const ignored: string[] = []
+  for (const key of ['models', 'endpoints', 'routing', 'defaultModel', 'fallbackModel', 'compactModel', 'agent'] as const) {
+    if (Object.hasOwn(filtered, key)) {
+      delete filtered[key]
+      ignored.push(key)
+    }
+  }
+  if (ignored.length > 0) {
+    console.error(`[myagent] Warning: ${filePath} cannot set global config fields ${ignored.join(', ')}; ignored. Set them in ~/.myagent/config.json.`)
+  }
+  return filtered
+}
+
 export async function loadSettingsLayers(cwd: string): Promise<SettingsLayers> {
-  const user = await loadSettingsFile(join(getGlobalMyAgentDir(), 'settings.json'))
+  const user = await loadUserSettings()
   // The home directory *is* the global workspace, and its "project" layer is
   // the user layer. Loading both would apply every permission entry and hook
   // twice — the same double-load `ConfigService` already guards against for
   // `config.json`.
   const project = isGlobalWorkspaceRoot(cwd)
     ? {}
-    : withoutProjectTrustGrants(await loadSettingsFile(join(cwd, '.myagent', 'settings.json')))
+    : withoutProjectTrustGrants(withoutOwnedConfig(
+        await loadSettingsFile(join(cwd, '.myagent', 'settings.json')),
+        join(cwd, '.myagent', 'settings.json'),
+      ))
   const legacyMcp = await loadLegacyMcpSettings(cwd)
-  const local = await loadSettingsFile(localSettingsPath(cwd))
+  const local = withoutOwnedConfig(await loadSettingsFile(localSettingsPath(cwd)), localSettingsPath(cwd))
   return { user, project, legacyMcp, local }
 }
 
@@ -354,10 +366,25 @@ export async function loadMergedSettings(cwd: string): Promise<MyAgentSettings> 
   return mergeSettings(user, project, legacyMcp, local)
 }
 
-async function writeSettingsAtomic(filePath: string, settings: MyAgentSettings): Promise<void> {
-  await mkdir(join(dirname(filePath)), { recursive: true })
-  await writeFile(`${filePath}.tmp`, `${JSON.stringify(settings, null, 2)}\n`, 'utf-8')
-  await rename(`${filePath}.tmp`, filePath)
+export class SettingsValidationError extends Error {
+  constructor(readonly errors: string[]) {
+    super(`Invalid settings: ${errors.join('; ')}`)
+    this.name = 'SettingsValidationError'
+  }
+}
+
+async function updateSettingsFile(filePath: string, mutate: (settings: MyAgentSettings) => void): Promise<void> {
+  await updateConfigurationFile<MyAgentSettings>(filePath, (settings) => {
+    if ((settings.permissions?.mode as string | undefined) === 'acceptEdits') settings.permissions!.mode = 'auto'
+    mutate(settings)
+    const validation = validateSettings(settings)
+    if (!validation.valid) throw new SettingsValidationError(validation.errors)
+    return settings
+  })
+}
+
+export async function updateUserSettings(mutate: (settings: MyAgentSettings) => void): Promise<void> {
+  await updateSettingsFile(join(getGlobalMyAgentDir(), 'settings.json'), mutate)
 }
 
 /**
@@ -408,23 +435,14 @@ const LOCAL_PATCH_KEYS = ['permissions', 'mcp', 'skills', 'cache', 'thinking', '
  * someone edited the file by hand.
  */
 export async function updateLocalSettings(cwd: string, patch: LocalSettingsPatch): Promise<void> {
-  const filePath = localSettingsPath(cwd)
-  const next = await loadSettingsFile(filePath)
-  for (const key of LOCAL_PATCH_KEYS) {
-    if (!Object.hasOwn(patch, key)) continue
-    const value = patch[key]
-    if (value === undefined) delete next[key]
-    // Indexed through a wider type on purpose: the key is one of
-    // `LOCAL_PATCH_KEYS` and the value came from `patch[key]`, but the compiler
-    // distributes the union over both sides and asks for their intersection.
-    else (next as Record<string, unknown>)[key] = value
-  }
-
-  const validation = validateSettings(next)
-  if (!validation.valid) {
-    throw new Error(`Invalid settings: ${validation.errors.join('; ')}`)
-  }
-  await writeSettingsAtomic(filePath, next)
+  await updateSettingsFile(localSettingsPath(cwd), (next) => {
+    for (const key of LOCAL_PATCH_KEYS) {
+      if (!Object.hasOwn(patch, key)) continue
+      const value = patch[key]
+      if (value === undefined) delete next[key]
+      else (next as Record<string, unknown>)[key] = value
+    }
+  })
 }
 
 /** Replaces one permission group in the local layer. */
@@ -596,10 +614,7 @@ export async function persistPermissionRule(cwd: string, rule: PermissionRule): 
 }
 
 export async function saveEffortLevel(level: EffortLevel): Promise<void> {
-  const settingsPath = join(getGlobalMyAgentDir(), 'settings.json')
-  const settings = await loadSettingsFile(settingsPath)
-  settings.effortLevel = level
-  await writeSettingsAtomic(settingsPath, settings)
+  await updateUserSettings((settings) => { settings.effortLevel = level })
 }
 
 export function validateSettings(settings: MyAgentSettings): { valid: boolean; errors: string[] } {

@@ -21,6 +21,7 @@ import { SessionStore } from '../src/sessions/service.js'
 import type { ImageAttachmentRef, UserInput } from '../src/media/types.js'
 import { replayMessageQueue } from '../src/runtime/messageQueue.js'
 import { projectRootKey } from '../src/runtime/projectDirectory.js'
+import { makeImageAttachmentRef } from './helpers/imageFixtures.js'
 
 /**
  * The host is exercised against stub collaborators rather than a real runtime:
@@ -917,6 +918,17 @@ test('rewind retires the queued message whose send the cut removed', async () =>
   )
   assert.deepEqual(replayMessageQueue(onDisk), [])
   harness.dispose()
+
+  const reopened = await createHarness({ existingRecords: onDisk })
+  try {
+    reopened.send({ type: 'hello', id: 'hello' })
+    await waitFor(() => reopened.received.find((event) => event.type === 'reply' && event.id === 'hello'), 'the reopened host')
+    await givePumpAChance()
+    assert.deepEqual(reopened.calls.submits, [], 'the rewound queue id cannot resend after restart')
+    assert.deepEqual(reopened.calls.restoreInputs, [], 'reopening does not restore the draft again')
+  } finally {
+    reopened.dispose()
+  }
 })
 
 test('a pending message enqueued after the rewind target survives and is sent once', async () => {
@@ -1013,6 +1025,55 @@ test('summarize-from-here retires the queue id its cut orphans', async () => {
   assert.deepEqual(replayMessageQueue(onDisk), [])
   harness.dispose()
 })
+
+for (const decision of ['summarize-from-here', 'summarize-up-to-here'] as const) {
+  test(`${decision} preserves pending messages across the boundary in send order`, async () => {
+    const createdAt = '2026-01-01T00:00:00.000Z'
+    const first = { id: 'q-first', content: 'first pending', priority: 'later' as const, createdAt }
+    const second = {
+      id: 'q-second', content: 'second pending', priority: 'now' as const, createdAt,
+      images: [makeImageAttachmentRef({ id: 'img-pending', ownerSessionId: 'original-session' })],
+    }
+    const records: SessionRecord[] = [
+      { type: 'message', id: 'm1', role: 'user', content: 'earlier turn', createdAt },
+      { type: 'message_queue', id: 'e-first', operation: 'enqueue', message: first, createdAt },
+      { type: 'message', id: 'm3', role: 'user', content: 'selected turn', createdAt },
+      { type: 'message_queue', id: 'e-second', operation: 'enqueue', message: second, createdAt },
+      { type: 'message', id: 'm4', role: 'assistant', content: 'answer', createdAt },
+    ]
+    const harness = await createHarness({ existingRecords: records })
+    try {
+      for (const record of records) await harness.store.appendRecord(harness.sessionId, record)
+      harness.failNextSubmit('the head cannot be accepted by this model')
+      harness.send({ type: 'hello', id: 'hello' })
+      await waitFor(() => harness.received.find((event) =>
+        event.type === 'session-event' && event.event.type === 'notice'), 'the paused head')
+      await givePumpAChance()
+
+      harness.send({ type: 'summarize-rewind', id: 'c1', messageId: 'm3', decision })
+      await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === 'c1'), 'the rewrite reply')
+      await givePumpAChance()
+
+      assert.deepEqual(harness.calls.submits, [], 'the same head still holds the pump')
+      assert.deepEqual(harness.calls.restoreInputs, [], 'summarizing does not restore a draft')
+      const onDisk = await harness.store.loadRecords(harness.sessionId)
+      assert.deepEqual(replayMessageQueue(onDisk), [first, second], 'order, priorities and images survive replay')
+
+      // A new host uses only the persisted records, without the old pump block.
+      const reopened = await createHarness({ existingRecords: onDisk })
+      try {
+        reopened.send({ type: 'hello', id: 'hello' })
+        await waitFor(() => reopened.calls.submits.length === 2 ? true : undefined, 'both messages after restart')
+        await givePumpAChance()
+        assert.deepEqual(reopened.calls.submits, [first.content, second.content])
+      } finally {
+        reopened.dispose()
+      }
+    } finally {
+      harness.dispose()
+    }
+  })
+}
 
 test('two rewinds in the same tick settle to one complete rewrite', async () => {
   const harness = await createHarness()

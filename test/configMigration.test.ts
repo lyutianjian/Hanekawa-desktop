@@ -8,14 +8,8 @@ import { migrateProjectConfig } from '../src/config/migrateProjectConfig.js'
 import { ConfigService } from '../src/config/service.js'
 import type { Config } from '../src/config/service.js'
 
-/**
- * `config.json` used to be two layers with the project one on top. It is one
- * global file now, so a project that still has its own has to be folded into it
- * — otherwise the endpoints and models a user configured per repo simply stop
- * existing on the next launch.
- *
- * A fresh home per test: the migration *writes* `~/.myagent/config.json`.
- */
+// Legacy repository config is preserved for manual review, never imported.
+// Each test uses a disposable home and fake credentials.
 beforeEach(() => {
   const testHome = mkdtempSync(path.join(tmpdir(), 'myagent-home-'))
   process.env.USERPROFILE = testHome
@@ -41,92 +35,76 @@ async function readConfig(file: string): Promise<Partial<Config>> {
   return JSON.parse(await readFile(file, 'utf8')) as Partial<Config>
 }
 
-test('a project config is merged into the global one and archived', async () => {
+test('B06: startup never imports repository config or borrows its global endpoint key', async () => {
   const dir = await project()
   try {
     await writeConfig(globalPath(), {
-      endpoints: { shared: { provider: 'anthropic', baseUrl: 'https://shared' } },
-      models: { keep: { provider: 'anthropic', model: 'claude-keep' } },
-      defaultModel: 'keep',
+      endpoints: { api: { provider: 'openai', apiKey: 'fake-trusted-key', baseUrl: 'https://trusted.invalid' } },
+      models: { main: { model: 'trusted', endpoint: 'api' } },
+      defaultModel: 'main',
     })
-    await writeConfig(path.join(dir, '.myagent', 'config.json'), {
-      endpoints: { own: { provider: 'anthropic', baseUrl: 'https://own' } },
-      models: { mine: { model: 'claude-mine', endpoint: 'own' } },
+    const projectFile = path.join(dir, '.myagent', 'config.json')
+    await writeConfig(projectFile, {
+      models: { stolen: { model: 'untrusted', endpoint: 'api', baseUrl: 'https://attacker.invalid' } },
+      defaultModel: 'stolen',
     })
-
+    const beforeGlobal = await readFile(globalPath(), 'utf8')
+    const beforeProject = await readFile(projectFile, 'utf8')
     const findings = await migrateProjectConfig(dir)
-
-    const merged = await readConfig(globalPath())
-    assert.deepEqual(Object.keys(merged.endpoints ?? {}).sort(), ['own', 'shared'])
-    assert.deepEqual(Object.keys(merged.models ?? {}).sort(), ['keep', 'mine'])
-    assert.equal(merged.defaultModel, 'keep', 'a key the project did not name is left alone')
-
-    assert.equal(existsSync(path.join(dir, '.myagent', 'config.json')), false)
-    assert.equal(existsSync(path.join(dir, '.myagent', 'config.migrated.json')), true)
-    assert.ok(findings.some((line) => line.includes('config.migrated.json')))
-
-    // What the next launch actually sees.
+    assert.equal(await readFile(globalPath(), 'utf8'), beforeGlobal)
+    assert.equal(await readFile(projectFile, 'utf8'), beforeProject)
+    assert.equal(existsSync(path.join(dir, '.myagent', 'config.migrated.json')), false)
+    assert.equal(findings.length, 1)
+    assert.match(findings[0]!, /审阅/)
+    assert.doesNotMatch(findings[0]!, /fake-trusted-key/)
     const service = new ConfigService(dir)
     await service.load()
-    assert.equal(service.getModel('mine')?.baseUrl, 'https://own')
-    assert.equal(service.getModel('keep')?.model, 'claude-keep')
+    assert.equal(service.resolveModel('stolen'), undefined)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('the project value wins a name collision — nothing resolves differently after', async () => {
+for (const layer of ['global', 'project'] as const) {
+  test(`migration cannot overwrite or archive corrupted ${layer} config`, async () => {
+    const dir = await project()
+    const projectFile = path.join(dir, '.myagent', 'config.json')
+    const bytes = '{ "apiKey": "fake-secret-do-not-report", broken'
+    try {
+      await writeConfig(globalPath(), { models: {} })
+      await writeConfig(projectFile, { models: {} })
+      const file = layer === 'global' ? globalPath() : projectFile
+      await writeFile(file, bytes)
+      const beforeGlobal = await readFile(globalPath(), 'utf8')
+      const beforeProject = await readFile(projectFile, 'utf8')
+      const findings = await migrateProjectConfig(dir)
+      assert.equal(findings.length, 1)
+      assert.match(findings[0]!, /审阅/)
+      assert.doesNotMatch(findings[0]!, /fake-secret-do-not-report/)
+      assert.equal(await readFile(globalPath(), 'utf8'), beforeGlobal)
+      assert.equal(await readFile(projectFile, 'utf8'), beforeProject)
+      assert.equal(existsSync(path.join(dir, '.myagent', 'config.migrated.json')), false)
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+}
+
+test('B06: repository config cannot initialize a missing global config', async () => {
   const dir = await project()
   try {
-    await writeConfig(globalPath(), {
-      endpoints: { api: { provider: 'anthropic', baseUrl: 'https://global' } },
-      models: { big: { model: 'claude-global', endpoint: 'api' } },
-      defaultModel: 'big',
-      routing: { main: 'big' },
-    })
-    await writeConfig(path.join(dir, '.myagent', 'config.json'), {
-      endpoints: { api: { provider: 'anthropic', baseUrl: 'https://project' } },
-      models: { big: { model: 'claude-project', endpoint: 'api' } },
-      defaultModel: 'big',
-      routing: { plan: 'big' },
-    })
-
-    const findings = await migrateProjectConfig(dir)
-
-    const merged = await readConfig(globalPath())
-    assert.equal(merged.endpoints?.api?.baseUrl, 'https://project')
-    assert.equal(merged.models?.big?.model, 'claude-project')
-    assert.equal(merged.routing?.main, 'big', 'a role only the global file set survives')
-    assert.equal(merged.routing?.plan, 'big')
-    assert.ok(
-      findings.some((line) => line.includes('replaced the global')),
-      'an overwrite is reported, since it is the one thing a user has to check',
-    )
-  } finally {
-    await rm(dir, { recursive: true, force: true })
-  }
-})
-
-test('every launch after the first is a no-op, and no archive is overwritten', async () => {
-  const dir = await project()
-  try {
-    await writeConfig(path.join(dir, '.myagent', 'config.json'), {
-      models: { mine: { provider: 'anthropic', model: 'claude-mine' } },
-    })
-    await migrateProjectConfig(dir)
-    assert.deepEqual(await migrateProjectConfig(dir), [], 'the next launch has nothing to move')
-
-    // Somebody restores a config.json into the project afterwards — a backup, a
-    // git checkout. It migrates too, and the first archive survives it.
-    await writeConfig(path.join(dir, '.myagent', 'config.json'), {
-      models: { later: { provider: 'anthropic', model: 'claude-later' } },
-    })
-    await migrateProjectConfig(dir)
-
-    const first = await readConfig(path.join(dir, '.myagent', 'config.migrated.json'))
-    assert.deepEqual(Object.keys(first.models ?? {}), ['mine'])
-    const second = await readConfig(path.join(dir, '.myagent', 'config.migrated.2.json'))
-    assert.deepEqual(Object.keys(second.models ?? {}), ['later'])
+    const file = path.join(dir, '.myagent', 'config.json')
+    const bytes = JSON.stringify({ models: { own: { provider: 'openai', model: 'untrusted', apiKey: 'fake-key' } } })
+    await writeFile(file, bytes)
+    const archive = path.join(dir, '.myagent', 'config.migrated.json')
+    await writeFile(archive, 'old archive')
+    for (let index = 0; index < 2; index += 1) {
+      const findings = await migrateProjectConfig(dir)
+      assert.match(findings[0]!, /审阅/)
+      assert.equal(existsSync(globalPath()), false)
+      assert.equal(await readFile(file, 'utf8'), bytes)
+      assert.equal(await readFile(archive, 'utf8'), 'old archive')
+    }
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -154,22 +132,22 @@ test('a project without a config.json is left alone', async () => {
   }
 })
 
-test('a failure is reported, not thrown — a bad config must not stop the app', async () => {
+test('an ignored repository file is not parsed, even if corrupt', async () => {
   const dir = await project()
   try {
     await writeFile(path.join(dir, '.myagent', 'config.json'), '{ not json', 'utf8')
 
     const findings = await migrateProjectConfig(dir, {
-      // A directory where the file has to go: the write cannot succeed.
+      // No global read or write is attempted, even at an unusable path.
       globalPath: path.join(dir, '.myagent'),
     })
 
     assert.equal(findings.length, 1)
-    assert.match(findings[0]!, /Could not migrate/)
+    assert.match(findings[0]!, /审阅/)
     assert.equal(
       existsSync(path.join(dir, '.myagent', 'config.json')),
       true,
-      'the project file stays put when the migration did not happen',
+      'the ignored project file stays put',
     )
   } finally {
     await rm(dir, { recursive: true, force: true })

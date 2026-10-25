@@ -40,8 +40,7 @@ import { getPlansDir } from '../src/utils/plans.js'
  * tabs cheap rather than what makes them wrong.
  */
 
-// ConfigService and loadMergedSettings both layer a shared `~/.myagent`
-// beneath the project one, so every test needs its own home.
+// Account configuration is global; every test needs its own home.
 beforeEach(() => {
   const testHome = mkdtempSync(path.join(tmpdir(), 'myagent-home-'))
   process.env.USERPROFILE = testHome
@@ -59,8 +58,9 @@ async function createProject(options: {
 } = {}): Promise<{ cwd: string; store: SessionStore; session: SessionMeta }> {
   const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-scope-'))
   await mkdir(path.join(cwd, '.myagent'), { recursive: true })
+  await mkdir(path.join(process.env.HOME!, '.myagent'), { recursive: true })
   await writeFile(
-    path.join(cwd, '.myagent', 'config.json'),
+    path.join(process.env.HOME!, '.myagent', 'config.json'),
     JSON.stringify(options.config ?? MODEL_CONFIG),
     'utf8',
   )

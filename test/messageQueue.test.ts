@@ -369,4 +369,16 @@ describe('reconcileRewoundQueue', () => {
     ]
     assert.deepEqual(reconcileRewoundQueue(retained, [kept, restored]), { retire: [], restore: [restored] })
   })
+
+  it('reinstates a retained suffix after the missing head to preserve send order', () => {
+    const first = pending('first')
+    const second = { ...pending('second'), priority: 'now' as const }
+    const retained: SessionRecord[] = [
+      { type: 'message_queue', id: 'e2', operation: 'enqueue', message: second, createdAt: base },
+    ]
+    assert.deepEqual(reconcileRewoundQueue(retained, [first, second]), {
+      retire: [second],
+      restore: [first, second],
+    })
+  })
 })

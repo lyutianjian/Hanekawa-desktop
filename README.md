@@ -57,7 +57,9 @@ npm run start:desktop
 
 `provider` 有三种：`anthropic`（Anthropic Messages）、`openai`（OpenAI Chat Completions，各家兼容服务通用）和 `openai-responses`（OpenAI Responses，OpenAI 官方推荐；GPT-6 Astra、GPT-6.1 Sol 只能在 Responses 下调用工具）。
 
-`config.json` 只有全局一份。旧版项目里的 `.myagent/config.json` 会在首次加载时迁入全局配置并归档。
+`config.json` 只有全局一份。项目和本地 settings 中的 `models`、`endpoints`、`routing`、`defaultModel`、`fallbackModel`、`compactModel` 及 `agent.*` 会被忽略，不能借用全局服务商凭证或写入全局配置。旧的用户层 `~/.myagent/settings.json` 仍兼容这些字段，`config.json` 优先。
+
+旧版项目里的 `.myagent/config.json` 不会自动导入或归档，应用会提示并保留原文件。确需导入时，请亲自审阅服务商地址、模型覆盖和凭证，先备份 `~/.myagent/config.json`（例如复制为 `config.before-import.json`），再手动把确认可信的字段合入全局配置并重新加载。仅有本地文件或未被 Git 跟踪，不能证明它来自你本人。
 
 ### 设置文件的层级
 
@@ -70,6 +72,8 @@ npm run start:desktop
 | 本地 | `~/.myagent/projects/<key>/settings.local.json` | 个人的每项目设置，不放在项目目录里 |
 
 权限规则、钩子等按层拼接，MCP 信任取并集；`skills.disabled` 例外，按层整体替换。
+
+`config.json` 和这三层设置文件只有在不存在时才按空配置初始化；已有文件的 JSON 损坏、顶层不是对象或无法读取时，会报告路径并停止加载或保存，不会自动覆盖或重建。运行中重新加载失败会保留上次有效的内存配置。请先备份原文件，再修正内容或访问权限并重新加载；首次启动失败时，修正后重新启动应用。
 
 项目里的 `.myagent/` 只存放你手动放进去的共享配置（设置、技能、agent 定义、规则、MCP）。会话及其他运行时数据（溢出的工具输出、图片附件、计划文件）以及个人的每项目设置（`settings.local.json`、`agents.local/`）都在 `~/.myagent/projects/<key>/` 下，`<key>` 由项目路径推导，所以应用自己写的东西永远不会出现在项目里。重命名或移动项目会得到新 key 和空历史，旧历史留在旧 key 下。如果旧版本把会话或本地设置留在了项目的 `.myagent/` 里，下次打开时会被迁走：每个文件先复制、校验，再删除原件；清空的 `.myagent/` 会被删除；搬不走的保持原样，并在启动时警告。
 
@@ -211,8 +215,8 @@ macOS 上标题栏为原生红绿灯按钮预留位置（缩放、全屏切换�
 | 命令 | 作用 |
 |---|---|
 | `/help` | 列出可用命令 |
-| `/clear` | 清空对话 |
-| `/resume` | 恢复当前工作目录下的会话 |
+| `/clear` | 清空对话；当前回合需先结束或停止完成，压缩时需等待完成 |
+| `/resume` | 恢复当前工作目录下的会话；同样需等待当前回合或压缩完成 |
 | `/rewind` | 回到本会话较早的位置 |
 | `/compact [保留重点]` | 立即压缩当前对话，可附上摘要要保留的内容 |
 | `/model` | 查看或切换当前模型 |
@@ -270,6 +274,8 @@ agent 通过 `Browser` 工具使用同一组标签页：打开、导航、后退
 ### 撤回（`/rewind`）
 
 `/rewind` 回到较早的一条提示，可以恢复对话、代码或两者。
+
+恢复对话时，所选提示及图片会回到输入框一次；如果它来自排队消息，也不会自动重发。其他尚未发送的排队消息会保留原顺序、优先级和图片；摘要回退同样保留待发送队列。
 
 恢复代码只恢复 **agent 的写入工具改过的文件**（`Edit`、`Write`、`MultiEdit`、`NotebookEdit`、`Delete`）。每次这类写入之前，原内容会被复制到 `~/.myagent/file-history/<session-id>/`，撤回时把这些副本放回去——并删除 agent 在所选位置之后新建的文件。
 

@@ -89,9 +89,9 @@ export interface MessageQueueRewrite {
 }
 
 export interface RewoundQueueReconciliation {
-  /** A replay of the retained records would resurrect these; the live queue no longer has them. */
+  /** Retire resurrected messages and any pending suffix that must be reordered. */
   retire: QueuedMessage[]
-  /** The live queue still has these, but the retained records no longer do. */
+  /** Re-enqueue the remaining pending messages in their original send order. */
   restore: QueuedMessage[]
 }
 
@@ -102,7 +102,8 @@ export interface RewoundQueueReconciliation {
  * orphans, in either direction: cutting a sent message's user record (and the
  * `dequeue` after it) leaves its `enqueue` claiming it is still waiting, and
  * cutting a pending message's own `enqueue` drops it from the queue the user
- * still holds. Both sides are reconciled by id, once, before the rewrite.
+ * still holds. Keep the matching pending prefix and rebuild the suffix, so a
+ * summary that cuts the head's enqueue cannot move it behind later messages.
  */
 export function reconcileRewoundQueue(
   retained: readonly SessionRecord[],
@@ -110,10 +111,15 @@ export function reconcileRewoundQueue(
 ): RewoundQueueReconciliation {
   const replayed = replayMessageQueue(retained)
   const pendingIds = new Set(pending.map((message) => message.id))
-  const replayedIds = new Set(replayed.map((message) => message.id))
+  const surviving = replayed.filter((message) => pendingIds.has(message.id))
+  let prefixLength = 0
+  while (prefixLength < pending.length && pending[prefixLength]?.id === surviving[prefixLength]?.id) {
+    prefixLength += 1
+  }
+  const keptIds = new Set(pending.slice(0, prefixLength).map((message) => message.id))
   return {
-    retire: replayed.filter((message) => !pendingIds.has(message.id)),
-    restore: pending.filter((message) => !replayedIds.has(message.id)),
+    retire: replayed.filter((message) => !keptIds.has(message.id)),
+    restore: pending.slice(prefixLength),
   }
 }
 
