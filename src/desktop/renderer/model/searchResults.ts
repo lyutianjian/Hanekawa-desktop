@@ -128,13 +128,15 @@ function parseGlob(content: string): SearchResults | undefined {
   const trimmed = content.trim()
   if (trimmed === 'No files found.') return undefined
   const paths: string[] = []
-  for (const raw of content.split('\n')) {
+  const notice = /\n\n(\[Showing \d+ of \d+ files; narrow the pattern or path\.\])\s*$/.exec(content)
+  const body = notice ? content.slice(0, notice.index) : content
+  for (const raw of body.split('\n')) {
     const line = raw.trim()
     if (line.length === 0) continue
     paths.push(line)
   }
   if (paths.length === 0) return undefined
-  return { tool: 'Glob', files: paths.map((path) => ({ path, matches: [] })), matchCount: paths.length }
+  return { tool: 'Glob', files: paths.map((path) => ({ path, matches: [] })), matchCount: paths.length, ...(notice ? { truncatedNote: notice[1] } : {}) }
 }
 
 /**

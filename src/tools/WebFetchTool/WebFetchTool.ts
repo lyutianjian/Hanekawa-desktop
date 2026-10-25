@@ -1,3 +1,4 @@
+import { isIP } from 'node:net'
 import { z } from 'zod/v3'
 import type { Tool, ToolResult } from '../../harness/types.js'
 import { DESCRIPTION } from './prompt.js'
@@ -6,6 +7,8 @@ import { DESCRIPTION } from './prompt.js'
 const MAX_URL_LENGTH = 2000
 const FETCH_TIMEOUT_MS = 30_000
 const MAX_MARKDOWN_LENGTH = 100_000
+/** Ceiling on the bytes actually received, counted before anything is decoded. */
+const MAX_BODY_BYTES = 5 * 1024 * 1024
 const CACHE_TTL_MS = 15 * 60 * 1000 // 15 minutes
 const MAX_CACHE_ENTRIES = 50
 
@@ -81,6 +84,70 @@ function validateURL(url: string): { valid: false; error: string } | { valid: tr
   return { valid: true, parsed }
 }
 
+/**
+ * A loopback host serves plain HTTP: upgrading it to https would fail against
+ * every local dev server. Anything that merely *looks* loopback — a name like
+ * `localhost.example.com` — keeps the usual upgrade.
+ */
+function isLoopbackHost(url: URL): boolean {
+  const host = url.hostname.toLowerCase().replace(/\.$/, '')
+  // RFC 6761 reserves `.localhost` for the loopback interface.
+  if (host === 'localhost' || host.endsWith('.localhost')) return true
+  const bare = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host
+  if (bare === '::1' || bare === '0:0:0:0:0:0:0:1') return true
+  // 127.0.0.0/8, in dotted quad form only.
+  if (isIP(bare) === 4) return Number(bare.split('.')[0]) === 127
+  return false
+}
+
+/** The URL actually requested: https for the public web, as given for loopback. */
+export function resolveFetchUrl(url: string): string {
+  const parsed = new URL(url)
+  if (parsed.protocol !== 'http:' || isLoopbackHost(parsed)) return url
+  return `https://${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`
+}
+
+/**
+ * The body, bounded by bytes as they arrive. `Content-Length` is a claim, and
+ * for a chunked response there is none at all, so the limit is enforced on what
+ * the stream really delivers; `response.text()` would have buffered the whole
+ * thing first.
+ */
+async function readBoundedBody(response: Response, url: string): Promise<{ text: string; bytes: number } | { error: string }> {
+  if (!response.body) return { text: '', bytes: 0 }
+  const reader = response.body.getReader()
+  const chunks: Uint8Array[] = []
+  let bytes = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (!value) continue
+      bytes += value.byteLength
+      if (bytes > MAX_BODY_BYTES) {
+        await reader.cancel().catch(() => {})
+        return {
+          error: `Response body exceeds ${formatBytes(MAX_BODY_BYTES)} (received at least ${formatBytes(bytes)}) from ${url}; nothing was cached.`,
+        }
+      }
+      chunks.push(value)
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => {})
+    const message = error instanceof Error ? error.message : String(error)
+    return { error: `Failed while reading the response body from ${url}: ${message}` }
+  }
+  const merged = new Uint8Array(bytes)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  // Bytes are the truth for the limit; the decoder handles multi-byte units
+  // split across chunks.
+  return { text: new TextDecoder('utf-8').decode(merged), bytes }
+}
+
 // --- HTML content detection ---
 function isHtmlContent(contentType: string): boolean {
   return contentType.includes('text/html') || contentType.includes('application/xhtml+xml')
@@ -147,10 +214,8 @@ export const webFetchTool: Tool = {
       }
     }
 
-    // Upgrade http to https
-    const fetchUrl = parsed.protocol === 'http:'
-      ? `https://${parsed.host}${parsed.pathname}${parsed.search}${parsed.hash}`
-      : url
+    // Upgrade http to https, except for a loopback host that only speaks http.
+    const fetchUrl = resolveFetchUrl(url)
 
     // Fetch. Redirects are followed by hand and only within the host that was
     // approved; a hop elsewhere goes back to the model as a new request.
@@ -198,10 +263,13 @@ export const webFetchTool: Tool = {
       }
     }
 
-    // Read response body
-    const text = await response.text()
+    // Read response body, bounded while it streams in.
+    const body = await readBoundedBody(response, currentUrl)
+    if ('error' in body) {
+      return { ok: false, content: body.error, errorCode: 'execution_failed' }
+    }
+    const { text, bytes } = body
     const contentType = response.headers.get('content-type') ?? ''
-    const bytes = text.length
 
     // Convert HTML to markdown, or use raw text
     let markdown: string

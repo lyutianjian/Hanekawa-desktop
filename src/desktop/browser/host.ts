@@ -40,6 +40,7 @@ import type {
   BrowserWaitRequest,
 } from '../../runtime/protocol/browserHost.js'
 import type { WireBrowserTabInfo } from '../shellProtocol.js'
+import type { CallBounds } from './bounds.js'
 import { cdpLease, cdpSender, pageEvaluator, requirePage } from './cdp.js'
 import {
   applyEmulation,
@@ -209,7 +210,7 @@ export class DesktopBrowserHost implements BrowserHost {
         if (until !== 'networkidle' || row.error !== undefined) return toState(row)
         // The rest of the caller's budget, not a fresh cap: they asked for one timeout.
         const remaining = Math.max(WAIT_POLL_INTERVAL_MS, deadline - performance.now())
-        const report = await this.settle(tabId, check, remaining)
+        const report = await this.settle(tabId, check, remaining, options.signal)
         return { ...toState(this.requireTab(caller, tabId)), settle: describeSettle(report) }
       }
       // The DOM is parsed, and that is all a `domcontentloaded` wait asked:
@@ -227,7 +228,7 @@ export class DesktopBrowserHost implements BrowserHost {
 
   async elements(caller: BrowserCaller, tabId: string, request: BrowserElementsRequest): Promise<BrowserSnapshot> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId)
+    const page = await this.emulatedPage(caller, tabId, revision)
     const snapshot = await this.projection.elements(ownerOf(page), pageEvaluator(page), request)
     // The page has live refs again, so the next idle touch has some to forget.
     this.forgotten.delete(tabId)
@@ -237,7 +238,7 @@ export class DesktopBrowserHost implements BrowserHost {
 
   async text(caller: BrowserCaller, tabId: string, request: BrowserTextRequest): Promise<BrowserSnapshot> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId)
+    const page = await this.emulatedPage(caller, tabId, revision)
     const snapshot = await this.projection.text(ownerOf(page), pageEvaluator(page), request)
     this.ownership.assertAllowed(caller.sessionId, revision)
     return snapshot
@@ -251,23 +252,24 @@ export class DesktopBrowserHost implements BrowserHost {
 
   async screenshot(caller: BrowserCaller, tabId: string, request: BrowserScreenshotRequest = {}): Promise<BrowserScreenshot> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId)
+    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
     const report = request.settle === false
       ? undefined
-      : await this.settle(tabId, this.guard(caller, revision, request.signal), SETTLE_SCREENSHOT_MS)
+      : await this.settle(tabId, this.guard(caller, revision, request.signal), SETTLE_SCREENSHOT_MS, request.signal)
     // Through CDP first: `Page.captureScreenshot` asks the renderer for a fresh
     // frame, which a tab parked off the panel still produces — `capturePage()`
     // would hand back whatever the window compositor last drew instead. The
     // latter stays as the fallback for when the debugger is unavailable (DevTools
     // holds it), and there a stale-but-real frame beats no picture.
-    const bytes = (await captureViaCdp(page)) ?? (await captureViaWindow(page))
+    const bounds = callBounds(request.signal)
+    const bytes = (await captureViaCdp(page, bounds)) ?? (await captureViaWindow(page))
     if (bytes === undefined) throw notCaptured()
     this.ownership.assertAllowed(caller.sessionId, revision)
     const { width, height } = pngSize(bytes)
     if (width === 0 || height === 0) throw notCaptured()
     const shot: BrowserScreenshot = { bytes, name: screenshotName(this.rowFor(tabId)?.url ?? ''), width, height }
     if (report !== undefined) shot.settle = describeSettle(report)
-    const viewport = await readViewport(page)
+    const viewport = await readViewport(page, bounds)
     if (viewport !== undefined) {
       shot.cssWidth = viewport.width
       shot.cssHeight = viewport.height
@@ -277,34 +279,34 @@ export class DesktopBrowserHost implements BrowserHost {
 
   async click(caller: BrowserCaller, tabId: string, request: BrowserClickRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId)
+    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
     const check = this.guard(caller, revision, request.signal)
-    return this.afterSettling(tabId, check, () => clickTarget(this.inputDeps(page, check), request))
+    return this.afterSettling(tabId, check, request.signal, () => clickTarget(this.inputDeps(page, check, request.signal), request))
   }
 
   async clickAt(caller: BrowserCaller, tabId: string, request: BrowserClickAtRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
     const page = this.requirePage(caller, tabId)
     const check = this.guard(caller, revision, request.signal)
-    return this.afterSettling(tabId, check, () => clickAt(this.inputDeps(page, check), request))
+    return this.afterSettling(tabId, check, request.signal, () => clickAt(this.inputDeps(page, check, request.signal), request))
   }
 
   async type(caller: BrowserCaller, tabId: string, request: BrowserTypeRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId)
-    return typeText(this.inputDeps(page, this.guard(caller, revision, request.signal)), request)
+    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
+    return typeText(this.inputDeps(page, this.guard(caller, revision, request.signal), request.signal), request)
   }
 
   async pressKey(caller: BrowserCaller, tabId: string, request: BrowserPressKeyRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId)
-    return pressKeys(this.inputDeps(page, this.guard(caller, revision, request.signal)), request)
+    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
+    return pressKeys(this.inputDeps(page, this.guard(caller, revision, request.signal), request.signal), request)
   }
 
   async selectOption(caller: BrowserCaller, tabId: string, request: BrowserSelectRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId)
-    return selectOption(this.inputDeps(page, this.guard(caller, revision, request.signal)), request)
+    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
+    return selectOption(this.inputDeps(page, this.guard(caller, revision, request.signal), request.signal), request)
   }
 
   async setChecked(
@@ -313,22 +315,22 @@ export class DesktopBrowserHost implements BrowserHost {
     request: BrowserSetCheckedRequest,
   ): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId)
+    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
     const check = this.guard(caller, revision, request.signal)
-    return this.afterSettling(tabId, check, () => setChecked(this.inputDeps(page, check), request))
+    return this.afterSettling(tabId, check, request.signal, () => setChecked(this.inputDeps(page, check, request.signal), request))
   }
 
   async hover(caller: BrowserCaller, tabId: string, request: BrowserHoverRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId)
+    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
     const check = this.guard(caller, revision, request.signal)
-    return this.afterSettling(tabId, check, () => hoverTarget(this.inputDeps(page, check), request))
+    return this.afterSettling(tabId, check, request.signal, () => hoverTarget(this.inputDeps(page, check, request.signal), request))
   }
 
   async scroll(caller: BrowserCaller, tabId: string, request: BrowserScrollRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId)
-    return scrollPage(this.inputDeps(page, this.guard(caller, revision, request.signal)), request)
+    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
+    return scrollPage(this.inputDeps(page, this.guard(caller, revision, request.signal), request.signal), request)
   }
 
   async waitFor(caller: BrowserCaller, tabId: string, request: BrowserWaitRequest): Promise<BrowserActionResult> {
@@ -337,7 +339,7 @@ export class DesktopBrowserHost implements BrowserHost {
     // is exactly when there is no ready document to insist on.
     const urlOnly = (request.selector ?? '') === '' && (request.text ?? '') === ''
     if (urlOnly) this.requireTab(caller, tabId)
-    else await this.emulatedPage(caller, tabId)
+    else await this.emulatedPage(caller, tabId, revision, request.signal)
     const deps = {
       // Resolved per poll, like everything below: the page a wait started on
       // is not necessarily the one it ends on.
@@ -346,7 +348,7 @@ export class DesktopBrowserHost implements BrowserHost {
         if (page === undefined) {
           return Promise.reject(new BrowserHostError('PAGE_NOT_READY', 'The tab has no page right now.', true))
         }
-        return pageEvaluator(page)(script)
+        return pageEvaluator(page, callBounds(request.signal))(script)
       },
       // Re-read every poll rather than closing over `page.generation`: a
       // navigation that lands mid-wait is exactly what this has to notice.
@@ -363,20 +365,21 @@ export class DesktopBrowserHost implements BrowserHost {
     const revision = this.enter(caller)
     const page = this.requirePage(caller, tabId)
     const check = this.guard(caller, revision, request.signal)
+    const bounds = { signal: request.signal, check }
     check()
     if (request.reset === true) {
-      const had = await resetEmulation(page.contents)
+      const had = await resetEmulation(page.contents, bounds)
       check()
-      return { text: had ? `tab ${tabId} emulates nothing now; ${await viewportOf(page)}.` : `tab ${tabId} was not emulating a device.` }
+      return { text: had ? `tab ${tabId} emulates nothing now; ${await viewportOf(page, bounds)}.` : `tab ${tabId} was not emulating a device.` }
     }
     const settings = resolveEmulation(request)
-    await applyEmulation(page.contents, settings)
+    await applyEmulation(page.contents, settings, bounds)
     // Whatever the tab showed was laid out for the old viewport.
     this.projection.dropTab(tabId)
     check()
     const label = request.preset === undefined ? '' : `${request.preset} `
     return {
-      text: `tab ${tabId} now emulates ${label}(${describeEmulation(settings)}); ${await viewportOf(page)}. It lasts until reset or the tab closes. The page was not reloaded; tab.reload it for a layout built for this device from the start.`,
+      text: `tab ${tabId} now emulates ${label}(${describeEmulation(settings)}); ${await viewportOf(page, bounds)}. It lasts until reset or the tab closes. The page was not reloaded; tab.reload it for a layout built for this device from the start.`,
     }
   }
 
@@ -386,13 +389,18 @@ export class DesktopBrowserHost implements BrowserHost {
    * Waits for the tab's page to stop moving, up to `timeoutMs`. Everything is
    * re-resolved per poll, like `waitFor`'s: the page may navigate mid-wait.
    */
-  private settle(tabId: string, check: () => void, timeoutMs: number): Promise<SettleReport> {
+  private settle(
+    tabId: string,
+    check: () => void,
+    timeoutMs: number,
+    signal?: AbortSignal,
+  ): Promise<SettleReport> {
     return waitForSettle({
       evaluate: (script) => {
         const page = this.deps.tabs.pageFor(tabId)
         return page === undefined
           ? Promise.reject(new BrowserHostError('PAGE_NOT_READY', 'The tab has no page right now.', true))
-          : pageEvaluator(page)(script)
+          : pageEvaluator(page, callBounds(signal))(script)
       },
       network: () => this.deps.tabs.networkOf(tabId),
       generation: () => this.deps.tabs.pageFor(tabId)?.generation,
@@ -409,9 +417,10 @@ export class DesktopBrowserHost implements BrowserHost {
   private async afterSettling(
     tabId: string,
     check: () => void,
+    signal: AbortSignal | undefined,
     act: () => Promise<BrowserActionResult>,
   ): Promise<BrowserActionResult> {
-    const report = await this.settle(tabId, check, SETTLE_ACTION_MS)
+    const report = await this.settle(tabId, check, SETTLE_ACTION_MS, signal)
     const result = await act()
     return report.settled ? result : { text: `${result.text} Before acting: ${describeSettle(report)}` }
   }
@@ -423,12 +432,13 @@ export class DesktopBrowserHost implements BrowserHost {
    * object to call: actions on one tab serialize on that key, and two sessions
    * addressing the same tab land in the same queue.
    */
-  private inputDeps(page: BrowserPage, check: () => void): InputDeps {
+  private inputDeps(page: BrowserPage, check: () => void, signal?: AbortSignal): InputDeps {
+    const bounds = callBounds(signal)
     return {
       key: page.contents,
-      send: cdpSender(page),
+      send: cdpSender(page, bounds),
       lease: cdpLease(page),
-      evaluate: pageEvaluator(page),
+      evaluate: pageEvaluator(page, bounds),
       check,
       platform: process.platform,
     }
@@ -480,6 +490,7 @@ export class DesktopBrowserHost implements BrowserHost {
     if (page === undefined) return
     this.forgotten.add(tabId)
     pageEvaluator(page)(forgetRefsScript()).catch(() => {
+      // A forgotten sweep is not worth reporting: the next snapshot replaces it.
       // A page mid-navigation loses its automation world, refs and all.
     })
   }
@@ -544,9 +555,12 @@ export class DesktopBrowserHost implements BrowserHost {
    * or a lost renderer took it: what the operation reads or presses has to be
    * the page at the size the model asked for.
    */
-  private async emulatedPage(caller: BrowserCaller, tabId: string): Promise<BrowserPage> {
+  private async emulatedPage(caller: BrowserCaller, tabId: string, revision: number, signal?: AbortSignal): Promise<BrowserPage> {
+    const check = this.guard(caller, revision, signal)
+    check()
     const page = this.requirePage(caller, tabId)
-    await restoreEmulation(page.contents)
+    await restoreEmulation(page.contents, { signal, check })
+    check()
     return page
   }
 
@@ -591,6 +605,16 @@ function screenshotName(url: string): string {
   return `screenshot-${host.replace(/[^a-zA-Z0-9.-]/g, '-')}-${randomUUID().slice(0, 8)}.png`
 }
 
+/**
+ * A caller's cancel signal in the shape the CDP seam takes.
+ *
+ * `undefined` when there is none, so the assignment keeps meaning "no signal"
+ * rather than "an already-aborted one"; the deadline applies either way.
+ */
+function callBounds(signal?: AbortSignal): CallBounds | undefined {
+  return signal === undefined ? undefined : { signal }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -604,11 +628,11 @@ function notCaptured(): BrowserHostError {
   )
 }
 
-async function captureViaCdp(page: BrowserPage): Promise<Buffer | undefined> {
+async function captureViaCdp(page: BrowserPage, bounds?: CallBounds): Promise<Buffer | undefined> {
   const release = cdpLease(page)()
   try {
     const result = await withTimeout(
-      cdpSender(page)('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }),
+      cdpSender(page, bounds)('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false }),
       SCREENSHOT_TIMEOUT_MS,
     )
     const data = (result as { data?: unknown } | undefined)?.data
@@ -624,9 +648,9 @@ async function captureViaCdp(page: BrowserPage): Promise<Buffer | undefined> {
  * The CSS viewport the capture shows. Best effort: the picture is still worth
  * returning without it, only coordinate clicks lose their scale.
  */
-async function readViewport(page: BrowserPage): Promise<ViewportResult | undefined> {
+async function readViewport(page: BrowserPage, bounds?: CallBounds): Promise<ViewportResult | undefined> {
   try {
-    const viewport = unwrap<ViewportResult>(await pageEvaluator(page)(viewportScript()))
+    const viewport = unwrap<ViewportResult>(await pageEvaluator(page, bounds)(viewportScript()))
     return viewport.width > 0 && viewport.height > 0 ? viewport : undefined
   } catch {
     return undefined
@@ -662,15 +686,18 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T | unde
 }
 
 /** The viewport as the page itself reports it, as evidence the override took. */
-async function viewportOf(page: BrowserPage): Promise<string> {
+async function viewportOf(page: BrowserPage, bounds: CallBounds & { check: () => void }): Promise<string> {
   try {
-    const size = (await pageEvaluator(page)('({ w: innerWidth, h: innerHeight, dpr: devicePixelRatio })')) as {
+    bounds.check()
+    const size = (await pageEvaluator(page, bounds)('({ w: innerWidth, h: innerHeight, dpr: devicePixelRatio })')) as {
       w: number
       h: number
       dpr: number
     }
+    bounds.check()
     return `the page reports innerWidth=${size.w}, innerHeight=${size.h}, devicePixelRatio=${size.dpr}`
   } catch {
+    bounds.check()
     return 'the page could not report its viewport'
   }
 }

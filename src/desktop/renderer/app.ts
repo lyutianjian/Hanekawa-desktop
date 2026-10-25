@@ -2064,7 +2064,13 @@ function renderSubagents(): void {
   const bodyOpen = (id: SideSection): boolean => onTasks && shown.sections.includes(id) && !folded.has(id)
   if (bodyOpen('plan')) planPanel.render(pane?.plan())
   commandsPanel.render(bodyOpen('commands') ? commands : undefined)
-  if (bodyOpen('subagents')) subagentPanel.render({ entries, selected: selectedSubagent })
+  // A page nobody can see must not poll: `setVisible` is what stops its clock and
+  // its once-a-second transcript read, and what catches it up in one read when the
+  // body opens again. `bodyOpen` already answers that question for the plan and
+  // command tabs; the subagent page is the one with a timer behind it.
+  const subagentsOpen = bodyOpen('subagents')
+  if (subagentsOpen) subagentPanel.render({ entries, selected: selectedSubagent })
+  subagentPanel.setVisible(subagentsOpen)
 
   const onThreads = visible && view.mode === 'threads'
   const coordination = activeCoordination()

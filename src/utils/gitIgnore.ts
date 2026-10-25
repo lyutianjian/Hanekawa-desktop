@@ -5,7 +5,7 @@ export async function gitIgnoredPaths(cwd: string, filePaths: string[]): Promise
   if (filePaths.length === 0) return new Set()
 
   return new Promise((resolve) => {
-    const child = spawn('git', ['-C', cwd, 'check-ignore', '--no-index', '--stdin'], {
+    const child = spawn('git', ['-C', cwd, 'check-ignore', '--no-index', '-z', '--stdin'], {
       stdio: ['pipe', 'pipe', 'ignore'],
       windowsHide: true,
     })
@@ -22,21 +22,18 @@ export async function gitIgnoredPaths(cwd: string, filePaths: string[]): Promise
     child.stdout.setEncoding('utf8')
     child.stdout.on('data', (chunk: string) => {
       output += chunk
+      const paths = output.split('\0')
+      output = paths.pop() ?? ''
+      for (const filePath of paths) ignored.add(normalizePath(filePath))
     })
     child.on('error', () => finish(new Set()))
     // git exits before reading stdin outside a repository; `close` still settles.
     child.stdin.on('error', () => {})
     child.on('close', (code) => {
-      if (code === 0 || code === 1) {
-        for (const line of output.split(/\r?\n/)) {
-          const normalized = normalizePath(line.trim())
-          if (normalized) ignored.add(normalized)
-        }
-      }
-      finish(ignored)
+      finish(code === 0 || code === 1 ? ignored : new Set())
     })
 
-    child.stdin.end(`${filePaths.join('\n')}\n`)
+    child.stdin.end(`${filePaths.join('\0')}\0`)
   })
 }
 

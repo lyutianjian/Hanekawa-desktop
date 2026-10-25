@@ -74,7 +74,7 @@ async function createHarness(options: {
   /** Lets a test hold the turn in its prepare stage. */
   snapshotGate?: (messageId: string) => Promise<void>
   /** The stub compactor, when a test needs to hold or inspect it. */
-  compact?: () => Promise<CompactCheckResult>
+  compact?: (instructions?: string, signal?: AbortSignal) => Promise<CompactCheckResult>
 } = {}): Promise<Harness> {
   const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-controller-'))
   const store = new SessionStore(cwd)
@@ -1111,6 +1111,34 @@ test('compaction holds the lane, refuses a second one, and blocks a switch', asy
   release({ compacted: false, usage: usage(0, 0) })
   await compacting
   assert.equal(harness.controller.busyKind(), undefined)
+})
+
+test('manual compaction is interruptible and releases its controller after cancellation', async () => {
+  const harness = await createHarness({ compact: async (_instructions, signal) => {
+    assert.ok(signal)
+    await new Promise<void>((_resolve, reject) => signal.addEventListener('abort', () => reject(abortError()), { once: true }))
+    return { compacted: false, usage: usage(0, 0) }
+  } })
+  const compact = harness.controller.compact()
+  const rejected = assert.rejects(compact, { name: 'AbortError' })
+  harness.controller.interrupt()
+  await rejected
+  assert.equal(harness.controller.busyKind(), undefined)
+  await harness.controller.submit({ text: 'after compact' })
+})
+
+test('interrupted coordinator and wake inputs never become user drafts', async () => {
+  for (const origin of ['user', 'coordinator', 'wake'] as const) {
+    const harness = await createHarness({ run: async (input, _signal, messageId) => {
+      await harness.store.appendRecord(harness.session.id, {
+        id: messageId!, type: 'message', role: 'user', content: input.text, createdAt: 'now',
+      })
+      harness.controller.interrupt()
+      throw abortError()
+    } })
+    await harness.controller.submit({ text: 'same wake text' }, { origin })
+    assert.equal(harness.events.some((event) => event.type === 'restore-input'), origin === 'user')
+  }
 })
 
 test('a switch in flight blocks every way a turn can start, until it ends', async () => {

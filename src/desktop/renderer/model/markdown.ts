@@ -400,7 +400,7 @@ function inlineOne(token: Token): MdInline[] {
     }
 
     case 'codespan':
-      return [{ kind: 'code', text: decodeEntities((token as Tokens.Codespan).text) }]
+      return [{ kind: 'code', text: (token as Tokens.Codespan).text }]
 
     case 'strong':
       return [{ kind: 'strong', children: inlineFrom((token as Tokens.Strong).tokens) }]

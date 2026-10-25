@@ -1,4 +1,3 @@
-import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import path from 'node:path'
 import fg from 'fast-glob'
@@ -7,6 +6,8 @@ import { z } from 'zod/v3'
 import type { Tool } from '../../harness/types.js'
 import { resolveToolPath } from '../../utils/paths.js'
 import { RG_TIMEOUT_MS, VCS_EXCLUSIONS } from '../GrepTool/constants.js'
+import { streamRipgrepLines } from '../rgStream.js'
+import { runtimeDataExclusions } from '../searchExclusions.js'
 import { DESCRIPTION } from './prompt.js'
 
 const MAX_RESULTS = 200
@@ -50,15 +51,13 @@ export const globTool: Tool = {
     const options = input as GlobInput
     const cwd = options.path ? resolveToolPath(context, options.path) : context.cwd
     const pattern = options.pattern.replace(/^(\.\/)+/, '')
-    const isMatch = picomatch(pattern, { dot: false })
     // Only the pattern's static prefix is walked, so `src/*.ts` stays cheap even from the home directory.
     const base = picomatch.scan(pattern).base
-    const entries = base && !existsSync(path.resolve(cwd, base))
-      ? []
-      : ((await listWithRipgrep(cwd, base, namesDotSegment(pattern))) ?? await fg(pattern, { cwd, dot: false, ignore: FALLBACK_IGNORE }))
-        .filter((entry) => isMatch(entry))
-    const count = entries.length
-    const shown = entries.slice(0, MAX_RESULTS).join('\n')
+    const matches = base && !existsSync(path.resolve(cwd, base))
+      ? { kept: [] as string[], total: 0 }
+      : await collectMatches(cwd, pattern, base, context.abortSignal)
+    const count = matches.total
+    const shown = matches.kept.join('\n')
     const notice = count > MAX_RESULTS ? `\n\n[Showing ${MAX_RESULTS} of ${count} files; narrow the pattern or path.]` : ''
     return {
       ok: true,
@@ -82,20 +81,74 @@ function namesDotSegment(pattern: string): boolean {
 }
 
 /**
- * Every file under `base` that ripgrep would search, so `.gitignore`d trees
- * like node_modules stay out exactly as they do for Grep. Paths come back
- * relative to `cwd` (absolute when `base` is). `null` when rg is not installed.
+ * The first `MAX_RESULTS` matches plus how many there really are. Both backends
+ * filter as they walk — a pattern is applied before anything is retained, so a
+ * capped result never hides a file that matched inside the window — and neither
+ * holds the whole listing, which in a home directory is tens of thousands of
+ * paths.
  */
-function listWithRipgrep(cwd: string, base: string, hidden: boolean): Promise<string[] | null> {
-  const args = ['--files', ...(hidden ? ['--hidden'] : []), ...VCS_EXCLUSIONS.flatMap((dir) => ['--glob', `!${dir}`]), ...(base ? ['--', base] : [])]
+async function collectMatches(
+  cwd: string,
+  pattern: string,
+  base: string,
+  signal?: AbortSignal,
+): Promise<{ kept: string[]; total: number }> {
+  const isMatch = picomatch(pattern, { dot: false })
+  const fromRipgrep = await listWithRipgrep(cwd, base, namesDotSegment(pattern), isMatch, signal)
+  if (fromRipgrep) return fromRipgrep
+  return listWithFastGlob(cwd, pattern, isMatch)
+}
+
+/**
+ * Every file under `base` that ripgrep would search, so `.gitignore`d trees
+ * like node_modules stay out exactly as they do for Grep, minus the runtime
+ * data a broad walk from the home directory must not list. `null` when rg is
+ * not installed.
+ */
+function listWithRipgrep(
+  cwd: string,
+  base: string,
+  hidden: boolean,
+  isMatch: (entry: string) => boolean,
+  signal?: AbortSignal,
+): Promise<{ kept: string[]; total: number } | null> {
+  const args = [
+    '--files',
+    ...(hidden ? ['--hidden'] : []),
+    ...VCS_EXCLUSIONS.flatMap((dir) => ['--glob', `!${dir}`]),
+    ...runtimeDataExclusions(cwd).flatMap((rel) => ['--glob', `!${rel}/**`, '--glob', `!**/${rel}/**`]),
+    ...(base ? ['--', base] : []),
+  ]
+  return streamRipgrepLines({
+    cwd,
+    args,
+    keepLimit: MAX_RESULTS,
+    timeoutMs: RG_TIMEOUT_MS,
+    ...(signal ? { signal } : {}),
+    accept: isMatch,
+    transform: (line) => line.replace(/\\/g, '/'),
+  })
+}
+
+/** The no-ripgrep path: fast-glob's stream, filtered and capped the same way. */
+function listWithFastGlob(cwd: string, pattern: string, isMatch: (entry: string) => boolean): Promise<{ kept: string[]; total: number }> {
   return new Promise((resolve, reject) => {
-    execFile('rg', args, { cwd, timeout: RG_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
-      const code = (err as { code?: unknown } | null)?.code
-      if (code === 'ENOENT') return resolve(null)
-      // exit 1 means no files at all.
-      if (err && code !== 1) return reject(new Error(`ripgrep failed: ${String(stderr).trim() || err.message}`))
-      resolve(stdout.split('\n').filter(Boolean).map((line) => line.replace(/\\/g, '/')))
+    const kept: string[] = []
+    let total = 0
+    const stream = fg.stream(pattern, {
+      cwd,
+      dot: false,
+      followSymbolicLinks: false,
+      ignore: [...FALLBACK_IGNORE, ...runtimeDataExclusions(cwd).flatMap((rel) => [rel, `${rel}/**`])],
     })
+    stream.on('data', (entry) => {
+      const value = String(entry).replace(/\\/g, '/')
+      if (!isMatch(value)) return
+      total += 1
+      if (kept.length < MAX_RESULTS) kept.push(value)
+    })
+    stream.on('error', reject)
+    stream.on('end', () => resolve({ kept, total }))
   })
 }
 

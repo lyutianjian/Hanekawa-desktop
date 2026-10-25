@@ -2745,7 +2745,7 @@ test('the turn footer rides on the answer: 复制 · 刚刚 · 用时 · tokens,
     { id: 'a', kind: 'assistant', text: 'done', turnId: 't1', createdAt: at },
     { id: 'd', kind: 'duration', text: '已处理 24 分 0 秒', durationMs: 1_440_000, turnId: 't1' },
   ]
-  render(transcript(turn), NO_DISCLOSURE, { ...IDLE_ACTIVITY, outputTokens: 3200 })
+  render(transcript(turn), NO_DISCLOSURE, { ...IDLE_ACTIVITY, outputTokens: 3200, outputTokenTurnId: 't1' })
   assert.deepEqual(items().map((item) => item.classes[1]), ['user', 'assistant'])
   const row = items()[1]!.children.find((child) => child.classes.includes('item-meta'))!
   assert.deepEqual(row.children.map((child) => child.text), ['', '刚刚', '用时 24 分 0 秒', '3.2k token'])
@@ -2755,6 +2755,9 @@ test('the turn footer rides on the answer: 复制 · 刚刚 · 用时 · tokens,
   render(transcript(turn), NO_DISCLOSURE, IDLE_ACTIVITY)
   assert.deepEqual(factsOf(items()[1]!), ['用时 24 分 0 秒'])
   render(transcript(turn), NO_DISCLOSURE, { ...IDLE_ACTIVITY, isStreaming: true, turnId: 't2', startedAt: Date.now(), outputTokens: 90 })
+  assert.deepEqual(factsOf(items()[1]!), ['用时 24 分 0 秒'])
+  // Output tokens that belong to another (interrupted) turn stay off this footer.
+  render(transcript(turn), NO_DISCLOSURE, { ...IDLE_ACTIVITY, outputTokens: 90, outputTokenTurnId: 't2' })
   assert.deepEqual(factsOf(items()[1]!), ['用时 24 分 0 秒'])
 })
 

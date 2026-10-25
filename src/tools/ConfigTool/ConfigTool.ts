@@ -1,5 +1,5 @@
 import { z } from 'zod/v3'
-import type { Tool, ToolContext, ToolResult } from '../../harness/types.js'
+import type { ModelReferenceField, Tool, ToolContext, ToolResult } from '../../harness/types.js'
 import type { MyAgentSettings } from '../../config/settings.js'
 import { loadMergedSettings, SettingsValidationError, updateUserSettings } from '../../config/settings.js'
 import { ConfigurationFileError } from '../../config/file.js'
@@ -15,6 +15,13 @@ interface SettingDef {
   type: 'boolean' | 'string' | 'number' | 'enum'
   description: string
   options?: readonly string[]
+  /**
+   * The config field this key mirrors. Model references live in `config.json`,
+   * which outranks the settings layers: they are read and written through
+   * `context.modelConfig`, and the settings accessors below are only a fallback
+   * for a context that has no configuration wired.
+   */
+  modelReference?: ModelReferenceField
   get: (settings: MyAgentSettings) => unknown
   set: (settings: MyAgentSettings, value: unknown) => void
   validate?: (value: unknown) => string | null
@@ -66,6 +73,7 @@ const SUPPORTED_SETTINGS: SettingDef[] = [
     key: 'defaultModel',
     type: 'string',
     description: 'Default model key for the main conversation loop',
+    modelReference: 'defaultModel',
     get: (s) => s.defaultModel,
     set: (s, v) => { s.defaultModel = v as string },
     validate: (v) => {
@@ -77,6 +85,7 @@ const SUPPORTED_SETTINGS: SettingDef[] = [
     key: 'fallbackModel',
     type: 'string',
     description: 'Fallback model key when default is unavailable',
+    modelReference: 'fallbackModel',
     get: (s) => s.fallbackModel,
     set: (s, v) => { s.fallbackModel = v as string },
     validate: (v) => {
@@ -88,6 +97,7 @@ const SUPPORTED_SETTINGS: SettingDef[] = [
     key: 'compactModel',
     type: 'string',
     description: 'Model key used for auto-compaction summarization',
+    modelReference: 'compactModel',
     get: (s) => s.compactModel,
     set: (s, v) => { s.compactModel = v as string },
     validate: (v) => {
@@ -155,10 +165,22 @@ export const configTool: Tool = {
   },
 }
 
+/**
+ * One setting's current value, read from whichever layer owns it: model
+ * references come from the config service, everything else from the merged
+ * settings. Writing to the wrong one is exactly what B26 was.
+ */
+function readSetting(def: SettingDef, context: ToolContext, merged: MyAgentSettings): unknown {
+  if (def.modelReference && context.modelConfig) {
+    return context.modelConfig.getModelReference(def.modelReference)
+  }
+  return def.get(merged)
+}
+
 async function handleList(context: ToolContext): Promise<ToolResult> {
   const merged = await loadMergedSettings(context.projectDir ?? context.cwd)
   const entries = SUPPORTED_SETTINGS.map((def) => {
-    const currentValue = def.get(merged)
+    const currentValue = readSetting(def, context, merged)
     const displayValue = currentValue === undefined ? '(not set)' : JSON.stringify(currentValue)
     const optionsStr = def.options ? ` [${def.options.join(', ')}]` : ''
     return `- **${def.key}** (${def.type}${optionsStr}): ${def.description}\n  Current: ${displayValue}`
@@ -195,7 +217,7 @@ async function handleGet(key: string | undefined, context: ToolContext): Promise
   }
 
   const merged = await loadMergedSettings(context.projectDir ?? context.cwd)
-  const currentValue = def.get(merged)
+  const currentValue = readSetting(def, context, merged)
   const displayValue = currentValue === undefined ? '(not set)' : JSON.stringify(currentValue)
 
   return {
@@ -236,6 +258,8 @@ async function handleSet(key: string | undefined, value: unknown, context: ToolC
     }
   }
 
+  if (def.modelReference) return await setModelReference(def.modelReference, value, context)
+
   // Coerce boolean strings
   let coercedValue = value
   if (def.type === 'boolean' && typeof value === 'string') {
@@ -273,6 +297,56 @@ async function handleSet(key: string | undefined, value: unknown, context: ToolC
     metadata: {
       display: {
         summary: `${key} → ${displayValue}`,
+      },
+    },
+  }
+}
+
+/**
+ * Write one model reference to the configuration that owns it.
+ *
+ * The value is a model key or a configured alias; an unknown name is refused
+ * with the key list rather than saved for `load()` to repair. The reply names
+ * the *effective* value read back after the save, so a failed write cannot read
+ * as a successful one.
+ */
+async function setModelReference(field: ModelReferenceField, value: unknown, context: ToolContext): Promise<ToolResult> {
+  const port = context.modelConfig
+  if (!port) {
+    return {
+      ok: false,
+      content: `${field} is stored in config.json, and this session has no model configuration wired to write it.`,
+      errorCode: 'precondition_failed',
+    }
+  }
+  if (typeof value !== 'string' || value.trim() === '') {
+    return {
+      ok: false,
+      content: `${field} must be a non-empty string naming a configured model.`,
+      errorCode: 'invalid_input',
+    }
+  }
+  const modelKey = port.resolveModelKey(value)
+  if (!modelKey) {
+    const known = port.listModelKeys()
+    return {
+      ok: false,
+      content: `Unknown model "${value}" for ${field}. Configured models: ${known.length > 0 ? known.join(', ') : '(none)'}`,
+      errorCode: 'invalid_input',
+    }
+  }
+
+  const write = await port.setModelReference(field, modelKey)
+  if (!write.ok) {
+    return { ok: false, content: `Failed to save ${field}: ${write.message}`, errorCode: 'execution_failed' }
+  }
+  const displayValue = JSON.stringify(write.effective)
+  return {
+    ok: true,
+    content: `Set ${field} = ${displayValue} in config.json\nNote: new sessions use it; the current session keeps the model it is already running.`,
+    metadata: {
+      display: {
+        summary: `${field} → ${displayValue}`,
       },
     },
   }

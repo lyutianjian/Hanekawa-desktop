@@ -24,6 +24,7 @@ import type { SessionCoordination, SessionMeta } from '../../sessions/service.js
 import { REPORT_MAX, sanitizeReportText, sanitizeTitle } from '../../utils/reportSanitizer.js'
 import { projectDataKey } from '../../utils/paths.js'
 import { readGitBranch } from '../gitBranch.js'
+import { deleteSessionArtifacts } from '../deleteSession.js'
 import type {
   CoordinationCaller,
   CoordinationErrorCode,
@@ -45,6 +46,7 @@ const FETCH_MESSAGE_MAX = 4000
 
 /** The slice of `SessionStore` the service uses. */
 export interface CoordinationSessionStore {
+  delete(sessionIdOrPrefix: string): Promise<void>
   create(title?: string): Promise<SessionMeta>
   setCoordination(sessionIdOrPrefix: string, value: SessionCoordination | undefined): Promise<void>
   resolve(idOrPrefix: string): Promise<SessionMeta | undefined>
@@ -59,6 +61,8 @@ export interface CoordinationPort {
   laneControl(sessionId: string): CoordinationLaneControl | undefined
   /** Opens (or returns) the session's lane; `activate:false` leaves the visible lane alone. */
   openLane(cwd: string, sessionId: string, options: { activate: boolean }): Promise<CoordinationLaneControl>
+  /** Detaches the lane and releases its scope before a failed start is deleted. */
+  closeLane(cwd: string, sessionId: string): Promise<void>
   notify(input: { title: string; body: string; sessionId: string }): void
   /**
    * The global thread lifecycle day counts.
@@ -212,8 +216,10 @@ export class CoordinationService implements CoordinationHost {
     }
 
     await this.engine.beginThreadStart(cwd)
+    let worktree: ThreadWorktree | undefined
+    let meta: SessionMeta | undefined
+    let failed = false
     try {
-      let worktree: ThreadWorktree | undefined
       if (request.writesCode) {
         try {
           worktree = await createThreadWorktree({ cwd, threadId, slug: name })
@@ -222,7 +228,7 @@ export class CoordinationService implements CoordinationHost {
         }
       }
 
-      const meta = await sessions.create(request.title)
+      meta = await sessions.create(request.title)
       // Before the lane opens: the session scope snapshots its role, and the
       // first runtime must already be built on the model the coordinator picked.
       await sessions.setCoordination(meta.id, {
@@ -243,15 +249,30 @@ export class CoordinationService implements CoordinationHost {
           ...(worktree ? { worktree: { branch: worktree.branch } } : {}),
         }))
       } catch (error) {
-        // A thread that never started leaves no row; the tool error tells the coordinator why.
-        await store.removeThreadsBySession([meta.id])
-        if (worktree) await removeThreadWorktree(cwd, worktree)
         throw new Error(`任务说明没能送达：${errorMessage(error)}`)
       }
 
       return { threadId, sessionId: meta.id, ...(worktree ? { branch: worktree.branch } : {}) }
+    } catch (error) {
+      failed = true
+      const cleanup = async (action: () => Promise<void>) => {
+        try { await action() }
+        catch (cleanupError) { console.error('[hanekawa] thread start cleanup:', errorMessage(cleanupError)) }
+      }
+      if (meta) {
+        const id = meta.id
+        await cleanup(() => this.port.closeLane(cwd, id))
+        await cleanup(() => store.removeThreadsBySession([id]))
+        await cleanup(() => deleteSessionArtifacts(cwd, sessions, id))
+      }
+      if (worktree) await cleanup(() => removeThreadWorktree(cwd, worktree!))
+      throw error
     } finally {
-      await this.engine.endThreadStart(cwd)
+      try { await this.engine.endThreadStart(cwd) }
+      catch (error) {
+        if (!failed) throw error
+        console.error('[hanekawa] thread start cleanup:', errorMessage(error))
+      }
     }
   }
 

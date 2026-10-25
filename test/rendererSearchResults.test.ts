@@ -7,6 +7,15 @@ import {
   type SearchResults,
 } from '../src/desktop/renderer/model/searchResults.js'
 
+test('Glob treats only its separated final notice as metadata', () => {
+  const realName = '[Showing 1 of 2 files; narrow the pattern or path.]'
+  const result = parseSearchResults('Glob', `${realName}\na.ts\n\n[Showing 2 of 201 files; narrow the pattern or path.]`)!
+  assert.deepEqual(result.files.map((file) => file.path), [realName, 'a.ts'])
+  assert.equal(result.matchCount, 2)
+  assert.equal(result.truncatedNote, '[Showing 2 of 201 files; narrow the pattern or path.]')
+  assert.equal(parseSearchResults('Glob', realName)?.files[0]?.path, realName)
+})
+
 /**
  * The search family's parser (T15, design §6.2 检索) — pure, like every
  * `model/` module, because the rules are the interesting half: what counts as a

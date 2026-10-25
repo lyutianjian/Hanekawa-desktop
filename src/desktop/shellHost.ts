@@ -2135,6 +2135,10 @@ export class ShellHost<
     pane: PaneT,
     activate = true,
   ): WireShellOpenSessionResult {
+    if (this.disposed) {
+      entry.workspace.close(pane)
+      throw new Error('Shell is closed')
+    }
     const existing = this.laneForPane(pane)
     if (existing !== undefined) {
       if (activate) this.requestActivate(existing)

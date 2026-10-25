@@ -81,11 +81,22 @@ export class ToolRunner {
     }
     await this.emitRecord(toolUse)
     let progressStarted = false
+    let recordFailed = false
+    let resultStarted = false
+    let approvalRecorded = false
+    const recordForRun = async (record: SessionRecord): Promise<void> => {
+      try { await this.emitRecord(record) }
+      catch (error) { recordFailed = true; throw error }
+    }
+    const settleResult = async (record: ToolResultRecord): Promise<void> => {
+      resultStarted = true
+      await this.emitToolResultAndPostHooks(record, tool, call.input, executionContext, signal, activeHooks)
+    }
 
     const executionContext: ToolContext = {
       ...context,
       abortSignal: signal ?? context.abortSignal,
-      appendRecord: (record) => this.emitRecord(record),
+      appendRecord: recordForRun,
       appendMetric: context.appendMetric,
       currentToolUseId: call.id,
       currentTurnId: turnId,
@@ -114,7 +125,7 @@ export class ToolRunner {
           turnId,
           tool.maxResultSizeChars,
         )
-        await this.emitToolResultAndPostHooks(record, tool, call.input, executionContext, signal, activeHooks)
+        await settleResult(record)
         return record
       }
 
@@ -125,13 +136,14 @@ export class ToolRunner {
       if (decision.writeTarget !== undefined) {
         executionContext.approvedWriteTarget = decision.writeTarget
       }
-      await this.emitRecord(this.permissionGate.createApprovalRecord(tool, call.input, approved, turnId))
+      await recordForRun(this.permissionGate.createApprovalRecord(tool, call.input, approved, turnId))
+      approvalRecorded = true
       if (!approved) {
         // A denial the user never saw must not claim they made it, or the model
         // retries the same call believing a human rejected it.
         const reason = decision.denialReason ?? `User denied permission for ${tool.name}.`
         const denied = this.result(call, tool.name, false, reason, 'permission_denied', undefined, turnId, tool.maxResultSizeChars)
-        await this.emitToolResultAndPostHooks(denied, tool, call.input, executionContext, signal, activeHooks)
+        await settleResult(denied)
         return denied
       }
 
@@ -139,7 +151,7 @@ export class ToolRunner {
       // while the permission dialog was open.
       if (signal?.aborted) {
         const aborted = this.result(call, tool.name, false, abortedToolResultContent(signal), 'aborted', undefined, turnId, tool.maxResultSizeChars)
-        await this.emitToolResultAndPostHooks(aborted, tool, call.input, executionContext, signal, activeHooks)
+        await settleResult(aborted)
         return aborted
       }
 
@@ -156,14 +168,14 @@ export class ToolRunner {
           turnId,
           tool.maxResultSizeChars,
         )
-        await this.emitToolResultAndPostHooks(blocked, tool, call.input, executionContext, signal, activeHooks)
+        await settleResult(blocked)
         return blocked
       }
 
       // Check abort signal again after pre-tool hooks.
       if (signal?.aborted) {
         const aborted = this.result(call, tool.name, false, abortedToolResultContent(signal), 'aborted', undefined, turnId, tool.maxResultSizeChars)
-        await this.emitToolResultAndPostHooks(aborted, tool, call.input, executionContext, signal, activeHooks)
+        await settleResult(aborted)
         return aborted
       }
 
@@ -180,26 +192,31 @@ export class ToolRunner {
             // Mapping is best-effort; fall back to plain-text content
           }
         }
-        await this.emitToolResultAndPostHooks(record, tool, call.input, executionContext, signal, activeHooks)
+        await settleResult(record)
         await this.emitAssistantMessageFromMetadata(result.metadata, turnId)
         return record
       } catch (error) {
+        if (resultStarted || recordFailed) throw error
         syncMutableToolContext(context, executionContext)
         const errorCode = error instanceof Error && error.name === 'AbortError' ? 'aborted' : 'execution_failed'
         const content = errorCode === 'aborted'
           ? abortedToolResultContent(signal, error)
           : describeToolError(tool.name, error, executionContext.cwd)
         const record = this.result(call, tool.name, false, content, errorCode, undefined, turnId, tool.maxResultSizeChars)
-        await this.emitToolResultAndPostHooks(record, tool, call.input, executionContext, signal, activeHooks)
+        await settleResult(record)
         return record
       }
     } catch (error) {
-      if (!isAbortError(error)) {
-        throw error
-      }
+      if (resultStarted || recordFailed) throw error
       syncMutableToolContext(context, executionContext)
-      const record = this.result(call, tool.name, false, abortedToolResultContent(signal, error), 'aborted', undefined, turnId, tool.maxResultSizeChars)
-      await this.emitToolResultAndPostHooks(record, tool, call.input, executionContext, signal, activeHooks)
+      if (!approvalRecorded) {
+        await recordForRun(this.permissionGate.createApprovalRecord(tool, call.input, false, turnId))
+      }
+      const aborted = signal?.aborted || isAbortError(error)
+      const record = this.result(call, tool.name, false,
+        aborted ? abortedToolResultContent(signal, error) : describeToolError(tool.name, error, executionContext.cwd),
+        aborted ? 'aborted' : 'execution_failed', undefined, turnId, tool.maxResultSizeChars)
+      await settleResult(record)
       return record
     } finally {
       if (progressStarted) {

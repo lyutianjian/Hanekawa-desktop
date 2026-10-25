@@ -20,6 +20,18 @@ function usage(overrides: Partial<TokenUsage> = {}): TokenUsage {
   return { inputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0, ...overrides }
 }
 
+test('cache write display distinguishes unreported writes from explicit zero', () => {
+  assert.equal(statusUsageView(usage({ inputTokens: 10 })).breakdown.some((row) => row.label === '缓存写入'), false)
+  assert.equal(statusUsageView(usage({ inputTokens: 10, cacheCreationInputTokens: 0 })).breakdown.find((row) => row.label === '缓存写入')?.value, '0')
+  assert.equal(statusUsageView(usage({ inputTokens: 10, cacheCreationInputTokens: 20 })).breakdown.find((row) => row.label === '缓存写入')?.value, '20')
+})
+
+test('token abbreviation carries rounding across units and omits redundant decimals', () => {
+  for (const [count, expected] of [[0, '0'], [999, '999'], [1000, '1k'], [9999, '10k'], [10000, '10k'], [999499, '999k'], [999500, '1M'], [999999, '1M'], [1000000, '1M']] as const) {
+    assert.equal(formatTokens(count), expected)
+  }
+})
+
 function runtime(overrides: Partial<WireReadyRuntimeSnapshot> = {}): WireReadyRuntimeSnapshot {
   return {
     status: 'ready',
@@ -34,7 +46,7 @@ function runtime(overrides: Partial<WireReadyRuntimeSnapshot> = {}): WireReadyRu
 test('token counts abbreviate without losing the leading digits', () => {
   assert.equal(formatTokens(0), '0')
   assert.equal(formatTokens(999), '999')
-  assert.equal(formatTokens(1000), '1.0k')
+  assert.equal(formatTokens(1000), '1k')
   assert.equal(formatTokens(16_400), '16k')
   assert.equal(formatTokens(950_000), '950k')
   assert.equal(formatTokens(1_200_000), '1.2M')

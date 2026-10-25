@@ -149,6 +149,40 @@ test('agent tasks share registry status and subscriptions with shell tasks', () 
   assert.ok(notifications >= 2)
 })
 
+test('stopAll settles every task even when one stop rejects', async () => {
+  // Shutdown calls stopAll before it closes anything else (MCP clients among
+  // them), so a single failing stop must not become a short-circuit that skips
+  // the rest — this is the reverse evidence for the claim that it does.
+  const registry = new BackgroundTaskRegistry()
+  const stopped: string[] = []
+  registry.registerAgent({
+    sessionId: 'session-1',
+    agentId: 'bad',
+    agentType: 'general',
+    description: 'refuses to stop',
+    stop: async () => {
+      stopped.push('bad')
+      throw new Error('stop failed')
+    },
+  })
+  registry.registerAgent({
+    sessionId: 'session-1',
+    agentId: 'good',
+    agentType: 'general',
+    description: 'stops fine',
+    stop: async () => { stopped.push('good') },
+  })
+
+  await registry.stopAll('session-1', 'test cleanup')
+
+  assert.deepEqual(stopped.sort(), ['bad', 'good'], 'both stops were attempted')
+  // The healthy task finishes its own stop. The failing one keeps whatever
+  // state its own stop left it in — deliberately unchanged here: this test
+  // pins the no-short-circuit property, not a fault-tolerance policy.
+  assert.equal(registry.getTask('session-1', 'agent_1')?.status, 'running')
+  assert.equal(registry.getTask('session-1', 'agent_2')?.status, 'killed')
+})
+
 test('restored short agent ids seed the next per-type id', async () => {
   const registry = new BackgroundTaskRegistry()
   const record = backgroundRecord('agent_2', 'agent', 'completed')

@@ -9,6 +9,7 @@ import { validateSettings, type MyAgentSettings } from '../config/settings.js'
 import { COORDINATOR_ROLE_PROMPT } from '../prompts/coordinatorPrompt.js'
 import { CoordinationStore } from '../services/coordination/threadStore.js'
 import { formatCoordinationUpdate, formatCoordinatorRestore, formatThreadTaskRestore } from './coordination/messages.js'
+import { createModelConfigPort } from './modelConfigPort.js'
 import { AgentLoop, type ActiveModelRuntime } from '../harness/loop.js'
 import { ContextBuilder } from '../harness/contextBuilder.js'
 import { priceUsage } from '../harness/usage.js'
@@ -437,6 +438,10 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
           }
         : {}),
       ...(imageAttachments ? { imageAttachments } : {}),
+      // Model references belong to config.json, so the Config tool writes them
+      // through ConfigService — the same owner the model picker uses — rather
+      // than through settings.json, which the config layer overrides.
+      modelConfig: createModelConfigPort(config),
     }
     // Instruction files the conversation opens with count as read.
     void rememberShownFiles([projectContext, snapshot.memoryIndex ?? ''].join('\n\n'), toolContext)

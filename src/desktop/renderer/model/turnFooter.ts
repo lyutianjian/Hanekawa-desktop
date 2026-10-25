@@ -18,6 +18,7 @@ export interface TurnFooter {
 export function splitTurnFooters(
   entries: readonly TranscriptEntry[],
   tokens?: number,
+  tokenTurnId?: string,
 ): { readonly entries: TranscriptEntry[]; readonly footers: Map<number, TurnFooter> } {
   const kept: TranscriptEntry[] = []
   const footers = new Map<number, TurnFooter>()
@@ -27,12 +28,11 @@ export function splitTurnFooters(
       const { durationMs } = entry.item
       if (target === undefined || durationMs === undefined) continue
       const createdAt = (target.kind === 'item' ? target.item.createdAt : undefined) ?? entry.item.createdAt
-      footers.set(kept.length - 1, { durationMs, ...(createdAt === undefined ? {} : { createdAt }) })
+      footers.set(kept.length - 1, {
+        durationMs, ...(createdAt === undefined ? {} : { createdAt }),
+        ...(tokens !== undefined && tokens > 0 && tokenTurnId !== undefined && entry.item.turnId === tokenTurnId ? { tokens } : {}),
+      })
     } else kept.push(entry)
-  }
-  if (tokens !== undefined && tokens > 0 && footers.size > 0) {
-    const last = Math.max(...footers.keys())
-    footers.set(last, { ...footers.get(last)!, tokens })
   }
   return { entries: kept, footers }
 }

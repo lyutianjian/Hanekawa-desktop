@@ -7,7 +7,7 @@ import { CoordinationWakeEngine, type WakeEnginePort, type WakeLaneController } 
 import { CoordinationStore } from '../src/services/coordination/threadStore.js'
 import { AUTO_WAKE_LIMIT } from '../src/runtime/coordination/wakeDecision.js'
 import type { ThreadRecord } from '../src/services/coordination/types.js'
-import type { CoordinationLaneControl } from '../src/runtime/protocol/coordinationHost.js'
+import type { CoordinationLaneControl, WakeDiscardReason } from '../src/runtime/protocol/coordinationHost.js'
 import type { SessionEvent } from '../src/runtime/sessionController.js'
 import type { CoordinationRole, TurnOrigin } from '../src/harness/types.js'
 import type { SessionMeta } from '../src/sessions/service.js'
@@ -18,6 +18,8 @@ class FakeLane implements CoordinationLaneControl, WakeLaneController {
   streaming = false
   pendingApproval = false
   wakes: string[] = []
+  onDiscard: ((reason: WakeDiscardReason) => void) | undefined
+  wakeError: Error | undefined
   compactFailureCount: number | undefined
   private events = new Set<(e: SessionEvent) => void>()
   private states = new Set<() => void>()
@@ -30,7 +32,11 @@ class FakeLane implements CoordinationLaneControl, WakeLaneController {
   getSessionId() { return this.id }
   // CoordinationLaneControl
   async enqueueFromCoordinator() {}
-  requestWake(text: string) { this.wakes.push(text) }
+  requestWake(text: string, onDiscard?: (reason: WakeDiscardReason) => void) {
+    if (this.wakeError) throw this.wakeError
+    this.wakes.push(text)
+    this.onDiscard = onDiscard
+  }
   async stop() {}
   setModel() {}
   setEffort() {}
@@ -100,6 +106,46 @@ async function runThread(t: FakeLane, origin: TurnOrigin = 'coordinator', text =
   t.say(text)
   t.end(origin, extra)
 }
+
+test('a pending wake discarded before turn start restores notes and count once, without immediately waking again', async () => {
+  for (const reason of ['stopped', 'failed', 'detached'] as const) {
+    const h = await setup(1)
+    await runThread(h.threads[0]!, 'coordinator', 'old report')
+    await h.settle()
+    const discard = h.coord.onDiscard
+    assert.ok(discard)
+    discard(reason)
+    discard(reason)
+    await h.settle()
+    const coord = (await h.store.read()).coordinator!
+    assert.equal(coord.wakeLocked, false)
+    assert.equal(coord.autoWakeCount, 0)
+    assert.equal(coord.notes.length, 1)
+    assert.match(coord.notes[0]!.text, /old report/)
+    assert.equal(h.coord.wakes.length, 1)
+    h.coord.start('user'); h.coord.end('user')
+    await h.settle()
+    assert.equal(h.coord.wakes.length, 2)
+    discard(reason)
+    await h.settle()
+    assert.equal((await h.store.read()).coordinator!.wakeLocked, true, 'an old receipt cannot cancel the new wake')
+    h.coord.start('wake'); h.coord.end('wake')
+    await h.settle()
+    assert.equal((await h.store.read()).coordinator!.wakeLocked, false)
+  }
+})
+
+test('requestWake failure restores the drained notes and releases its lock', async () => {
+  const h = await setup(1)
+  h.coord.wakeError = new Error('lane failed')
+  await runThread(h.threads[0]!)
+  await h.settle()
+  const coord = (await h.store.read()).coordinator!
+  assert.equal(coord.wakeLocked, false)
+  assert.equal(coord.autoWakeCount, 0)
+  assert.equal(coord.notes.length, 1)
+  assert.equal(h.errors.length, 1)
+})
 
 test('each report wakes the coordinator; the last says the threads have finished', async () => {
   const h = await setup()

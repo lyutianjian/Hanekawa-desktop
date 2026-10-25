@@ -46,9 +46,37 @@ function fold(events: SessionEvent[], initial?: TranscriptState) {
   return { state, restored, models }
 }
 
+test('stream retries replace only the current uncommitted thinking attempt', () => {
+  let state = createTranscriptState([{
+    type: 'message', id: 'committed', role: 'assistant', content: 'old answer', model: 'm',
+    thinkingBlocks: [{ type: 'thinking', thinking: 'old reasoning', signature: 'signed' }], createdAt: 'now',
+  }])
+  const send = (event: SessionEvent) => { state = applySessionEvent(state, event).state }
+  for (let i = 0; i < 3; i++) {
+    send({ type: 'stream', event: { type: 'message_start' } })
+    send({ type: 'stream', event: { type: 'thinking_delta', thinking: 'new reasoning' } })
+    send({ type: 'stream', event: { type: 'thinking_stop' } })
+    send({ type: 'stream', event: { type: 'retry', attempt: i + 1, reason: 'transient', delayMs: 1 } })
+  }
+  send({ type: 'stream', event: { type: 'message_start' } })
+  send({ type: 'stream', event: { type: 'thinking_delta', thinking: 'new reasoning' } })
+  assert.deepEqual(state.items.filter((item) => item.kind === 'thinking').map((item) => item.text), ['old reasoning', 'new reasoning'])
+})
+
 function message(id: string, role: 'user' | 'assistant', content: string): SessionRecord {
   return { type: 'message', id, role, content, createdAt: 'now' }
 }
+
+test('context trimming is visible in the transcript before the answer', () => {
+  const { state } = fold([
+    { type: 'turn-start', messageId: 'u1', displayInput: 'continue', createdAt: 'now' },
+    { type: 'stream', event: { type: 'context_trim_notice', message: '本次请求省略了 2 条历史或附加内容。', trimmedCount: 2 } },
+    { type: 'stream', event: { type: 'text_delta', text: 'answer' } },
+  ])
+  const notice = state.items.findIndex((item) => item.kind === 'notice' && /省略了 2 条/.test(item.text))
+  const answer = state.items.findIndex((item) => item.kind === 'assistant')
+  assert.ok(notice >= 0 && answer > notice)
+})
 
 const ALL_EVENT_TYPES: SessionEvent['type'][] = [
   'turn-start',

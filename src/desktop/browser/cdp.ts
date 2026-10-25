@@ -12,9 +12,11 @@
  * no host capability to reach, and the automation has no page script to trip over.
  */
 
+import { withinBounds, type CallBounds } from './bounds.js'
 import { cdpSessionFor } from './cdpSession.js'
 import { BrowserHostError } from './errors.js'
-import { AUTOMATION_WORLD_ID, type BrowserPage } from './tabs.js'
+import type { BrowserPage } from './tabs.js'
+import { AUTOMATION_WORLD_ID } from './limits.js'
 
 export type PageEvaluator = (script: string) => Promise<unknown>
 export type CdpSender = (method: string, params?: Record<string, unknown>) => Promise<unknown>
@@ -27,9 +29,14 @@ export type CdpSender = (method: string, params?: Record<string, unknown>) => Pr
  * and "frame detached mid-call" is not observable, and all three are answered by
  * waiting and asking again. A genuinely absent tab is `TAB_NOT_FOUND`, and that
  * decision is made above, by whoever looked the tab up.
+ *
+ * Both entry points also carry the caller's `CallBounds`: a page that never
+ * answers — an `alert()`, a script looping in its own event loop, a renderer
+ * that stopped replying — ends the call instead of holding the tab's queue and
+ * its CDP lease forever. See `bounds.ts` for what that does and does not claim.
  */
-export function pageEvaluator(page: BrowserPage): PageEvaluator {
-  return async (script: string) => {
+export function pageEvaluator(page: BrowserPage, bounds?: CallBounds): PageEvaluator {
+  return (script: string) => withinBounds(bounds, 'reading the page', async () => {
     const contents = page.contents
     if (contents.isDestroyed()) {
       throw new BrowserHostError('PAGE_NOT_READY', 'The page is gone. Reload the tab and try again.', true)
@@ -44,7 +51,7 @@ export function pageEvaluator(page: BrowserPage): PageEvaluator {
       const detail = error instanceof Error ? error.message : String(error)
       throw new BrowserHostError('PAGE_NOT_READY', `The page could not be read: ${detail}`, true)
     }
-  }
+  })
 }
 
 /**
@@ -58,8 +65,12 @@ export function pageEvaluator(page: BrowserPage): PageEvaluator {
  *
  * Attaching, detaching and stepping aside for DevTools are `cdpSession.ts`'s.
  */
-export function cdpSender(page: BrowserPage): CdpSender {
-  return cdpSessionFor(page.contents).send
+export function cdpSender(page: BrowserPage, bounds?: CallBounds): CdpSender {
+  return (method, params) => withinBounds(
+    bounds,
+    `sending the input command ${method}`,
+    () => cdpSessionFor(page.contents).send(method, params),
+  )
 }
 
 /** A lease on the tab's attachment, held for the length of one action. */

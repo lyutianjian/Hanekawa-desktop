@@ -17,7 +17,6 @@ import { promptTokens } from '../harness/usage.js'
 import { breakDownContext, fixedContextTokens, type ContextBreakdown } from '../harness/contextBreakdown.js'
 import { promptCacheTtlMs } from '../harness/cacheControl.js'
 import { shouldIdleCompact } from './coordination/contextPolicy.js'
-import { isSystemReminderBlock } from '../harness/systemReminder.js'
 import { countSessionRecordTokens, countSessionRecordsTokens, textTokenWeight } from '../prompts/budget.js'
 import { generateSessionTitle } from '../harness/sessionTitle.js'
 import { deriveSessionTitle, type SessionMeta, type SessionStore } from '../sessions/service.js'
@@ -411,7 +410,9 @@ export class SessionController {
         if (handoff) this.pendingAcceptance = { messageId, notify: handoff.onAccepted }
       },
       run: (signal) => loop.run(input, signal, messageId, runOverrides),
-      restore: (signal, sessionId) => this.tryRestoreInterruptedPrompt(signal, messageId, input, sessionId),
+      ...((options?.origin ?? 'user') === 'user'
+        ? { restore: (signal: AbortSignal, sessionId: string) => this.tryRestoreInterruptedPrompt(signal, messageId, input, sessionId) }
+        : {}),
     })
   }
 
@@ -634,8 +635,10 @@ export class SessionController {
     if (this.compacting) throw new Error('上下文正在压缩，请稍候。')
     if (this.streaming) throw new Error('当前回合仍在进行，请先停止。')
     this.compacting = true
+    const ac = new AbortController()
+    this.abortController = ac
     try {
-      const result = await this.getSession().loop.compact(instructions)
+      const result = await this.getSession().loop.compact(instructions, ac.signal)
       if (result.compacted) {
         this.usage = { ...this.usage, total: addTokenUsage(this.usage.total, result.usage) }
         this.usageAnchorRecordId = undefined
@@ -643,6 +646,7 @@ export class SessionController {
       }
       return result
     } finally {
+      if (this.abortController === ac) this.abortController = null
       this.compacting = false
     }
   }
@@ -1126,7 +1130,7 @@ export class SessionController {
   ): Promise<boolean> {
     // A wake turn's reminders are not a draft to hand back, and dropping them
     // would lose the result they report.
-    if (signal.reason !== 'user-cancel' || isSystemReminderBlock(input.text)) return false
+    if (signal.reason !== 'user-cancel') return false
 
     try {
       const records = await rollbackInterruptedPromptIfSynthetic({

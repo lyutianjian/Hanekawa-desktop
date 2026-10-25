@@ -7,6 +7,63 @@ import { autoCompactIfNeeded, COMPACT_FAILURE_LIMIT, compactNow, resetAutoCompac
 import type { ModelProvider, SessionRecord } from '../src/harness/types.js'
 import { makeImageAttachmentRef } from './helpers/imageFixtures.js'
 
+test('cancelled compactions never open the circuit or fall back, while real failures still do', async () => {
+  const records: SessionRecord[] = ['old', 'latest'].map((id) => ({
+    type: 'message', id, role: 'user', content: id, createdAt: '2026-10-25T00:00:00Z',
+  }))
+  const appended: SessionRecord[] = []
+  let failures = 0
+  let fallbackCalls = 0
+  const provider: ModelProvider = {
+    name: 'fake',
+    createMessage: async () => { fallbackCalls++; return { content: 'summary', toolCalls: [] } },
+  }
+  const input = {
+    records, provider, model: 'fake', tools: [], force: true, circuitKey: 'cancel-regression',
+    getCompactFailureCount: async () => failures,
+    setCompactFailureCount: async (count: number) => { failures = count },
+    appendRecord: async (record: SessionRecord) => { appended.push(record) },
+  }
+  for (let i = 0; i < 3; i++) {
+    await assert.rejects(autoCompactIfNeeded({
+      ...input,
+      summarizeWithSharedPrefix: async () => { throw new DOMException('Cancelled', 'AbortError') },
+    }), { name: 'AbortError' })
+  }
+  assert.equal(failures, 0)
+  assert.equal(fallbackCalls, 0)
+  assert.deepEqual(appended, [])
+  for (let i = 0; i < COMPACT_FAILURE_LIMIT; i++) {
+    await autoCompactIfNeeded({ ...input, provider: { name: 'fake', createMessage: async () => { throw new Error('real failure') } } })
+  }
+  assert.equal(failures, COMPACT_FAILURE_LIMIT)
+  assert.equal((await autoCompactIfNeeded(input)).compacted, false)
+  assert.equal((await compactNow(input)).compacted, true)
+  assert.equal(failures, 0)
+  resetAutoCompactFailureState(input.circuitKey)
+})
+
+test('text fallback receives a cancellable foreground retry and cannot commit after Stop', async () => {
+  const ac = new AbortController()
+  const records: SessionRecord[] = ['old', 'latest'].map((id) => ({
+    type: 'message', id, role: 'user', content: id, createdAt: '2026-10-25T00:00:00Z',
+  }))
+  const appended: SessionRecord[] = []
+  await assert.rejects(compactNow({
+    records, model: 'fake', tools: [], signal: ac.signal,
+    provider: { name: 'fake', createMessage: async (request) => {
+      assert.equal(request.retry?.signal, ac.signal)
+      assert.equal(request.retry?.callerKind, 'interactive')
+      assert.notEqual(request.retry?.persistent, true)
+      ac.abort('user-cancel')
+      return { content: 'late summary', toolCalls: [] }
+    } },
+    summarizeWithSharedPrefix: async () => { throw new Error('use fallback') },
+    appendRecord: async (record) => { appended.push(record) },
+  }), { name: 'AbortError' })
+  assert.deepEqual(appended, [])
+})
+
 test('autoCompactIfNeeded writes compact boundary when threshold is exceeded', async () => {
   resetAutoCompactFailureState()
   const records: SessionRecord[] = [
@@ -776,6 +833,41 @@ function compactableRecords(): SessionRecord[] {
     },
   ]
 }
+
+test('the compaction check spends the request overhead rather than re-measuring the system', async () => {
+  resetAutoCompactFailureState()
+  const records: SessionRecord[] = [
+    { type: 'message', id: 'old-user', role: 'user', content: 'old context', createdAt: '2026-05-10T00:00:00.000Z' },
+    { type: 'message', id: 'latest-user', role: 'user', content: 'latest request', createdAt: '2026-05-10T00:01:00.000Z' },
+  ]
+  const appended: SessionRecord[] = []
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage() {
+      return { content: 'summary', toolCalls: [] }
+    },
+  }
+  const base = {
+    records,
+    provider,
+    model: 'fake-model',
+    tools: [],
+    contextManagement: compactTestBudget(),
+    appendRecord: async (record: SessionRecord) => { appended.push(record) },
+  }
+  // A system prompt that alone crosses this window's threshold; the history
+  // below it is a handful of tokens.
+  const system = 'system prompt line\n'.repeat(300)
+
+  // The loop measured the request it will send: these are its fixed parts, and
+  // they are counted once — the `system` string is not measured a second time.
+  assert.equal((await autoCompactIfNeeded({ ...base, system: '', fixedOverheadTokens: 0 })).compacted, false)
+  const measured = await autoCompactIfNeeded({ ...base, system: '', fixedOverheadTokens: 2_000 })
+  assert.equal(measured.compacted, true)
+  // A caller that measured nothing keeps the legacy shape and re-measures it.
+  assert.equal((await autoCompactIfNeeded({ ...base, system })).compacted, true)
+  assert.ok(appended.length >= 2)
+})
 
 function compactTestBudget() {
   return {

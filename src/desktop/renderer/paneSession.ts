@@ -909,6 +909,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       startedAt: turnStartedAt,
       turnId: transcript.turnId,
       ...(turnOutputTokens === undefined ? {} : { outputTokens: turnOutputTokens }),
+      outputTokenTurnId: transcript.lastTurnId,
       ...(asking === undefined ? {} : { asking }),
       ...(taskCount === 0 ? {} : { backgroundTasks: taskCount }),
       ...(transcript.phase ? { phase: transcript.phase } : {}),
@@ -2187,8 +2188,42 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     statusRepaint.cancel()
   }
 
+  /**
+   * Answers everything this pane is still waiting on, by rejecting it.
+   *
+   * `dispose()` is the last thing that happens to a pane and its lane is already
+   * gone or going, so nothing will ever answer a parked request: without this,
+   * `enqueue`'s promise — and a `PermissionGate.approve` with no timeout behind
+   * it — outlives everything that could resolve it.
+   *
+   * Rejecting, rather than resolving with an answer of its own, is what keeps
+   * the per-kind answers in *one* place: `SessionClient.answer` catches a
+   * throwing handler and replies with `UI_REQUEST_FALLBACKS[kind]`, which is
+   * exactly "the UI is not mounted". A pane being disposed is that case — it is
+   * gone before the reply is due — so the tool is denied, the question rejected,
+   * the plan exit rejected, and entering plan mode approved (it only ever
+   * restricts). A second table here would drift the day a request kind is added.
+   */
+  function abandonRequests(): void {
+    for (const request of queue.entries) {
+      const resolve = resolvers.get(request.requestId)
+      if (!resolve) continue
+      resolve(Promise.reject(new Error('The pane was closed before the request was answered.')))
+    }
+    resolvers.clear()
+    queue = createUiQueue()
+  }
+
   function dispose(): void {
-    if (active) closeImageViewer()
+    // An active pane owns the singleton panels on screen, and `deactivate()` is
+    // the one place that knows every one of them. A dispose that skipped it left
+    // the permission card (or the rewind panel, a suggestion popover, the
+    // attachment strip) painted over whichever pane the shell activated next,
+    // acting on a client that no longer exists — closing the *last* pane was the
+    // reliable way to see it, since a switch repaints over most of it.
+    // A background pane must not run it: those panels belong to the active one.
+    if (active) deactivate()
+    abandonRequests()
     welcome.dispose()
     transcriptView.dispose()
     streamRepaint.cancel()

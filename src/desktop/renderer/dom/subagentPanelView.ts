@@ -37,6 +37,18 @@ export interface SubagentPanelHandlers {
 
 export interface SubagentPanelView {
   render(model: SubagentPanelModel): void
+  /**
+   * Whether the panel is on screen.
+   *
+   * `render` is only called while it is, which used to be the whole story: the
+   * page it had built kept its own `setInterval` and went on re-reading the
+   * run's transcript every second, for as long as the user stayed anywhere else
+   * in the app — and kept ticking clocks nobody could see. The panel cannot tell
+   * a hidden body from an unchanged one, so the screen state that knows
+   * (`renderSubagents`) says so: hiding stops both timers and invalidates what
+   * is in flight, showing refreshes once and restarts exactly one of each.
+   */
+  setVisible(visible: boolean): void
 }
 
 const POLL_MS = 1000
@@ -61,6 +73,18 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
   /** The user's folds; every turn is open until they say otherwise. */
   let manual = new Map<string, boolean>()
   let pollTimer: ReturnType<typeof setInterval> | undefined
+  let visible = false
+  /** Whether the run on the page is still live, so the page wants its poll. */
+  let polling = false
+  /**
+   * Bumped whenever what is on screen stops being what was asked for: a hide, or
+   * a page closing. A read carries the value it started under, so one that lands
+   * after its page left the screen is dropped instead of painting over the page
+   * that replaced it.
+   */
+  let epoch = 0
+  /** The epoch whose read is still on the wire; one read at a time. */
+  let inFlight: number | undefined
 
   function tick(): void {
     for (const clock of clocks) clock.node.textContent = formatWorkedDuration(Date.now() - clock.startedAt)
@@ -147,9 +171,21 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
   function fetchRecords(): void {
     const current = page
     if (current?.agentId === undefined) return
+    // One read at a time: a clock tick during a slow read is dropped rather than
+    // queued behind it — the next tick asks again, and a failed read is retried
+    // by the poll or by the 重试 it just drew.
+    if (inFlight === epoch) return
     const agentId = current.agentId
+    const at = epoch
+    inFlight = at
+    const settleRead = (): void => {
+      if (inFlight === at) inFlight = undefined
+    }
     void handlers.loadTranscript(agentId).then((records) => {
-      if (page !== current || records.length === 0) return
+      settleRead()
+      if (at !== epoch || page !== current) return
+      showFailure(undefined)
+      if (records.length === 0) return
       const seen = `${records.length}:${records.at(-1)?.id}`
       if (seen === recordsSeen) return
       recordsSeen = seen
@@ -157,11 +193,32 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
       show(timeline, true)
       show(fallback, false)
       paintTimeline()
-    }).then(() => {
-      if (page === current) showFailure(undefined)
     }, (error: unknown) => {
-      if (page === current) showFailure(error instanceof Error ? error.message : String(error))
+      settleRead()
+      // A failure for a page that is no longer up is not news: it would put an
+      // error under whatever the user is looking at now.
+      if (at !== epoch || page !== current) return
+      showFailure(error instanceof Error ? error.message : String(error))
     })
+  }
+
+  /**
+   * The timers this panel runs, and nothing else: the poll while a live run is on
+   * a page the user can see, and the clocks of every running run. One of each,
+   * and only while visible — `??=` is what keeps a redraw of an unchanged page
+   * from stacking a second interval on the first.
+   */
+  function syncTimers(): void {
+    if (visible && polling) pollTimer ??= setInterval(fetchRecords, POLL_MS)
+    else if (pollTimer !== undefined) {
+      clearInterval(pollTimer)
+      pollTimer = undefined
+    }
+    if (visible && clocks.length > 0) clockTimer ??= setInterval(tick, 1000)
+    else if (clockTimer !== undefined) {
+      clearInterval(clockTimer)
+      clockTimer = undefined
+    }
   }
 
   // The poll retries on its own while the run is live; 重试 is for one that has
@@ -175,14 +232,15 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
   }
 
   function closePage(): void {
+    epoch += 1
     page?.view.dispose()
     page = undefined
     state = undefined
     recordsSeen = undefined
     showFailure(undefined)
     manual = new Map()
-    if (pollTimer !== undefined) clearInterval(pollTimer)
-    pollTimer = undefined
+    polling = false
+    syncTimers()
   }
 
   function openPage(entry: SubagentEntry): void {
@@ -233,13 +291,10 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
     )
     replace(fallback, ...fallbackBody(entry))
     // Once more on every change the parent saw — the last one is the run ending —
-    // and once a second until then.
+    // then once a second while it runs and the page is on screen.
+    polling = !entry.finished
     fetchRecords()
-    if (!entry.finished) pollTimer ??= setInterval(fetchRecords, POLL_MS)
-    else if (pollTimer !== undefined) {
-      clearInterval(pollTimer)
-      pollTimer = undefined
-    }
+    syncTimers()
   }
 
   function render(model: SubagentPanelModel): void {
@@ -257,12 +312,25 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
       if (wasPage) container.scrollTop = 0
     }
     tick()
-    if (clocks.length > 0) clockTimer ??= setInterval(tick, 1000)
-    else if (clockTimer !== undefined) {
-      clearInterval(clockTimer)
-      clockTimer = undefined
-    }
+    syncTimers()
   }
 
-  return { render }
+  function setVisible(next: boolean): void {
+    if (next === visible) return
+    visible = next
+    if (!visible) {
+      // Whatever is on the wire was asked for a page the user has just left.
+      epoch += 1
+      syncTimers()
+      return
+    }
+    // Back on screen: the clocks read the time that passed while they were off,
+    // and the transcript catches up in one read rather than one per hidden
+    // second. `fetchRecords` drops it instead if the page changed meanwhile.
+    tick()
+    fetchRecords()
+    syncTimers()
+  }
+
+  return { render, setVisible }
 }

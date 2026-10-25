@@ -15,6 +15,7 @@
 
 import type { BrowserEmulatePreset, BrowserEmulateRequest } from '../../runtime/protocol/browserHost.js'
 import { cdpSessionFor, type CdpContents } from './cdpSession.js'
+import { abortedError, withinBounds, type CallBounds } from './bounds.js'
 import { BrowserHostError } from './errors.js'
 
 export interface EmulationSettings {
@@ -92,22 +93,44 @@ interface Active {
 
 const active = new WeakMap<CdpContents, Active>()
 
+interface EmulationBounds extends CallBounds {
+  check?: () => void
+}
+
+function checkOperation(bounds?: EmulationBounds): void {
+  if (bounds?.signal?.aborted) throw abortedError()
+  bounds?.check?.()
+}
+
+function boundedSender(contents: CdpContents, bounds?: EmulationBounds) {
+  return (method: string, params?: Record<string, unknown>) => withinBounds(bounds, `sending ${method}`, () => {
+    checkOperation(bounds)
+    return cdpSessionFor(contents).send(method, params)
+  })
+}
+
 /** The tab's current emulation, if any. */
 export function emulationOf(contents: CdpContents): EmulationSettings | undefined {
   return active.get(contents)?.settings
 }
 
 /** Replaces whatever the tab emulated before with `settings`, and keeps it. */
-export async function applyEmulation(contents: CdpContents, settings: EmulationSettings): Promise<void> {
+export async function applyEmulation(contents: CdpContents, settings: EmulationSettings, bounds?: EmulationBounds): Promise<void> {
+  checkOperation(bounds)
   const session = cdpSessionFor(contents)
   const previous = active.get(contents)
   // The new lease first, so the count never touches zero between the two.
   const release = session.acquire()
   const epoch = session.epoch
   try {
-    await sendOverrides(session.send, settings)
+    await sendOverrides(boundedSender(contents, bounds), settings)
+    checkOperation(bounds)
   } catch (error) {
     release()
+    if (previous) {
+      previous.release()
+      previous.epoch = -1
+    }
     throw error
   }
   previous?.release()
@@ -119,7 +142,8 @@ export async function applyEmulation(contents: CdpContents, settings: EmulationS
  * they were set. With DevTools open there is nothing to put them back on;
  * the operation that follows still runs, and the next one tries again.
  */
-export async function restoreEmulation(contents: CdpContents): Promise<void> {
+export async function restoreEmulation(contents: CdpContents, bounds?: EmulationBounds): Promise<void> {
+  checkOperation(bounds)
   const current = active.get(contents)
   if (current === undefined || contents.isDestroyed() || contents.isDevToolsOpened()) return
   const session = cdpSessionFor(contents)
@@ -127,16 +151,20 @@ export async function restoreEmulation(contents: CdpContents): Promise<void> {
   const release = session.acquire()
   const epoch = session.epoch
   try {
-    await sendOverrides(session.send, current.settings)
+    await sendOverrides(boundedSender(contents, bounds), current.settings)
+    checkOperation(bounds)
   } catch (error) {
     release()
+    current.release()
     throw error
   }
+  current.release()
   active.set(contents, { settings: current.settings, release, epoch })
 }
 
 /** Clears the tab's emulation. `false` when it had none. */
-export async function resetEmulation(contents: CdpContents): Promise<boolean> {
+export async function resetEmulation(contents: CdpContents, bounds?: EmulationBounds): Promise<boolean> {
+  checkOperation(bounds)
   const current = active.get(contents)
   if (current === undefined) return false
   active.delete(contents)
@@ -144,12 +172,14 @@ export async function resetEmulation(contents: CdpContents): Promise<boolean> {
   try {
     // A lost attachment already took the overrides with it.
     if (current.epoch === session.epoch && !contents.isDestroyed()) {
-      await session.send('Emulation.clearDeviceMetricsOverride')
-      await session.send('Emulation.setTouchEmulationEnabled', { enabled: false })
+      const send = boundedSender(contents, bounds)
+      await send('Emulation.clearDeviceMetricsOverride')
+      await send('Emulation.setTouchEmulationEnabled', { enabled: false })
       if (current.settings.userAgent !== undefined) {
         // An empty override is CDP's "no override".
-        await session.send('Emulation.setUserAgentOverride', { userAgent: '' })
+        await send('Emulation.setUserAgentOverride', { userAgent: '' })
       }
+      checkOperation(bounds)
     }
   } finally {
     current.release()

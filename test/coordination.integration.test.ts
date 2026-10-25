@@ -141,6 +141,7 @@ async function setup(t: TestContext, script: Script, options: { git?: boolean; s
     storeFor: () => project.store,
     laneControl: (id) => lanes.get(id)?.host,
     openLane: async (dir, id, o) => (await openLane(dir, id, o)).host,
+    closeLane: async (_dir, id) => { lanes.get(id)?.close() },
     notify: (n) => { notices.push(n.body) },
     days: () => ({}),
   }, engine)

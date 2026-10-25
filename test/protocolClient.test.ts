@@ -36,6 +36,26 @@ function createHarness(): Harness {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
+test('host close rejects both pending and newly sent commands immediately', { timeout: 1000 }, async () => {
+  const harness = createHarness()
+  const pending = harness.client.listCommands()
+  const rejected = assert.rejects(pending, /host disconnected/i)
+  harness.hostSide.close()
+  await rejected
+  await assert.rejects(harness.client.listCommands(), /host disconnected/i)
+  harness.client.dispose()
+})
+
+test('a synchronous transport post failure settles and removes its pending reply', async () => {
+  const client = new SessionClient({
+    post: () => { throw new Error('post failed') },
+    onMessage: () => () => {}, onClose: () => () => {}, close: () => {},
+  })
+  await assert.rejects(client.listCommands(), /post failed/)
+  assert.equal((client as unknown as { replies: { size: number } }).replies.size, 0)
+  client.dispose()
+})
+
 function snapshot(overrides: Partial<SessionControllerSnapshot> = {}): SessionControllerSnapshot {
   return {
     isStreaming: false,

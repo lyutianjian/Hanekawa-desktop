@@ -8,7 +8,7 @@ import {
   defaultBackgroundTaskRegistry,
   type BackgroundTaskSnapshot,
 } from '../../services/backgroundTasks/registry.js'
-import { terminateProcessTree } from '../../services/backgroundTasks/processTree.js'
+import { terminateProcessTree } from '../processTree.js'
 import {
   DEFAULT_BASH_TIMEOUT_MS,
   SLEEP_BLOCK_THRESHOLD_SECONDS,

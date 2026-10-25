@@ -12,6 +12,9 @@ export const SNAPSHOT_CACHE_MAX_BYTES = 16 * 1024 * 1024
 export const SNAPSHOT_CACHE_MAX_ENTRIES = 32
 export const SNAPSHOT_CACHE_TTL_MS = 120_000
 
+/** The isolated world automation runs in. The page's own scripts live in world 0. */
+export const AUTOMATION_WORLD_ID = 1001
+
 /** What one call may return, and what a caller may ask for. */
 export const MAX_CHARS_MIN = 2048
 export const MAX_CHARS_MAX = 24_000
@@ -53,6 +56,18 @@ export const WAIT_FOR_MAX_MS = 30_000
  * in well under a second, so anything past this is the hang, not a slow page.
  */
 export const SCREENSHOT_TIMEOUT_MS = 5000
+
+/**
+ * How long one call into the page gets before it is taken for a hung one.
+ *
+ * The in-page collectors bound their own scans (`SCAN_BUDGET_MS`), so a call
+ * that outlives this is not a slow page: it is an `alert()`, a script looping
+ * forever in the page's own event loop, or a renderer that stopped answering.
+ * Generous on purpose — the reply also carries a large snapshot — because
+ * ending a working call early costs a retry, while waiting forever costs the
+ * turn.
+ */
+export const AUTOMATION_CALL_TIMEOUT_MS = 15_000
 
 /** One `page.type` call. Long enough for a paragraph, short of a paste bomb. */
 export const TYPE_TEXT_MAX = 10_000

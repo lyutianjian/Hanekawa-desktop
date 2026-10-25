@@ -14,7 +14,11 @@
  * - **`check()` at every boundary.** Cancellation is checked before dispatch and
  *   again after each await, which puts the granularity at one CDP command rather
  *   than at one operation — except inside a press/release pair, which always
- *   completes so nothing is left held down. Phase 5's takeover arbitration
+ *   completes so nothing is left held down. A boundary is only reachable if the
+ *   await before it returned, so a call that never settles is ended by
+ *   `bounds.ts`'s deadline at the seam: the action then fails here instead of
+ *   waiting on a page that will not answer, and the answer that eventually
+ *   arrives reaches no step left to trigger. Phase 5's takeover arbitration
  *   hangs off the same hook — it is the one place a "stop now" can be observed
  *   mid-burst.
  * - **Nothing echoes what was typed.** The evidence line counts characters. A

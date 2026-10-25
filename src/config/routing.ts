@@ -69,7 +69,7 @@ export interface Routing {
  * that is true for a config the user has not spoken about. A user who wants a
  * cheaper compaction model still has the dedicated `compactModel` setting.
  */
-export const DEFAULT_ROUTING: Required<Pick<Routing, 'main' | 'plan' | 'compact' | 'coordinator' | 'thread'>> & { subagent: Required<Pick<SubagentRouting, 'general' | 'fork' | 'explore' | 'plan'>> } = {
+export const DEFAULT_ROUTING: Required<Pick<Routing, 'main' | 'plan' | 'compact' | 'coordinator' | 'thread'>> & { subagent: SubagentRouting } = {
   main: 'inherit',
   plan: 'inherit',
   compact: 'inherit',
@@ -77,9 +77,6 @@ export const DEFAULT_ROUTING: Required<Pick<Routing, 'main' | 'plan' | 'compact'
   thread: 'inherit',
   subagent: {
     general: 'inherit',
-    fork: 'inherit',
-    explore: 'inherit',
-    plan: 'inherit',
   },
 }
 

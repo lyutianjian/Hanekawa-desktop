@@ -7,7 +7,7 @@ import type { CoordinationRole, TurnOrigin } from '../../harness/types.js'
 import type { CoordinationStore } from '../../services/coordination/threadStore.js'
 import type { ThreadRecord } from '../../services/coordination/types.js'
 import type { SessionMeta } from '../../sessions/service.js'
-import type { CoordinationLaneControl } from '../protocol/coordinationHost.js'
+import type { CoordinationLaneControl, WakeDiscardReason } from '../protocol/coordinationHost.js'
 import type { SessionEvent } from '../sessionController.js'
 import { formatThreadNote, formatWakeMessage, threadStatusAfterTurn } from './messages.js'
 import {
@@ -48,6 +48,7 @@ interface LaneTurn {
 }
 
 interface ProjectState {
+  pendingWake?: { sessionId: string; notes: Awaited<ReturnType<CoordinationStore['drainNotes']>>; previousCount: number }
   startingThreads: number
   /** The coordinator session whose turn is running, if any; a retired coordinator's lane never sets it. */
   runningCoordinator: string | undefined
@@ -119,6 +120,7 @@ export class CoordinationWakeEngine {
       offEvent()
       offState()
       if (role() === 'coordinator') {
+        this.discardPendingWake(cwd, sessionId, 'detached')
         // A wake still waiting in this lane is gone with it; don't leave the lock stuck.
         this.schedule(cwd, async () => {
           const store = this.port.storeFor(cwd)
@@ -167,8 +169,10 @@ export class CoordinationWakeEngine {
   }
 
   /** Runs after everything already scheduled for the project; for tests and shutdown. */
-  idle(cwd: string): Promise<void> {
-    return this.project(cwd).chain
+  async idle(cwd: string): Promise<void> {
+    const p = this.project(cwd)
+    let chain: Promise<void>
+    do { chain = p.chain; await chain } while (chain !== p.chain)
   }
 
   private project(cwd: string): ProjectState {
@@ -217,6 +221,7 @@ export class CoordinationWakeEngine {
     const p = this.project(cwd)
     if (p.retired.has(sessionId)) return
     p.runningCoordinator = sessionId
+    if (origin === 'wake') p.pendingWake = undefined
     if (origin !== 'user') return
     this.schedule(cwd, async () => {
       if (await this.isRetired(cwd, sessionId)) return
@@ -375,20 +380,37 @@ export class CoordinationWakeEngine {
     if (!lock.proceed) return
 
     await store.setWakeLocked(true)
-    const notes = await store.drainNotes()
-    const count = nextAutoWakeCount(coord.autoWakeCount, 'auto-wake')
-    await store.setAutoWakeCount(count)
-    const text = formatWakeMessage({ reason: verdict.reason, notes: notes.map((n) => ({ threadId: n.threadId, text: n.text })), count })
+    const wake = { sessionId: coord.sessionId, notes: [] as Awaited<ReturnType<CoordinationStore['drainNotes']>>, previousCount: coord.autoWakeCount }
+    p.pendingWake = wake
     try {
+      wake.notes = await store.drainNotes()
+      const count = nextAutoWakeCount(coord.autoWakeCount, 'auto-wake')
+      await store.setAutoWakeCount(count)
+      const text = formatWakeMessage({ reason: verdict.reason, notes: wake.notes.map((n) => ({ threadId: n.threadId, text: n.text })), count })
       const lane = control ?? await this.port.openLane(cwd, coord.sessionId, { activate: false })
-      lane.requestWake(text)
+      lane.requestWake(text, (reason) => this.discardPendingWake(cwd, coord.sessionId, reason, wake))
     } catch (error) {
-      // Nothing was delivered: put the notes back and unlock.
-      for (const note of notes) await store.enqueueNote(note)
-      await store.setAutoWakeCount(coord.autoWakeCount)
-      await store.setWakeLocked(false)
+      this.discardPendingWake(cwd, coord.sessionId, 'failed', wake)
       throw error
     }
+  }
+
+  private discardPendingWake(cwd: string, sessionId: string, reason: WakeDiscardReason, expected?: ProjectState['pendingWake']): void {
+    const p = this.project(cwd)
+    const wake = p.pendingWake
+    if (!wake || wake.sessionId !== sessionId || (expected !== undefined && wake !== expected)) return
+    p.pendingWake = undefined
+    p.suppressed = false
+    p.retryPending = false
+    p.lastTurnOutcome = reason === 'failed' ? 'failed' : 'interrupted'
+    this.schedule(cwd, async () => {
+      const store = this.port.storeFor(cwd)
+      await store.restoreNotes(wake.notes)
+      if ((await store.read()).coordinator?.sessionId === sessionId) {
+        await store.setAutoWakeCount(wake.previousCount)
+        await store.setWakeLocked(false)
+      }
+    })
   }
 }
 

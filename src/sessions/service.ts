@@ -211,7 +211,11 @@ export class SessionStore {
     const meta = this.createMeta(title)
     const { id } = meta
     await writeFile(this.sessionJsonlPath(id), '', { flag: 'a' })
-    await this.upsertIndex(meta)
+    try { await this.upsertIndex(meta) }
+    catch (error) {
+      await rm(this.sessionJsonlPath(id), { force: true })
+      throw error
+    }
     return meta
   }
 

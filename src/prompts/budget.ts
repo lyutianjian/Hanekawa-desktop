@@ -19,6 +19,8 @@ export const AUTOCOMPACT_RESERVE_RATIO = 0.083
 export const COMPACT_PROMPT_RESERVE_TOKENS = 2_000
 export const MANUAL_COMPACT_BUFFER_TOKENS = 3_000
 export const MICROCOMPACT_THRESHOLD_RATIO = 0.9
+/** Slack left between a planned request and the window it must fit. */
+export const CONTEXT_SAFETY_BUFFER_TOKENS = 1_000
 export const TIME_BASED_MC_GAP_THRESHOLD_MINUTES = 60
 export const TIME_BASED_MC_KEEP_RECENT = 5
 
@@ -146,20 +148,62 @@ export function countMessagesTokens(
   }
 }
 
+/** A declared tool schema as the provider receives it. */
+export interface ToolSchemaCost {
+  name: string
+  description?: string
+  inputSchema?: unknown
+}
+
+/** Fixed request content, including any inherited history prefix, in tokens. */
+export interface RequestOverhead {
+  /** The composed system prompt plus the instruction block counted into it. */
+  systemTokens: number
+  toolSchemaTokens: number
+  total: number
+}
+
+export function countToolSchemasTokens(tools: readonly ToolSchemaCost[]): number {
+  let total = 0
+  for (const tool of tools) {
+    total += textTokenWeight(`${tool.name}\n${tool.description ?? ''}\n${JSON.stringify(tool.inputSchema ?? {})}`)
+  }
+  return Math.ceil(total)
+}
+
+/**
+ * The one place a request's fixed cost is measured, so the compaction decision
+ * and the request builder cannot disagree about what history may spend.
+ */
+export function requestOverhead(input: { system?: string; tools?: readonly ToolSchemaCost[]; prefixTokens?: number }): RequestOverhead {
+  const systemTokens = input.system ? countTextTokens(input.system) : 0
+  const toolSchemaTokens = input.tools?.length ? countToolSchemasTokens(input.tools) : 0
+  return { systemTokens, toolSchemaTokens, total: systemTokens + toolSchemaTokens + Math.max(0, input.prefixTokens ?? 0) }
+}
+
+/** The window history may spend once the request's fixed parts are paid for. */
+export function getAvailableTokensForOverhead(
+  config: Partial<ContextManagementConfig> = {},
+  overheadTokens: number,
+): number {
+  return getEffectiveContextWindowSize(config) - Math.max(0, overheadTokens) - CONTEXT_SAFETY_BUFFER_TOKENS
+}
+
 export function getAvailableContextTokens(
   config: Partial<ContextManagementConfig> = {},
   system?: string,
+  tools?: readonly ToolSchemaCost[],
 ): number {
-  const systemTokens = system ? countTextTokens(system) : 0
-  return getEffectiveContextWindowSize(config) - systemTokens - 1000
+  return getAvailableTokensForOverhead(config, requestOverhead({ system, tools }).total)
 }
 
 export function selectMessagesForContext(
   messages: ChatMessage[],
   config: Partial<ContextManagementConfig> = {},
   system?: string,
+  tools?: readonly ToolSchemaCost[],
 ): ChatMessage[] {
-  const availableTokens = getAvailableContextTokens(config, system)
+  const availableTokens = getAvailableContextTokens(config, system, tools)
 
   if (availableTokens <= 0) {
     return []
@@ -184,8 +228,9 @@ export function selectContextItemsForContext(
   items: ModelContextItem[],
   config: Partial<ContextManagementConfig> = {},
   system?: string,
+  tools?: readonly ToolSchemaCost[],
 ): ModelContextItem[] {
-  return planContextItems(items, config, system).items
+  return planContextItems(items, config, system, tools).items
 }
 
 /**
@@ -225,16 +270,16 @@ export function planContextItems(
   items: ModelContextItem[],
   config: Partial<ContextManagementConfig> = {},
   system?: string,
+  tools?: readonly ToolSchemaCost[],
+  imageTokenStrategy: ImageTokenStrategy = DEFAULT_IMAGE_TOKEN_STRATEGY,
+  prefixTokens = 0,
 ): ContextSelectionPlan {
-  const availableTokens = getAvailableContextTokens(config, system)
+  const availableTokens = getAvailableTokensForOverhead(config, requestOverhead({ system, tools, prefixTokens }).total)
   const pinned = items.filter(isPinnedItem)
-  const pinnedTokens = pinned.reduce((sum, item) => sum + countContextItemTokens(item), 0)
-  // Only pinned content can overflow: everything else may be trimmed away. A
-  // window the system prompt has already exhausted reports nothing — there is
-  // no budget to compare against, and the send keeps its legacy shape.
-  const overflowTokens = availableTokens > 0 && pinnedTokens > availableTokens
-    ? pinnedTokens - availableTokens
-    : 0
+  const pinnedTokens = pinned.reduce((sum, item) => sum + countContextItemTokens(item, imageTokenStrategy), 0)
+  // Pinned content must survive even when the fixed request leaves no budget;
+  // the caller reports capacity failure instead of sending an incomplete task.
+  const overflowTokens = Math.max(0, pinnedTokens - Math.max(0, availableTokens))
 
   if (availableTokens <= 0) {
     const lastUserItem = [...items].reverse().find(
@@ -258,7 +303,7 @@ export function planContextItems(
 
   for (const item of [...items].reverse()) {
     if (kept.has(item)) continue
-    const tokens = countContextItemTokens(item)
+    const tokens = countContextItemTokens(item, imageTokenStrategy)
     if (used + tokens > availableTokens) {
       if (keptTrimmable > 0) break
       continue

@@ -4,7 +4,12 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { z } from 'zod/v3'
-import { ContextBuilder } from '../src/harness/contextBuilder.js'
+import { ContextBuilder, INSTRUCTIONS_MESSAGE_ID, type BuildContextInput } from '../src/harness/contextBuilder.js'
+import {
+  countTextTokens,
+  getAvailableTokensForOverhead,
+  requestOverhead,
+} from '../src/prompts/budget.js'
 import type { ReadFileState, SessionRecord, Tool } from '../src/harness/types.js'
 import { makeImageAttachmentRef } from './helpers/imageFixtures.js'
 
@@ -451,6 +456,112 @@ test('ContextBuilder budgets messages and tool records together', async () => {
   assert.ok(built.contextItems.some((item) => item.kind === 'tool_result' && item.toolUseId === 'call-1'))
 })
 
+test('the build reports the fixed cost it handed the budget', async () => {
+  // The system prompt, the instruction files folded into it and the declared
+  // tool schemas are what the request carries before any history; the budget
+  // and the compaction check both read this one number.
+  const apiInputSchema = {
+    type: 'object',
+    properties: { path: { type: 'string' }, body: { type: 'string', description: 'b'.repeat(900) } },
+    required: ['path'],
+  }
+  const wideTool: Tool = {
+    name: 'Write',
+    description: 'Write a file',
+    inputSchema: z.object({ path: z.string() }),
+    apiInputSchema,
+    riskLevel: 'confirm',
+    execute: async () => ({ ok: true, content: '' }),
+  }
+  const builder = new ContextBuilder(undefined, contextWindow(9000))
+  const instructions = '# AGENTS.md\n' + 'Always run the tests. '.repeat(100)
+
+  const built = await builder.build({
+    records: [{ type: 'message', id: 'u1', role: 'user', content: 'hi', createdAt: '2026-05-10T00:00:00.000Z' }],
+    tools: [wideTool],
+    projectContext: instructions,
+    includeUserContext: false,
+  })
+
+  const instructionsMessage = built.messages.find((message) => message.id === INSTRUCTIONS_MESSAGE_ID)
+  assert.ok(instructionsMessage)
+  assert.equal(
+    built.overhead.systemTokens,
+    countTextTokens(`${built.system}\n\n${instructionsMessage.content}`),
+  )
+  // Measured from the schema the payload builder sends, not from the zod input.
+  assert.equal(
+    built.overhead.toolSchemaTokens,
+    countTextTokens(`${wideTool.name}\n${wideTool.description}\n${JSON.stringify(apiInputSchema)}`),
+  )
+  assert.equal(built.overhead.total, built.overhead.systemTokens + built.overhead.toolSchemaTokens)
+  // And the history this build selected was sized against exactly that:
+  assert.equal(
+    built.selection.availableTokens,
+    getAvailableTokensForOverhead(contextWindow(9000), built.overhead.total),
+  )
+})
+
+test('a long instruction file and a wide tool schema take budget from the oldest history', async () => {
+  const builder = new ContextBuilder(undefined, contextWindow(9000))
+  const records: SessionRecord[] = [
+    {
+      type: 'message',
+      id: 'old',
+      role: 'user',
+      content: 'old '.repeat(2_500),
+      createdAt: '2026-05-10T00:00:00.000Z',
+    },
+    {
+      type: 'message',
+      id: 'new',
+      role: 'user',
+      content: 'now',
+      createdAt: '2026-05-10T00:01:00.000Z',
+    },
+  ]
+
+  const plain = await builder.build({ records, tools: [], includeUserContext: false })
+  assert.ok(!plain.selection.trimmed.ids.includes('message:user:old'))
+
+  const loaded = await builder.build({
+    records,
+    tools: [{
+      name: 'Write',
+      description: 'Write a file',
+      inputSchema: z.object({ path: z.string() }),
+      apiInputSchema: { type: 'object', properties: { body: { type: 'string', description: 'b'.repeat(4_000) } } },
+      riskLevel: 'confirm',
+      execute: async () => ({ ok: true, content: '' }),
+    }],
+    projectContext: '# AGENTS.md\n' + 'Always run the tests. '.repeat(300),
+    includeUserContext: false,
+  })
+
+  assert.ok(loaded.selection.trimmed.ids.includes('message:user:old'))
+  // The difference the record sees is exactly the difference in fixed cost.
+  assert.equal(
+    plain.selection.availableTokens - loaded.selection.availableTokens,
+    loaded.overhead.total - plain.overhead.total,
+  )
+})
+
+test('two builds of the same conversation measure the same fixed cost', async () => {
+  const builder = new ContextBuilder(undefined, contextWindow(9000))
+  const input: BuildContextInput = {
+    records: [{ type: 'message', id: 'u1', role: 'user', content: 'hi', createdAt: '2026-05-10T00:00:00.000Z' }],
+    tools: [tool],
+    includeUserContext: false,
+  }
+
+  const first = await builder.build(input)
+  const second = await builder.build(input)
+
+  assert.deepEqual(second.overhead, first.overhead)
+  assert.equal(second.system, first.system)
+  assert.equal(second.selection.availableTokens, first.selection.availableTokens)
+})
+
 test('ContextBuilder prepends preloaded history before child records', async () => {
   const builder = new ContextBuilder(undefined, contextWindow(8000))
   const preloadRecords: SessionRecord[] = [{
@@ -483,6 +594,40 @@ test('ContextBuilder prepends preloaded history before child records', async () 
       .map((item) => item.message.id),
     ['parent-message', 'child-directive'],
   )
+})
+
+test('full request estimates use the serving model image strategy for preload and inherited history', async () => {
+  const image = makeImageAttachmentRef({ width: 2000, height: 1125 })
+  const parent = { id: 'inherited', role: 'user' as const, content: 'parent', createdAt: '', images: [image] }
+  const input: BuildContextInput = {
+    inheritedRequest: { model: 'model', system: '', messages: [parent], contextItems: [{ kind: 'message', message: parent }], cacheSource: 'agent:test' },
+    preloadRecords: [{ type: 'message', ...parent, id: 'preload' }],
+    records: [{ type: 'message', id: 'latest', role: 'user', content: 'continue', createdAt: '' }],
+    tools: [], includeUserContext: false,
+  }
+  const builder = new ContextBuilder(undefined, contextWindow(5000))
+  const text = await builder.build({ ...input, imageTokenStrategy: 'none' })
+  const anthropic = await builder.build({ ...input, imageTokenStrategy: 'anthropic' })
+  const openai = await builder.build({ ...input, imageTokenStrategy: 'openai' })
+  assert.equal(anthropic.inputTokens - text.inputTokens, 6000, 'both images cost 3000 tokens before trimming')
+  assert.equal(openai.inputTokens - text.inputTokens, 2210, 'both images cost 1105 tokens for OpenAI')
+  assert.equal(anthropic.overhead.total - text.overhead.total, 3000, 'the inherited image reserves prefix space')
+  assert.ok(anthropic.selection.trimmed.ids.includes('message:user:preload'))
+  assert.equal(openai.selection.trimmed.count, 0)
+  assert.deepEqual(anthropic.messages.map((message) => message.id), ['latest'])
+})
+
+test('an oversized latest instruction stays pinned instead of being replaced by older history', async () => {
+  const built = await new ContextBuilder(undefined, contextWindow(4000)).build({
+    inheritedRequest: { model: 'model', system: 's'.repeat(10_500), messages: [], cacheSource: 'agent:test' },
+    records: [
+      { type: 'message', id: 'old', role: 'user', content: 'old', createdAt: '' },
+      { type: 'message', id: 'latest', role: 'user', content: 'latest instruction '.repeat(2000), createdAt: '' },
+    ],
+    transientUserContext: ['transient reminder'], tools: [], includeUserContext: false,
+  })
+  assert.ok(built.messages.some((message) => message.id === 'latest'))
+  assert.ok(built.selection.overflowTokens > 0, 'an exhausted history budget must still report pinned overflow')
 })
 
 test('ContextBuilder uses latest compact boundary as prior context summary', async () => {

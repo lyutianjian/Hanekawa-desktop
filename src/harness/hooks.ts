@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process'
 import picomatch from 'picomatch'
+import { terminateProcessTree } from '../tools/processTree.js'
+import { spawnWindowsHook } from './windowsHookJob.js'
 import type { Tool, ToolContext } from './types.js'
 
 const DEFAULT_HOOK_TIMEOUT_MS = 30_000
@@ -192,28 +194,29 @@ function runHookCommand(options: {
   timeoutPrefix: string
   blockedPrefix: string
 }): Promise<PreToolUseHookResult & { stdout?: string; stderr?: string }> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const { hook, hookName, input, context, signal, failurePrefix, timeoutPrefix, blockedPrefix } = options
     const timeoutMs = Math.max(1, hook.timeoutMs ?? DEFAULT_HOOK_TIMEOUT_MS)
-    const proc = spawn(hook.command, [], {
+    const proc = process.platform === 'win32' ? spawnWindowsHook(hook.command, context.cwd) : spawn(hook.command, [], {
       cwd: context.cwd,
       shell: true,
-      signal,
+      detached: true,
       stdio: ['pipe', 'pipe', 'pipe'],
-      // No console window per hook run on Windows; the output is piped anyway.
-      windowsHide: true,
     })
 
     let stdout = ''
     let stderr = ''
     let settled = false
     let timedOut = false
+    let stopping: Promise<void> | undefined
 
     const finish = (result: PreToolUseHookResult & { stdout?: string; stderr?: string }) => {
       if (settled) return
       settled = true
       clearTimeout(timeoutId)
-      resolve(result)
+      signal?.removeEventListener('abort', onAbort)
+      if (signal?.aborted) reject(new DOMException('The operation was aborted.', 'AbortError'))
+      else resolve(result)
     }
 
     const append = (current: string, chunk: Buffer): string => {
@@ -222,10 +225,19 @@ function runHookCommand(options: {
       return next.length > MAX_HOOK_OUTPUT_BYTES ? next.slice(0, MAX_HOOK_OUTPUT_BYTES) : next
     }
 
-    const timeoutId = setTimeout(() => {
-      timedOut = true
-      proc.kill()
-    }, timeoutMs)
+    const stop = () => {
+      if (settled || stopping) return
+      stopping = terminateProcessTree(proc, { graceMs: 100 }).finally(() => {
+        proc.stdin.destroy()
+        proc.stdout.destroy()
+        proc.stderr.destroy()
+        finish({ ok: false, content: `${timeoutPrefix}: ${hook.command}`, details: { command: hook.command, timeoutMs, stdout, stderr } })
+      })
+    }
+    const onAbort = () => stop()
+    const timeoutId = setTimeout(() => { timedOut = true; stop() }, timeoutMs)
+    signal?.addEventListener('abort', onAbort, { once: true })
+    if (signal?.aborted) onAbort()
 
     proc.stdout.on('data', (chunk: Buffer) => {
       stdout = append(stdout, chunk)
@@ -236,6 +248,7 @@ function runHookCommand(options: {
     })
 
     proc.on('error', (error: Error) => {
+      if (stopping) return
       finish({
         ok: false,
         content: `${failurePrefix}: ${error.message}`,
@@ -244,6 +257,7 @@ function runHookCommand(options: {
     })
 
     proc.on('close', (code: number | null, childSignal: NodeJS.Signals | null) => {
+      if (stopping) return
       if (timedOut) {
         finish({
           ok: false,

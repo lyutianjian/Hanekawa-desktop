@@ -8,6 +8,43 @@ import { countTextTokens } from '../src/prompts/budget.js'
 import type { SessionRecord, Tool, ToolProgressEvent } from '../src/harness/types.js'
 import { makeImageAttachmentRef } from './helpers/imageFixtures.js'
 
+test('permission exceptions settle one failed tool result and finish progress', async () => {
+  const records: SessionRecord[] = []
+  const progress: ToolProgressEvent[] = []
+  const tool: Tool = {
+    name: 'guarded', description: 'guarded', inputSchema: z.object({}).strict(), riskLevel: 'confirm',
+    execute: async () => { throw new Error('must not execute') },
+  }
+  const runner = new ToolRunner([tool], new PermissionGate(async () => { throw new Error('approval failed') }), {
+    onRecord: async (record) => { records.push(record) }, onProgress: (event) => { progress.push(event) },
+  })
+  const result = await runner.run({ id: 'approval-error', name: tool.name, input: {} }, { cwd: process.cwd(), sessionId: 's', readFiles: new Set() })
+  assert.equal(result.ok, false)
+  assert.match(result.content, /approval failed/)
+  assert.equal(records.filter((record) => record.type === 'tool_result').length, 1)
+  assert.deepEqual(progress.map((event) => event.phase), ['started', 'finished'])
+})
+
+test('persistence failures are reported without retrying or duplicating tool results', async () => {
+  for (const failType of ['tool_use', 'tool_approval', 'tool_result', 'message']) {
+    const records: SessionRecord[] = []
+    let failedWrites = 0
+    const tool: Tool = {
+      name: 'save', description: 'save', inputSchema: z.object({}).strict(), riskLevel: 'safe',
+      execute: async () => ({ ok: true, content: 'done', metadata: { assistantMessageContent: 'reported' } }),
+    }
+    const runner = new ToolRunner([tool], new PermissionGate(async () => true), {
+      onRecord: async (record) => {
+        if (record.type === failType) { failedWrites++; throw new Error('disk failed') }
+        records.push(record)
+      },
+    })
+    await assert.rejects(runner.run({ id: 'save-failed', name: tool.name, input: {} }, { cwd: process.cwd(), sessionId: 's', readFiles: new Set() }), /disk failed/)
+    assert.equal(failedWrites, 1)
+    assert.ok(records.filter((record) => record.type === 'tool_result').length <= 1)
+  }
+})
+
 test('tool runner executes safe tool without prompting', async () => {
   let prompted = false
   const tool: Tool = {

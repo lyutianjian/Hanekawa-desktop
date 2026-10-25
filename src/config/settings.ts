@@ -451,9 +451,8 @@ export async function setLocalPermissionEntries(
   behavior: 'allow' | 'deny' | 'ask',
   entries: readonly string[],
 ): Promise<void> {
-  const local = await loadLocalSettings(cwd)
-  await updateLocalSettings(cwd, {
-    permissions: { ...local.permissions, [behavior]: [...entries] },
+  await updateSettingsFile(localSettingsPath(cwd), (local) => {
+    local.permissions = { ...local.permissions, [behavior]: [...entries] }
   })
 }
 

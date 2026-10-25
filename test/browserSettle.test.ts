@@ -97,6 +97,19 @@ test('an abort raised by check ends the wait', async () => {
   await assert.rejects(waitForSettle(deps), /cancelled/)
 })
 
+test('a poll that never comes back ends the settle window instead of holding the turn', async () => {
+  const deps: SettleDeps = {
+    timeoutMs: 30,
+    evaluate: () => new Promise<unknown>(() => {}),
+    network: () => ({ pending: [], quietMs: Infinity }),
+    generation: () => 1,
+    check: () => undefined,
+  }
+  const report = await waitForSettle(deps)
+  assert.equal(report.settled, false, 'a page that will not answer was not seen settle')
+  assert.match(describeSettle(report), /still changing/)
+})
+
 test('network bookkeeping: in flight until it ends, quiet counted from the last event, forgotten with the page', () => {
   let clock = 0
   const network = new NetworkActivity(() => clock)

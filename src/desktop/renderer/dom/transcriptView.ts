@@ -599,7 +599,7 @@ export function createTranscriptView(
         && tail.item.turnId !== undefined && tail.item.turnId === activity.turnId) {
         entries = entries.slice(0, -1)
       }
-      const split = splitTurnFooters(entries, activity?.isStreaming === true ? undefined : activity?.outputTokens)
+      const split = splitTurnFooters(entries, activity?.isStreaming === true ? undefined : activity?.outputTokens, activity?.outputTokenTurnId)
       entries = split.entries
       const footers = activity === undefined ? new Map<number, TurnFooter>() : split.footers
       const live = turnActivity(entries, activity ?? IDLE)

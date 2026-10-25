@@ -24,6 +24,13 @@ function blocks(markdown: string): MdBlock[] {
   return parseMarkdownBlocks(markdown)
 }
 
+test('inline code preserves literal entity spelling while prose still decodes entities', () => {
+  for (const literal of ['&lt;', '&amp;', '&#60;', '<', 'a &lt; b']) {
+    const parsed = blocks('`' + literal + '`')
+    assert.deepEqual(parsed, [{ kind: 'paragraph', inline: [{ kind: 'code', text: literal }] }])
+  }
+})
+
 /** Flatten inline nodes to their visible text, the way `textContent` would. */
 function textOf(inline: readonly MdInline[]): string {
   return inline

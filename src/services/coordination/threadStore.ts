@@ -155,6 +155,13 @@ export class CoordinationStore {
     })
   }
 
+  /** Returns undelivered notes, preserving newer reports already in the queue. */
+  async restoreNotes(notes: readonly CoordinatorNote[]): Promise<void> {
+    await this.mutateCoordinator((c) => {
+      c.notes = [...notes, ...c.notes].reduce(enqueueNoteInto, [] as CoordinatorNote[])
+    })
+  }
+
   async drainNotes(): Promise<CoordinatorNote[]> {
     let taken: CoordinatorNote[] = []
     await this.update((f) => {

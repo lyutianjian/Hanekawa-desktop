@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { absoluteTime, relativeTime } from '../src/desktop/renderer/model/turnFooter.js'
+import { absoluteTime, relativeTime, splitTurnFooters } from '../src/desktop/renderer/model/turnFooter.js'
+
+test('tokens attach only to the footer of the turn that reported them', () => {
+  const entries = [
+    { kind: 'item', item: { id: 'answer', kind: 'assistant', text: 'done', turnId: 'old' } },
+    { kind: 'item', item: { id: 'duration', kind: 'duration', text: '', durationMs: 100, turnId: 'old' } },
+    { kind: 'item', item: { id: 'interrupted', kind: 'user', text: 'next', turnId: 'new' } },
+  ] as const
+  assert.equal(splitTurnFooters(entries, 20, 'new').footers.get(0)?.tokens, undefined)
+  assert.equal(splitTurnFooters(entries, 20, 'old').footers.get(0)?.tokens, 20)
+  assert.equal(splitTurnFooters(entries, 20).footers.get(0)?.tokens, undefined)
+})
 
 /**
  * The window's one time label. A message stamp used to be a bare 「14:32」 from

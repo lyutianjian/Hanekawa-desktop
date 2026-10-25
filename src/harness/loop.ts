@@ -38,7 +38,7 @@ import {
   getEffectiveContextWindowSize,
   type ContextManagementConfig,
 } from '../prompts/budget.js'
-import type { ContextSelectionPlan } from '../prompts/budget.js'
+import type { ContextSelectionPlan, RequestOverhead } from '../prompts/budget.js'
 import { ESCALATED_MAX_TOKENS, MODEL_CONTEXT_WINDOW_DEFAULT } from '../prompts/budget.js'
 import type { SkillDefinition } from '../services/skills/skillsService.js'
 import type { CacheRuntime } from './cacheControl.js'
@@ -296,12 +296,23 @@ const MAX_CONCURRENT_TOOL_CALLS = 10
  */
 export class ContextOverflowError extends Error {
   readonly code = 'context_overflow'
-  constructor(readonly selection: ContextSelectionPlan, readonly usableContextWindow: number) {
-    super([
-      `This request cannot be sent: the compaction summary and the task it continues take ${selection.pinnedTokens} tokens,`,
-      `and only ${Math.max(0, selection.availableTokens)} of the model's ${usableContextWindow}-token window are left for them.`,
-      'Compaction could not shrink them further. Switch to a model with a larger context window, or start a new session.',
-    ].join(' '))
+  constructor(
+    readonly selection: ContextSelectionPlan,
+    readonly usableContextWindow: number,
+    /** Set when the request's fixed parts alone left no room for any history. */
+    readonly fixedOverheadTokens?: number,
+  ) {
+    super(fixedOverheadTokens === undefined
+      ? [
+          `This request cannot be sent: the compaction summary and the task it continues take ${selection.pinnedTokens} tokens,`,
+          `and only ${Math.max(0, selection.availableTokens)} of the model's ${usableContextWindow}-token window are left for them.`,
+          'Compaction could not shrink them further. Switch to a model with a larger context window, or start a new session.',
+        ].join(' ')
+      : [
+          `This request cannot be sent: the system prompt, instruction files and tool schemas, together with any inherited conversation prefix, take ${fixedOverheadTokens} tokens,`,
+          `leaving nothing of the model's ${usableContextWindow}-token window for the conversation.`,
+          'Compaction cannot shrink them. Trim AGENTS.md/MEMORY.md, drop tools, or switch to a model with a larger context window.',
+        ].join(' '))
     this.name = 'ContextOverflowError'
   }
 }
@@ -518,10 +529,11 @@ export class AgentLoop {
     )
   }
 
-  async summarizeRecordsForRewind(records: SessionRecord[]): Promise<{ summary: string; usage?: TokenUsage; preTokens: number }> {
+  async summarizeRecordsForRewind(records: SessionRecord[], signal?: AbortSignal): Promise<{ summary: string; usage?: TokenUsage; preTokens: number }> {
     return this.enqueue(async () => {
       const result = await summarizeRecordsForContinuation({
         records,
+        signal,
         provider: this.activeModel.provider,
         model: this.activeModel.model,
         compactRuntime: this.options.compactModel,
@@ -541,13 +553,16 @@ export class AgentLoop {
   }
 
   /** `/compact`: summarizes the conversation now, between turns; throws when the summary fails. */
-  async compact(instructions?: string): Promise<CompactCheckResult> {
+  async compact(instructions?: string, signal?: AbortSignal): Promise<CompactCheckResult> {
     return this.enqueue(async () => {
       const turnId = randomUUID()
       const records = await this.loadPreparedRecords(turnId)
       const userMessageId = [...records].reverse().find((record) => record.type === 'message' && record.role === 'user')?.id ?? ''
       const cacheSource = this.options.cacheSource ?? agentCacheSource(this.options.toolContext.sessionId, this.dataRoot())
-      return this.runCompaction(compactNow, records, turnId, userMessageId, cacheSource, instructions ? { compactInstructions: instructions } : {})
+      return this.runCompaction(compactNow, records, turnId, userMessageId, cacheSource, {
+        ...(instructions ? { compactInstructions: instructions } : {}),
+        fixedOverheadTokens: await this.fixedRequestOverheadTokens(),
+      }, signal)
     })
   }
 
@@ -875,6 +890,9 @@ export class AgentLoop {
           resetModelRequestState()
         }
         await this.flushReadyToolUseSummaries(turnId)
+        // Measured once per iteration and handed to every compaction attempt
+        // below: the same number the request builder will subtract from the window.
+        const fixedOverheadTokens = await this.fixedRequestOverheadTokens()
         const preparedRecords = await this.loadPreparedRecords(turnId, userMessage.id)
         if (this.consumeImageRequestStateChanged()) resetModelRequestState(false)
         const imageTokenStrategy = resolveImageTokenStrategy(
@@ -897,6 +915,7 @@ export class AgentLoop {
         await this.appendPendingTrimRecords()
         let recordsBeforeCompact = progressive.records
         const compactResult = await this.runCompaction(autoCompactIfNeeded, recordsBeforeCompact, turnId, userMessage.id, cacheSource, {
+          fixedOverheadTokens,
           lastResponseTokenCount: progressive.lastResponseTokenCount,
           lastResponseRecordCount: this.responseBaseline?.recordCount,
           lastResponseRecordId: this.responseBaseline?.recordId,
@@ -912,6 +931,7 @@ export class AgentLoop {
             ? `compacted model=${this.activeModel.model} ${compactResult.metrics?.preTokens ?? '?'}->${compactResult.metrics?.postTokens ?? '?'}`
             : `skipped model=${this.activeModel.model}`,
         }])
+        if (compactResult.compacted) recordsBeforeCompact = await this.loadPreparedRecords(turnId, userMessage.id)
 
       if (this.retryPrimaryIfReady(cacheSource)) {
         resetModelRequestState()
@@ -937,10 +957,12 @@ export class AgentLoop {
         transientUserContext,
       })
       let compactedThisStep = compactResult.compacted
-      if (built.selection.overflowTokens > 0 && !compactedThisStep) {
-        // The summary and the continuation alone no longer fit. Compaction is
-        // the only thing that can shrink them, and it gets one attempt here.
+      const needsFullRequestCompact = built.selection.overflowTokens > 0
+        || built.selection.trimmed.count > 0
+        || (this.responseBaseline === undefined && built.inputTokens >= getAutoCompactThreshold(this.activeContextManagement))
+      if (needsFullRequestCompact && !compactedThisStep && !compactResult.attempted) {
         const overflowCompact = await this.runCompaction(autoCompactIfNeeded, recordsBeforeCompact, turnId, userMessage.id, cacheSource, {
+          fixedOverheadTokens,
           lastResponseTokenCount: progressive.lastResponseTokenCount,
           lastResponseRecordCount: this.responseBaseline?.recordCount,
           lastResponseRecordId: this.responseBaseline?.recordId,
@@ -956,9 +978,23 @@ export class AgentLoop {
             transientUserContext,
           })
         }
-        if (built.selection.overflowTokens > 0) {
-          throw new ContextOverflowError(built.selection, this.getContextBudget().usableContextWindow)
-        }
+      }
+      const effectiveContextWindow = getEffectiveContextWindowSize(this.activeContextManagement)
+      if (built.overhead.total >= effectiveContextWindow) {
+        // The system prompt, instruction files and tool schemas alone exhaust
+        // the window: compaction only shrinks history, so say so instead of
+        // sending a request stripped of the work it was asked to do.
+        throw new ContextOverflowError(built.selection, effectiveContextWindow, built.overhead.total)
+      }
+      if (built.selection.overflowTokens > 0) {
+        throw new ContextOverflowError(built.selection, this.getContextBudget().usableContextWindow)
+      }
+      if (built.selection.trimmed.count > 0) {
+        this.options.onStreamEvent?.({
+          type: 'context_trim_notice',
+          message: `完整上下文超过当前模型的容量，压缩未能保留全部内容；本次请求省略了 ${built.selection.trimmed.count} 条历史或附加内容。`,
+          trimmedCount: built.selection.trimmed.count,
+        })
       }
       const baseRequest = built.request
       const requestRecordCount = records.length
@@ -1052,7 +1088,7 @@ export class AgentLoop {
         model: this.activeModel.model,
         ...(response.reasoningContent ? { reasoningContent: response.reasoningContent } : {}),
         ...(response.thinkingBlocks && response.thinkingBlocks.length > 0
-          ? { thinkingBlocks: response.thinkingBlocks }
+          ? { thinkingBlocks: response.thinkingBlocks, ...(response.thinkingSource ? { thinkingSource: response.thinkingSource } : {}) }
           : {}),
         ...(response.reasoningDetails?.length ? { reasoningDetails: response.reasoningDetails } : {}),
         ...(response.responseItems?.length ? { responseItems: response.responseItems } : {}),
@@ -1389,6 +1425,9 @@ export class AgentLoop {
     if (source.askUserQuestionBridge) fork.askUserQuestionBridge = source.askUserQuestionBridge
     if (source.imageAttachments) fork.imageAttachments = source.imageAttachments
     if (source.getSupportsImageInput) fork.getSupportsImageInput = source.getSupportsImageInput
+    // Configuration is account-level, not session state: a forked call reaches
+    // the same owning config the original context did.
+    if (source.modelConfig) fork.modelConfig = source.modelConfig
     return fork
   }
 
@@ -1400,15 +1439,7 @@ export class AgentLoop {
    */
   private async enqueue<T>(work: () => Promise<T>): Promise<T> {
     const previous = this.inFlight
-    if (previous) {
-      try {
-        await previous
-      } catch {
-        // Prior work's failure is the prior caller's concern. We only need
-        // sequencing here, not error propagation.
-      }
-    }
-    const current = (async () => work())()
+    const current = (previous ?? Promise.resolve()).catch(() => {}).then(work)
     this.inFlight = current
     try {
       return await current
@@ -1859,7 +1890,27 @@ export class AgentLoop {
       toolContext: this.options.toolContext,
       env,
       dynamicToolSearchEnabled,
+      inheritedRequest: this.options.inheritedRequest,
+      imageTokenStrategy: resolveImageTokenStrategy(this.activeModel.providerName, this.activeModel.supportsImageInput),
     }
+  }
+
+  /**
+   * What this iteration's request carries before its history — composed system,
+   * instruction files and the tool schemas it declares — measured by the builder
+   * that will send it, so compaction sizes history against the window the
+   * request actually has left. Without a shared number the check counts the
+   * bare system prompt and a long AGENTS.md or a wide toolset silently trims
+   * history the compaction threshold never saw.
+   */
+  private async fixedRequestOverheadTokens(): Promise<number> {
+    const { toolSearchState, toolsForContext } = this.toolsForRequest()
+    const built = await this.options.contextBuilder.build({
+      records: [],
+      ...this.fixedContextInput(toolsForContext, toolSearchState.enabled),
+      includeUserContext: false,
+    })
+    return built.overhead.total
   }
 
   /** The fixed parts of the request this loop would send after `records`, for the context breakdown. */
@@ -1894,7 +1945,7 @@ export class AgentLoop {
     userMessageId: string,
     cacheSource: CacheBreakSource,
     tail: { includeUserContext: boolean; permissionMode?: PermissionMode; transientUserContext?: () => string[] },
-  ): Promise<{ request: ModelRequest; selection: ContextSelectionPlan }> {
+  ): Promise<{ request: ModelRequest; selection: ContextSelectionPlan; overhead: RequestOverhead; inputTokens: number }> {
     // The inherited half of the request, re-derived per iteration for the
     // same reason the session records are: the model serving this attempt
     // decides what its images become.
@@ -1979,6 +2030,8 @@ export class AgentLoop {
     return {
       request: this.options.inheritedRequest ? withInheritedPrefix(this.options.inheritedRequest, request) : request,
       selection: built.selection,
+      overhead: built.overhead,
+      inputTokens: built.inputTokens,
     }
   }
 
@@ -2093,13 +2146,17 @@ export class AgentLoop {
     userMessageId: string,
     signal: AbortSignal | undefined,
   ): Promise<ModelResponse> {
-    const { request: base } = await this.buildModelRequest(
+    const built = await this.buildModelRequest(
       records,
       turnId,
       userMessageId,
       compactCacheSource(this.dataRoot()),
       { includeUserContext: false },
     )
+    if (built.selection.trimmed.count > 0 || built.selection.overflowTokens > 0) {
+      throw new Error('The shared-prefix request would omit history; summarize the complete records as text instead.')
+    }
+    const base = built.request
     const message: ChatMessage = {
       id: 'compact-request',
       role: 'user',
@@ -2111,7 +2168,7 @@ export class AgentLoop {
       ...base,
       messages: [...base.messages, message],
       contextItems: [...(base.contextItems ?? []), { kind: 'message', message }],
-      retry: { callerKind: 'background', persistent: true, signal },
+      retry: { callerKind: 'interactive', signal },
     })
   }
 

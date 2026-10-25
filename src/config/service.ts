@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from 'node:util'
 import { readConfigurationFile, updateConfigurationFile } from './file.js'
 import { getGlobalConfigPath } from '../utils/paths.js'
 import type { ContextManagementConfig } from '../prompts/budget.js'
@@ -37,6 +38,9 @@ export type ThinkingConfig =
   | { type: 'adaptive' }
   | { type: 'enabled'; budgetTokens: number }
   | { type: 'disabled' }
+
+/** The three model references that live directly on the config object. */
+export type ModelReferenceField = 'defaultModel' | 'fallbackModel' | 'compactModel'
 
 export interface ModelConfig {
   provider?: string
@@ -174,6 +178,7 @@ export interface ConfigServiceOptions {
 export class ConfigService {
   private config: Config
   private configPath: string
+  private persistedConfig: Partial<Config> = {}
   private loadFailure: unknown
   /** Human-readable notes about tier-era config found by the last `load()`. */
   private legacyModelFindings: string[] = []
@@ -192,11 +197,13 @@ export class ConfigService {
     const previous = this.config
     try {
       const loaded = await readConfigurationFile<Partial<Config>>(this.configPath) ?? {}
+      const persisted = structuredClone(loaded)
       const userSettings = await loadUserSettings()
       const settingsConfig = configFromSettings(userSettings)
       this.config = deepMergeConfig(deepMergeConfig(DEFAULT_CONFIG, settingsConfig), loaded)
       this.migrateMaxEffort()
       this.legacyModelFindings = this.migrateLegacyTiers([userSettings, loaded])
+      this.persistedConfig = persisted
       this.loadFailure = undefined
     } catch (error) {
       this.config = previous
@@ -317,11 +324,19 @@ export class ConfigService {
 
   async save(): Promise<void> {
     if (this.loadFailure !== undefined) throw this.loadFailure
+    const expected = this.persistedConfig
+    const config = JSON.parse(JSON.stringify(this.config)) as Config
+    let saved: Partial<Config> | undefined
     try {
       await updateConfigurationFile<Partial<Config>>(this.getSaveTarget(), (current) => {
+        if (!isDeepStrictEqual(current, expected)) {
+          throw new Error('配置文件已被其他操作修改，请重新加载后再保存。')
+        }
         for (const key of ['endpoints', 'models', 'routing', 'defaultModel', 'fallbackModel', 'compactModel', 'agent'] as const) delete current[key]
-        return { ...current, ...this.config }
+        saved = { ...current, ...config }
+        return saved
       })
+      this.persistedConfig = saved!
     } catch (error) {
       this.loadFailure = error
       throw error
@@ -351,10 +366,40 @@ export class ConfigService {
     return modelKey ? this.resolveModel(modelKey) : undefined
   }
 
+  /**
+   * The three top-level model references, written the same way: a name that
+   * resolves to a real model is stored as given, so aliases and exact keys both
+   * survive, and a name that resolves to nothing is refused rather than saved as
+   * a reference `load()` would have to repair. Callers that need to report why
+   * resolve the name first (see `resolveModelInput`).
+   */
   setDefaultModel(name: string): void {
-    if (this.resolveModelReference(name)) {
-      this.config.defaultModel = name
-    }
+    this.setModelReference('defaultModel', name)
+  }
+
+  setFallbackModel(name: string): void {
+    this.setModelReference('fallbackModel', name)
+  }
+
+  setCompactModel(name: string): void {
+    this.setModelReference('compactModel', name)
+  }
+
+  /** @returns whether the name resolved and was stored. */
+  setModelReference(field: ModelReferenceField, name: string): boolean {
+    if (!this.resolveModelReference(name)) return false
+    this.config[field] = name
+    return true
+  }
+
+  /** The configured reference for a field, exactly as stored (aliases included). */
+  getModelReference(field: ModelReferenceField): string | undefined {
+    return this.config[field]
+  }
+
+  /** Every configured model key, in config order. */
+  listModelKeys(): string[] {
+    return Object.keys(this.config.models)
   }
 
   addModel(name: string, model: ModelConfig): void {

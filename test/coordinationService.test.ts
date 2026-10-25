@@ -58,6 +58,7 @@ async function setup(t: TestContext, options: { git?: boolean } = {}) {
       if (!control) lanes.set(sessionId, control = new FakeControl())
       return control
     },
+    closeLane: async (_cwd, sessionId) => { lanes.delete(sessionId) },
     notify: (n) => { notices.push(n) },
     days: () => days,
   }
@@ -77,6 +78,32 @@ async function setup(t: TestContext, options: { git?: boolean } = {}) {
 }
 
 const request = { title: 'Fix the bug', brief: 'Fix it', background: 'b'.repeat(80), writesCode: false }
+
+test('every failed thread start rolls back its session, lane, row and worktree and settles the engine', async (t) => {
+  for (const stage of ['create', 'metadata', 'upsert', 'open', 'send']) {
+    const h = await setup(t, { git: true })
+    const originalCreate = h.sessions.create.bind(h.sessions)
+    const originalMetadata = h.sessions.setCoordination.bind(h.sessions)
+    const originalUpsert = h.store.upsertThread.bind(h.store)
+    const originalOpen = h.port.openLane.bind(h.port)
+    h.sessions.create = async (title) => { if (stage === 'create') throw new Error(stage); return originalCreate(title) }
+    h.sessions.setCoordination = async (id, value) => { await originalMetadata(id, value); if (stage === 'metadata') throw new Error(stage) }
+    h.store.upsertThread = async (row) => { await originalUpsert(row); if (stage === 'upsert') throw new Error(stage) }
+    h.port.openLane = async (cwd, id, options) => {
+      const control = await originalOpen(cwd, id, options)
+      if (stage === 'open') throw new Error(stage)
+      if (stage === 'send') control.enqueueFromCoordinator = async () => { throw new Error(stage) }
+      return control
+    }
+    await assert.rejects(h.service.startThread(h.caller, { ...request, writesCode: true }), new RegExp(stage))
+    assert.deepEqual((await h.sessions.list()).map((session) => session.id), [h.coordinatorId], stage)
+    assert.equal((await h.store.read()).threads.length, 0, stage)
+    assert.equal(h.lanes.size, 0, stage)
+    assert.equal(h.git('branch', '--list', 'hanekawa/*'), '', stage)
+    assert.equal(h.git('worktree', 'list', '--porcelain').match(/^worktree /gm)?.length, 1, stage)
+    assert.deepEqual(h.calls, ['begin', 'end'], stage)
+  }
+})
 
 async function commitIn(dir: string, file: string, content: string): Promise<void> {
   await writeFile(path.join(dir, file), content)

@@ -187,6 +187,8 @@ export class SessionWorkspace {
   private readonly project: ProjectRuntime
   private readonly createFileHistoryService: CreateFileHistoryService | undefined
   private readonly panes = new Set<SessionPane>()
+  private readonly openingBySessionId = new Map<string, Promise<SessionPane>>()
+  private closed = false
 
   constructor(project: ProjectRuntime, options: SessionWorkspaceOptions = {}) {
     this.project = project
@@ -210,9 +212,17 @@ export class SessionWorkspace {
    * one onto the same session, which is exactly what {@link open} refuses.
    */
   adopt(scope: SessionScope, options: { modelKey?: string } = {}): SessionPane {
+    if (this.closed) {
+      scope.dispose()
+      throw new Error('Workspace is closed')
+    }
     const existing = this.paneForSession(scope.session.id)
-    if (existing) return existing
-    return this.register(scope, options)
+    if (existing) {
+      if (existing.scope !== scope) scope.dispose()
+      return existing
+    }
+    try { return this.register(scope, options) }
+    catch (error) { scope.dispose(); throw error }
   }
 
   /**
@@ -223,12 +233,16 @@ export class SessionWorkspace {
    * JSONL and two `FileHistoryService`s snapshotting one worktree. The pane
    * asked for *is* that pane.
    */
-  async open(session: SessionMeta): Promise<SessionPane> {
+  open(session: SessionMeta): Promise<SessionPane> {
+    if (this.closed) return Promise.reject(new Error('Workspace is closed'))
     const existing = this.paneForSession(session.id)
-    if (existing) return existing
-
-    const scope = await this.project.openScope(session)
-    return this.register(scope, {})
+    if (existing) return Promise.resolve(existing)
+    const pending = this.openingBySessionId.get(session.id)
+    if (pending) return pending
+    const opening = Promise.resolve().then(async () => this.adopt(await this.project.openScope(session)))
+      .finally(() => { this.openingBySessionId.delete(session.id) })
+    this.openingBySessionId.set(session.id, opening)
+    return opening
   }
 
   /** Closes one pane. A pane not open here is left alone. */
@@ -238,6 +252,7 @@ export class SessionWorkspace {
   }
 
   closeAll(): void {
+    this.closed = true
     for (const pane of [...this.panes]) pane.close()
   }
 

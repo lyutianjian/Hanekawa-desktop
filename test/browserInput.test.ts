@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
+import { withinBounds } from '../src/desktop/browser/bounds.js'
 import { BrowserHostError } from '../src/desktop/browser/errors.js'
 import { describeKeys } from '../src/desktop/browser/keys.js'
 import {
@@ -338,6 +339,63 @@ test('a cancel is observed at the next boundary, not after the burst', async () 
     (error: unknown) => error instanceof BrowserHostError && error.code === 'OPERATION_ABORTED',
   )
   assert.deepEqual(sent, [], 'no input may be dispatched once the action is cancelled')
+})
+
+test('a page that stops answering ends the action instead of holding the tab', async () => {
+  // What `bounds.ts` hands the input layer when a page hangs on an `alert()` or
+  // a dead loop: a rejection, where before this awaited forever with the lease
+  // still held. The action must settle, release, and press nothing.
+  const { deps, sent } = harness()
+  const log: string[] = []
+  deps.lease = () => {
+    log.push('acquire')
+    return () => log.push('release')
+  }
+  deps.evaluate = () => withinBounds({ timeoutMs: 10 }, 'reading the page', () => new Promise<never>(() => {}))
+
+  await assert.rejects(
+    () => clickTarget(deps, { ref: 'e1' }),
+    (error: unknown) =>
+      error instanceof BrowserHostError && error.code === 'PAGE_NOT_READY' && error.retryable === true,
+  )
+  assert.deepEqual(sent, [], 'a press cannot follow an answer the page never gave')
+  assert.deepEqual(log, ['acquire', 'release'], 'the queue and the CDP lease must not be held by a hung call')
+})
+
+test('a cancelled action acts on nothing the page answers afterwards', async () => {
+  const controller = new AbortController()
+  const { deps, sent } = harness()
+  const log: string[] = []
+  deps.lease = () => {
+    log.push('acquire')
+    return () => log.push('release')
+  }
+  let answer: (value: unknown) => void = () => {}
+  let observed = (): void => {}
+  const asked = new Promise<void>((resolve) => {
+    observed = resolve
+  })
+  deps.evaluate = () =>
+    withinBounds({ signal: controller.signal, timeoutMs: 60_000 }, 'reading the page', () => {
+      return new Promise<unknown>((resolve) => {
+        answer = resolve
+        observed()
+      })
+    })
+
+  const action = clickTarget(deps, { ref: 'e1' })
+  await asked
+  controller.abort()
+  await assert.rejects(
+    action,
+    (error: unknown) => error instanceof BrowserHostError && error.code === 'OPERATION_ABORTED',
+  )
+
+  // The page finally answers, with a target the click would have used.
+  answer({ ok: true, value: { ref: 'e1', role: 'button', name: 'Sign in', x: 120, y: 240, url: '/', title: 'X' } })
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.deepEqual(sent, [], 'no click may ride on an answer that arrived after the cancel')
+  assert.deepEqual(log, ['acquire', 'release'])
 })
 
 test('a cancel that lands mid-press still releases the button', async () => {

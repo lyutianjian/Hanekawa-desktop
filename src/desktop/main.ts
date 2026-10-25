@@ -96,6 +96,13 @@ import { createLaneMux } from '../runtime/protocol/laneChannel.js'
 import type { RuntimeHost } from '../runtime/types.js'
 import { ShellHost } from './shellHost.js'
 import { QuitCoordinator } from './quitCoordinator.js'
+import { explicitCwd, secondLaunchIntent } from './launchArgs.js'
+import {
+  RendererRecovery,
+  RENDERER_RECOVERY_ATTEMPTS,
+  type RendererGoneDetails,
+  type RestorableLane,
+} from './rendererRecovery.js'
 import { StartupPreparation } from './startupPreparation.js'
 import { restoreGuiPath } from './guiPath.js'
 import { BrowserTabHost } from './browser/tabs.js'
@@ -224,6 +231,21 @@ const quit = new QuitCoordinator({
     console.error('[hanekawa] 退出收尾未完成，强制退出：', error)
   },
 })
+/**
+ * The way back from a dead renderer: a crash leaves the window standing with
+ * nothing to draw, so the app asks once, rebuilds the window, and reopens the
+ * lanes whose sessions were written down. Quitting always wins — during
+ * `before-quit` the teardown owns the window.
+ */
+const rendererRecovery = new RendererRecovery({
+  isQuitting: () => quit.isQuitting(),
+  confirm: (details) => confirmRendererGone(details),
+  captureLanes: () => captureRestorableLanes(),
+  rebuild: (lanes) => rebuildWindowAfterCrash(lanes),
+  reportFailure: (error, attempt) => reportRecoveryFailure(error, attempt),
+  quit: () => app.quit(),
+  log: (message) => console.error(message),
+})
 /** Lane keys are minted here so they are monotonic for the process lifetime. */
 let laneCounter = 0
 /**
@@ -303,6 +325,7 @@ const coordination = new CoordinationService(
     },
     laneControl: (sessionId) => shell?.host.laneControlFor(sessionId),
     openLane: (cwd, sessionId, options) => openCoordinationLane(cwd, sessionId, options.activate),
+    closeLane: async (_cwd, sessionId) => { shell?.host.detachLaneBySessionId(sessionId, 'thread-start-failed') },
     notify: (notice) => notifyCoordination(notice),
     days: () => coordinationDays(),
   },
@@ -318,19 +341,29 @@ if (!app.requestSingleInstanceLock()) {
   // `bootstrap()` (MCP connects, store init) on a process that is exiting.
   app.quit()
 } else {
-  app.on('second-instance', (_event, argv, workingDirectory) => {
-    // A second launch is a request for *that* directory's project: open it if it
-    // is new, focus it if it is already here. There is only one window now, so
-    // focusing it is the whole of "bring Hanekawa to the front" — the project
-    // itself gets its newest lane activated through the shell protocol. The
-    // launch directory is explicit intent here, unlike a first launch's bare
-    // `process.cwd()`.
-    if (shell && !shell.window.isDestroyed()) focusWindow(shell.window)
-    void openProjectInteractive(explicitCwd(argv) ?? workingDirectory)
+  app.on('second-instance', (_event, argv) => {
+    // Only `--cwd=` is intent — `launchArgs.ts` explains why the event's own
+    // working directory is not, and is where the decision is tested. With a
+    // window, a plain second launch is "come to the front"; without one it is
+    // the same request as a Dock click, because the process has to build a
+    // window before it can show anything at all.
+    const intent = secondLaunchIntent(argv, { hasWindow: liveWindow() !== undefined })
+    if (intent.kind === 'open') {
+      const window = liveWindow()
+      if (window) focusWindow(window)
+      void openProjectInteractive(intent.cwd)
+      return
+    }
+    if (intent.kind === 'focus') {
+      const window = liveWindow()
+      if (window) focusWindow(window)
+      return
+    }
+    reopenWindow()
   })
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
+    if (process.platform !== 'darwin' && !rendererRecovery.isRecovering()) {
       app.quit()
     }
   })
@@ -390,24 +423,183 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 /**
- * A window for a process that has none — the Dock icon clicked, or a menu item
- * chosen, after the last window closed (macOS keeps running). Projects did not
- * survive the window (their last lane died with it), so this reopens whichever
- * entry is left and, when nothing is, the registry's answer: the same
- * resolution a fresh launch would make.
+ * A window for a process that has none — the Dock icon clicked, a second
+ * launch, or a menu item chosen, after the last window closed (macOS keeps
+ * running). Projects did not survive the window (their last lane died with it),
+ * so this reopens whichever entry is left and, when nothing is, the registry's
+ * answer: the same resolution a fresh launch would make.
+ *
+ * One at a time, and one catch-all. A Dock click is cheap enough to make twice,
+ * and two runs used to race: the second found `directory` still holding the
+ * first's project — a project that is closing is not a window — and returned
+ * without building anything, so the click appeared to do nothing. The second
+ * request now waits for the first and then focuses what it built.
  */
+let reopening: Promise<void> | undefined
+
 function reopenWindow(): void {
-  const first = directory.entries()[0]
-  if (first) {
-    void openProject(first.cwd)
-  } else {
-    void resolveStartupRoot().then((resolution) => openProject(resolution.root))
+  if (reopening !== undefined) {
+    void reopening.then(() => {
+      const window = liveWindow()
+      if (window) focusWindow(window)
+    })
+    return
   }
+  reopening = reopenWindowOnce().finally(() => {
+    reopening = undefined
+  })
+  void reopening
+}
+
+async function reopenWindowOnce(): Promise<void> {
+  try {
+    const built = await ensureShell()
+    if (built.host.laneKeys().length > 0) {
+      const window = liveWindow()
+      if (window) focusWindow(window)
+      return
+    }
+    const first = directory.entries()[0]
+    if (first === undefined) {
+      await openProject((await resolveStartupRoot()).root)
+    } else {
+      // An entry outlives its window by the length of a `shutdown()`, so
+      // "the registry has this project" is not "there is a window showing it".
+      // Waiting the close out is what makes the reopen bootstrap a fresh one.
+      await directory.whenClosed(first.cwd)
+      await openProject(first.cwd)
+    }
+    await ensureVisibleLane(built)
+  } catch (error) {
+    dialog.showErrorBox(
+      '无法打开窗口',
+      error instanceof Error ? (error.stack ?? error.message) : String(error),
+    )
+  }
+}
+
+/**
+ * The last step of a reopen: a window with no lane paints an empty canvas, and
+ * `openProject` can legitimately end that way (another request is bootstrapping
+ * the same root and owns its first pane, so this caller has nothing to open).
+ * A draft lane is the single-window equivalent of the empty window the click
+ * asked for.
+ */
+async function ensureVisibleLane(built: Shell): Promise<void> {
+  if (built.host.laneKeys().length > 0) return
+  const entry = directory.entries()[0]
+  if (entry === undefined) return
+  await built.host.openLane(entry, {})
 }
 
 /** The window, while there is one to parent a dialog or receive an event. */
 function liveWindow(): BrowserWindow | undefined {
   return shell && !shell.window.isDestroyed() ? shell.window : undefined
+}
+
+/**
+ * Asks whether to rebuild after the renderer died.
+ *
+ * Unparented on purpose: the only window there is has a dead renderer, and a
+ * sheet attached to it would be the one dialog nobody can see.
+ */
+async function confirmRendererGone(details: RendererGoneDetails): Promise<boolean> {
+  const { response } = await dialog.showMessageBox({
+    type: 'error',
+    title: '窗口已停止运行',
+    message: '界面进程意外退出，窗口已经无法绘制。',
+    detail:
+      `原因：${details.reason}（退出码 ${details.exitCode}）\n\n`
+      + '已保存的会话仍在磁盘上，恢复后会重新打开；正在进行的回复无法恢复。',
+    buttons: ['恢复窗口', '退出 Hanekawa'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  })
+  return response === 0
+}
+
+/** A, or the second, failed rebuild: retry or leave. */
+async function reportRecoveryFailure(error: unknown, attempt: number): Promise<'retry' | 'quit'> {
+  const { response } = await dialog.showMessageBox({
+    type: 'error',
+    title: '无法恢复窗口',
+    message: '重新创建窗口失败。',
+    detail:
+      (error instanceof Error ? error.message : String(error))
+      + (attempt >= RENDERER_RECOVERY_ATTEMPTS ? '\n\n再次失败将退出 Hanekawa。' : ''),
+    buttons: ['重试', '退出 Hanekawa'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  })
+  return response === 0 ? 'retry' : 'quit'
+}
+
+/**
+ * The lanes worth reopening, read while the dead window still knows them.
+ *
+ * Only sessions the store can resolve appear: a lane on an in-memory draft has
+ * no record to reopen, and restoring it would mean minting an empty session
+ * under a new id — a transcript that looks like the user's, with none of it.
+ */
+async function captureRestorableLanes(): Promise<readonly RestorableLane[]> {
+  const built = shell
+  if (!built || built.window.isDestroyed()) return []
+  const lanes = built.host.describeLanes()
+  const restorable: RestorableLane[] = []
+  for (const entry of directory.entries()) {
+    for (const lane of lanes) {
+      if (lane.projectRoot !== entry.root) continue
+      if ((await entry.project.store.resolve(lane.sessionId)) === undefined) continue
+      restorable.push({
+        cwd: entry.cwd,
+        sessionId: lane.sessionId,
+        coordination: lane.coordinationRole !== undefined,
+      })
+    }
+  }
+  return restorable
+}
+
+/**
+ * Destroys what is left of the dead window and builds a new one over the same
+ * projects.
+ *
+ * The destroy is the point: `closed` is where every lane is detached (their
+ * blocking requests settled, their tabs closed) and every project told it lost
+ * its UI, and it is the one path the app already trusts for "the window is
+ * gone". Waiting for `shell` to clear is waiting for that handler.
+ */
+async function rebuildWindowAfterCrash(lanes: readonly RestorableLane[]): Promise<void> {
+  if (quit.isQuitting()) return
+  const dead = shell
+  if (dead && !dead.window.isDestroyed()) dead.window.destroy()
+  await waitForShellToGo()
+  if (quit.isQuitting()) return
+  await ensureShell()
+  for (const [index, lane] of lanes.entries()) {
+    if (quit.isQuitting()) return
+    const activate = index === lanes.length - 1
+    // Coordination lanes go through their own door: the role rules that decide
+    // whether a coordinator or thread session may open are not bypassed by a
+    // recovery.
+    if (lane.coordination) {
+      await openCoordinationLane(lane.cwd, lane.sessionId, activate)
+      continue
+    }
+    const { entry } = await ensureProject(lane.cwd, { sessionId: lane.sessionId })
+    const rebuilt = await ensureShell()
+    await rebuilt.host.openLane(entry, { sessionId: lane.sessionId, activate })
+  }
+}
+
+/** `window.destroy()` emits `closed` synchronously, but not on every platform — so wait. */
+async function waitForShellToGo(): Promise<void> {
+  for (let attempt = 0; attempt < 100 && shell !== undefined; attempt++) {
+    await new Promise((resolve) => setImmediate(resolve))
+  }
+  if (shell !== undefined) throw new Error('旧窗口没有关闭，无法重建窗口。')
 }
 
 /**
@@ -669,6 +861,13 @@ async function ensureShell(): Promise<Shell> {
   })
 
   guardNavigation(window)
+
+  // A crashed renderer leaves this window standing with a dead document:
+  // `closed` never fires, so no other path in the app would notice. The
+  // recovery asks, rebuilds, and reopens what was written down.
+  window.webContents.on('render-process-gone', (_event, details) => {
+    void rendererRecovery.handle({ reason: details.reason, exitCode: details.exitCode })
+  })
 
   // `guardNavigation` locks *this* window's one document down — it denies every
   // in-window navigation, because the app shell only ever loads its own file.
@@ -1118,21 +1317,6 @@ async function promptTrustMcpServer(
   const parent = liveWindow()
   const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
   return response === 0
-}
-
-/**
- * The `--cwd=` flag, when it names a directory that exists.
- *
- * Explicit only: the launch's own working directory is deliberately *not* a
- * candidate anywhere else — a shortcut whose working directory is the install
- * folder, or a terminal sitting anywhere else, is not a statement about which
- * project to open.
- */
-function explicitCwd(argv: readonly string[] = process.argv): string | undefined {
-  const flag = argv.find((arg) => arg.startsWith('--cwd='))
-  if (!flag) return undefined
-  const value = flag.slice('--cwd='.length)
-  return existsSync(value) ? value : undefined
 }
 
 /**

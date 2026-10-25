@@ -1,10 +1,20 @@
 import { readFile, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import type { ChatMessage, ModelContextItem, SessionRecord, Tool, ToolContext } from './types.js'
+import type { ChatMessage, ModelContextItem, ModelRequest, SessionRecord, Tool, ToolContext } from './types.js'
+import type { ImageTokenStrategy } from '../media/imageTokens.js'
 import type { PermissionMode } from './permissions.js'
 import { PromptComposer } from '../prompts/composer.js'
-import { countTextTokens, type ContextManagementConfig, type ContextSelectionPlan } from '../prompts/budget.js'
+import {
+  countTextTokens,
+  countContextItemTokens,
+  requestOverhead,
+  type ContextManagementConfig,
+  type ContextSelectionPlan,
+  type RequestOverhead,
+  type ToolSchemaCost,
+} from '../prompts/budget.js'
+import { getCachedToolSchema } from './toolApiSchema.js'
 import { compactBoundaryToMessage } from './compact.js'
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from './cacheControl.js'
 import { SystemPromptSectionCache } from './sections.js'
@@ -20,6 +30,8 @@ const picomatch = require('picomatch') as {
 export const INSTRUCTIONS_MESSAGE_ID = 'meta:instructions'
 
 export interface BuildContextInput {
+  inheritedRequest?: ModelRequest
+  imageTokenStrategy?: ImageTokenStrategy
   preloadRecords?: SessionRecord[]
   records: SessionRecord[]
   tools: Tool[]
@@ -57,12 +69,20 @@ export interface EnvironmentInfo {
 }
 
 export interface BuiltContext {
+  /** Full request estimate before any history is trimmed. */
+  inputTokens: number
   system?: string
   systemBlocks?: string[]
   messages: ChatMessage[]
   contextItems: ModelContextItem[]
   /** What the budget kept and what it could not make fit. */
   selection: ContextSelectionPlan
+  /**
+   * The fixed cost this build measured: composed system, the instruction block
+   * counted into it, the declared tool schemas, and any inherited prefix. The compaction check reads
+   * the same number so the two never disagree about what history may spend.
+   */
+  overhead: RequestOverhead
 }
 
 export type SectionKey =
@@ -184,6 +204,20 @@ function getOutputEfficiencySection(sections: SystemPromptSectionCache): string 
   return systemPromptSection(sections, 'output-efficiency', () => OUTPUT_EFFICIENCY_SECTION)
 }
 
+/**
+ * The declared tools as the provider receives them, so their cost is measured
+ * from the same schema bytes the payload carries rather than a re-derivation.
+ */
+function toolSchemaCosts(tools: readonly Tool[] | undefined): ToolSchemaCost[] | undefined {
+  if (!tools?.length) return undefined
+  return tools.map((tool) => {
+    const schema = getCachedToolSchema(tool)
+    // Spelled out rather than passed through: the API schema arrives with
+    // snake_case keys, and an unmapped `input_schema` would be costed as `{}`.
+    return { name: schema.name, description: schema.description, inputSchema: schema.input_schema }
+  })
+}
+
 export class ContextBuilder {
   private skillsSystemSectionFingerprint: string | undefined
 
@@ -199,7 +233,8 @@ export class ContextBuilder {
   }
 
   async build(input: BuildContextInput): Promise<BuiltContext> {
-    const systemBlocks = this.buildSystemBlocks(
+    const inherited = input.inheritedRequest
+    const systemBlocks = inherited?.systemBlocks ?? (inherited ? [inherited.system ?? ''] : this.buildSystemBlocks(
       input.system,
       input.memoryPrompt,
       input.criticalSystemReminder,
@@ -209,11 +244,16 @@ export class ContextBuilder {
       input.env,
       input.dynamicToolSearchEnabled ?? false,
       input.rolePrompt,
-    )
+    ))
     const system = systemBlocks
       .filter((b) => b !== SYSTEM_PROMPT_DYNAMIC_BOUNDARY)
       .join('\n\n')
     const activeSkills = matchFileSkills(input.skills ?? [], input.toolContext)
+    const ownContextItems = this.recordsToContextItems(input.records)
+    const latestUserId = [...input.records].reverse().find((record) => record.type === 'message' && record.role === 'user')?.id
+    for (const item of ownContextItems) {
+      if (item.kind === 'message' && item.message.id === latestUserId) item.pinned = true
+    }
     // Everything that can change between turns lives *after* the history
     // (spec §6.2). The date rolls over, a fileMatch skill activates from a
     // file the loop just read, the user cycles the permission mode — in front
@@ -222,7 +262,7 @@ export class ContextBuilder {
     // append, which costs nothing.
     const allContextItems = [
       ...this.recordsToContextItems(input.preloadRecords ?? []),
-      ...this.recordsToContextItems(input.records),
+      ...ownContextItems,
       ...(input.includeUserContext === false ? [] : this.buildUserContext(input.now ?? new Date(), activeSkills)),
       ...this.buildTransientUserContext(
         [permissionModeReminder(input.permissionMode), ...(input.transientUserContext ?? [])],
@@ -235,19 +275,34 @@ export class ContextBuilder {
     // Prepended after the budget cut, which trims from the front, and counted
     // into it alongside the system prompt. Not transient: it holds index 0 for
     // the whole session, so it is part of the cached prefix a fork inherits.
-    const instructions = this.buildInstructionsContext(input.projectContext, input.memoryIndex, input.now ?? new Date())
+    const instructions = inherited ? undefined : this.buildInstructionsContext(input.projectContext, input.memoryIndex, input.now ?? new Date())
+    // Instruction files are prepended after the cut, so they are counted through
+    // the system string and never trimmed away; the tool schemas are declared
+    // beside the system in every payload and hold the same kind of budget.
+    const countedSystem = instructions ? `${system}\n\n${instructions.message.content}` : system
+    const inheritedTools = inherited?.tools ?? []
+    const inheritedNames = new Set(inheritedTools.map((tool) => tool.name))
+    const toolSchemas = toolSchemaCosts([...inheritedTools, ...input.tools.filter((tool) => !inheritedNames.has(tool.name))])
+    const inheritedItems = inherited?.contextItems ?? inherited?.messages.map((message) => ({ kind: 'message', message }) satisfies ModelContextItem) ?? []
+    const prefixTokens = inheritedItems.reduce((sum, item) => sum + countContextItemTokens(item, input.imageTokenStrategy), 0)
+    const overhead = requestOverhead({ system: countedSystem, tools: toolSchemas, prefixTokens })
     const built = this.composer.composeContextItems(allContextItems, {
-      system: instructions ? `${system}\n\n${instructions.message.content}` : system,
+      system: countedSystem,
       contextManagement: input.contextManagement ?? this.defaultContextManagement,
       includeHistory: true,
+      tools: toolSchemas,
+      imageTokenStrategy: input.imageTokenStrategy,
+      prefixTokens,
     })
 
     return {
+      inputTokens: overhead.total + allContextItems.reduce((sum, item) => sum + countContextItemTokens(item, input.imageTokenStrategy), 0),
       system,
       systemBlocks,
       messages: instructions ? [instructions.message, ...built.messages] : built.messages,
       contextItems: instructions ? [instructions, ...built.contextItems] : built.contextItems,
       selection: built.selection,
+      overhead,
     }
   }
 
@@ -349,6 +404,7 @@ export class ContextBuilder {
             model: record.model,
             ...(record.reasoningContent ? { reasoningContent: record.reasoningContent } : {}),
             ...(record.thinkingBlocks ? { thinkingBlocks: record.thinkingBlocks } : {}),
+            ...(record.thinkingSource ? { thinkingSource: record.thinkingSource } : {}),
             ...(record.reasoningDetails ? { reasoningDetails: record.reasoningDetails } : {}),
             ...(record.responseItems ? { responseItems: record.responseItems } : {}),
             ...(record.images ? { images: record.images } : {}),

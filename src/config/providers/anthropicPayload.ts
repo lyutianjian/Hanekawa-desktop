@@ -1,6 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk'
 import type { ImageAttachmentRef } from '../../media/types.js'
-import type { ModelContextItem, ModelRequest, RequestImageBytes, Tool } from '../../harness/types.js'
+import type { ChatMessage, ModelContextItem, ModelRequest, RequestImageBytes, ThinkingBlock, Tool } from '../../harness/types.js'
 import { getCachedToolSchema } from '../../harness/toolApiSchema.js'
 import {
   addCacheBreakpoints,
@@ -101,6 +101,30 @@ function anthropicSystemWithCache(request: ModelRequest, enableCaching: boolean)
   return blocks.filter((b) => b.text.length > 0)
 }
 
+/**
+ * The opaque replay blocks this request may carry, and nothing else.
+ *
+ * A thinking signature is bound to the model that produced it: replaying one to
+ * a different model or endpoint may be rejected. Both model and the provider's
+ * opaque source identity must match; a model alias alone cannot prove origin.
+ * Missing provenance is not evidence — an unknown source is treated like a
+ * different one and the blocks are dropped.
+ *
+ * Deliberately narrow: only the opaque blocks go. Assistant text and the
+ * tool_use / tool_result pairing stay, so a stripped history remains valid, and
+ * while the model has not moved the payload is byte-identical to before — the
+ * cached prefix survives. `requestPrep`'s strip-on-model-change runs earlier as
+ * the front-line protection; this is the last boundary, for the paths that build
+ * a request without going through it (resume, fork, a manual model switch).
+ */
+function eligibleThinkingBlocks(message: ChatMessage, request: ModelRequest): ThinkingBlock[] {
+  const blocks = message.thinkingBlocks
+  if (!blocks || blocks.length === 0) return []
+  if (!message.model || message.model !== request.model) return []
+  if (!message.thinkingSource || !request.thinkingSource || message.thinkingSource !== request.thinkingSource) return []
+  return blocks
+}
+
 export function buildAnthropicMessages(request: ModelRequest) {
   const contextItems = request.contextItems ?? request.messages.map((message) => ({ kind: 'message', message }) satisfies ModelContextItem)
   const messages: Array<Record<string, unknown>> = []
@@ -121,8 +145,11 @@ export function buildAnthropicMessages(request: ModelRequest) {
         ...anthropicImageBlocks(item.message.images, request.imageBytes),
       ]
 
-      if (item.message.role === 'assistant' && item.message.thinkingBlocks && item.message.thinkingBlocks.length > 0) {
-        const thinkingBlocks = item.message.thinkingBlocks.map((block) => {
+      const replayableThinkingBlocks = item.message.role === 'assistant'
+        ? eligibleThinkingBlocks(item.message, request)
+        : []
+      if (replayableThinkingBlocks.length > 0) {
+        const thinkingBlocks = replayableThinkingBlocks.map((block) => {
           if (block.type === 'redacted_thinking') {
             return { type: 'redacted_thinking', data: block.data }
           }

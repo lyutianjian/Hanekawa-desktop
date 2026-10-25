@@ -24,6 +24,26 @@ function tmpDir(): Promise<string> {
   return mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-routing-'))
 }
 
+test('general routing reaches built-in types while explicit inherit survives save and reload', async () => {
+  const dir = await tmpDir()
+  try {
+    await writeConfig(dir, {
+      models: { main: { provider: 'openai', model: 'main' }, small: { provider: 'openai', model: 'small' } },
+      defaultModel: 'main', routing: { subagent: { general: 'small', plan: 'inherit' } },
+    })
+    const service = new ConfigService(dir)
+    await service.load()
+    for (let i = 0; i < 3; i++) {
+      for (const type of ['fork', 'explore', 'custom']) {
+        assert.equal(service.resolveModelKeyFor({ kind: 'subagent', type }, { currentModelKey: 'main' }), 'small')
+      }
+      assert.equal(service.resolveModelKeyFor({ kind: 'subagent', type: 'plan' }, { currentModelKey: 'main' }), 'main')
+      await service.save()
+      await service.load()
+    }
+  } finally { await rm(dir, { recursive: true, force: true }) }
+})
+
 /**
  * Seeds the config a service opened at `_dir` will read — which is the *home*
  * file, whatever the project directory is. The parameter is kept so each case
@@ -45,9 +65,9 @@ test('mergeRouting: every role inherits by default', () => {
   assert.equal(merged.main, 'inherit')
   assert.equal(merged.plan, 'inherit')
   assert.equal(merged.compact, 'inherit')
-  assert.equal(merged.subagent?.fork, 'inherit')
-  assert.equal(merged.subagent?.explore, 'inherit')
-  assert.equal(merged.subagent?.plan, 'inherit')
+  assert.equal(merged.subagent?.fork, undefined)
+  assert.equal(merged.subagent?.explore, undefined)
+  assert.equal(merged.subagent?.plan, undefined)
 })
 
 test('mergeRouting: deep-merges subagent overrides', () => {
@@ -58,7 +78,7 @@ test('mergeRouting: deep-merges subagent overrides', () => {
   assert.equal(merged.main, 'small')
   assert.equal(merged.subagent?.explore, 'big')
   // Untouched defaults preserved.
-  assert.equal(merged.subagent?.fork, 'inherit')
+  assert.equal(merged.subagent?.fork, undefined)
 })
 
 test('pickRoutedModel: subagent type override beats general fallback', () => {
@@ -529,7 +549,7 @@ test('ConfigService write-back: setRouting persists deep-merged routing', async 
     assert.equal(after.main, 'y')
     assert.equal(after.subagent?.explore, 'y')
     // Untouched defaults preserved through reload.
-    assert.equal(after.subagent?.fork, 'inherit')
+    assert.equal(after.subagent?.fork, undefined)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

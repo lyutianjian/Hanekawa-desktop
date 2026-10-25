@@ -28,6 +28,7 @@
     "test/rendererDismiss.test.ts",
     "test/rendererMarkdownView.test.ts",
     "test/rendererOverlayView.test.ts",
+    "test/rendererPaneDispose.test.ts",
     "test/rendererPresenceView.test.ts",
     "test/rendererSettingsView.test.ts",
     "test/rendererSidebarView.test.ts",

@@ -7,7 +7,7 @@ import { collectCacheControlTelemetry } from '../src/config/providers/cacheContr
 import { resetCacheBreakDetection } from '../src/harness/cacheBreakDetection.js'
 import { resetCacheTTLEvaluation } from '../src/harness/cacheControl.js'
 import { TurnImageBlockError } from '../src/harness/turnImages.js'
-import type { ModelContextItem, ModelRequest, RequestImageBytes, ToolResultBlockParam } from '../src/harness/types.js'
+import type { ChatMessage, ModelContextItem, ModelRequest, RequestImageBytes, ToolResultBlockParam } from '../src/harness/types.js'
 import type { ImageAttachmentRef, ImageMimeType } from '../src/media/types.js'
 
 const cacheEnvironment = new Map(
@@ -481,6 +481,55 @@ test('Anthropic provider preserves final thinking blocks in the model response',
     thinking: 'private reasoning',
     signature: 'sig-1',
   }])
+  assert.match(response.thinkingSource ?? '', /^[a-f0-9]{64}$/)
+})
+
+test('a resumed or forked same-name model replays thinking only through its original endpoint', async () => {
+  const signed = { type: 'thinking', thinking: 'private reasoning', signature: 'source-signature' }
+  const redacted = { type: 'redacted_thinking', data: 'source-redacted' }
+  const create = (baseUrl: string, apiKey = 'test-key') => {
+    const payloads: Record<string, unknown>[] = []
+    const provider = new AnthropicProvider({ provider: 'anthropic', model: 'claude-sonnet', apiKey, baseUrl })
+    ;(provider as unknown as { client: { messages: { stream: (payload: Record<string, unknown>) => FakeAnthropicStream } } }).client = {
+      messages: { stream: (payload) => {
+        payloads.push(payload)
+        const stream = new FakeAnthropicStream()
+        stream.finishWithContent([signed, redacted, { type: 'text', text: 'answer' }])
+        return stream
+      } },
+    }
+    return { provider, payloads }
+  }
+  const original = create('https://source-a.example')
+  const response = await original.provider.createMessage(cacheRequest())
+  const history: ChatMessage = JSON.parse(JSON.stringify({
+    id: 'from-a', role: 'assistant', content: response.content, model: 'claude-sonnet', createdAt: 'now',
+    thinkingBlocks: response.thinkingBlocks, thinkingSource: response.thinkingSource,
+  }))
+  assert.doesNotMatch(JSON.stringify(history), /test-key|https:/, 'source metadata does not persist keys or URLs')
+  for (const [baseUrl, model, keep] of [
+    ['https://source-a.example/', 'claude-sonnet', true],
+    ['https://source-b.example', 'claude-sonnet', false],
+    ['https://source-a.example', 'different-model', false],
+  ] as const) {
+    const { provider, payloads } = create(baseUrl, 'rotated-key')
+    await provider.createMessage(cacheRequest({
+      model, messages: [history],
+      thinkingSource: response.thinkingSource,
+      contextItems: [
+        { kind: 'message', message: history },
+        { kind: 'tool_use', id: 'call', tool: 'Read', input: { filePath: 'file.txt' } },
+        { kind: 'tool_result', toolUseId: 'call', tool: 'Read', content: 'file body', ok: true },
+      ],
+    }))
+    const messages = payloads[0]!.messages as Array<{ role: string; content: Array<Record<string, unknown>> }>
+    const blocks = messages.flatMap((message) => message.content)
+    assert.deepEqual(blocks.filter((block) => block.type === 'thinking' || block.type === 'redacted_thinking'), keep ? [signed, redacted] : [])
+    assert.ok(blocks.some((block) => block.type === 'text' && block.text === 'answer'))
+    assert.ok(blocks.some((block) => block.type === 'tool_use' && block.id === 'call'))
+    assert.ok(blocks.some((block) => block.type === 'tool_result' && block.tool_use_id === 'call'))
+  }
+  assert.deepEqual(history.thinkingBlocks, [signed, redacted], 'changing the request never rewrites history')
 })
 
 function cacheRequest(overrides: Partial<ModelRequest> = {}): ModelRequest {

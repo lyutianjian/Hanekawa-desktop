@@ -259,3 +259,54 @@ test('an element state needs a selector and no text', async () => {
   )
   assert.equal(polls(), 0)
 })
+
+test('a page that never answers a poll ends the wait on the wait\'s own deadline', async () => {
+  let asked = 0
+  const deps: WaitDeps = {
+    timeoutMs: 20,
+    evaluate: () => {
+      asked += 1
+      return new Promise<unknown>(() => {})
+    },
+    generation: () => 1,
+    check: () => undefined,
+  }
+
+  await assert.rejects(
+    () => waitForCondition(deps, condition),
+    (error: unknown) =>
+      error instanceof BrowserHostError &&
+      error.code === 'WAIT_TIMEOUT' &&
+      /not met within 20ms\. Last seen: The page did not answer/.test(error.message),
+  )
+  // Each poll is bounded by what is left of the wait, so the loop gets at most a
+  // second, shorter one before its deadline lands; what it must never do is ask again
+  // once the wait it was given is over.
+  assert.ok(asked <= 2, `a stuck poll must not be retried past the wait's deadline (asked ${asked})`)
+})
+
+test('a cancel during a hung poll ends the wait instead of waiting out its timeout', async () => {
+  const controller = new AbortController()
+  let started = (): void => {}
+  const asked = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  const deps: WaitDeps = {
+    timeoutMs: 60_000,
+    signal: controller.signal,
+    evaluate: () => {
+      started()
+      return new Promise<unknown>(() => {})
+    },
+    generation: () => 1,
+    check: () => undefined,
+  }
+
+  const waiting = waitForCondition(deps, condition)
+  await asked
+  controller.abort()
+  await assert.rejects(
+    waiting,
+    (error: unknown) => error instanceof BrowserHostError && error.code === 'OPERATION_ABORTED',
+  )
+})

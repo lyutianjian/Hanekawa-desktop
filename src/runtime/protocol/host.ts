@@ -53,7 +53,7 @@ import { buildStartupNotices, resolveInitialQueuedPrompt, type StartupNotice } f
 import type { AgentSession, ProjectRuntime, SessionScope } from '../types.js'
 import type { SessionPane } from '../sessionWorkspace.js'
 import type { RuntimeChannel } from './channel.js'
-import type { CoordinationLaneControl } from './coordinationHost.js'
+import type { CoordinationLaneControl, WakeDiscardReason } from './coordinationHost.js'
 import { sessionSwitchBlocked } from '../sessionRole.js'
 import { createHostCommandContext } from './commandContext.js'
 import { parseHostCommand, type HostCommandParseFailure } from './commandSchema.js'
@@ -366,7 +366,7 @@ export class SessionHost implements CoordinationLaneControl {
   private queueBlock: { messageId: string; session: AgentSession | undefined } | undefined
   private pendingConfigScope: ProviderConfigChangeScope | undefined
   /** A wake turn's text, waiting for the pump to let it through. See `requestWake`. */
-  private pendingWake: string | undefined
+  private pendingWake: Array<{ text: string; onDiscard?: (reason: WakeDiscardReason) => void }> = []
   private readonly stateListeners = new Set<() => void>()
   /** The last lane state announced, so listeners fire on change only. */
   private lastStateKey = ''
@@ -423,6 +423,7 @@ export class SessionHost implements CoordinationLaneControl {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.discardPendingWake('detached')
     if (this.taskPostTimer !== undefined) {
       clearTimeout(this.taskPostTimer)
       this.taskPostTimer = undefined
@@ -698,15 +699,18 @@ export class SessionHost implements CoordinationLaneControl {
     // Queued messages go first (`canWakeForNotifications` needs an empty queue);
     // a coordinator wake goes before background notes and takes any that are
     // waiting, so the two never start back-to-back turns.
-    if (this.pendingWake !== undefined && canWakeForNotifications(state, true)) {
+    if (this.pendingWake.length > 0 && canWakeForNotifications(state, true)) {
       const notes = tasks.hasParentNotifications(this.session.id)
         ? tasks.consumeParentNotifications(this.session.id)
         : []
-      const text = [this.pendingWake, ...notes].join('\n\n')
-      this.pendingWake = undefined
+      const wakes = this.pendingWake.splice(0)
+      const text = [...wakes.map((wake) => wake.text), ...notes].join('\n\n')
       this.pumping = true
       void this.controller.submit({ text }, { origin: 'wake' })
-        .catch((error: unknown) => this.postQueueNotice(`Failed to start a wake turn: ${error instanceof Error ? error.message : String(error)}`))
+        .catch((error: unknown) => {
+          for (const wake of wakes) wake.onDiscard?.('failed')
+          this.postQueueNotice(`Failed to start a wake turn: ${error instanceof Error ? error.message : String(error)}`)
+        })
         .finally(() => {
           this.pumping = false
           this.pumpQueue()
@@ -892,6 +896,7 @@ export class SessionHost implements CoordinationLaneControl {
       }
 
       case 'interrupt':
+        this.discardPendingWake('stopped')
         this.controller.interrupt(command.reason)
         return null
 
@@ -1353,9 +1358,14 @@ export class SessionHost implements CoordinationLaneControl {
   }
 
   /** Not gated on `hello`: a lane opened without a window still wakes. */
-  requestWake(text: string): void {
-    this.pendingWake = this.pendingWake === undefined ? text : `${this.pendingWake}\n\n${text}`
+  requestWake(text: string, onDiscard?: (reason: WakeDiscardReason) => void): void {
+    if (this.disposed) { onDiscard?.('detached'); return }
+    this.pendingWake.push({ text, ...(onDiscard ? { onDiscard } : {}) })
     this.pumpQueue()
+  }
+
+  private discardPendingWake(reason: WakeDiscardReason): void {
+    for (const wake of this.pendingWake.splice(0)) wake.onDiscard?.(reason)
   }
 
   /**
@@ -1364,7 +1374,7 @@ export class SessionHost implements CoordinationLaneControl {
    */
   async stop(): Promise<void> {
     const ids = this.messages.getSnapshot().map((message) => message.id)
-    this.pendingWake = undefined
+    this.discardPendingWake('stopped')
     await this.messages.discard(ids)
     this.controller.interrupt('coordinator-stop')
   }

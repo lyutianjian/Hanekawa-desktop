@@ -1,15 +1,20 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  CONTEXT_SAFETY_BUFFER_TOKENS,
   countMessageTokens,
   countMessagesTokens,
   countSessionRecordTokens,
+  countTextTokens,
+  countToolSchemasTokens,
   getAutoCompactThreshold,
+  getAvailableTokensForOverhead,
   getContextWindowForModel,
   getEffectiveContextWindowSize,
   getManualCompactThreshold,
   getMicroCompactThreshold,
   planContextItems,
+  requestOverhead,
   selectContextItemsForContext,
   selectMessagesForContext,
 } from '../src/prompts/budget.js'
@@ -146,6 +151,68 @@ test('a plan names what it dropped, by record id', () => {
   assert.ok(!plan.trimmed.ids.some((id) => id.endsWith('new-user')))
   // A tool pair goes together, so the drop names both halves, never a dangling use.
   if (plan.trimmed.ids.includes('tool_use:call-9')) assert.ok(plan.trimmed.ids.includes('tool_result:call-9'))
+})
+
+test('a request\'s tool schemas come out of the window its history may use', () => {
+  const config = { contextWindow: 10_000, summaryOutputTokens: 0 }
+  const tools = [
+    { name: 'Read', description: 'Read a file from disk', inputSchema: { type: 'object', properties: { filePath: { type: 'string' } } } },
+    { name: 'Bash', description: 'Run a shell command', inputSchema: { type: 'object', properties: { command: { type: 'string' } } } },
+  ]
+  const bare = requestOverhead({})
+  assert.deepEqual(bare, { systemTokens: 0, toolSchemaTokens: 0, total: 0 })
+
+  const withTools = requestOverhead({ tools })
+  assert.equal(withTools.systemTokens, 0)
+  assert.equal(withTools.toolSchemaTokens, countToolSchemasTokens(tools))
+  assert.ok(withTools.toolSchemaTokens > 0)
+
+  // Same window, same history: only the declared schemas differ, and they are
+  // money the history cannot spend.
+  assert.equal(getAvailableTokensForOverhead(config, 0), 10_000 - CONTEXT_SAFETY_BUFFER_TOKENS)
+  assert.equal(
+    getAvailableTokensForOverhead(config, withTools.total),
+    getAvailableTokensForOverhead(config, 0) - withTools.toolSchemaTokens,
+  )
+})
+
+test('the fixed cost of a request is system prompt plus tool schemas, measured once', () => {
+  const system = '# System\n' + 'Be careful. '.repeat(100)
+  const tools = [{ name: 'Read', description: 'Read a file', inputSchema: { type: 'object' } }]
+  const measured = requestOverhead({ system, tools })
+  assert.equal(measured.systemTokens, countTextTokens(system))
+  assert.equal(measured.total, measured.systemTokens + measured.toolSchemaTokens)
+  // Two measurements of one request agree: the prefix the model caches is the
+  // same request, so nothing here may vary between calls.
+  assert.deepEqual(requestOverhead({ system, tools }), measured)
+})
+
+test('selecting history subtracts the tool schemas the request will carry', () => {
+  const config = { contextWindow: 3_500, summaryOutputTokens: 0 }
+  const messages: ChatMessage[] = [
+    { id: 'long', role: 'user', content: 'old '.repeat(1_700), createdAt: new Date().toISOString() },
+  ]
+  // ~600 tokens of schema: the window fits the message without them, and no
+  // longer does once they are paid for.
+  const tools = [{ name: 'Read', description: 'd'.repeat(1_800), inputSchema: { type: 'object' } }]
+
+  assert.deepEqual(selectMessagesForContext(messages, config).map((message) => message.id), ['long'])
+  assert.deepEqual(selectMessagesForContext(messages, config, undefined, tools), [])
+})
+
+test('planning context items counts the system prompt the request carries', () => {
+  const now = new Date().toISOString()
+  const items: ModelContextItem[] = [
+    { kind: 'message', message: { id: 'old', role: 'user', content: 'old '.repeat(600), createdAt: now } },
+    { kind: 'message', message: { id: 'new', role: 'user', content: 'now', createdAt: now } },
+  ]
+  const config = { contextWindow: 4_000, summaryOutputTokens: 0 }
+
+  assert.deepEqual(planContextItems(items, config).trimmed.ids, [])
+  // A system prompt large enough to pay for the old message keeps it out, even
+  // though the records themselves are unchanged.
+  const plan = planContextItems(items, config, '# System\n' + 'Be careful. '.repeat(550))
+  assert.deepEqual(plan.trimmed.ids, ['message:user:old'])
 })
 
 test('PromptComposer builds request messages', () => {

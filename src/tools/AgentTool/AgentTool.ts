@@ -1376,6 +1376,9 @@ function createSubAgentToolContext(
     // is what `pinAttachmentOwner` fixes. Absent here means the Read tool's
     // image branch answers with a precondition instead of binary text.
     ...(imageAttachments ? { imageAttachments } : {}),
+    // Global configuration, not session state: the Config tool reaches the same
+    // owner from a subagent as from the loop that started it.
+    ...(parent.modelConfig ? { modelConfig: parent.modelConfig } : {}),
   }
 }
 

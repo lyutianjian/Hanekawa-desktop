@@ -143,6 +143,54 @@ function message(id: string, content: string): SessionRecord {
   return { type: 'message', id, role: 'user', content, createdAt: 'now' }
 }
 
+test('concurrent opens share one scope, allow other sessions, and retry a failed open', async () => {
+  const h = await createHarness()
+  const first = await h.store.create('first')
+  const second = await h.store.create('second')
+  const original = h.project.openScope.bind(h.project)
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  let attempts = 0
+  h.project.openScope = async (session) => {
+    if (session.id === first.id) {
+      attempts++
+      await gate
+      if (attempts === 1) throw new Error('open failed')
+    }
+    return original(session)
+  }
+  const opens = [h.workspace.open(first), h.workspace.open(first), h.workspace.open(first)]
+  const failure = Promise.all(opens.map((pending) => assert.rejects(pending, /open failed/)))
+  await h.workspace.open(second)
+  release()
+  await failure
+  assert.equal(attempts, 1)
+  const [a, b, c] = await Promise.all([h.workspace.open(first), h.workspace.open(first), h.workspace.open(first)])
+  assert.equal(a, b)
+  assert.equal(a, c)
+  assert.equal(attempts, 2)
+  assert.equal(h.openedScopes.filter((id) => id === first.id).length, 1)
+  h.workspace.closeAll()
+})
+
+test('closing the workspace while an open is pending disposes the late scope', async () => {
+  const h = await createHarness()
+  const session = await h.store.create('late')
+  const original = h.project.openScope.bind(h.project)
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  h.project.openScope = async (meta) => { await gate; return original(meta) }
+  const pending = h.workspace.open(session)
+  const rejected = assert.rejects(pending, /closed/i)
+  await Promise.resolve()
+  h.workspace.closeAll()
+  release()
+  await rejected
+  assert.equal(h.workspace.list().length, 0)
+  assert.deepEqual(h.order, [`disposeScope:${session.id}`])
+  await assert.rejects(h.workspace.open(session), /closed/i)
+})
+
 test('a pane\'s controller listens to its own scope, not to another pane\'s', async () => {
   const harness = await createHarness()
   const first = await harness.workspace.open(await harness.store.create('first'))

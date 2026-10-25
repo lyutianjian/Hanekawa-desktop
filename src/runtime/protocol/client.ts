@@ -714,8 +714,13 @@ export class SessionClient {
 
   private async send(command: Exclude<HostCommand, { type: 'ui-response' }>): Promise<unknown> {
     if (this.disposed) throw new Error('The client was disposed.')
+    if (this.hostGone) throw new Error('The host disconnected.')
     const pending = this.replies.create(command.id)
-    this.channel.post(command)
+    try {
+      this.channel.post(command)
+    } catch (error) {
+      this.replies.settle(command.id, { ok: false, message: error instanceof Error ? error.message : String(error) })
+    }
     const settled = await pending
     if (!settled.ok) throw new Error(settled.message)
     return settled.result

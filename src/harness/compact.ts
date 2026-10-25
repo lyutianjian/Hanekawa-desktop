@@ -32,6 +32,13 @@ export interface CompactCheckInput {
   tools: Tool[]
   system?: string
   contextManagement?: Partial<ContextManagementConfig>
+  /**
+   * What the request carries before its history — composed system, instruction
+   * files, tool schemas — measured by the context builder and shared with the
+   * request it sizes. Without it the check counts the bare system prompt and
+   * lets a request trim history before compaction ever sees the real cost.
+   */
+  fixedOverheadTokens?: number
   lastResponseTokenCount?: number
   lastResponseRecordId?: string
   lastResponseRecordCount?: number
@@ -66,7 +73,7 @@ export interface CompactCheckInput {
    * that text path.
    */
   summarizeWithSharedPrefix?(prompt: string): Promise<{ content: string; usage?: TokenUsage }>
-  /** Stops the shared-prefix summary; the text fallback runs in the background. */
+  /** Cancels the entire summary chain, including fallback and retry waits. */
   signal?: AbortSignal
   appendRecord(record: SessionRecord): Promise<void>
   onBeforeCompact?(event: CompactHookEvent): Promise<void>
@@ -81,6 +88,8 @@ export interface CompactHookEvent {
 
 export interface CompactCheckResult {
   compacted: boolean
+  /** A failed attempt must not be repeated by the same step's final budget check. */
+  attempted?: boolean
   usage: TokenUsage
   metrics?: {
     preTokens: number
@@ -90,6 +99,7 @@ export interface CompactCheckResult {
 }
 
 export interface ContinuationSummaryInput {
+  signal?: AbortSignal
   records: SessionRecord[]
   provider: ModelProvider
   model: string
@@ -153,10 +163,11 @@ async function autoCompactIfNeededOnce(input: CompactCheckInput, circuitKey: str
   try {
     return await compactRecords(input, compactableRecords, tokenCount, 'auto', circuitKey)
   } catch (error) {
+    if (isCancelled(input.signal, error)) throw error
     const failureCount = currentFailures + 1
     await setCompactFailureCount(input, circuitKey, failureCount)
     await appendCompactFailureRecord(input, error, failureCount, tokenCount)
-    return { compacted: false, usage: { ...EMPTY_TOKEN_USAGE } }
+    return { compacted: false, attempted: true, usage: { ...EMPTY_TOKEN_USAGE } }
   }
 }
 
@@ -181,9 +192,12 @@ async function compactRecords(
   circuitKey: string,
 ): Promise<CompactCheckResult> {
   const compactStartedAt = Date.now()
+  throwIfCancelled(input.signal)
   await runBeforeCompactHook(input, { trigger, preTokens: tokenCount, recordCount: recordsToCompact.length })
 
+  throwIfCancelled(input.signal)
   const summary = await summarizeForAutoCompact(input, recordsToCompact, tokenCount)
+  throwIfCancelled(input.signal)
   const postTokens = countTextTokens(summary.content)
   const compactDurationMs = Date.now() - compactStartedAt
   // Captured before the records are summarized away: a thread's task outlives
@@ -237,7 +251,7 @@ async function summarizeForAutoCompact(
       if (content) return { content, usage: response.usage, preTokens: tokenCount }
       sharedUsage = response.usage
     } catch (error) {
-      if (input.signal?.aborted) throw error
+      if (isCancelled(input.signal, error)) throw error
       if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
         console.error('[compact] shared-prefix summary failed; falling back to text:', error)
       }
@@ -255,6 +269,7 @@ async function summarizeForAutoCompact(
     compactPromptVariant: input.compactPromptVariant,
     ...(input.attachmentFacts ? { attachmentFacts: input.attachmentFacts } : {}),
     cwd: input.cwd,
+    signal: input.signal,
   })
   return sharedUsage ? { ...summary, usage: addTokenUsage(sharedUsage, summary.usage) } : summary
 }
@@ -263,6 +278,7 @@ async function runBeforeCompactHook(input: CompactCheckInput, event: CompactHook
   try {
     await input.onBeforeCompact?.(event)
   } catch (hookError) {
+    if (isCancelled(input.signal, hookError)) throw hookError
     if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
       console.error('[compact] preCompact hook failed:', hookError)
     }
@@ -293,13 +309,19 @@ export function resetAutoCompactFailureState(circuitKey?: string): void {
 }
 
 function countCurrentTokens(input: CompactCheckInput, compactableRecords: SessionRecord[]): number {
+  // Provider counts already covered the fixed parts of the request they counted;
+  // growth in instructions or tool schemas reaches this estimate as records or
+  // as a reset baseline, so it is added to the estimate only.
+  const fixedOverhead = input.fixedOverheadTokens !== undefined
+    ? Math.max(0, input.fixedOverheadTokens)
+    : countTextTokens(input.system ?? '')
   if (input.lastResponseTokenCount === undefined) {
-    return countSessionRecordsTokens(compactableRecords, input.system, input.imageTokenStrategy)
+    return countSessionRecordsTokens(compactableRecords, undefined, input.imageTokenStrategy) + fixedOverhead
   }
 
   const pendingTokens = countPendingRecordTokens(input)
   if (pendingTokens === undefined) {
-    return countSessionRecordsTokens(compactableRecords, input.system, input.imageTokenStrategy)
+    return countSessionRecordsTokens(compactableRecords, undefined, input.imageTokenStrategy) + fixedOverhead
   }
   return input.lastResponseTokenCount + pendingTokens
 }
@@ -396,6 +418,7 @@ function findLastRecordIndex(records: SessionRecord[], predicate: (record: Sessi
 }
 
 export async function summarizeRecordsForContinuation(input: ContinuationSummaryInput): Promise<ContinuationSummaryResult> {
+  throwIfCancelled(input.signal)
   const tokenCount = input.preTokens ?? countSessionRecordsTokens(input.records)
   // The summary request is text only (design §11.3): images become placeholders
   // naming the attachment, its size and its cache location, so a compact model
@@ -434,14 +457,23 @@ export async function summarizeRecordsForContinuation(input: ContinuationSummary
     promptCacheRetention,
     promptCaching: false,
     cacheSource: compactCacheSource(input.cwd),
-    retry: { callerKind: 'background', persistent: true },
+    retry: { callerKind: 'interactive', signal: input.signal },
   })
 
+  throwIfCancelled(input.signal)
   return {
     content: formatCompactSummary(response.content.trim()) || '(No compact summary was produced.)',
     usage: response.usage,
     preTokens: tokenCount,
   }
+}
+
+function throwIfCancelled(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError')
+}
+
+function isCancelled(signal: AbortSignal | undefined, error: unknown): boolean {
+  return signal?.aborted === true || (error instanceof Error && (error.name === 'AbortError' || error.name === 'APIUserAbortError'))
 }
 
 function formatRecordsForSummary(records: SessionRecord[]): string {

@@ -7,6 +7,8 @@ import { z } from 'zod/v3'
 import { AgentLoop } from '../src/harness/loop.js'
 import { displayCacheSource, forkCacheSource } from '../src/harness/cacheBreakDetection.js'
 import { ContextBuilder } from '../src/harness/contextBuilder.js'
+import { PromptComposer } from '../src/prompts/composer.js'
+import { SystemPromptSectionCache } from '../src/harness/sections.js'
 import { PermissionGate, type PermissionMode } from '../src/harness/permissions.js'
 import { PlanModeManager } from '../src/harness/planModeManager.js'
 import { ToolRunner } from '../src/harness/toolRunner.js'
@@ -65,6 +67,48 @@ function testTool(name: string, options: Partial<Tool> = {}): Tool {
     execute: async () => ({ ok: true, content: `${name} result` }),
     ...options,
   }
+}
+
+test('five simultaneous run and runTool calls reserve a serial tail even after rejection', async () => {
+  const records: SessionRecord[] = []
+  const order: number[] = []
+  let active = 0
+  let maximum = 0
+  const work = async (id: number) => {
+    order.push(id)
+    maximum = Math.max(maximum, ++active)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+    active--
+    if (id === 1) throw new Error('first failed')
+    return { content: String(id), toolCalls: [] }
+  }
+  const tools = [testTool('serial', { execute: async () => ({ ok: true, content: (await work(3)).content }) })]
+  const loop = new AgentLoop({
+    provider: { name: 'fake', createMessage: async (request) => work(Number([...request.messages].reverse().find((message) => /^[1245]$/.test(message.content))?.content)) },
+    model: 'fake', tools, contextBuilder: new ContextBuilder(),
+    toolRunner: new ToolRunner(tools, new PermissionGate(async () => true), { onRecord: async (record) => { records.push(record) } }),
+    toolContext: { cwd: process.cwd(), sessionId: 'serial-regression', readFiles: new Set() },
+    recordStream: recordStreamFor(records),
+  })
+  const results = await Promise.allSettled([
+    loop.run({ text: '1' }), loop.run({ text: '2' }),
+    loop.runTool({ id: 'serial-call', name: 'serial', input: {} }),
+    loop.run({ text: '4' }), loop.run({ text: '5' }),
+  ])
+  assert.equal(results[0]?.status, 'rejected')
+  assert.ok(results.slice(1).every((result) => result.status === 'fulfilled'))
+  assert.equal(maximum, 1)
+  assert.deepEqual(order, [1, 2, 3, 4, 5])
+})
+
+/**
+ * A builder with no default prompt sections. The tests below size history
+ * against synthetic windows a couple thousand tokens wide; compaction counts
+ * what the request really carries — system prompt, instructions, tool schemas —
+ * so the fixed parts have to be small for the window to say anything about them.
+ */
+function cheapContextBuilder(): ContextBuilder {
+  return new ContextBuilder(new PromptComposer(), {}, new SystemPromptSectionCache(), [])
 }
 
 function setEnv(key: string, value: string | undefined): void {
@@ -126,6 +170,25 @@ test('agent loop appends user and assistant messages', async () => {
   assert.equal(metrics[0]?.response_tokens, 30)
   assert.equal(metrics[0]?.cache_read_tokens, 10)
   assert.equal(metrics[0]?.tool_calls, 0)
+})
+
+test('the loop persists thinking provenance and the context builder carries it into replay', async () => {
+  const records: SessionRecord[] = []
+  const loop = new AgentLoop({
+    provider: { name: 'fake', createMessage: async () => ({
+      content: 'answer', toolCalls: [], thinkingSource: 'endpoint-identity',
+      thinkingBlocks: [{ type: 'thinking', thinking: 'reasoning', signature: 'signature' }],
+    }) }, model: 'fake-model', tools: [], contextBuilder: cheapContextBuilder(),
+    toolRunner: new ToolRunner([], new PermissionGate(async () => true), { onRecord: async (record) => { records.push(record) } }),
+    toolContext: { cwd: process.cwd(), sessionId: 'source-replay', readFiles: new Set() },
+    recordStream: recordStreamFor(records),
+  })
+  await loop.run({ text: 'question' })
+  const persisted = JSON.parse(JSON.stringify(records)) as SessionRecord[]
+  const assistant = persisted.find((record) => record.type === 'message' && record.role === 'assistant')
+  assert.equal(assistant?.type === 'message' ? assistant.thinkingSource : undefined, 'endpoint-identity')
+  const built = await cheapContextBuilder().build({ preloadRecords: persisted, records: [], tools: [], includeUserContext: false })
+  assert.equal(built.messages.find((message) => message.id === assistant?.id)?.thinkingSource, 'endpoint-identity')
 })
 
 test('a retry runs the failed turn again on its own message instead of a new one', async () => {
@@ -1974,7 +2037,7 @@ test('agent loop excludes compact summarizer usage from status usage', async () 
       id: 'old-user',
       type: 'message',
       role: 'user',
-      content: 'old context ' + 'x'.repeat(3000),
+      content: 'old context ' + 'x'.repeat(10_000),
       createdAt: '2026-05-24T00:00:00.000Z',
     },
     {
@@ -2011,12 +2074,12 @@ test('agent loop excludes compact summarizer usage from status usage', async () 
     provider,
     model: 'fake-model',
     tools: [],
-    contextBuilder: new ContextBuilder(),
+    contextBuilder: cheapContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
-    contextWindow: 1000,
+    contextWindow: 5000,
     contextManagement: {
-      contextWindow: 1000,
+      contextWindow: 5000,
       summaryOutputTokens: 0,
       autoCompactReserveRatio: 0.5,
     },
@@ -2715,8 +2778,8 @@ test('agent loop auto-compacts without preparing records twice in the same itera
 
       const contextItems = request.contextItems ?? []
       assert.ok(contextItems.some((item) => item.kind === 'message' && item.message.id.startsWith('meta:user-context')))
-      assert.ok(contextItems.some((item) => item.kind === 'message' && item.message.id === 'old-user'))
-      assert.ok(!contextItems.some((item) => item.kind === 'message' && /Prior conversation was compacted/.test(item.message.content)))
+      assert.ok(!contextItems.some((item) => item.kind === 'message' && item.message.id === 'old-user'))
+      assert.ok(contextItems.some((item) => item.kind === 'message' && /Prior conversation was compacted/.test(item.message.content)))
       return {
         content: 'done',
         toolCalls: [],
@@ -2811,9 +2874,11 @@ test('auto-compaction sends the conversation\'s own request with the compact pro
   const durable = (request: ModelRequest) => request.contextItems!
     .filter((item) => !(item.kind === 'message' && item.message.transient))
     .map((item) => item.kind === 'message' ? item.message.id : item.kind)
-  assert.deepEqual(durable(compact!), durable(main!))
   assert.ok(durable(compact!).includes('old-user'))
   const boundary = records.find((record) => record.type === 'compact_boundary')
+  assert.ok(boundary)
+  assert.ok(durable(main!).includes(boundary.id))
+  assert.ok(!durable(main!).includes('old-user'))
   assert.match(boundary?.type === 'compact_boundary' ? boundary.summary : '', /shared summary/)
 })
 
@@ -2913,13 +2978,8 @@ test('agent loop includes compact summary on the next user turn after compaction
           && /Prior conversation was compacted/.test(item.message.content)
           && /compact summary for later turns/.test(item.message.content),
       )
-      if (mainCallCount === 1) {
-        assert.equal(hasCompactSummary, false)
-        assert.ok(contextItems.some((item) => item.kind === 'message' && item.message.id === 'old-user'))
-      } else {
-        assert.equal(hasCompactSummary, true)
-        assert.equal(contextItems.some((item) => item.kind === 'message' && item.message.id === 'old-user'), false)
-      }
+      assert.equal(hasCompactSummary, true)
+      assert.equal(contextItems.some((item) => item.kind === 'message' && item.message.id === 'old-user'), false)
 
       return { content: `done ${mainCallCount}`, toolCalls: [] }
     },
@@ -2932,7 +2992,7 @@ test('agent loop includes compact summary on the next user turn after compaction
     provider,
     model: 'fake-model',
     tools,
-    contextBuilder: new ContextBuilder(),
+    contextBuilder: cheapContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 'summary-next-turn-session', readFiles: new Set() },
     contextWindow: 10_000,
@@ -2988,7 +3048,7 @@ test('agent loop runs preCompact and postCompact hooks around successful compact
     provider,
     model: 'fake-model',
     tools: [],
-    contextBuilder: new ContextBuilder(),
+    contextBuilder: cheapContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
     contextWindow: 2_550,
@@ -3054,7 +3114,7 @@ test('agent loop checks auto-compact before later model requests in a tool loop'
 
       providerCalls.push('model-2')
       const contextItems = request.contextItems ?? []
-      assert.ok(!contextItems.some((item) => item.kind === 'message' && /Prior conversation was compacted/.test(item.message.content)))
+      assert.ok(contextItems.some((item) => item.kind === 'message' && /Prior conversation was compacted/.test(item.message.content)))
       return {
         content: 'done',
         toolCalls: [],
@@ -3082,7 +3142,7 @@ test('agent loop checks auto-compact before later model requests in a tool loop'
     provider,
     model: 'fake-model',
     tools,
-    contextBuilder: new ContextBuilder(),
+    contextBuilder: cheapContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
     contextWindow: 2_150,
@@ -3188,7 +3248,7 @@ test('agent loop counts pending records against the prepared request baseline af
       value: z.string(),
     }).strict(),
     riskLevel: 'safe',
-    execute: async () => ({ ok: true, content: 'pending tool output '.repeat(120) }),
+    execute: async () => ({ ok: true, content: 'pending tool output '.repeat(200) }),
   }]
   const runner = new ToolRunner(tools, new PermissionGate(async () => true), {
     onRecord: async (record) => { records.push(record) },
@@ -3197,13 +3257,17 @@ test('agent loop counts pending records against the prepared request baseline af
     provider,
     model: 'fake-model',
     tools,
-    contextBuilder: new ContextBuilder(),
+    contextBuilder: cheapContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 'prepared-baseline-session', readFiles: new Set() },
-    contextWindow: 2_180,
+    contextWindow: 3_000,
     contextManagement: {
-      contextWindow: 2_180,
-      summaryOutputTokens: 100,
+      contextWindow: 3_000,
+      // The reserve is what the fixed request parts leave room for: with a
+      // summary reserve this window's threshold sits under the system prompt and
+      // tool schema cost, and the very first iteration would compact before the
+      // baseline this test is about could exist.
+      summaryOutputTokens: 0,
     },
     recordStream: recordStreamFor(records),
   })
@@ -3213,6 +3277,148 @@ test('agent loop counts pending records against the prepared request baseline af
   assert.equal(response.content, 'done')
   assert.deepEqual(providerCalls, ['model-1', 'compact', 'model-2'])
   assert.equal(records.filter((record) => record.type === 'compact_boundary').length, 2)
+})
+
+test('auto-compact counts the instruction files the request carries', async () => {
+  resetAutoCompactFailureState()
+  const instructions = '# AGENTS.md\n' + 'Run the tests before claiming done. '.repeat(400)
+  const history: SessionRecord[] = [
+    // ~16k tokens: inside the 18k threshold on its own.
+    { type: 'message', id: 'old-user', role: 'user', content: 'old context '.repeat(4_000), createdAt: '2026-05-10T00:00:00.000Z' },
+    { type: 'message', id: 'old-assistant', role: 'assistant', content: 'old answer', createdAt: '2026-05-10T00:01:00.000Z' },
+  ]
+  const run = async (projectContext: string | undefined) => {
+    const records = history.map((record) => ({ ...record }))
+    const providerCalls: string[] = []
+    const provider: ModelProvider = {
+      name: 'fake',
+      async createMessage(request) {
+        const isCompactRequest = request.contextItems?.some(
+          (item) => item.kind === 'message' && item.message.id === 'compact-request',
+        ) ?? false
+        providerCalls.push(isCompactRequest ? 'compact' : 'model')
+        return { content: isCompactRequest ? 'summary' : 'done', toolCalls: [] }
+      },
+    }
+    const loop = new AgentLoop({
+      provider,
+      model: 'fake-model',
+      tools: [],
+      contextBuilder: cheapContextBuilder(),
+      toolRunner: new ToolRunner([], new PermissionGate(async () => true), {
+        onRecord: async (record) => { records.push(record) },
+      }),
+      toolContext: { cwd: process.cwd(), sessionId: 'instructions-overhead', readFiles: new Set() },
+      contextWindow: 20_000,
+      contextManagement: { contextWindow: 20_000, summaryOutputTokens: 0 },
+      recordStream: recordStreamFor(records),
+      ...(projectContext ? { projectContext } : {}),
+    })
+    await loop.run({ text: 'carry on' })
+    return providerCalls
+  }
+
+  // The same history fits the window on its own: no compaction.
+  assert.deepEqual(await run(undefined), ['model'])
+  // The instruction files ride in front of it, and together they no longer fit
+  // the threshold the check reads.
+  assert.deepEqual(await run(instructions), ['compact', 'model'])
+})
+
+for (const prefix of ['preload', 'inherited', 'transient'] as const) {
+  test(`auto-compact counts ${prefix} context before the actual request can lose history`, async () => {
+    const sessionId = `full-request-${prefix}`
+    resetAutoCompactFailureState(sessionId)
+    const records: SessionRecord[] = [
+      { type: 'message', id: 'own-old-user', role: 'user', content: 'own history '.repeat(3000), createdAt: '2026-05-10T00:00:00.000Z' },
+      { type: 'message', id: 'own-old-assistant', role: 'assistant', content: 'ack', createdAt: '2026-05-10T00:01:00.000Z' },
+    ]
+    const parent: ChatMessage = { id: 'parent-history', role: 'user', content: 'parent context '.repeat(2400), createdAt: '2026-05-09T00:00:00.000Z' }
+    const inheritedRequest: ModelRequest = {
+      system: 'parent system', messages: [parent], contextItems: [{ kind: 'message', message: parent }],
+      tools: [], model: 'fake-model', cacheSource: forkCacheSource('parent', process.cwd()),
+    }
+    const requests: ModelRequest[] = []
+    const loop = new AgentLoop({
+      provider: { name: 'fake', createMessage: async (request) => {
+        requests.push(request)
+        return { content: displayCacheSource(request.cacheSource) === 'compact' ? 'full request summary' : 'done', toolCalls: [] }
+      } },
+      model: 'fake-model', tools: [], contextBuilder: cheapContextBuilder(),
+      toolRunner: new ToolRunner([], new PermissionGate(async () => true), { onRecord: async (record) => { records.push(record) } }),
+      toolContext: { cwd: process.cwd(), sessionId, readFiles: new Set() }, recordStream: recordStreamFor(records),
+      contextWindow: 20_000, contextManagement: { contextWindow: 20_000, summaryOutputTokens: 0 },
+      ...(prefix === 'preload' ? { preloadRecords: [{ type: 'message', ...parent }] } : {}),
+      ...(prefix === 'inherited' ? { inheritedRequest } : {}),
+      ...(prefix === 'transient' ? { planModeManager: { beforeTurn: async () => {}, getActivePlanAttachment: () => parent.content } as unknown as PlanModeManager } : {}),
+    })
+    await loop.run({ text: 'continue' })
+    const summary = requests.find((request) => request.contextItems?.some((item) => item.kind === 'message' && item.message.id === 'compact-request'))
+    assert.ok(summary, 'the full request must trigger a summary call before sending')
+    const boundary = records.find((record) => record.type === 'compact_boundary')
+    assert.ok(boundary)
+    const sentIds = requests.at(-1)!.contextItems!.map((item) => item.kind === 'message' ? item.message.id : item.kind)
+    assert.ok(sentIds.includes(boundary.id), 'the actual request carries the compacted own history')
+    assert.ok(!sentIds.includes('own-old-user'))
+    if (prefix !== 'transient') assert.ok(sentIds.includes('parent-history'), 'the actual request retains parent history')
+    else assert.ok(requests.at(-1)!.messages.some((message) => message.content === parent.content))
+  })
+}
+
+test('failed compaction reports any history trimmed from the actual request', async () => {
+  resetAutoCompactFailureState('preload-trim-notice')
+  const records: SessionRecord[] = [
+    { type: 'message', id: 'own-old-user', role: 'user', content: 'own history '.repeat(3000), createdAt: '2026-05-10T00:00:00.000Z' },
+    { type: 'message', id: 'own-old-assistant', role: 'assistant', content: 'ack', createdAt: '2026-05-10T00:01:00.000Z' },
+  ]
+  const events: ModelStreamEvent[] = []
+  const requests: ModelRequest[] = []
+  const loop = new AgentLoop({
+    provider: { name: 'fake', createMessage: async (request) => {
+      requests.push(request)
+      if (displayCacheSource(request.cacheSource) === 'compact') throw new Error('summary failed')
+      return { content: 'done', toolCalls: [] }
+    } }, model: 'fake-model', tools: [], contextBuilder: cheapContextBuilder(),
+    toolRunner: new ToolRunner([], new PermissionGate(async () => true), { onRecord: async (record) => { records.push(record) } }),
+    toolContext: { cwd: process.cwd(), sessionId: 'preload-trim-notice', readFiles: new Set() }, recordStream: recordStreamFor(records),
+    contextWindow: 20_000, contextManagement: { contextWindow: 20_000, summaryOutputTokens: 0 },
+    preloadRecords: [{ type: 'message', id: 'parent-history', role: 'user', content: 'parent context '.repeat(2400), createdAt: '2026-05-09T00:00:00.000Z' }],
+    onStreamEvent: (event) => events.push(event),
+  })
+  await loop.run({ text: 'continue' })
+  assert.equal(records.filter((record) => record.type === 'compact_attempt_failed').length, 1)
+  assert.ok(events.some((event) => event.type === 'context_trim_notice'))
+  assert.ok(!requests.at(-1)!.messages.some((message) => message.id === 'parent-history'))
+})
+
+test('instruction files that alone exhaust the window stop the turn before it is sent', async () => {
+  resetAutoCompactFailureState()
+  let called = 0
+  const loop = new AgentLoop({
+    provider: {
+      name: 'fake',
+      async createMessage() {
+        called += 1
+        return { content: 'should not be reached', toolCalls: [] }
+      },
+    },
+    model: 'fake-model',
+    tools: [],
+    contextBuilder: cheapContextBuilder(),
+    toolRunner: new ToolRunner([], new PermissionGate(async () => true), { onRecord: async () => {} }),
+    toolContext: { cwd: process.cwd(), sessionId: 'overhead-capacity', readFiles: new Set() },
+    contextWindow: 4_000,
+    contextManagement: { contextWindow: 4_000, summaryOutputTokens: 0 },
+    projectContext: '# AGENTS.md\n' + 'Rewrite the whole project. '.repeat(4_000),
+    recordStream: recordStreamFor([]),
+  })
+
+  await assert.rejects(loop.run({ text: 'hello' }), (error: Error & { code?: string }) => {
+    assert.equal(error.code, 'context_overflow')
+    assert.match(error.message, /system prompt, instruction files and tool schemas/)
+    return true
+  })
+  assert.equal(called, 0)
 })
 
 test('agent loop continues the turn when auto-compact summary fails', async () => {
@@ -3263,7 +3469,7 @@ test('agent loop continues the turn when auto-compact summary fails', async () =
     provider,
     model: 'fake-model',
     tools,
-    contextBuilder: new ContextBuilder(),
+    contextBuilder: cheapContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 'compact-failure-session', readFiles: new Set() },
     contextWindow: 2_550,
@@ -3277,8 +3483,8 @@ test('agent loop continues the turn when auto-compact summary fails', async () =
   const response = await loop.run({ text: 'latest request' })
 
   assert.equal(response.content, 'main response')
-  // The shared-prefix summary fails, then the text fallback does.
-  assert.deepEqual(providerCalls, ['compact', 'compact', 'main'])
+  // A shared-prefix request would trim history, so only the complete text fallback is sent.
+  assert.deepEqual(providerCalls, ['compact', 'main'])
   assert.equal(records.filter((record) => record.type === 'compact_attempt_failed').length, 1)
   assert.equal(records.some((record) => record.type === 'compact_boundary'), false)
 })
@@ -3628,7 +3834,7 @@ test('agent loop uses last response usage, not cumulative usage, for auto-compac
     provider,
     model: 'fake-model',
     tools,
-    contextBuilder: new ContextBuilder(),
+    contextBuilder: cheapContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
     contextWindow: 2_180,
@@ -3672,11 +3878,11 @@ test('the next turn checks auto-compact against the last response usage, not a r
     provider,
     model: 'fake-model',
     tools: [],
-    contextBuilder: new ContextBuilder(),
+    contextBuilder: cheapContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 'cross-turn-baseline', readFiles: new Set() },
-    contextWindow: 2_180,
-    contextManagement: { contextWindow: 2_180, summaryOutputTokens: 100 },
+    contextWindow: 4_000,
+    contextManagement: { contextWindow: 4_000, summaryOutputTokens: 100, autoCompactReserveRatio: 0.875 },
     recordStream: recordStreamFor(records),
   })
 
@@ -4328,7 +4534,7 @@ test('a mid-run model switch drops the usage baseline and re-estimates with imag
       contextWindow: 35_000,
     },
     tools,
-    contextBuilder: new ContextBuilder(),
+    contextBuilder: cheapContextBuilder(),
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 's16-baseline', readFiles: new Set() },
     // Threshold ~2000: the projected text-only request stays below it, but the

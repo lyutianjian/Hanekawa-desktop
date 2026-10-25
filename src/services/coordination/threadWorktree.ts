@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { mkdir, rm } from 'node:fs/promises'
+import { lstat, mkdir, readdir, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
@@ -29,7 +29,10 @@ export async function createThreadWorktree(input: { cwd: string; threadId: strin
   if (!isSafeBranchName(branch)) throw new Error(`Unsafe thread branch name "${branch}"`)
   // A project that is not a repository becomes one; never the home directory.
   const inRepo = await git(input.cwd, ['rev-parse', '--show-toplevel']).then(() => true, () => false)
+  const hasFiles = (await readdir(input.cwd)).some((name) => name !== '.git')
+  const requireBaseline = () => { throw new Error('这个项目尚无可用的源码提交；请先初始化 Git 仓库并提交线程需要的文件，再创建代码线程。') }
   if (!inRepo) {
+    if (hasFiles) requireBaseline()
     if (path.resolve(input.cwd) === path.resolve(homedir())) throw new Error('Refusing to turn the home directory into a git repository')
     await git(input.cwd, ['init', '-q'])
   }
@@ -37,12 +40,24 @@ export async function createThreadWorktree(input: { cwd: string; threadId: strin
   // A repository with no commits has nothing to fork from; give it an empty root
   // commit. `--only` with no paths leaves whatever the user has staged out of it.
   const hasHead = await git(input.cwd, ['rev-parse', '--verify', '--quiet', 'HEAD']).then(() => true, () => false)
+  if (hasFiles && (!hasHead || await git(input.cwd, ['ls-tree', '-r', '--name-only', 'HEAD', '--', '.']) === '')) requireBaseline()
   if (!hasHead) await git(repoRoot, ['commit', '--allow-empty', '--only', '--no-verify', '-m', 'Initial commit'])
   const baseRef = await git(input.cwd, ['rev-parse', '--verify', 'HEAD'])
   const prefix = await git(input.cwd, ['rev-parse', '--show-prefix'])
   const dir = getThreadWorktreeDir(input.cwd, input.threadId)
+  const exists = await lstat(dir).then(() => true, (error: NodeJS.ErrnoException) => {
+    if (error.code !== 'ENOENT') throw error
+    return false
+  })
+  if (exists) throw new Error(`Thread worktree path already exists: ${dir}`)
   await mkdir(path.dirname(dir), { recursive: true })
-  await git(repoRoot, ['worktree', 'add', '-b', branch, dir, baseRef])
+  await git(repoRoot, ['branch', branch, baseRef])
+  try { await git(repoRoot, ['worktree', 'add', dir, branch]) }
+  catch (error) {
+    try { await removeThreadWorktree(repoRoot, { path: dir, branch }) }
+    catch (cleanupError) { console.error('[hanekawa] worktree cleanup:', cleanupError instanceof Error ? cleanupError.message : String(cleanupError)) }
+    throw error
+  }
   return { path: dir, branch, baseRef, cwd: path.resolve(dir, prefix) }
 }
 

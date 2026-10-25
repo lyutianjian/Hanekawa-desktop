@@ -22,6 +22,7 @@
  *   the wait continues, because refusing would leave the model with nothing.
  */
 
+import { withinBounds } from './bounds.js'
 import type { ConditionOptions, ConditionResult, ConditionState } from './inject/bundle.js'
 import { conditionScript, unwrap } from './inject/bundle.js'
 import { BrowserHostError } from './errors.js'
@@ -128,8 +129,19 @@ export async function waitForCondition(deps: WaitDeps, condition: WaitCondition)
 
     let result: ConditionResult | undefined
     if (wantsPage && urlOk) {
+      // Bounded by what is left of the caller's wait, so a page that stops
+      // answering mid-wait cannot outlive the wait that asked: the poll comes
+      // back as "not observed yet" and the loop's own deadline ends it with the
+      // last thing it did see.
+      const budget = Math.max(1, deadline - now())
       try {
-        result = unwrap<ConditionResult>(await deps.evaluate(script))
+        result = unwrap<ConditionResult>(
+          await withinBounds(
+            { ...(deps.signal === undefined ? {} : { signal: deps.signal }), timeoutMs: budget },
+            'checking the page',
+            () => deps.evaluate(script),
+          ),
+        )
       } catch (error) {
         // `retryable` is the whole distinction: a page that is navigating cannot
         // answer yet and will, while a bad selector or a closed tab never will.

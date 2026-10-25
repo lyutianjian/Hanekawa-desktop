@@ -39,12 +39,12 @@ export const CONTEXT_CRITICAL_RATIO = 0.95
  */
 export function formatTokens(n: number): string {
   if (n < 1000) return String(n)
-  if (n < 1_000_000) {
+  if (n < 999_500) {
     const thousands = n / 1000
-    return `${thousands < 10 ? thousands.toFixed(1) : Math.round(thousands)}k`
+    return `${thousands < 10 ? Number(thousands.toFixed(1)) : Math.round(thousands)}k`
   }
   const millions = n / 1_000_000
-  return `${millions < 10 ? millions.toFixed(1) : Math.round(millions)}M`
+  return `${millions < 10 ? Number(millions.toFixed(1)) : Math.round(millions)}M`
 }
 
 function formatExact(n: number): string {
@@ -175,7 +175,7 @@ export function statusUsageView(
     { label: '总计', value: `${formatExact(allTokens)} token` },
     ...(cost ? [{ label: '会话开销', value: cost }] : []),
     { label: '输入（未缓存）', value: formatExact(inputTokens) },
-    { label: '缓存写入', value: formatExact(writes(total)) },
+    ...(total.cacheCreationInputTokens === undefined ? [] : [{ label: '缓存写入', value: formatExact(writes(total)) }]),
     { label: '缓存命中', value: formatExact(cacheReadInputTokens) },
     { label: '输出', value: formatExact(outputTokens) },
   ]

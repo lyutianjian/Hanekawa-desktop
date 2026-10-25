@@ -14,6 +14,7 @@
  * Electron-free like `wait.ts`, and for the same reason.
  */
 
+import { withinBounds } from './bounds.js'
 import type { SettleProbe } from './inject/bundle.js'
 import { settleScript, unwrap } from './inject/bundle.js'
 import { LONG_REQUEST_MS, NETWORK_QUIET_MS, SCAN_MAX_NODES, WAIT_POLL_INTERVAL_MS } from './limits.js'
@@ -55,7 +56,16 @@ export async function waitForSettle(deps: SettleDeps): Promise<SettleReport> {
     // Stability needs two looks, so the first poll can never settle on its own.
     let steady = false
     try {
-      probe = unwrap<SettleProbe>(await deps.evaluate(script))
+      // A poll is bounded by what is left of the settle window, so a page that
+      // stopped answering reads as "could not be read" and the report goes out on
+      // time: settling is a courtesy, and its cap is the promise it makes.
+      probe = unwrap<SettleProbe>(
+        await withinBounds(
+          { timeoutMs: Math.max(1, deps.timeoutMs - (now() - started)) },
+          'checking whether the page settled',
+          () => deps.evaluate(script),
+        ),
+      )
     } catch {
       busy.push('the page could not be read (navigating?)')
     }

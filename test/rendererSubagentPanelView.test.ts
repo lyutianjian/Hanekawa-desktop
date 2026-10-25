@@ -4,6 +4,7 @@ import test from 'node:test'
 import { installDomStub, type StubView } from './helpers/domStub.js'
 import { createSubagentPanelView } from '../src/desktop/renderer/dom/subagentPanelView.js'
 import type { SubagentEntry } from '../src/desktop/renderer/model/subagentPanel.js'
+import type { SessionRecord } from '../src/harness/types.js'
 
 /**
  * The subagent page's read failure. It used to be swallowed: a finished run
@@ -63,4 +64,149 @@ test('a transcript that cannot be read says so, and 重试 reads it again', asyn
   await settle()
   assert.equal(reads, 2)
   assert.equal(find(stub.inspect(container), 'load-error')!.hidden, true, 'a good read withdraws it')
+})
+
+/**
+ * The page's liveness. It re-reads the run's transcript once a second and ticks
+ * its clock, and used to do both for as long as the page existed — including for
+ * hours after the user had switched the side panel to another tab, since nothing
+ * told the panel it was gone. Time is faked here so a "hidden for five seconds"
+ * is a tick and not a sleep.
+ */
+
+function flush(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve))
+}
+
+const running: SubagentEntry = {
+  id: 'call-2',
+  agentId: 'agent-2',
+  name: 'Explore',
+  description: 'keep looking',
+  status: 'running',
+  finished: false,
+  startedAt: 0,
+  notes: [],
+}
+
+function text(view: StubView, name: string): string {
+  const node = find(view, name)
+  return node === undefined ? '' : `${node.text}${node.children.map((child) => child.text).join('')}`
+}
+
+test('a hidden page stops reading and stops its clock, and comes back in one read', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] })
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('subagents')
+  let reads = 0
+  const view = createSubagentPanelView(container, {
+    onSelect: () => {},
+    loadTranscript: async () => {
+      reads += 1
+      return []
+    },
+    onOpenPath: () => {},
+    onStop: () => {},
+  })
+
+  const startedAt = Date.now()
+  view.setVisible(true)
+  view.render({ entries: [{ ...running, startedAt }], selected: 'call-2' })
+  await flush()
+  assert.equal(reads, 1, 'the page it just opened reads once')
+
+  t.mock.timers.tick(1000)
+  await flush()
+  assert.equal(reads, 2, 'and once a second while it runs')
+  assert.equal(text(stub.inspect(container), 'subagent-time'), '1 秒')
+
+  container.scrollTop = 120
+  view.setVisible(false)
+  t.mock.timers.tick(5000)
+  await flush()
+  assert.equal(reads, 2, 'nothing is read for a page nobody can see')
+  assert.equal(text(stub.inspect(container), 'subagent-time'), '1 秒', 'the clock stops too')
+
+  view.setVisible(true)
+  await flush()
+  assert.equal(reads, 3, 'showing again catches up in one read, not five')
+  assert.equal(text(stub.inspect(container), 'subagent-time'), '6 秒', 'and the clock reads the time that passed')
+  assert.equal(stub.inspect(container).scrollTop, 120, 'and the reader is left where they were')
+
+  for (let second = 0; second < 3; second++) {
+    t.mock.timers.tick(1000)
+    await flush()
+  }
+  assert.equal(reads, 6, 'exactly one poll is running, not one per show')
+})
+
+test('a read that lands after the page was hidden does not paint over it', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('subagents')
+  const records: SessionRecord[] = [{ type: 'message', id: 'm1', role: 'user', content: 'hello', createdAt: 'now' }]
+  let release = (_: readonly SessionRecord[]) => {}
+  let reads = 0
+  const view = createSubagentPanelView(container, {
+    onSelect: () => {},
+    loadTranscript: () => {
+      reads += 1
+      if (reads === 1) return new Promise((resolve) => { release = resolve })
+      return Promise.resolve(records)
+    },
+    onOpenPath: () => {},
+    onStop: () => {},
+  })
+  const timeline = () => find(stub.inspect(container), 'subagent-transcript')!
+
+  view.setVisible(true)
+  view.render({ entries: [running], selected: 'call-2' })
+  await flush()
+  assert.equal(reads, 1)
+  assert.equal(timeline().hidden, true, 'the fallback shows until the transcript arrives')
+
+  view.setVisible(false)
+  release(records)
+  await flush()
+  assert.equal(timeline().hidden, true, 'a read for a page that left the screen paints nothing')
+
+  view.setVisible(true)
+  await flush()
+  assert.equal(reads, 2, 'coming back asks again rather than waiting on the dropped read')
+  assert.equal(timeline().hidden, false, 'and this one is on screen, so it lands')
+})
+
+test('closing the page stops its poll as well', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('subagents')
+  let reads = 0
+  const view = createSubagentPanelView(container, {
+    onSelect: () => {},
+    loadTranscript: async () => {
+      reads += 1
+      return []
+    },
+    onOpenPath: () => {},
+    onStop: () => {},
+  })
+  view.setVisible(true)
+  view.render({ entries: [running], selected: 'call-2' })
+  await flush()
+  // Two ticks in a row, one read: a tick that lands while a read is still on the
+  // wire is dropped rather than queued behind it.
+  t.mock.timers.tick(2000)
+  await flush()
+  assert.equal(reads, 2)
+  t.mock.timers.tick(1000)
+  await flush()
+  assert.equal(reads, 3)
+
+  view.render({ entries: [running], selected: undefined })
+  t.mock.timers.tick(5000)
+  await flush()
+  assert.equal(reads, 3, 'the list has no page to keep fresh')
 })

@@ -11,6 +11,27 @@ import type { SessionRecord } from '../src/harness/types.js'
 import { getSessionsDir } from '../src/utils/paths.js'
 import { makeImageAttachmentRef } from './helpers/imageFixtures.js'
 
+test('a session creation whose index write fails leaves no unindexed transcript', async (t) => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'session-create-failed-'))
+  const store = new SessionStore(dir)
+  await store.init()
+  const sessionsDir = getSessionsDir(dir)
+  const rename = fs.promises.rename.bind(fs.promises)
+  const replacement = t.mock.method(fs.promises, 'rename', async (from: fs.PathLike, to: fs.PathLike) => {
+    if (String(to) === path.join(sessionsDir, 'index.json')) throw new Error('index write failed')
+    return rename(from, to)
+  })
+  syncBuiltinESMExports()
+  try {
+    await assert.rejects(store.create('failed'), /index write failed/)
+    assert.deepEqual((await fs.promises.readdir(sessionsDir)).filter((name) => name.endsWith('.jsonl')), [])
+  } finally {
+    replacement.mock.restore()
+    syncBuiltinESMExports()
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('SessionStore creates, lists, resolves, renames, and deletes sessions', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
   try {

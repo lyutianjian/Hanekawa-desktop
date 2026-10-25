@@ -2617,6 +2617,27 @@ test('requestWake before hello runs a wake turn, once, folding in background not
   harness.dispose()
 })
 
+test('stopping or detaching a queued wake sends one discard receipt and never submits it', async () => {
+  for (const exit of ['stop', 'interrupt', 'dispose'] as const) {
+    const h = await createHarness({ role: 'coordinator' })
+    h.setStreaming(true)
+    const receipts: string[] = []
+    h.host.requestWake('pending wake', (reason) => receipts.push(reason))
+    if (exit === 'stop') await h.host.stop()
+    else if (exit === 'dispose') h.host.dispose()
+    else {
+      h.send({ type: 'interrupt', id: 'stop-wake', reason: 'user-cancel' })
+      await waitFor(() => h.received.find((event) => event.type === 'reply' && event.id === 'stop-wake'), 'stop reply')
+    }
+    h.setStreaming(false)
+    await givePumpAChance()
+    assert.deepEqual(h.calls.submits, [])
+    assert.deepEqual(receipts, [exit === 'dispose' ? 'detached' : 'stopped'])
+    h.dispose()
+    assert.equal(receipts.length, 1)
+  }
+})
+
 test('a thread scope refuses /clear and retarget', async () => {
   const harness = await createHarness({ role: 'thread' })
   registerBuiltinCommands(harness.commands)

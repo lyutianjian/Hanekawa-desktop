@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk'
+import { createHash } from 'node:crypto'
 import type { ModelConfig } from '../service.js'
 import type { PromptCachingMode } from '../routing.js'
 import type { ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, ThinkingBlock } from '../../harness/types.js'
@@ -150,6 +151,10 @@ export class AnthropicProvider implements ModelProvider {
   }
 
   private async sendMessage(request: ModelRequest, attempt: number, enableCaching: boolean): Promise<ModelResponse> {
+    const thinkingSource = createHash('sha256').update(JSON.stringify([
+      this.name, this.endpoint.replace(/\/+$/, ''), request.model,
+    ])).digest('hex')
+    request = { ...request, thinkingSource }
     const dynamicToolSearch = this.supportsDynamicToolSearch()
     const payload = buildAnthropicPayload(request, this.maxOutputTokens, {
       promptCaching: enableCaching,
@@ -204,6 +209,7 @@ export class AnthropicProvider implements ModelProvider {
       : null
     return {
       ...parsed,
+      ...(parsed.thinkingBlocks?.length ? { thinkingSource } : {}),
       ...(cacheBreak ? { cacheBreak } : {}),
     }
   }

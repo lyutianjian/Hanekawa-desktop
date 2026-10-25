@@ -314,6 +314,8 @@ export type TranscriptEntry =
   | { readonly kind: 'run'; readonly run: ActivityRun }
 
 export interface TranscriptState {
+  /** The completed turn owning the live output token count. */
+  readonly lastTurnId?: string
   readonly items: readonly TranscriptItem[]
   /** Bumped by a `transcript-reset` that asked for one; a view may use it as a key. */
   readonly generation: number
@@ -614,6 +616,7 @@ export function applySessionEvent(
           toolProgress: undefined,
           isThinking: false,
           turnId: undefined,
+          lastTurnId: state.turnId,
           liveThinkingId: undefined,
           phase: undefined,
           draftCall: undefined,
@@ -701,7 +704,13 @@ function applyStream(state: TranscriptState, event: Extract<SessionEvent, { type
     case 'retry':
       // A stream that failed partway leaves its draft pending; settled, so the
       // row can say the request is being sent again.
-      return { ...settleDraft(state), draftCall: undefined, phase: { kind: 'retrying', attempt: event.attempt, reason: event.reason } }
+      return {
+        ...settleDraft(state),
+        items: settleDraft(state).items.filter((item) => item.id !== state.liveThinkingId),
+        liveThinkingId: undefined,
+        draftCall: undefined,
+        phase: { kind: 'retrying', attempt: event.attempt, reason: event.reason },
+      }
     case 'compact':
       if (event.phase === 'end') return endCompaction(state)
       return {
@@ -711,6 +720,11 @@ function applyStream(state: TranscriptState, event: Extract<SessionEvent, { type
       }
     case 'thinking_delta':
       return appendThinking(state, event.thinking, now)
+    case 'context_trim_notice':
+      return {
+        ...state,
+        items: [...state.items, { id: `context-trim-${state.items.length}`, kind: 'notice', text: event.message, turnId: state.turnId }],
+      }
     case 'thinking_stop':
       return { ...state, isThinking: false, items: pauseThinking(state, stampThinkingDuration(state, now)) }
     case 'message_start': {

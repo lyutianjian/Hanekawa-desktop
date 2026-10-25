@@ -53,9 +53,6 @@ const MODIFIER_KEYS = new Set(['Shift', 'Control', 'Alt', 'AltGraph', 'Meta', 'O
  */
 export const BROWSER_PARTITION = 'persist:hanekawa-browser'
 
-/** The isolated world automation runs in. The page's own scripts live in world 0. */
-export const AUTOMATION_WORLD_ID = 1001
-
 /** A new tab's bounds until the renderer has measured its hole. */
 const INITIAL_RECT: WireBrowserRect = { x: 0, y: 0, width: 1280, height: 720 }
 /** A parked tab that was never measured (or measured at zero) is laid out at this size. */

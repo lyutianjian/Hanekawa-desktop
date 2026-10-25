@@ -95,7 +95,7 @@ export interface CoordinationLaneControl {
   /** Queue a message from the coordinator; it never interrupts a user-driven turn. */
   enqueueFromCoordinator(text: string): Promise<void>
   /** Ask the lane to start a wake turn with this text when it can. */
-  requestWake(text: string): void
+  requestWake(text: string, onDiscard?: (reason: WakeDiscardReason) => void): void
   /** Drop queued messages, then interrupt the running turn. */
   stop(): Promise<void>
   setModel(key: string): void
@@ -104,3 +104,5 @@ export interface CoordinationLaneControl {
   state(): { streaming: boolean; pendingApproval: boolean; pendingDialog: boolean }
   onStateChange(listener: () => void): () => void
 }
+
+export type WakeDiscardReason = 'stopped' | 'failed' | 'detached'

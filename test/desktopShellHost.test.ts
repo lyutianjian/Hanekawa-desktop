@@ -3215,3 +3215,44 @@ test('list-sessions carries a session coordination role', async () => {
   assert.equal(group.sessions.find((s) => s.id === 'c1')?.coordinationRole, 'coordinator')
   assert.equal('coordinationRole' in group.sessions.find((s) => s.id === 'p1')!, false)
 })
+
+// --- what a Dock click does with a window that has no lanes ------------------
+
+test('a window whose last lane died can be refilled with one draft lane', async () => {
+  const h = createHarness()
+  const result = await h.client.openSession({ projectRoot: h.entry.root })
+  await settle()
+  h.host.detachLane(result.lane, 'window-closed')
+  await h.directory.whenClosed(h.entry.cwd)
+  assert.deepEqual(h.client.getLanes(), [], 'the window is empty after the close')
+
+  // What the reopen does after the old project has finished shutting down: a
+  // fresh bootstrap of the same root, then a draft lane on it. Returning early
+  // because the *entry* was still around is what left a window that painted
+  // nothing.
+  const reborn = h.addProject(h.entry.cwd)
+  const reopened = await h.host.openLane(reborn.entry, {})
+  await settle()
+
+  assert.deepEqual(h.client.getLanes().map((lane) => lane.lane), [reopened.lane])
+  assert.equal(reborn.workspace.panes.length, 1, 'exactly one pane, never a ghost alongside it')
+  assert.equal(reborn.entry.root, h.entry.root, 'the same project, from a runtime built after the close')
+})
+
+test('a root that is still closing resolves to no project, so a reopen must wait', async () => {
+  const h = createHarness()
+  const result = await h.client.openSession({ projectRoot: h.entry.root })
+  await settle()
+  h.host.detachLane(result.lane, 'window-closed')
+
+  // `closeProject` drops the entry before the shutdown completes, so the window
+  // and the registry disagree for its duration: the root is known, and there is
+  // nothing to open yet. `whenClosed` is what a reopen awaits before it
+  // bootstraps, instead of racing a dying runtime over one `.myagent/`.
+  assert.equal(h.directory.get(h.entry.cwd), undefined)
+  await assert.rejects(h.client.openSession({ projectRoot: h.entry.root }), /No project is open/)
+  await h.directory.whenClosed(h.entry.cwd)
+  const reborn = h.addProject(h.entry.cwd)
+  assert.equal(h.directory.size, 1, 'one runtime per root, because the old one was finished first')
+  assert.equal(h.directory.entries()[0], reborn.entry)
+})

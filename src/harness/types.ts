@@ -6,6 +6,7 @@ import type { PermissionMode } from './permissions.js'
 import type { RiskContext, RiskTier } from './risk/types.js'
 import type { SessionMetricInput } from './metrics.js'
 import type { RetryErrorCategory } from '../config/retry.js'
+import type { ModelReferenceField } from '../config/service.js'
 import type { ImageAttachmentMetadata, ImageAttachmentRef, ImageInputErrorReason, ImageMimeType } from '../media/types.js'
 
 export type RiskLevel = 'safe' | 'confirm' | 'dangerous'
@@ -35,6 +36,7 @@ export type ModelStreamEvent =
   | { type: 'retry'; attempt: number; reason: RetryErrorCategory; delayMs: number }
   /** An automatic compaction began summarizing (`start`) or settled either way (`end`). */
   | { type: 'compact'; phase: 'start' | 'end' }
+  | { type: 'context_trim_notice'; message: string; trimmedCount: number }
   /**
    * The loop degraded a request's historical images to text placeholders
    * because the serving model cannot accept images (design §9.1). Emitted
@@ -67,6 +69,8 @@ export interface ChatMessage {
   model?: string
   reasoningContent?: string
   thinkingBlocks?: ThinkingBlock[]
+  /** Opaque source identity for signed thinking; absent on older records. */
+  thinkingSource?: string
   /**
    * OpenRouter's Chat Completions `reasoning_details`, kept verbatim: some
    * entries are encrypted, and the model that wrote them needs them back.
@@ -614,6 +618,33 @@ export interface AttachmentBytesLoader {
 /** A session's part in a project's coordination (see `services/coordination/`). */
 export type CoordinationRole = 'coordinator' | 'thread'
 
+export type { ModelReferenceField }
+
+/**
+ * The owning model configuration — `config.json` through `ConfigService` —
+ * injected by the runtime that builds a loop's tool context.
+ *
+ * The Config tool writes model references through this port instead of through
+ * `settings.json`: the config layer outranks the settings layers, so a value
+ * written to settings could be reported as set and never take effect. The port
+ * owns no rules of its own — validation, precedence, and persistence stay in
+ * the one class that already has them.
+ */
+export interface ModelConfigPort {
+  /** The stored reference for a field, exactly as written (an alias may appear). */
+  getModelReference(field: ModelReferenceField): string | undefined
+  /** The model key a user-supplied reference names, or undefined when it names none. */
+  resolveModelKey(reference: string): string | undefined
+  /** Every configured model key, in configuration order. */
+  listModelKeys(): string[]
+  /** Validate, store and persist one reference; report what is now effective. */
+  setModelReference(field: ModelReferenceField, reference: string): Promise<ModelReferenceWrite>
+}
+
+export type ModelReferenceWrite =
+  | { ok: true; effective: string }
+  | { ok: false; message: string }
+
 export interface ToolContext {
   cwd: string
   /** Key for per-project data dirs (plans, memory, spill, transcripts). Absent means `cwd`. */
@@ -664,6 +695,13 @@ export interface ToolContext {
   getPermissionMode?(): PermissionMode
   setPermissionMode?(mode: PermissionMode): void
   exitPlanMode?(): PermissionMode
+  /**
+   * Model references (`defaultModel`/`fallbackModel`/`compactModel`), which live
+   * in `config.json` rather than in settings. Absent where no configuration is
+   * wired (test loops): the Config tool then refuses to write one instead of
+   * writing a value the config layer would override.
+   */
+  modelConfig?: ModelConfigPort
   planModeBridge?: PlanModeBridge
   askUserQuestionBridge?: AskUserQuestionBridge
   /** Active provider name ('anthropic' | 'openai') — used by ToolSearchTool to format results. */
@@ -982,6 +1020,7 @@ export interface ForkPrefix {
 }
 
 export interface ModelRequest {
+  thinkingSource?: string
   system?: string
   systemBlocks?: string[]
   messages: ChatMessage[]
@@ -1031,6 +1070,7 @@ export interface ModelRequest {
 }
 
 export interface ModelResponse {
+  thinkingSource?: string
   content: string
   toolCalls: ToolCall[]
   usage?: TokenUsage

@@ -4,7 +4,7 @@ import {
   loadMcpConfig,
   wrapMcpTool,
 } from '../services/mcp/index.js'
-import type { ManagedMcpClient, McpServerConfig, McpTool } from '../services/mcp/index.js'
+import type { ManagedMcpClient, ManagedMcpClientOptions, McpServerConfig, McpTool } from '../services/mcp/index.js'
 import { trustMcpServerLocally } from '../config/settings.js'
 import type { MyAgentSettings } from '../config/settings.js'
 import type { ToolRegistry } from './toolRegistry.js'
@@ -18,6 +18,12 @@ export interface ConnectMcpServersOptions {
   confirmTrust: (name: string, server: McpServerConfig) => Promise<boolean>
   /** Emits the `mcp_connect_failed` metric; also called on reconnect failures. */
   onConnectFailure: (name: string, error: string) => Promise<void>
+  /**
+   * Seam for tests: the real connection spawns a child process, so the startup
+   * failure paths (a server that connects but cannot list its tools, a close
+   * that fails while unwinding) are only reachable by substituting it.
+   */
+  connect?: (config: McpServerConfig, options?: ManagedMcpClientOptions) => Promise<ManagedMcpClient>
 }
 
 export interface ConnectMcpServersResult {
@@ -34,6 +40,7 @@ export async function connectMcpServers(
   options: ConnectMcpServersOptions,
 ): Promise<ConnectMcpServersResult> {
   const { cwd, settings, registry, confirmTrust, onConnectFailure } = options
+  const connect = options.connect ?? connectManagedMcpServer
   const mcpConfig = await loadMcpConfig(cwd, settings)
   const clients: ManagedMcpClient[] = []
   const status: McpConnectionStatus = { connected: [], failed: [] }
@@ -45,6 +52,10 @@ export async function connectMcpServers(
   }
 
   for (const [name, serverConfig] of Object.entries(mcpConfig)) {
+    // Held outside the try: a server that connected but then failed to list its
+    // tools already owns a child process, and only `clients` is closed at
+    // shutdown — so this loop is the one place that can still dispose of it.
+    let manager: ManagedMcpClient | undefined
     try {
       if (!trustedServers.has(name)) {
         const trusted = await confirmTrust(name, serverConfig)
@@ -57,24 +68,42 @@ export async function connectMcpServers(
       }
 
       const timeoutMs = getMcpTimeoutMs(serverConfig)
-      let manager: ManagedMcpClient
-      manager = await connectManagedMcpServer(serverConfig, {
+      const connected: ManagedMcpClient = await connect(serverConfig, {
         onReconnect: async (client) => {
           // List through the fresh client, but invoke through the stable
           // manager wrapper.
-          await refreshMcpServerTools(name, client, manager, timeoutMs, registry)
+          await refreshMcpServerTools(name, client, connected, timeoutMs, registry)
         },
         onToolsChanged: (_client, tools) => {
-          setMcpServerTools(name, tools, manager, registry)
+          setMcpServerTools(name, tools, connected, registry)
         },
         onReconnectFailed: async (error) => {
           await onConnectFailure(name, error.message)
         },
       })
-      await refreshMcpServerTools(name, manager, manager, timeoutMs, registry)
-      clients.push(manager)
+      manager = connected
+      await refreshMcpServerTools(name, connected, connected, timeoutMs, registry)
+      // Ownership transfers only now, with a full connection and its tools
+      // published: from here the shutdown path closes it.
+      clients.push(connected)
+      manager = undefined
       status.connected.push({ name, toolCount: registry.serverToolCount(name) })
     } catch (error) {
+      // Undo the attempt before reporting it: a half-registered server would
+      // keep serving tools whose process is gone, and a leaked process would
+      // outlive the runtime. A cleanup failure is recorded on its own so it
+      // cannot hide the error that actually broke the connection.
+      if (manager) {
+        registry.removeServerTools(name)
+        try {
+          await manager.close()
+        } catch (closeError) {
+          status.failed.push({
+            name,
+            error: `failed to close after a startup error: ${closeError instanceof Error ? closeError.message : String(closeError)}`,
+          })
+        }
+      }
       await recordFailure(name, error instanceof Error ? error.message : String(error))
     }
   }

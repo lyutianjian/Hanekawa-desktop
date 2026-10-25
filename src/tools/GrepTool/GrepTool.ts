@@ -1,10 +1,13 @@
-import { execFile } from 'node:child_process'
 import { readFile, stat } from 'node:fs/promises'
 import path from 'node:path'
 import fg from 'fast-glob'
+import picomatch from 'picomatch'
 import { z } from 'zod/v3'
 import type { Tool, ToolResult } from '../../harness/types.js'
+import { filterGitIgnoredPaths } from '../../utils/gitIgnore.js'
 import { resolveToolPath } from '../../utils/paths.js'
+import { streamRipgrepLines, type RipgrepStreamResult } from '../rgStream.js'
+import { runtimeDataExclusions } from '../searchExclusions.js'
 import {
   DEFAULT_HEAD_LIMIT,
   MAX_COLUMNS,
@@ -44,6 +47,8 @@ interface SearchOptions {
   before: number
   after: number
   cwd: string
+  /** App-owned runtime data inside the search root, relative to it. */
+  exclusions: string[]
 }
 
 function buildRipgrepArgs(options: SearchOptions): string[] {
@@ -53,6 +58,11 @@ function buildRipgrepArgs(options: SearchOptions): string[] {
   if (options.multiline) args.push('-U', '--multiline-dotall')
   if (options.glob) args.push('--glob', options.glob)
   if (options.type) args.push('--type', options.type)
+  // Ripgrep matches a glob against the path as it prints it, so an absolute
+  // search root needs the `**/` form while a relative one needs the bare form.
+  for (const excluded of options.exclusions) {
+    args.push('--glob', `!${excluded}/**`, '--glob', `!**/${excluded}/**`)
+  }
 
   if (options.outputMode === 'files_with_matches') {
     args.push('--files-with-matches')
@@ -87,30 +97,26 @@ function buildRipgrepArgs(options: SearchOptions): string[] {
  * sent every empty search through a full-tree fast-glob scan, which is both
  * slow and how raw `fs` errors reached the model.
  */
-function tryRipgrep(options: SearchOptions): Promise<string[] | null> {
-  return new Promise((resolve, reject) => {
-    const args = buildRipgrepArgs(options)
-    execFile('rg', args, { cwd: options.cwd, timeout: RG_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024, windowsHide: true }, (err, stdout, stderr) => {
-      const code = (err as { code?: unknown } | null)?.code
-      // rg not installed is the one fallback-worthy case.
-      if (code === 'ENOENT') {
-        resolve(null)
-        return
-      }
-      const exitCode = typeof code === 'number' ? code : undefined
-      if (err && exitCode === undefined) {
-        // Killed by signal or timed out — not something a fallback can fix.
-        reject(err)
-        return
-      }
-      if (exitCode !== undefined && exitCode >= 2) {
-        reject(new Error(`ripgrep failed (exit ${exitCode}): ${String(stderr).trim() || 'unknown error'}`))
-        return
-      }
-      // exit 0 = matches, exit 1 = no matches. Both are answers.
-      resolve(toRelativeMatches(stdout, options.cwd, options.outputMode === 'files_with_matches'))
-    })
+function tryRipgrep(options: SearchOptions, keepLimit: number, signal?: AbortSignal): Promise<RipgrepStreamResult | null> {
+  const wholeLineIsPath = options.outputMode === 'files_with_matches'
+  return streamRipgrepLines({
+    cwd: options.cwd,
+    args: buildRipgrepArgs(options),
+    keepLimit,
+    timeoutMs: RG_TIMEOUT_MS,
+    ...(signal ? { signal } : {}),
+    // Kept rows are rewritten relative to the working directory, the same form
+    // the fallback prints; counting happens before this so totals stay exact.
+    transform: (line) => toRelativeMatch(line, options.cwd, wholeLineIsPath),
   })
+}
+
+/** Ripgrep prints `path:line:text`; paths come back relative to `cwd`. */
+function toRelativeMatch(line: string, cwd: string, wholeLineIsPath: boolean): string {
+  if (wholeLineIsPath) return path.relative(cwd, path.resolve(cwd, line))
+  const parts = splitRgLine(line)
+  if (!parts) return line
+  return path.relative(cwd, path.resolve(cwd, parts.filePath)) + parts.rest
 }
 
 /** Ripgrep's own words when a pattern contains `\n` but `-U` was not passed. */
@@ -129,16 +135,6 @@ function splitRgLine(line: string): { filePath: string; rest: string } | null {
   const colonIdx = line.indexOf(':', driveOffset)
   if (colonIdx === -1) return null
   return { filePath: line.substring(0, colonIdx), rest: line.substring(colonIdx) }
-}
-
-function toRelativeMatches(stdout: string, cwd: string, wholeLineIsPath: boolean): string[] {
-  const lines = stdout.split('\n').filter(Boolean)
-  return lines.map((line) => {
-    if (wholeLineIsPath) return path.relative(cwd, path.resolve(cwd, line))
-    const parts = splitRgLine(line)
-    if (!parts) return line
-    return path.relative(cwd, path.resolve(cwd, parts.filePath)) + parts.rest
-  })
 }
 
 /** Line numbers (1-based) of every line the pattern touches in `raw`. */
@@ -180,19 +176,16 @@ function countNewlines(value: string, upTo: number): number {
  * Used only when `rg` is not installed. `type` has no equivalent here; the
  * caller notes that in the result rather than silently narrowing nothing.
  */
-async function fallbackGrep(options: SearchOptions, limit: number): Promise<string[]> {
+async function fallbackGrep(options: SearchOptions, limit: number): Promise<{ rows: string[]; total: number }> {
   const flags = (options.caseInsensitive ? 'i' : '') + (options.multiline ? 's' : '')
   let regex: RegExp
   try {
     regex = new RegExp(options.pattern, flags)
   } catch {
-    return ['Error: Invalid regular expression pattern.']
+    return { rows: ['Error: Invalid regular expression pattern.'], total: 1 }
   }
 
-  const files = options.targetIsFile
-    ? [options.target]
-    : (await fg(options.glob ?? '**/*', { cwd: options.target, onlyFiles: true, dot: false, ignore: ['**/node_modules/**'] }))
-      .map((entry) => path.join(options.target, entry))
+  const files = options.targetIsFile ? [options.target] : await fallbackFiles(options)
   const rows: string[] = []
 
   for (const filePath of files) {
@@ -226,10 +219,48 @@ async function fallbackGrep(options: SearchOptions, limit: number): Promise<stri
     }
   }
 
-  return rows
+  return { rows, total: rows.length }
 }
 
-/** Match lines widened by the context window, deduplicated and in order. */
+/**
+ * `--glob` as ripgrep reads it: a pattern without `/` is matched against the
+ * basename at any depth (so `*.ts` finds `src/a.ts`, not just top-level files),
+ * and dots are matched like any other character.
+ */
+function globMatcher(glob: string | undefined): ((entry: string) => boolean) | undefined {
+  if (!glob) return undefined
+  const matches = picomatch(glob, { dot: true })
+  if (glob.includes('/')) return (entry) => matches(entry)
+  return (entry) => matches(path.posix.basename(entry))
+}
+
+/** Without ripgrep's traversal, at least these never come back. */
+const FALLBACK_IGNORE = ['**/node_modules/**', ...VCS_EXCLUSIONS.map((dir) => `**/${dir}/**`)]
+
+/**
+ * Every file under the search root ripgrep would have considered. It walks with
+ * dots so hidden sources stay searchable — the same reason the ripgrep call
+ * passes `--hidden` — prunes the directories ripgrep never enters, then applies
+ * the glob filter before anything is read.
+ */
+async function fallbackFiles(options: SearchOptions): Promise<string[]> {
+  const entries = await fg('**/*', {
+    cwd: options.target,
+    onlyFiles: true,
+    dot: true,
+    followSymbolicLinks: false,
+    ignore: [...FALLBACK_IGNORE, ...options.exclusions.flatMap((rel) => [rel, `${rel}/**`])],
+  })
+  const relative = entries.map((entry) => entry.replace(/\\/g, '/'))
+  const matcher = globMatcher(options.glob)
+  const matched = matcher ? relative.filter((entry) => matcher(entry)) : relative
+  // `--glob` overrides ripgrep's ignore files outright, so only a search with
+  // no glob asks git which of these the user had already ignored.
+  const kept = options.glob ? matched : await filterGitIgnoredPaths(options.target, matched)
+  return kept.map((entry) => path.join(options.target, entry))
+}
+
+/** Match lines widened by the context window, deduplicated, in order. */
 function expandContext(hits: number[], before: number, after: number, totalLines: number): number[] {
   if (before === 0 && after === 0) return hits
   const wanted = new Set<number>()
@@ -326,40 +357,45 @@ export const grepTool: Tool = {
       before,
       after,
       cwd: context.cwd,
+      // A browse of a home directory must not wade through the sessions and
+      // spilled output Hanekawa keeps under `~/.myagent`, nor the coordination
+      // worktrees; a search aimed inside those keeps them.
+      exclusions: runtimeDataExclusions(target),
     }
 
-    // Try ripgrep first (ReDoS-immune, faster)
-    let rgMatches: string[] | null
+    // Try ripgrep first (ReDoS-immune, faster). Only `offset + headLimit` rows
+    // are held; the rest is counted as it streams.
+    let rgResult: RipgrepStreamResult | null
     try {
-      rgMatches = await tryRipgrep(searchOptions)
+      rgResult = await tryRipgrep(searchOptions, fetchLimit, context.abortSignal)
     } catch (error) {
       // A pattern containing `\n` is a cross-line search the caller forgot to
       // declare. Retrying with multiline answers the question instead of
       // handing back ripgrep's stderr.
       if (searchOptions.multiline || !isLiteralNewlineRejection(error)) throw error
-      rgMatches = await tryRipgrep({ ...searchOptions, multiline: true })
+      rgResult = await tryRipgrep({ ...searchOptions, multiline: true }, fetchLimit, context.abortSignal)
     }
-    if (rgMatches !== null) {
-      return paginateResult(rgMatches, effectiveLimit, offset, outputMode)
+    if (rgResult !== null) {
+      return paginateResult(rgResult.kept, rgResult.total, effectiveLimit, offset, outputMode)
     }
 
     // Fallback to Node RegExp
-    const matches = await fallbackGrep(searchOptions, fetchLimit)
+    const fallback = await fallbackGrep(searchOptions, fetchLimit)
     const note = searchOptions.type
       ? `\n\n[ripgrep is not installed, so the type filter "${searchOptions.type}" was not applied. Use glob instead for an exact filter.]`
       : ''
-    return paginateResult(matches, effectiveLimit, offset, outputMode, note)
+    return paginateResult(fallback.rows, fallback.total, effectiveLimit, offset, outputMode, note)
   },
 }
 
-function paginateResult(allRows: string[], limit: number, offset: number, outputMode: OutputMode, note = ''): ToolResult {
-  const sliced = allRows.slice(offset, offset + limit)
+function paginateResult(rows: string[], total: number, limit: number, offset: number, outputMode: OutputMode, note = ''): ToolResult {
+  const sliced = rows.slice(offset, offset + limit)
   const rowCount = sliced.length
 
   let content = sliced.join('\n') || 'No matches found.'
   // Append pagination notice if results were truncated
-  if (offset > 0 || sliced.length < allRows.length) {
-    content += `\n\n[Showing results ${offset + 1}..${offset + sliced.length} of ${allRows.length} total matches]`
+  if (offset > 0 || offset + sliced.length < total) {
+    content += `\n\n[Showing results ${offset + 1}..${offset + sliced.length} of ${total} total matches]`
   }
   content += note
 

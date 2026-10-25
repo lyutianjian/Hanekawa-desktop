@@ -139,6 +139,54 @@ test('ConfigService revalidates config at save even without a reload', async () 
   assert.equal(await readFile(file, 'utf8'), '{ broken after load')
 })
 
+test('independent ConfigService instances refuse stale saves instead of losing another project change', async () => {
+  const first = new ConfigService(path.join(process.env.HOME!, 'project-a'))
+  const second = new ConfigService(path.join(process.env.HOME!, 'project-b'))
+  await Promise.all([first.load(), second.load()])
+  first.addModel('model-a', { provider: 'anthropic', model: 'a' })
+  second.setContextManagement({ contextWindow: 400_000 })
+
+  const saved = await Promise.allSettled([first.save(), second.save()])
+  assert.equal(saved.filter((result) => result.status === 'fulfilled').length, 1)
+  const rejected = saved.find((result) => result.status === 'rejected')
+  assert.ok(rejected && rejected.status === 'rejected')
+  assert.match(String(rejected.reason), /配置.*已.*修改.*重新加载/)
+
+  const loser = saved[0]!.status === 'rejected' ? first : second
+  await loser.load()
+  loser.addModel('model-a', { provider: 'anthropic', model: 'a' })
+  loser.setContextManagement({ contextWindow: 400_000 })
+  await loser.save()
+
+  const reloaded = new ConfigService(process.env.HOME!)
+  await reloaded.load()
+  assert.equal(reloaded.getModel('model-a')?.model, 'a')
+  assert.equal(reloaded.get().agent.contextManagement?.contextWindow, 400_000)
+})
+
+test('stale saves cannot resurrect deleted models, endpoints or references', async () => {
+  const first = new ConfigService(process.env.HOME!)
+  first.setEndpoint('relay', { provider: 'anthropic', baseUrl: 'https://relay.example' })
+  first.addModel('model-a', { model: 'a', endpoint: 'relay' })
+  await first.save()
+  const second = new ConfigService(process.env.HOME!)
+  await second.load()
+
+  first.removeEndpoint('relay')
+  await first.save()
+  second.setContextManagement({ contextWindow: 400_000 })
+  await assert.rejects(() => second.save(), /重新加载/)
+  const deleted = JSON.parse(await readFile(first.getSaveTarget(), 'utf8'))
+  assert.deepEqual(deleted.models, {})
+  assert.equal(deleted.endpoints, undefined)
+  assert.equal(deleted.defaultModel, undefined)
+
+  await second.load()
+  second.setContextManagement({ contextWindow: 400_000 })
+  await second.save()
+  assert.deepEqual(JSON.parse(await readFile(first.getSaveTarget(), 'utf8')).models, {})
+})
+
 for (const bytes of ['null', '[]', '"text"', '42']) {
   test(`ConfigService refuses non-object config: ${bytes}`, async () => {
     const service = new ConfigService(process.env.HOME!)
@@ -1193,6 +1241,74 @@ test('providers report dynamic ToolSearch support conservatively', () => {
   }
 })
 
+test('Anthropic payload replays signed thinking only to the model that wrote it', () => {
+  const thinking = { type: 'thinking' as const, thinking: 'reasoned', signature: 'sig-abc' }
+  const redacted = { type: 'redacted_thinking' as const, data: 'opaque-blob' }
+  const body = (messageModel: string | undefined, requestModel: string, messageSource: string | undefined, requestSource: string | undefined) => {
+    const request: ModelRequest = {
+      cacheSource: 'agent:test',
+      model: requestModel,
+      thinkingSource: requestSource,
+      messages: [],
+      promptCaching: false,
+      contextItems: [
+        { kind: 'message', message: { id: 'u1', role: 'user', content: 'hi', createdAt: new Date().toISOString() } },
+        {
+          kind: 'message',
+          message: {
+            id: 'a1',
+            role: 'assistant',
+            content: 'checking',
+            createdAt: new Date().toISOString(),
+            ...(messageModel ? { model: messageModel } : {}),
+            thinkingSource: messageSource,
+            thinkingBlocks: [thinking, redacted],
+          },
+        },
+        { kind: 'tool_use', id: 'call-1', tool: 'Read', input: { filePath: 'a.txt' } },
+        { kind: 'tool_result', toolUseId: 'call-1', tool: 'Read', ok: true, content: 'body' },
+      ],
+    }
+    return buildAnthropicPayload(request) as { messages: Array<{ role: string; content: unknown }> }
+  }
+
+  // Same model: both opaque blocks survive, in order, ahead of the text.
+  const kept = body('claude-sonnet-4', 'claude-sonnet-4', 'source-a', 'source-a')
+  const keptBlocks = kept.messages[1]!.content as Array<Record<string, unknown>>
+  assert.deepEqual(keptBlocks.slice(0, 2), [
+    { type: 'thinking', thinking: 'reasoned', signature: 'sig-abc' },
+    { type: 'redacted_thinking', data: 'opaque-blob' },
+  ])
+  assert.deepEqual(keptBlocks[2], { type: 'text', text: 'checking' })
+
+  for (const [label, messageModel, messageSource, requestSource] of [
+    ['a different model', 'claude-opus-4', 'source-a', 'source-a'],
+    ['unknown model', undefined, 'source-a', 'source-a'],
+    ['changed endpoint', 'claude-sonnet-4', 'source-a', 'source-b'],
+    ['legacy source', 'claude-sonnet-4', undefined, 'source-a'],
+    ['unknown request source', 'claude-sonnet-4', 'source-a', undefined],
+  ] as const) {
+    const dropped = body(messageModel, 'claude-sonnet-4', messageSource, requestSource)
+    const assistant = dropped.messages[1]!.content as Array<Record<string, unknown>>
+    assert.ok(
+      assistant.every((block) => block.type !== 'thinking' && block.type !== 'redacted_thinking'),
+      `${label}: opaque blocks must not be replayed`,
+    )
+    // The assistant text and the tool pairing stay: only the opaque half goes.
+    assert.deepEqual(assistant[0], { type: 'text', text: 'checking' })
+    assert.deepEqual(
+      dropped.messages.flatMap((message) => message.content as Array<Record<string, unknown>>)
+        .find((block) => block.type === 'tool_use'),
+      { type: 'tool_use', id: 'call-1', name: 'Read', input: { filePath: 'a.txt' } },
+    )
+    const last = dropped.messages.at(-1)!.content as Array<Record<string, unknown>>
+    assert.equal(last[0]!.type, 'tool_result')
+    assert.equal(last[0]!.tool_use_id, 'call-1')
+    assert.equal(last[0]!.content, 'body')
+    assert.equal(last[0]!.is_error, false)
+  }
+})
+
 test('buildAnthropicMessages includes tool use and tool results', () => {
   const request: ModelRequest = {
     cacheSource: 'agent:test',
@@ -1983,6 +2099,7 @@ test('buildAnthropicMessages prepends thinking blocks before assistant content',
   const request: ModelRequest = {
     cacheSource: 'agent:test',
     model: 'claude-opus-4-7',
+    thinkingSource: 'source-a',
     messages: [],
     contextItems: [
       {
@@ -1996,6 +2113,9 @@ test('buildAnthropicMessages prepends thinking blocks before assistant content',
           role: 'assistant',
           content: 'The answer is 42.',
           createdAt: new Date().toISOString(),
+          // Provenance: a signature is only legal back to the model that wrote it.
+          model: 'claude-opus-4-7',
+          thinkingSource: 'source-a',
           thinkingBlocks: [
             { type: 'thinking', thinking: 'Let me think...', signature: 'sig-abc' },
           ],
@@ -2019,6 +2139,7 @@ test('buildAnthropicMessages preserves thinking blocks when followed by tool_use
   const request: ModelRequest = {
     cacheSource: 'agent:test',
     model: 'claude-opus-4-7',
+    thinkingSource: 'source-a',
     messages: [],
     contextItems: [
       {
@@ -2032,6 +2153,8 @@ test('buildAnthropicMessages preserves thinking blocks when followed by tool_use
           role: 'assistant',
           content: '',
           createdAt: new Date().toISOString(),
+          model: 'claude-opus-4-7',
+          thinkingSource: 'source-a',
           thinkingBlocks: [
             { type: 'thinking', thinking: 'I should read the file', signature: 'sig-xyz' },
           ],

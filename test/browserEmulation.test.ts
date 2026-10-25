@@ -108,3 +108,67 @@ test('a lost attachment is re-emulated on the next operation, once', async () =>
   assert.equal(await resetEmulation(target), true)
   assert.deepEqual(fake.debugger.sent, [])
 })
+
+for (const operation of ['apply', 'replace', 'restore', 'reset'] as const) {
+  test(`${operation} emulation cancels a stuck command, releases its lease and ignores late replies`, async () => {
+    const { fake, target } = contents()
+    const settings = resolveEmulation({ preset: 'iphone' })
+    if (operation !== 'apply') await applyEmulation(target, settings)
+    if (operation === 'restore') fake.debugger.kick()
+    fake.debugger.sent = []
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    const original = fake.debugger.sendCommand.bind(fake.debugger)
+    fake.debugger.sendCommand = async (method) => {
+      await original(method)
+      await gate
+      return {}
+    }
+    const controller = new AbortController()
+    const options = { signal: controller.signal }
+    const pending = operation === 'apply' || operation === 'replace' ? applyEmulation(target, settings, options)
+      : operation === 'restore' ? restoreEmulation(target, options) : resetEmulation(target, options)
+    const result = pending.then(() => 'success', (error: { code?: string }) => error.code)
+    try {
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(fake.debugger.sent.length, 1)
+      controller.abort()
+      assert.equal(await Promise.race([result, new Promise((resolve) => setTimeout(() => resolve('pending'), 60))]), 'OPERATION_ABORTED')
+      assert.equal((cdpSessionFor(target) as unknown as { users: number }).users, 0)
+      release()
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.equal(fake.debugger.sent.length, 1, 'a late reply must not send another command')
+      fake.debugger.sendCommand = original
+      await applyEmulation(target, settings)
+      assert.equal(emulationOf(target), settings, 'the next operation can acquire a fresh lease')
+    } finally {
+      release()
+      await result
+      fake.debugger.kick()
+    }
+  })
+}
+
+test('emulation commands time out and recheck ownership before sending follow-up commands', { timeout: 1_000 }, async () => {
+  const { fake, target } = contents()
+  const settings = resolveEmulation({ preset: 'iphone' })
+  fake.debugger.sendCommand = async (method) => {
+    fake.debugger.sent.push(method)
+    return new Promise(() => {})
+  }
+  await assert.rejects(() => applyEmulation(target, settings, { timeoutMs: 5 }), { code: 'PAGE_NOT_READY' })
+  assert.equal((cdpSessionFor(target) as unknown as { users: number }).users, 0)
+  let allowed = true
+  fake.debugger.sent = []
+  fake.debugger.sendCommand = async (method) => {
+    fake.debugger.sent.push(method)
+    allowed = false
+    return {}
+  }
+  await assert.rejects(() => applyEmulation(target, settings, { check: () => {
+    if (!allowed) throw new Error('ownership changed')
+  } }), /ownership changed/)
+  assert.equal(fake.debugger.sent.length, 1)
+  assert.equal((cdpSessionFor(target) as unknown as { users: number }).users, 0)
+  fake.debugger.kick()
+})
