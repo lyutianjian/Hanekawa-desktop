@@ -168,8 +168,10 @@ function fakeRuntimeSlot(): RuntimeSlot {
   } as unknown as RuntimeSlot
 }
 
-function fakeScope(): SessionScope {
+function fakeScope(cwd = '/tmp/fixture'): SessionScope {
   return {
+    projectDir: cwd,
+    workingDir: cwd,
     session: {
       id: 'ses',
       shortId: 'ses',
@@ -258,7 +260,7 @@ function fakeProject(cwd = '/tmp/fixture'): ProjectRuntime {
     createActiveModelRuntime: () => ({} as never),
     // Echoes the session so the scope, the pane and the wire all agree on the
     // id — the real `openScope` opens a scope *for* that session.
-    openScope: async (session: SessionMeta) => ({ ...fakeScope(), session }),
+    openScope: async (session: SessionMeta) => ({ ...fakeScope(cwd), session }),
     getSettings: () => ({}),
     listAgentDefinitions: () => [],
     reloadAgentDefinitions: async () => 0,

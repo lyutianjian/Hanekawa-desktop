@@ -16,7 +16,7 @@ function fakeHost(overrides: Partial<CoordinationHost> = {}): { host: Coordinati
     return value
   }
   const host: CoordinationHost = {
-    startThread: rec('startThread', { threadId: 't1', sessionId: 's2', branch: 'hanekawa/x-t1' }),
+    startThread: rec('startThread', { threadId: 't1', sessionId: 's2', modelKey: 'm', branch: 'hanekawa/x-t1' }),
     messageThread: rec('messageThread', undefined),
     stopThread: rec('stopThread', undefined),
     resolveThread: rec('resolveThread', undefined),
@@ -101,6 +101,7 @@ test('StartThread passes the request through and names the branch', async () => 
   )
   assert.equal(result.ok, true)
   assert.match(result.content, /t1.*hanekawa\/x-t1/)
+  assert.match(result.content, /Model key: "m"/)
   assert.deepEqual(calls[0]!.args[1], { title: 'Fix', brief: 'b', background: BACKGROUND, writesCode: true, model: 'm' })
 })
 
@@ -130,6 +131,7 @@ test('host errors map by code', async () => {
     ['THREAD_STALE', 'precondition_failed'],
     ['NOT_COORDINATOR', 'precondition_failed'],
     ['NO_COORDINATOR', 'precondition_failed'],
+    ['MODEL_NOT_FOUND', 'precondition_failed'],
     ['WORKTREE_FAILED', 'execution_failed'],
     [undefined, 'execution_failed'],
   ]

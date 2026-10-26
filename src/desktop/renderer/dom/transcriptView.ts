@@ -16,13 +16,10 @@ import {
 } from '../model/thinking.js'
 import {
   groupTranscript,
-  isAgentCall,
-  toStep,
   toolStatusLabel,
   type ActivityRun,
   type ActivityStep,
   type Receipt,
-  type SubagentLive,
   type SubagentRun,
   type TranscriptEntry,
   type TranscriptItem,
@@ -35,7 +32,7 @@ import { PRESENCE_FALLBACK_MS } from '../model/presence.js'
 import { splitFileMentions } from '../model/userMessage.js'
 import { splitAttachedPaths } from '../../../media/attachedPaths.js'
 import { pathTileNode } from './pathTile.js'
-import { AGENT_TOOL } from '../model/subagentPanel.js'
+import { AGENT_TOOL, agentDescription } from '../model/subagentPanel.js'
 import type { ImageAttachmentRef } from '../../../media/types.js'
 import type { ToolErrorCode } from '../../../harness/types.js'
 import {
@@ -599,7 +596,13 @@ export function createTranscriptView(
         && tail.item.turnId !== undefined && tail.item.turnId === activity.turnId) {
         entries = entries.slice(0, -1)
       }
-      const split = splitTurnFooters(entries, activity?.isStreaming === true ? undefined : activity?.outputTokens, activity?.outputTokenTurnId)
+      const streaming = activity?.isStreaming === true
+      const split = splitTurnFooters(
+        entries,
+        streaming ? undefined : activity?.outputTokens,
+        activity?.outputTokenTurnId,
+        streaming ? activity.turnId : undefined,
+      )
       entries = split.entries
       const footers = activity === undefined ? new Map<number, TurnFooter>() : split.footers
       const live = turnActivity(entries, activity ?? IDLE)
@@ -641,16 +644,18 @@ export function createTranscriptView(
       const lastTurn = activity?.isStreaming === true ? undefined : Math.max(-1, ...footers.keys())
       const cards = new Map([...edits].map(([index, turn]) => [index, editsCardNode(painter, turn, index === lastTurn)]))
       const liveRun = typeof live.place === 'object' ? live.place.run : undefined
-      const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index), activity !== undefined, cards.get(index), liveRun))
+      const tasks = activity?.backgroundTasks ?? 0
+      const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index), activity !== undefined, cards.get(index), liveRun, tasks))
       // Built before `prune`, or its key would count as dead on the very paint
       // that asked for it. A kept line keeps the spans its fill handed over.
       status = live.row ? { row: live.row, tokens: activity?.outputTokens } : undefined
-      const tasks = activity?.backgroundTasks ?? 0
       // `blocked` is the mark's word for a turn waiting on the user: a question or an approval.
       const card = activity?.taskCard && (live.mark?.state === 'blocked' ? pausedTaskCard(activity.taskCard) : activity.taskCard)
       if (card) nodes.push(taskCardNode(painter, card))
+      // The button rides the status line — the waiting line, or the live run's own
+      // line. Only a turn with no line of its own gets one standing alone.
       if (live.row && live.place === 'line') nodes.push(waitingNode(painter, tasks, live.row.thinkingSince !== undefined))
-      else if (tasks > 0 && painter.onOpenBackgroundTasks) nodes.push(idleStatusNode(painter, tasks))
+      else if (!live.row && tasks > 0 && painter.onOpenBackgroundTasks) nodes.push(idleStatusNode(painter, tasks))
       if (!live.row) gate = undefined
       // A fresh span starts empty, whatever the old one showed.
       if (clockNode !== shownClock) metaShown = ''
@@ -1011,8 +1016,8 @@ function sameSignature(a: readonly unknown[], b: readonly unknown[]): boolean {
 
 // --- entries -----------------------------------------------------------------
 
-function entryNode(painter: Painter, entry: TranscriptEntry, footer: TurnFooter | undefined, inTurn: boolean, card: HTMLElement | undefined, liveRun: string | undefined): HTMLElement {
-  return entry.kind === 'run' ? runNode(painter, entry.run, entry.run.id === liveRun) : itemNode(painter, entry.item, footer, inTurn, card)
+function entryNode(painter: Painter, entry: TranscriptEntry, footer: TurnFooter | undefined, inTurn: boolean, card: HTMLElement | undefined, liveRun: string | undefined, tasks: number): HTMLElement {
+  return entry.kind === 'run' ? runNode(painter, entry.run, entry.run.id === liveRun, tasks) : itemNode(painter, entry.item, footer, inTurn, card)
 }
 
 /**
@@ -1027,7 +1032,7 @@ function entryNode(painter: Painter, entry: TranscriptEntry, footer: TurnFooter 
  * The run the turn is in (`live`) has the status on its line instead of its
  * summary. Once settled, a run of one step is that step's row alone.
  */
-function runNode(painter: Painter, run: ActivityRun, live: boolean): HTMLElement {
+function runNode(painter: Painter, run: ActivityRun, live: boolean, tasks: number): HTMLElement {
   if (!runHasTools(run)) {
     const lines = run.steps.map((step) => thinkingLine(painter, step as Extract<ActivityStep, { kind: 'thinking' }>))
     return painter.node(run.id, 'run thinking-run', lines, () => lines)
@@ -1041,9 +1046,18 @@ function runNode(painter: Painter, run: ActivityRun, live: boolean): HTMLElement
   const classes = ['run']
   if (expanded) classes.push('open')
   if (live) classes.push('live')
-  const head = live ? liveRunLine(painter, run, summarizeRun(run), expanded) : runLine(painter, run, summarizeRun(run), expanded)
-  const card = painter.disclose(`card:${run.id}`, expanded, head, () => cardNode(painter, run))
+  const line = live ? liveRunLine(painter, run, summarizeRun(run), expanded) : runLine(painter, run, summarizeRun(run), expanded)
+  // The line is a button, so the task button cannot sit inside it: the two share a row.
+  const head = live ? runHeadRow(painter, run.id, line, tasks) : line
+  const card = painter.disclose(`card:${run.id}`, expanded, line, () => cardNode(painter, run))
   return painter.node(run.id, classes.join(' '), [head, card], () => [head, card])
+}
+
+/** The live run's line and its 「N 个后台任务」 button on one row; the line alone when there is no button. */
+function runHeadRow(painter: Painter, runId: string, line: HTMLElement, tasks: number): HTMLElement {
+  const button = tasksButton(painter, tasks)
+  if (!button) return line
+  return painter.node(`run-head-row:${runId}`, 'run-head-row', [line, button], () => [line, button])
 }
 
 /** The card's rows, kept so they are not re-inserted with their run. */
@@ -1353,8 +1367,8 @@ function searchResults(step: ToolLike): SearchResults | undefined {
  * under the step's `failed` class.
  *
  * The trailing newline's empty row is dropped, mirroring the tool's own line
- * count, or the head's `N 行` would disagree with the block by one. A trailing
- * `\r` goes with it: it is half of a CRLF the split already broke on, not a
+ * count, so the block does not end in a phantom blank line. A trailing `\r`
+ * goes with it: it is half of a CRLF the split already broke on, not a
  * character of the line.
  */
 function readRows(step: ToolLike): readonly CodeRow[] | undefined {
@@ -1387,14 +1401,6 @@ function agentRun(step: ToolLike): SubagentRun | undefined {
 }
 
 /**
- * The read family's own note (§6.2): `240 行` — the parsed block's own count,
- * so the head and the body can never disagree.
- */
-function readStats(rows: readonly CodeRow[]): string {
-  return `${rows.length} 行`
-}
-
-/**
  * The Agent family's own note (§6.2): `opus · 12 工具` — the model the run used
  * and the calls it made, composed from the run's own record. The model is the
  * same string the result's `headerSuffix` carries, so while this unit stands
@@ -1417,7 +1423,11 @@ function familyData(step: ToolLike): FamilyData {
   }
 }
 
-/** The family's own counts, sitting where a suffix would (§6.2). */
+/**
+ * The family's own counts, sitting between the name and the chevron (§6.2). The
+ * read family has none: how long a file is says nothing about what the call did,
+ * and the body counts its own lines anyway.
+ */
 function familyStats(family: FamilyData): string | undefined {
   // An old capped patch's counts are partial — `+0 −17` on a whole-file rewrite
   // whose adds were cut — so the suffix stays off rather than lying. A search
@@ -1425,22 +1435,20 @@ function familyStats(family: FamilyData): string | undefined {
   // in the notice), so its counts are the list's own and always honest.
   if (family.patch !== undefined && !family.patch.partial) return patchStats(family.patch)
   if (family.found !== undefined) return searchStats(family.found)
-  if (family.rows !== undefined) return readStats(family.rows)
   return agentStats(family.agent)
 }
 
 /**
  * A tool's row in an opened run: 「读取 **pricing.js**」, with what the result adds
- * (the patch's counts, the lines read, the files found, or the time it took) on the
- * right. It opens into the tool's own output when there is any; a row with nothing
- * to show is a plain line, and a sub-agent's row opens its run in the side panel.
+ * (the patch's counts, the files found, or the time it took) between the name and
+ * the chevron — the same place the folded run's line puts its own diff counts. It
+ * opens into the tool's own output when there is any; a row with nothing to show
+ * is a plain line, and a sub-agent's row opens its run in the side panel.
  */
 function toolRow(painter: Painter, step: ToolLike): HTMLElement {
   const status = step.kind === 'tool' ? step.status : step.pending === true ? 'running' : 'done'
   const agent = step.kind === 'tool' && step.toolName === AGENT_TOOL
   const selected = agent && painter.selectedSubagent === step.id
-  // Running: a bordered capsule that says only which agent. Finished: one line of prose.
-  const capsule = agent && (status === 'running' || status === 'awaiting-approval')
   const expanded = isExpanded(painter.disclosure, step.id) && !agent
   const classes = ['step', step.kind, status]
   if (!expanded) classes.push('collapsed')
@@ -1450,35 +1458,32 @@ function toolRow(painter: Painter, step: ToolLike): HTMLElement {
   const detail = step.kind === 'tool' ? step.tool : undefined
   return painter.node(`step:${step.id}`, classes.join(' '), [step.text, detail, status, expanded, selected], () => {
     const family = familyData(step)
-    const live = subagentLive(step, status)
-    // A running sub-agent has no run record yet; its live count stands in.
-    const stats = familyStats(family) ?? (live === undefined ? undefined : `${live.toolCount} 工具`)
+    // A running sub-agent has no run record yet, so it has no counts to state: the
+    // row says it is running and its description opens the run's own page.
+    const stats = familyStats(family)
     const body = agent ? undefined : stepBody(step, family, painter)
     const label = rowLabel(step)
     const name = stepAccessibleName(step, label, status, stats)
-    const ran = agent && status === 'done' ? ranAgentLabel(step, family.agent) : undefined
     const toggles = body !== undefined
     const headKey = `${toggles ? 'tool-head' : 'tool-static'}:${step.id}`
     const ref = painter.ref(headKey, expanded)
-    const right = capsule || ran ? undefined : rowRight(family, stats)
-    const headClass = capsule ? 'step-head agent-chip' : ran ? 'step-head agent-ran' : toggles || agent ? 'step-head' : 'step-head static'
+    const right = agent ? undefined : rowRight(family, stats)
+    const headClass = agent ? 'step-head agent-ran' : toggles ? 'step-head' : 'step-head static'
     const head = painter.node(headKey, headClass, [name, detail, step.text, expanded, selected], (node) => {
+      if (agent) return [el('span', 'step-label', ...agentRow(painter, step, status, name))]
       node.title = name
       node.setAttribute('aria-label', name)
-      if (agent) node.setAttribute('aria-pressed', selected ? 'true' : 'false')
-      else if (toggles) node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
-      if (capsule) return [icon('agent'), el('span', 'step-label', agentName(step)), icon('chevron-right')]
+      if (toggles) node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
       return [
-        el('span', 'step-label', ...(ran ?? label.parts)),
-        toggles ? icon('chevron-right') : undefined,
+        el('span', 'step-label', ...label.parts),
         right,
+        toggles ? icon('chevron-right') : undefined,
       ]
     }, () => {
-      if (!toggles && !agent) return el('div', 'step-head static')
-      return button('step-head', '', name, () => {
-        if (agent) painter.onOpenSubagent(step.id)
-        else painter.onToggle(step.id, ref.expanded)
-      })
+      // The agent's row is prose; only its description is the link to the run.
+      if (agent) return el('div')
+      if (!toggles) return el('div', 'step-head static')
+      return button('step-head', '', name, () => painter.onToggle(step.id, ref.expanded))
     })
     const bodyKey = `tool-body:${step.id}`
     const shown = body === undefined ? undefined : painter.disclose(bodyKey, expanded, head, () => {
@@ -1489,27 +1494,8 @@ function toolRow(painter: Painter, step: ToolLike): HTMLElement {
     const toBackground = step.kind === 'tool' && step.toolName === 'Bash' && status === 'running' && painter.onBackgroundTool !== undefined
       ? button('step-background', '转后台', '不再等待这条命令，让它在后台继续运行', () => painter.onBackgroundTool!(step.id))
       : undefined
-    return [head, toBackground, live === undefined ? undefined : liveLine(live), shown]
+    return [head, toBackground, shown]
   })
-}
-
-/** The latest tool of a running sub-agent, drawn under its step's head. */
-function subagentLive(step: ToolLike, status: string): SubagentLive | undefined {
-  if (step.kind !== 'tool' || step.toolName !== AGENT_TOOL || status !== 'running') return undefined
-  return step.tool.live
-}
-
-/** `↳ Read notes.txt` — outside the disclosure, so a folded step still says what it is doing. */
-function liveLine(live: SubagentLive): HTMLElement {
-  const node = el(
-    'div',
-    'step-live',
-    el('span', 'step-live-arrow', '↳'),
-    el('span', 'step-name', live.tool),
-    live.summary.length > 0 ? el('span', 'step-summary', live.summary) : undefined,
-  )
-  node.setAttribute('aria-live', 'off')
-  return node
 }
 
 /**
@@ -1521,9 +1507,11 @@ function rowLabel(step: ToolLike): { readonly text: string; readonly parts: Chil
   if (step.kind === 'subagent') return { text: step.text, parts: [step.text] }
   const failed = step.status === 'failed' ? ' 失败' : step.status === 'interrupted' ? ' 已中断' : ''
   const mark = step.status === 'failed' ? el('span', 'step-fail', failed) : failed
+  // The Agent row draws its own words; this is the part its accessible name needs.
   if (step.toolName === AGENT_TOOL) {
-    const target = [step.tool.agentType, step.tool.useSummary].filter(Boolean).join(' · ')
-    return { text: `${step.tool.displayName} ${target}${failed}`, parts: [step.tool.displayName, ' ', el('strong', '', target), mark] }
+    const type = step.tool.subagent?.subagentType ?? step.tool.agentType
+    const target = [type, agentName(step)].filter(Boolean).join(' · ')
+    return { text: `${target}${failed}`, parts: [] }
   }
   const { verb, target, bare } = callParts(step, step.toolName === undefined || !EDIT_TOOLS.has(step.toolName))
   if (target.length === 0) return { text: `${verb}${failed}`, parts: step.status === 'failed' ? [verb, mark] : [`${verb}${failed}`] }
@@ -1538,20 +1526,26 @@ function rowLabel(step: ToolLike): { readonly text: string; readonly parts: Chil
 /** What the Agent call is called to the reader: the task it was given, else its type. */
 function agentName(step: ToolLike): string {
   if (step.kind !== 'tool') return step.text
-  return step.tool.useSummary || step.tool.agentType || step.tool.displayName
+  return agentDescription(step.tool)
 }
 
-/** 「已运行子代理 名称 · 模型」: the verb and the model quiet, the name carrying the line. */
-function ranAgentLabel(step: ToolLike, run: SubagentRun | undefined): Child[] {
-  const model = run?.model === undefined ? undefined : modelName(run.model)
+/**
+ * The Agent row's words: a quiet verb and state, then the short description as
+ * the link into the run. The row itself is prose — pressing the verb opens
+ * nothing — and a live run turns the same spinner the status line does.
+ */
+function agentRow(painter: Painter, step: ToolLike, status: string, name: string): Child[] {
+  const live = status === 'running' || status === 'awaiting-approval'
+  const suffix = status === 'failed' ? ' 失败' : status === 'interrupted' ? ' 已中断' : undefined
   return [
-    el('span', 'agent-verb', '已运行子代理 '),
-    el('strong', '', agentName(step)),
-    model ? el('span', 'agent-model', ` · ${model}`) : undefined,
-  ].filter((part) => part !== undefined)
+    live ? el('span', 'agent-mark', icon(status === 'running' ? 'spinner' : 'agent')) : undefined,
+    el('span', 'agent-verb', live ? '正在运行子 agent ' : '已运行子 agent '),
+    button('agent-description', agentName(step), name, () => painter.onOpenSubagent(step.id)),
+    suffix ? el('span', 'step-fail', suffix) : undefined,
+  ]
 }
 
-/** The right edge of a row: the family's counts, if it has any. */
+/** A row's trailing counts, if its family has any. */
 function rowRight(family: FamilyData, stats: string | undefined): HTMLElement | undefined {
   if (stats === undefined) return undefined
   const patch = family.patch !== undefined && !family.patch.partial ? family.patch : undefined
@@ -1824,10 +1818,6 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
   if (item.kind === 'turn-failure' && item.failure) return turnFailureNode(painter, item.failure, classes, key)
   if (item.kind === 'compaction') {
     return painter.node(key, classes.join(' '), [item.text], () => [icon('fold-vertical'), el('span', 'line-text', item.text)])
-  }
-  if (isAgentCall(item)) {
-    const row = toolRow(painter, toStep(item) as ToolLike)
-    return painter.node(`agent:${item.id}`, 'run agent-entry', [row], () => [row])
   }
   if (item.kind === 'user') {
     // The item is the *column* here, not the bubble: the bubble is its own node,

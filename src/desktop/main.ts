@@ -178,6 +178,22 @@ const WINDOW_CHROME = {
  */
 const WINDOW_BACKGROUND = { dark: '#1a1a1a', light: '#f2f2f2' } as const
 
+/**
+ * Windows 11 22H2 and later can draw an acrylic backdrop behind the window —
+ * the platform's stand-in for macOS's sidebar vibrancy. `styles.css` tints
+ * `body` on `win32` exactly as it does on `darwin`, so the material shows
+ * through the frame, and the canvas stays opaque over it.
+ *
+ * Older Windows cannot, and there the same tint blends over `WINDOW_BACKGROUND`
+ * — the token it is mixed from — so the frame stays the flat colour it always
+ * was rather than asking for a backdrop nothing will draw.
+ *
+ * `getSystemVersion` reads `RtlGetVersion`; `os.release` still answers 10.0 on
+ * Windows 11 unless the executable carries a compatibility manifest.
+ */
+const WINDOW_MATERIAL = process.platform === 'win32'
+  && Number(process.getSystemVersion().split('.')[2] ?? '0') >= 22000
+
 // A plain annotation rather than `as unknown as`: `ipcMain` really is
 // assignable to `MainSideIpc`, and letting the compiler confirm that is what
 // keeps the structural types honest about the Electron API.
@@ -318,6 +334,11 @@ const coordinationEngine = new CoordinationWakeEngine({
 })
 const coordination = new CoordinationService(
   {
+    configFor: (cwd) => {
+      const entry = directory.get(cwd)
+      if (!entry) throw new Error(`No project is open at ${cwd}`)
+      return entry.project.config
+    },
     storeFor: (cwd) => {
       const entry = directory.get(cwd)
       if (!entry) throw new Error(`No project is open at ${cwd}`)
@@ -831,6 +852,11 @@ async function ensureShell(): Promise<Shell> {
   )
   const floor = minimumSize(placement.workArea)
   const theme = windowState.theme
+  const frame = process.platform === 'darwin'
+    ? { vibrancy: 'sidebar' as const, visualEffectState: 'active' as const, backgroundColor: '#00000000' }
+    : WINDOW_MATERIAL
+      ? { backgroundMaterial: 'acrylic' as const, backgroundColor: '#00000000' }
+      : { backgroundColor: WINDOW_BACKGROUND[theme] }
   const window = new BrowserWindow({
     ...placement.bounds,
     minWidth: floor.width,
@@ -842,14 +868,12 @@ async function ensureShell(): Promise<Shell> {
     // Frameless chrome (5g): the renderer draws the title bar — the rail toggle
     // and the Chinese menus — and Windows keeps drawing its own three buttons
     // into `titleBarOverlay`, so no window-control IPC has to exist at all.
-    // `backgroundColor` is what the frame is painted with before the first
-    // frame arrives; without it the app opens as a white flash. Both start on
-    // the theme the renderer last reported, so a light launch is light.
-    // macOS draws the frame (title bar and sidebar) as the system's sidebar
-    // material; the window stays clear so `body`'s translucent fill lets it through.
-    ...(process.platform === 'darwin'
-      ? { vibrancy: 'sidebar' as const, visualEffectState: 'active' as const, backgroundColor: '#00000000' }
-      : { backgroundColor: WINDOW_BACKGROUND[theme] }),
+    //
+    // `frame` is the window's material and the fill it is painted with before
+    // the document's first frame: macOS and Windows 11 keep the window clear so
+    // `body`'s translucent fill lets the backdrop through, everywhere else the
+    // fill is opaque — without one the app opens as a white flash.
+    ...frame,
     titleBarStyle: 'hidden',
     titleBarOverlay: process.platform === 'darwin' ? { height: TITLEBAR_HEIGHT } : WINDOW_CHROME[theme],
     webPreferences: {
@@ -1089,8 +1113,9 @@ async function ensureShell(): Promise<Shell> {
       if (nativeTheme.themeSource !== preference) nativeTheme.themeSource = preference
       // The window's own fill shows wherever the document has not painted yet:
       // the edge a Windows resize drag uncovers, a reload's first frame. Left
-      // dark under a light theme, it flashed black there.
-      if (process.platform !== 'darwin') window.setBackgroundColor(WINDOW_BACKGROUND[theme])
+      // dark under a light theme, it flashed black there. A window with a
+      // backdrop keeps the clear fill — an opaque one would cover the material.
+      if (process.platform !== 'darwin' && !WINDOW_MATERIAL) window.setBackgroundColor(WINDOW_BACKGROUND[theme])
       // Remembered for the next launch's first frame.
       if (windowState.theme !== theme || windowState.themePreference !== preference) {
         windowState = { ...windowState, theme, themePreference: preference }

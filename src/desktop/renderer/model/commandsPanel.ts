@@ -1,9 +1,8 @@
 import type { BackgroundTaskSnapshot } from '../../../services/backgroundTasks/registry.js'
 
 /**
- * The task page's 命令 section: the session's background shell processes,
- * running first, then the finished ones newest first. Agents are left out —
- * they are the 子代理 section's. Pure, from wire types only.
+ * The session's background shell processes, adapted for the unified task list.
+ * Pure, from wire types only.
  */
 
 export interface CommandRow {

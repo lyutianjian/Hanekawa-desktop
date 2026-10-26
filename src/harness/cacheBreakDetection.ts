@@ -26,7 +26,6 @@ import { cacheHitRate } from './usage.js'
 export type CacheBreakSource =
   | `agent:${string}`
   | `agent:plan:${string}`
-  | `agent:fork:${string}`
   | 'repl_main_thread'
   | 'sdk'
   | 'compact'
@@ -101,12 +100,6 @@ export function toolUseSummaryCacheSource(root?: string): CacheBreakSource {
 
 export function sessionTitleCacheSource(root?: string): CacheBreakSource {
   return bindRoot('session_title', root)
-}
-
-/** One per fork run: concurrent forks must not share a cache-read baseline. */
-export function forkCacheSource(forkId: string, root?: string): CacheBreakSource {
-  const normalized = forkId.trim() || 'unknown'
-  return bindRoot(`agent:fork:${normalized}`, root)
 }
 
 export function planCacheSource(sessionId: string, root?: string): CacheBreakSource {

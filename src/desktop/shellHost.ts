@@ -1,7 +1,7 @@
 import { z } from 'zod/v3'
 import path from 'node:path'
 import { homedir } from 'node:os'
-import { rm } from 'node:fs/promises'
+import { mkdir, rm } from 'node:fs/promises'
 import { maskKey } from '../config/maskKey.js'
 import { VALID_EFFORT_LEVELS, normalizeSupportedEfforts } from '../config/effort.js'
 import { resolveImageCapability, SUPPORTED_PROVIDER_NAMES } from '../config/providers/registry.js'
@@ -38,7 +38,7 @@ import { importSkill } from '../services/skills/importSkill.js'
 import { readUserInstructions, writeUserInstructions } from '../services/context/projectContext.js'
 import { peekSessions } from './recentProjects.js'
 import { UsageScanner } from './usageStats.js'
-import { getProjectDataDir, getProjectMemoryDir, getSkillsDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
+import { getDefaultWorkingDir, getProjectDataDir, getProjectMemoryDir, getSkillsDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
 import type {
   DirectoryProject,
   DirectoryWorkspace,
@@ -1975,7 +1975,7 @@ export class ShellHost<
   }
 
   /**
-   * Hands the project's directory to an editor — or, with `target`, one file
+   * Hands the project's working directory to an editor — or, with `target`, one file
    * inside it at one line (T15: a search result's path, clicked).
    *
    * `entry.cwd`, not `entry.root`: the root is the normalized comparison key
@@ -1994,7 +1994,9 @@ export class ShellHost<
     // Missing callback rejects rather than answering `ok`, the same rule
     // `open-project` follows: silence is indistinguishable from success.
     if (!this.deps.onOpenInEditor) throw new Error('The shell cannot open an editor.')
-    await this.deps.onOpenInEditor(cwd, target === undefined ? undefined : resolveProjectFile(cwd, target))
+    const workingDir = getDefaultWorkingDir(cwd)
+    if (isGlobalWorkspaceRoot(cwd)) await mkdir(workingDir, { recursive: true })
+    await this.deps.onOpenInEditor(workingDir, target === undefined ? undefined : resolveProjectFile(workingDir, target))
     return { ok: true } satisfies WireShellOpenInEditorResult
   }
 
@@ -2053,7 +2055,7 @@ export class ShellHost<
       return info
     })
 
-    // The four built-ins unioned with whatever routing already names, so a
+    // The built-ins unioned with whatever routing already names, so a
     // custom `.myagent/agents/*.md` type that has been routed keeps its row.
     const subagentTypes = [...new Set([...BUILTIN_SUBAGENT_TYPES, ...Object.keys(routing.subagent ?? {})])]
 
@@ -2311,7 +2313,7 @@ function summarize(session: {
  * The subagent types that always get a routing row, whether or not the config
  * has spoken about them. Mirrors the built-ins `.myagent/agents/` may override.
  */
-const BUILTIN_SUBAGENT_TYPES = ['general', 'fork', 'explore', 'plan'] as const
+const BUILTIN_SUBAGENT_TYPES = ['general', 'explore', 'plan'] as const
 
 /**
  * The startup mode the screen is able to write back.

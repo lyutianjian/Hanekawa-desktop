@@ -6,6 +6,7 @@ import test from 'node:test'
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
 import { trackAnimationStarts, trackIdentity } from './helpers/motion.js'
 import { createTranscriptView } from '../src/desktop/renderer/dom/transcriptView.js'
+import { icon } from '../src/desktop/renderer/dom/icons.js'
 import { NO_DISCLOSURE } from '../src/desktop/renderer/model/thinking.js'
 import type { DisclosureState } from '../src/desktop/renderer/model/thinking.js'
 import type { TranscriptItem, TranscriptState } from '../src/desktop/renderer/model/transcript.js'
@@ -731,7 +732,7 @@ test('the line of the run the turn is in is the status: mark, words, clock — a
   const head = run.children[0]!
   assert.deepEqual(head.classes, ['run-line', 'live'])
   assert.deepEqual(head.children.map((child) => child.classes.join(' ')), ['line-mark', 'line-text', 'line-meta line-elapsed', 'icon'])
-  assert.deepEqual(statusText(head), { label: '读取 2 个文件', meta: ['6 秒'] })
+  assert.deepEqual(statusText(head), { label: '读取 a.ts', meta: ['6 秒'] }, 'one call at a time, in order')
   for (const index of [0, 1, 2]) assert.equal(head.children[index]!.attributes.get('aria-hidden'), 'true')
   // Named for what the run has done, not for words that change ten times a turn.
   assert.equal(head.attributes.get('aria-label'), '正在进行 · 读取 2 个文件')
@@ -1008,14 +1009,14 @@ test('an edit step carries its patch counts in the head and a real diff below', 
   const step = rowOf(view)
   assert.deepEqual(step?.classes, ['step', 'tool', 'done'])
   const head = step?.children[0]
-  // `编辑 a.ts` and its counts on the right (§6.2): for this family they *are*
-  // the result's note.
+  // `编辑 a.ts` and its counts (§6.2): for this family they *are* the result's
+  // note, and they sit against the name, left of the chevron.
   assert.deepEqual(
     head?.children.map((part) => [part.className, part.text]),
-    [['step-label', '编辑 a.ts'], ['icon', ''], ['step-right', '+1 −1']],
+    [['step-label', '编辑 a.ts'], ['step-right', '+1 −1'], ['icon', '']],
   )
   assert.equal(head?.attributes.get('aria-label'), '编辑 a.ts · +1 −1 · 完成')
-  assert.deepEqual(head?.children[2]?.children.map((part) => [part.className, part.text]), [['stat-add', '+1'], ['stat-del', '−1']])
+  assert.deepEqual(head?.children[1]?.children.map((part) => [part.className, part.text]), [['stat-add', '+1'], ['stat-del', '−1']])
 
   // The body is the file's full path over the same diff the permission dialog
   // paints — the result summary is not repeated over it.
@@ -1332,12 +1333,11 @@ test('a Grep step carries its counts in the head and its hits grouped by file be
   const step = rowOf(view)
   assert.deepEqual(step?.classes, ['step', 'tool', 'done'])
   // `Grep "turnId" · 3 处 / 2 文件` (§6.2): the counts are the parsed list's
-  // own, sitting where a suffix would — the same place the edit family puts
-  // its `+12 −3`.
+  // own, left of the chevron — the same place the edit family puts its `+12 −3`.
   const head = step?.children[0]
   assert.deepEqual(
     head?.children.map((part) => [part.className, part.text]),
-    [['step-label', '搜索 pattern: "turnId"'], ['icon', ''], ['step-right', '3 处 / 2 文件']],
+    [['step-label', '搜索 pattern: "turnId"'], ['step-right', '3 处 / 2 文件'], ['icon', '']],
   )
   assert.equal(head?.attributes.get('aria-label'), '搜索 pattern: "turnId" · 3 处 / 2 文件 · 完成')
 
@@ -1465,14 +1465,14 @@ test('a Read step opens into the file as a line-numbered code block', (t) => {
   view.render(transcript([readStep()]), opened('read-1'))
 
   const step = rowOf(view)
-  // `读取 src/a.ts` and `2 行` (§6.2): the count is the block's own, so the head
-  // and the body can never disagree about how long the file is.
+  // `读取 src/a.ts` and nothing else (§6.2): how long the file is says nothing
+  // about the call, so the head carries no count.
   const head = step?.children[0]
   assert.deepEqual(
     head?.children.map((part) => [part.className, part.text]),
-    [['step-label', '读取 src/a.ts'], ['icon', ''], ['step-right', '2 行']],
+    [['step-label', '读取 src/a.ts'], ['icon', '']],
   )
-  assert.equal(head?.attributes.get('aria-label'), '读取 src/a.ts · 2 行 · 完成')
+  assert.equal(head?.attributes.get('aria-label'), '读取 src/a.ts · 完成')
 
   // The body is the file's own lines, one row each with its own number — and
   // no highlighting of any kind: the row is exactly the text the tool read.
@@ -1504,11 +1504,14 @@ test('a Read step numbers its rows from the tool’s own prefix, offset included
   )
 })
 
-/** The Agent row: a standalone entry of its own, never a row of a run card. */
+/** An icon's path data, as `icons.ts` drew it. */
+const pathOf = (svg: SVGSVGElement): string | null => svg.children[0]?.getAttribute('d') ?? null
+
+/** The Agent step: alone, it is the whole of its single-step run. */
 const agentRowOf = (rendered: Rendered): StubView => {
-  const found = rendered.items().find((item) => item.classes.includes('agent-entry'))
-  assert.ok(found, 'no Agent entry was painted')
-  return found.children[0]!
+  const step = runOf(rendered).children[0]
+  assert.ok(step, 'no Agent step was painted')
+  return step
 }
 
 function agentStep(): TranscriptItem {
@@ -1521,6 +1524,7 @@ function agentStep(): TranscriptItem {
     tool: {
       displayName: 'explore agent',
       useSummary: '扫一遍 tools/',
+      description: '扫一遍 tools/',
       task: '找到 display 的**所有**用法',
       // As the tool writes it for the model: the report, then its notices.
       content: '22 个工具返回了 **display.summary**，其中 6 个带 detail。'
@@ -1541,7 +1545,7 @@ function agentStep(): TranscriptItem {
   }
 }
 
-test('a running Agent step says what its sub-agent is doing, even folded', (t) => {
+test('a running Agent step is one row of prose, its mark turning, and only the description opens the run', (t) => {
   const view = mount(t)
   const running: TranscriptItem = {
     id: 'agent-1',
@@ -1553,6 +1557,7 @@ test('a running Agent step says what its sub-agent is doing, even folded', (t) =
     tool: {
       displayName: '子代理',
       useSummary: '扫一遍 tools/',
+      description: '扫一遍 tools/',
       agentType: 'explore',
       task: '找用法',
       live: { tool: 'Read', summary: 'src/a.ts', toolCount: 3 },
@@ -1562,16 +1567,33 @@ test('a running Agent step says what its sub-agent is doing, even folded', (t) =
 
   const step = agentRowOf(view)
   const head = step?.children[0]
-  // A bordered capsule — diamond, name, chevron — with the count left to the live line.
-  assert.equal(head?.className, 'step-head agent-chip')
+  // No capsule around the row: a quiet verb and the description, like any tool line.
+  assert.equal(head?.className, 'step-head agent-ran')
   assert.deepEqual(
     head?.children.map((part) => [part.className, part.text]),
-    [['icon', ''], ['step-label', '扫一遍 tools/'], ['icon', '']],
+    [['step-label', '正在运行子 agent 扫一遍 tools/']],
   )
-  assert.equal(head?.attributes.get('aria-label'), '子代理 explore · 扫一遍 tools/ · 3 工具 · 执行中')
-  const live = step?.children[1]
-  assert.equal(live?.className, 'step-live')
-  assert.deepEqual(live?.children.map((part) => part.text), ['↳', 'Read', 'src/a.ts'])
+  const label = head?.children[0]
+  assert.deepEqual(
+    label?.children.map((part) => [part.className, part.text]),
+    [['agent-mark', ''], ['agent-verb', '正在运行子 agent '], ['agent-description', '扫一遍 tools/']],
+  )
+
+  // The row is prose, not a button: only the description is the link.
+  view.stub.click(head!.node)
+  assert.deepEqual(view.openedSubagents, [])
+  view.stub.click(label!.children[2]!.node)
+  assert.deepEqual(view.openedSubagents, ['agent-1'])
+  assert.equal(label?.children[2]?.attributes.get('aria-label'), 'explore · 扫一遍 tools/ · 执行中')
+
+  // The mark is the spinner — the thread list's own shape, turned by the sheet off
+  // the step's own `running` class, so 「still going」 looks the same in both places.
+  assert.ok(step?.classes.includes('running'))
+  assert.deepEqual(
+    [label?.children[0]?.children[0]?.children[0]?.attributes.get('d'), label?.children[0]?.children[0]?.children[0]?.tagName],
+    [pathOf(icon('spinner')), 'path'],
+  )
+  assert.notEqual(label?.children[0]?.children[0]?.children[0]?.attributes.get('d'), pathOf(icon('agent')))
 })
 
 test('an Agent step is a link to the side panel, with the run in the head', (t) => {
@@ -1579,40 +1601,37 @@ test('an Agent step is a link to the side panel, with the run in the head', (t) 
   view.render(transcript([agentStep()]), opened('agent-1'))
 
   const step = agentRowOf(view)
-  // The run's model and tool count are one unit on the right — and the result's
-  // own `headerSuffix` carries that same model, so it is not drawn twice.
+  // Only the short description is linked; model and tool counts live in the detail.
   const head = step?.children[0]
-  assert.deepEqual(
-    head?.children.map((part) => [part.className, part.text]),
-    [['step-label', '已运行子代理 扫一遍 tools/ · opus']],
-  )
   assert.equal(head?.className, 'step-head agent-ran')
+  const label = head?.children[0]
   assert.deepEqual(
-    head?.children[0]?.children.map((part) => [part.className, part.text]),
-    [['agent-verb', '已运行子代理 '], ['', '扫一遍 tools/'], ['agent-model', ' · opus']],
+    label?.children.map((part) => [part.className, part.text]),
+    [['agent-verb', '已运行子 agent '], ['agent-description', '扫一遍 tools/']],
   )
-  assert.equal(head?.attributes.get('aria-label'), 'explore agent 扫一遍 tools/ · opus · 12 工具 · 完成')
+  assert.equal(label?.children[1]?.attributes.get('aria-label'), 'explore · 扫一遍 tools/ · opus · 12 工具 · 完成')
 
   // Never a fold: the run lives in the side panel, even when the disclosure
   // says open, and a click asks for that panel instead of toggling.
   assert.equal(step?.children.some((child) => child.classes.includes('step-body')), false)
   view.stub.click(head!.node)
+  assert.deepEqual(view.openedSubagents, [])
+  view.stub.click(label!.children[1]!.node)
   assert.deepEqual(view.openedSubagents, ['agent-1'])
   assert.deepEqual(view.toggled, [])
 
   view.render(transcript([agentStep()]), new Map([['run:agent-1', true]]), undefined, 'agent-1')
   const selected = agentRowOf(view)
   assert.equal(selected?.classes.includes('selected'), true)
-  assert.equal(selected?.children[0]?.attributes.get('aria-pressed'), 'true')
 })
 
-test('an Agent call splits the work around it and is counted in no run summary', (t) => {
+test('an Agent call is a step of the work around it and is counted in the run summary', (t) => {
   const view = mount(t)
   const read = (id: string): TranscriptItem => ({ id, kind: 'tool', text: id, toolName: 'Read', turnId: 't1', tool: { displayName: 'Read', useSummary: `${id}.ts` } })
   const other = { ...agentStep(), id: 'agent-2' }
   view.render(transcript([read('r1'), read('r1b'), agentStep(), read('r2'), other, { ...agentStep(), id: 'agent-3' }]), NO_DISCLOSURE)
-  assert.deepEqual(view.items().map((entry) => entry.classes.join(' ')), ['run', 'run agent-entry', 'run single', 'run agent-entry', 'run agent-entry'])
-  assert.equal(runOf(view).children[0]!.attributes.get('aria-label'), '读取 2 个文件')
+  assert.deepEqual(view.items().map((entry) => entry.classes.join(' ')), ['run'])
+  assert.equal(runOf(view).children[0]!.attributes.get('aria-label'), '读取 3 个文件，运行 3 个子代理')
 })
 
 test('a failed Agent step keeps its plain row and says so in words', (t) => {
@@ -1620,8 +1639,12 @@ test('a failed Agent step keeps its plain row and says so in words', (t) => {
   const failed = { ...agentStep(), failed: true }
   view.render(transcript([failed]), opened('agent-1'))
   const head = agentRowOf(view).children[0]
-  assert.equal(head?.className, 'step-head')
-  assert.equal(head?.children[0]?.text.endsWith('失败'), true)
+  assert.equal(head?.className, 'step-head agent-ran')
+  const label = head?.children[0]
+  assert.equal(label?.text.endsWith('失败'), true)
+  assert.equal(label?.children[1]?.className, 'agent-description')
+  view.stub.click(label!.children[1]!.node)
+  assert.deepEqual(view.openedSubagents, ['agent-1'])
 })
 
 function webStep(overrides: { failed?: boolean; errorCode?: ToolErrorCode } = {}): TranscriptItem {
@@ -2004,7 +2027,7 @@ test('the run’s line carries the status while it works, and its pieces survive
   paint(pairItems({ pending: true }))
   assert.deepEqual(view.items().map((entry) => entry.classes[0]), ['item', 'run'])
   const head = runOf(view).children[0]!
-  assert.equal(statusText(head).label, '读取 2 个文件')
+  assert.equal(statusText(head).label, '读取 a.ts', 'the first of the parallel calls')
   const pieces = head.children
 
   // The tools settle and the turn keeps running: the words fall back to
@@ -2013,7 +2036,7 @@ test('the run’s line carries the status while it works, and its pieces survive
   const still = runOf(view).children[0]!
   assert.equal(still.node, head.node)
   for (const index of [0, 1, 2]) assert.equal(still.children[index]!.node, pieces[index]!.node)
-  assert.equal(statusText(still).label, '读取 2 个文件', 'a new label waits out its delay')
+  assert.equal(statusText(still).label, '读取 a.ts', 'a new label waits out its delay')
 
   // Only the end of the turn takes the status away, and the line is the summary.
   view.render(transcript(pairItems(), { turnId: undefined }), NO_DISCLOSURE, {
@@ -2822,6 +2845,23 @@ test('the background-task button ends the status line and opens the task list', 
   // None left: the button goes, the rest of the line stays.
   view.render(state, NO_DISCLOSURE, waiting(state, Date.now() - 5000))
   assert.equal(view.items().at(-1)!.children.length, 3)
+})
+
+test('a live run carries the background-task button on its own line, not below it', (t) => {
+  const view = mount(t)
+  view.render(transcript(pairItems({ pending: true })), NO_DISCLOSURE, { ...RUNNING_T1, startedAt: Date.now() - 6_000, backgroundTasks: 1 })
+
+  assert.deepEqual(view.items().map((entry) => entry.classes[0]), ['item', 'run'], 'no idle status line of its own')
+  const row = runOf(view).children[0]!
+  assert.deepEqual(row.classes, ['run-head-row'])
+  assert.deepEqual(row.children.map((child) => child.classes[0]), ['run-line', 'line-tasks'])
+  assert.equal(row.children[1]!.text, '1 个后台任务')
+  view.stub.click(row.children[1]!.node)
+  assert.equal(view.backgroundOpens(), 1)
+
+  // None left: the row goes, the line is the run's head again.
+  view.render(transcript(pairItems({ pending: true })), NO_DISCLOSURE, { ...RUNNING_T1, startedAt: Date.now() - 6_000 })
+  assert.deepEqual(runOf(view).children[0]!.classes, ['run-line', 'live'])
 })
 
 test('with tasks still running, an idle session keeps the button alone as its status line', (t) => {

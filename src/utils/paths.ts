@@ -69,6 +69,11 @@ export function isGlobalWorkspaceRoot(cwd: string): boolean {
   return normalizeCaseForComparison(path.resolve(cwd)) === normalizeCaseForComparison(path.resolve(homedir()))
 }
 
+/** The global workspace keeps its home-keyed data, but tools run in Documents. */
+export function getDefaultWorkingDir(projectDir: string): string {
+  return isGlobalWorkspaceRoot(projectDir) ? path.join(userHome(), 'Documents', 'myagent') : projectDir
+}
+
 const MAX_PATH_DEPTH = 50
 const CASE_INSENSITIVE_PLATFORM = process.platform === 'win32' || process.platform === 'darwin'
 
@@ -204,36 +209,9 @@ export function getThreadWorktreeDir(projectDir: string, threadId: string): stri
   return path.join(userHome(), '.myagent-worktrees', projectDataKey(projectDir), threadId)
 }
 
-/**
- * The file tools' path guard. The workspace boundary is not decided here: the
- * risk classifier grades a path outside it and the permission gate rules on
- * that grade, as it does for Bash. The one hard wall is Hanekawa's own
- * `~/.myagent` — only the places there the model is *told* to use stay
- * reachable: this session's spilled tool output (the preview hands it the path
- * to Read), the project's plan files (plan mode has it Write them), its
- * memory directory and the user's global instructions file. The session
- * transcripts least of all.
- */
+/** Resolve file-tool paths; access is decided by the shared permission gate. */
 export function resolveToolPath(context: { cwd: string; projectDir?: string; sessionId?: string }, filePath: string): string {
-  const absolute = path.resolve(context.cwd, filePath)
-  if (!isUnderRoot(getGlobalMyAgentDir(), absolute)) return absolute
-  const projectDir = context.projectDir ?? context.cwd
-  const roots = [getProjectPlansDir(projectDir), getProjectMemoryDir(projectDir), getCoordinationNotesDir(projectDir), getUserInstructionsPath()]
-  if (context.sessionId) roots.push(getToolResultSpillDir(projectDir, context.sessionId))
-  if (roots.some((root) => isUnderRoot(root, absolute))) return absolute
-  throw new Error(`Path "${filePath}" is inside Hanekawa's runtime data (~/.myagent), which file tools cannot reach`)
-}
-
-function isUnderRoot(root: string, absolute: string): boolean {
-  let a: string
-  let r: string
-  try {
-    a = normalizeCaseForComparison(resolveExistingPrefix(absolute))
-    r = normalizeCaseForComparison(resolveExistingPrefix(path.resolve(root)))
-  } catch {
-    return false
-  }
-  return withTrailingSeparator(a).startsWith(withTrailingSeparator(r))
+  return path.resolve(context.cwd, filePath)
 }
 
 export function getSkillsDir(cwd: string): string {

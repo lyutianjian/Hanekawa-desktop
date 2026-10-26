@@ -1,7 +1,7 @@
 import { readFile, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import path from 'node:path'
-import type { ChatMessage, ModelContextItem, ModelRequest, SessionRecord, Tool, ToolContext } from './types.js'
+import type { ChatMessage, ModelContextItem, SessionRecord, Tool, ToolContext } from './types.js'
 import type { ImageTokenStrategy } from '../media/imageTokens.js'
 import type { PermissionMode } from './permissions.js'
 import { PromptComposer } from '../prompts/composer.js'
@@ -30,9 +30,7 @@ const picomatch = require('picomatch') as {
 export const INSTRUCTIONS_MESSAGE_ID = 'meta:instructions'
 
 export interface BuildContextInput {
-  inheritedRequest?: ModelRequest
   imageTokenStrategy?: ImageTokenStrategy
-  preloadRecords?: SessionRecord[]
   records: SessionRecord[]
   tools: Tool[]
   system?: string
@@ -79,7 +77,7 @@ export interface BuiltContext {
   selection: ContextSelectionPlan
   /**
    * The fixed cost this build measured: composed system, the instruction block
-   * counted into it, the declared tool schemas, and any inherited prefix. The compaction check reads
+   * counted into it, and the declared tool schemas. The compaction check reads
    * the same number so the two never disagree about what history may spend.
    */
   overhead: RequestOverhead
@@ -233,8 +231,7 @@ export class ContextBuilder {
   }
 
   async build(input: BuildContextInput): Promise<BuiltContext> {
-    const inherited = input.inheritedRequest
-    const systemBlocks = inherited?.systemBlocks ?? (inherited ? [inherited.system ?? ''] : this.buildSystemBlocks(
+    const systemBlocks = this.buildSystemBlocks(
       input.system,
       input.memoryPrompt,
       input.criticalSystemReminder,
@@ -244,7 +241,7 @@ export class ContextBuilder {
       input.env,
       input.dynamicToolSearchEnabled ?? false,
       input.rolePrompt,
-    ))
+    )
     const system = systemBlocks
       .filter((b) => b !== SYSTEM_PROMPT_DYNAMIC_BOUNDARY)
       .join('\n\n')
@@ -261,7 +258,6 @@ export class ContextBuilder {
     // prompt) and voids the whole cached prefix; at the tail they are an
     // append, which costs nothing.
     const allContextItems = [
-      ...this.recordsToContextItems(input.preloadRecords ?? []),
       ...ownContextItems,
       ...(input.includeUserContext === false ? [] : this.buildUserContext(input.now ?? new Date(), activeSkills)),
       ...this.buildTransientUserContext(
@@ -274,25 +270,20 @@ export class ContextBuilder {
     // level, not in the system prompt: a repo's AGENTS.md is not the harness.
     // Prepended after the budget cut, which trims from the front, and counted
     // into it alongside the system prompt. Not transient: it holds index 0 for
-    // the whole session, so it is part of the cached prefix a fork inherits.
-    const instructions = inherited ? undefined : this.buildInstructionsContext(input.projectContext, input.memoryIndex, input.now ?? new Date())
+    // the whole session.
+    const instructions = this.buildInstructionsContext(input.projectContext, input.memoryIndex, input.now ?? new Date())
     // Instruction files are prepended after the cut, so they are counted through
     // the system string and never trimmed away; the tool schemas are declared
     // beside the system in every payload and hold the same kind of budget.
     const countedSystem = instructions ? `${system}\n\n${instructions.message.content}` : system
-    const inheritedTools = inherited?.tools ?? []
-    const inheritedNames = new Set(inheritedTools.map((tool) => tool.name))
-    const toolSchemas = toolSchemaCosts([...inheritedTools, ...input.tools.filter((tool) => !inheritedNames.has(tool.name))])
-    const inheritedItems = inherited?.contextItems ?? inherited?.messages.map((message) => ({ kind: 'message', message }) satisfies ModelContextItem) ?? []
-    const prefixTokens = inheritedItems.reduce((sum, item) => sum + countContextItemTokens(item, input.imageTokenStrategy), 0)
-    const overhead = requestOverhead({ system: countedSystem, tools: toolSchemas, prefixTokens })
+    const toolSchemas = toolSchemaCosts(input.tools)
+    const overhead = requestOverhead({ system: countedSystem, tools: toolSchemas })
     const built = this.composer.composeContextItems(allContextItems, {
       system: countedSystem,
       contextManagement: input.contextManagement ?? this.defaultContextManagement,
       includeHistory: true,
       tools: toolSchemas,
       imageTokenStrategy: input.imageTokenStrategy,
-      prefixTokens,
     })
 
     return {

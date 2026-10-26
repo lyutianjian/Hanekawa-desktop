@@ -154,7 +154,6 @@ import {
   PANEL_CLOSED_STORAGE_KEY,
   SECTIONS_COLLAPSED_STORAGE_KEY,
   SIDE_SECTIONS,
-  autoOpensThreads,
   isSectionCollapsed,
   parsePanelClosed,
   parseSectionsCollapsed,
@@ -164,14 +163,13 @@ import {
   threadsHeadView,
   sidePanelView,
   threadStripView,
-  visibleSections,
   withSectionCollapsed,
   type SideMode,
   type SidePanelInput,
   type SideSection,
 } from './model/sidePanel.js'
-import { commandRows } from './model/commandsPanel.js'
-import { createCommandsPanelView } from './dom/commandsPanelView.js'
+import { backgroundTaskGroups } from './model/backgroundTasks.js'
+import { createBackgroundTasksView } from './dom/backgroundTasksView.js'
 import type { TurnEdits } from './model/turnEdits.js'
 import { threadPage, type ThreadSelection } from './model/threadDetail.js'
 import { createThreadPanelView } from './dom/threadPanelView.js'
@@ -290,7 +288,7 @@ const surface = createSurfacePanel(required('surface'), (action) => {
 const suggestions = createSuggestionsView(required('suggestions'), (index) => {
   void activePane()?.acceptCompletionAt(index)
 }, required('input'))
-const processStrip = createProcessStripView(required('process-strip'), () => showSideTab('commands'))
+const processStrip = createProcessStripView(required('process-strip'), () => showSideTab('running'))
 const status = createStatusView({
   usage: required('status-usage'),
 })
@@ -440,7 +438,7 @@ function attachPaneSession(lane: string): void {
     onOpenFile: (path, line) => openInEditor(lane, path, line),
     onOpenSubagent: (id) => openSubagent(id),
     onViewEdits: (edits, path) => viewEdits(lane, edits, path),
-    onOpenTasks: () => showSideTab('commands'),
+    onOpenTasks: () => showSideTab('running'),
     // A wake note's [查看]: the thread table of this lane's project names the
     // thread's session, which then opens like any other.
     onOpenThread: (threadId) => {
@@ -1161,11 +1159,6 @@ function activeCoordination(): WireCoordinationThreads | undefined {
   return root === undefined ? undefined : coordinationByRoot.get(root)
 }
 
-/** The active project has a coordinator or threads, so the 线程 tab has something to say. */
-function hasCoordination(state: WireCoordinationThreads | undefined): boolean {
-  return state !== undefined && (state.coordinatorSessionId !== undefined || state.threads.length > 0)
-}
-
 /** Puts a session on screen: its live lane when it has one, otherwise the host opens it. */
 function openSessionById(projectRoot: string, sessionId: string): void {
   const live = shellClient.getLanes().find((info) => info.sessionId === sessionId)
@@ -1346,15 +1339,9 @@ function runMergeIntent(intent: MergeBarIntent): void {
 const mergeBar = createMergeBarView(mergeBarNode, (intent) => runMergeIntent(intent))
 
 shellClient.onCoordinationThreads((state) => {
-  const previous = coordinationByRoot.get(state.projectRoot)
   coordinationByRoot.set(state.projectRoot, state)
   markThreadsSeen(state)
-  // A thread just started in the project on screen: bring its list up. The
-  // first pull has nothing to compare with, so opening the app opens nothing.
-  const started = previous !== undefined
-    && state.threads.some((thread) => !previous.threads.some((known) => known.threadId === thread.threadId))
   if (state.projectRoot === activeLaneInfo()?.projectRoot) {
-    if (autoOpensThreads(started, panelClosed.has(state.projectRoot)) && !coordinated()) showSideTab('threads')
     activePane()?.refreshWelcome()
   }
   renderSidebar()
@@ -1757,7 +1744,7 @@ let sideMode: SideMode = 'tasks'
 let panelClosed = parsePanelClosed(localStorage.getItem(PANEL_CLOSED_STORAGE_KEY))
 /** The page a coordination session has up, kept apart from the ordinary session's `sideMode`. */
 let coordMode: SideMode = 'threads'
-/** The sections each project's user folded; the task page's memory, like `panelClosed`. */
+/** Per-project section choices relative to their default folds. */
 let sectionsCollapsed = parseSectionsCollapsed(localStorage.getItem(SECTIONS_COLLAPSED_STORAGE_KEY))
 
 function coordinated(): boolean {
@@ -1768,6 +1755,7 @@ function sidePanelInput(): SidePanelInput {
   const root = activeLaneInfo()?.projectRoot
   const pane = activePane()
   const isCoordinated = coordinated()
+  const groups = backgroundTaskGroups(pane?.client.getBackgroundTasks() ?? [], pane?.subagents() ?? [])
   return {
     coordinated: isCoordinated,
     laneOpen: activeLane !== undefined && panelOpenLanes.has(activeLane),
@@ -1775,9 +1763,8 @@ function sidePanelInput(): SidePanelInput {
     panelClosed: root !== undefined && panelClosed.has(root),
     has: {
       plan: pane?.plan() !== undefined,
-      commands: pane?.client.getBackgroundTasks().some((task) => task.kind === 'shell') ?? false,
-      subagents: (pane?.subagents().length ?? 0) > 0,
-      threads: isCoordinated || hasCoordination(activeCoordination()),
+      running: groups.running.length > 0,
+      finished: groups.finished.length > 0,
     },
   }
 }
@@ -1907,7 +1894,8 @@ browserMaximize.addEventListener('click', () => {
   browserPanel.measure()
 })
 const sideResizer = required('browser-resizer')
-const subagentPanel = createSubagentPanelView(required('subagent-view'), {
+const subagentHost = required('subagent-view')
+const subagentPanel = createSubagentPanelView(subagentHost, {
   onSelect: (id) => {
     selectedSubagent = id
     renderSubagents()
@@ -1915,11 +1903,6 @@ const subagentPanel = createSubagentPanelView(required('subagent-view'), {
   loadTranscript: async (agentId) => (await activePane()?.client.getSubagentTranscript(agentId))?.records ?? [],
   onOpenPath: (path, line) => {
     if (activeLane !== undefined) openInEditor(activeLane, path, line)
-  },
-  onStop: (id) => {
-    const client = activePane()?.client
-    const task = client?.getBackgroundTasks().find((candidate) => candidate.toolUseId === id && candidate.status === 'running')
-    if (task) void client!.killTask(task.id).catch((error) => reportError({ action: '停止子代理' }, error))
   },
   onError: (message) => toastHost.push('error', message),
 })
@@ -1930,10 +1913,13 @@ const changesPanel = createChangesPanelView(changesHost, {
     if (activeLane !== undefined) openInEditor(activeLane, path, undefined)
   },
 })
-const commandsPanel = createCommandsPanelView(required('commands-view'), {
+const backgroundTasks = createBackgroundTasksView({ running: required('running-tasks-view'), finished: required('finished-tasks-view') }, {
   loadOutput: async (taskId) => (await activePane()?.client.peekTaskOutput(taskId, COMMAND_OUTPUT_BYTES)) ?? '',
-  onStop: (taskId) => {
-    void activePane()?.client.killTask(taskId).catch((error) => reportError({ action: '停止进程' }, error))
+  onSelectAgent: (id) => openSubagent(id),
+  onStop: (row) => {
+    const client = activePane()?.client
+    const taskId = row.kind === 'shell' ? row.id : client?.getBackgroundTasks().find((task) => task.toolUseId === row.id && task.status === 'running')?.id
+    if (taskId !== undefined) void client?.killTask(taskId).catch((error) => reportError({ action: '停止任务' }, error))
   },
 })
 const threadsPage = required('threads-page')
@@ -1968,12 +1954,12 @@ let threadNoticeTimer: ReturnType<typeof setTimeout> | undefined
 interface SectionNode { section: HTMLElement; head: HTMLElement; title: HTMLElement; count: HTMLElement; body: HTMLElement }
 const sectionNodes: Record<SideSection, SectionNode> = {
   plan: sectionNode('plan'),
-  commands: sectionNode('commands'),
-  subagents: sectionNode('subagents'),
+  running: sectionNode('running'),
+  finished: sectionNode('finished'),
 }
 const sideSections = required('side-sections')
 const tasksEmpty = required('tasks-empty')
-/** The tail of a command's output the 命令 section shows. */
+/** The tail of a command's output the task list shows. */
 const COMMAND_OUTPUT_BYTES = 16_000
 const overviewHead = required('overview-head')
 const overviewSummary = required('overview-summary')
@@ -2037,40 +2023,37 @@ function renderSubagents(): void {
   const onTasks = visible && view.mode === 'tasks'
   const entries = onTasks ? pane?.subagents() ?? [] : []
   const tasks = onTasks ? pane?.client.getBackgroundTasks() ?? [] : []
-  const commands = commandRows(tasks)
-  const running = entries.filter((entry) => entry.status === 'running' || entry.status === 'awaiting-approval').length
-  const runningCommands = commands.filter((row) => row.running).length
+  const groups = backgroundTaskGroups(tasks, entries)
+  const selected = entries.find((entry) => entry.id === selectedSubagent)
+  const onAgentPage = onTasks && selected !== undefined
   show(sideSections, onTasks)
-  show(tasksEmpty, onTasks && view.sections.length === 0)
-  // The sub-agent the user selected stands alone as a page.
+  show(tasksEmpty, onTasks && !onAgentPage && view.sections.length === 0)
   const folded = new Set(SIDE_SECTIONS.filter((id) => isSectionCollapsed(sectionsCollapsed, root, id)))
-  const shown = visibleSections(view.sections, folded, selectedSubagent !== undefined ? 'subagents' : undefined)
-  const titles: Record<SideSection, string> = { plan: '计划', commands: '命令', subagents: '子代理' }
+  const titles: Record<SideSection, string> = { plan: '计划', running: '运行中', finished: '已完成' }
   const counts: Record<SideSection, string> = {
     plan: '',
-    commands: runningCommands > 0 ? `${runningCommands} 运行中` : '',
-    subagents: running > 0 ? `${running} 运行中` : '',
+    running: String(groups.running.length),
+    finished: String(groups.finished.length),
   }
   for (const id of SIDE_SECTIONS) {
     const node = sectionNodes[id]
     const open = !folded.has(id)
-    show(node.section, onTasks && shown.sections.includes(id))
-    node.section.classList.toggle('focus', shown.focus === id)
+    show(node.section, onTasks && !onAgentPage && view.sections.includes(id))
     node.head.setAttribute('aria-expanded', String(open))
     node.title.textContent = titles[id]
     node.count.textContent = counts[id]
     show(node.body, open)
   }
-  const bodyOpen = (id: SideSection): boolean => onTasks && shown.sections.includes(id) && !folded.has(id)
+  const bodyOpen = (id: SideSection): boolean => onTasks && !onAgentPage && view.sections.includes(id) && !folded.has(id)
   if (bodyOpen('plan')) planPanel.render(pane?.plan())
-  commandsPanel.render(bodyOpen('commands') ? commands : undefined)
-  // A page nobody can see must not poll: `setVisible` is what stops its clock and
-  // its once-a-second transcript read, and what catches it up in one read when the
-  // body opens again. `bodyOpen` already answers that question for the plan and
-  // command tabs; the subagent page is the one with a timer behind it.
-  const subagentsOpen = bodyOpen('subagents')
-  if (subagentsOpen) subagentPanel.render({ entries, selected: selectedSubagent })
-  subagentPanel.setVisible(subagentsOpen)
+  backgroundTasks.render(onTasks && !onAgentPage ? {
+    sessionId: activeLaneInfo()?.sessionId ?? '',
+    groups,
+    open: new Set((['running', 'finished'] as const).filter(bodyOpen)),
+  } : undefined)
+  show(subagentHost, onAgentPage)
+  if (onAgentPage) subagentPanel.render({ entries, selected: selectedSubagent })
+  subagentPanel.setVisible(onAgentPage)
 
   const onThreads = visible && view.mode === 'threads'
   const coordination = activeCoordination()
@@ -2111,8 +2094,7 @@ function renderSubagents(): void {
       ...(threadNotice === undefined ? {} : { notice: threadNotice.text, ...(threadNotice.tone === undefined ? {} : { noticeTone: threadNotice.tone }) }),
     }))
   }
-  // A folded section keeps its selection: unfolding brings the same page back.
-  pane?.setSelectedSubagent(onTasks && view.sections.includes('subagents') ? selectedSubagent : undefined)
+  pane?.setSelectedSubagent(onAgentPage ? selectedSubagent : undefined)
 }
 
 /**
@@ -2121,7 +2103,10 @@ function renderSubagents(): void {
  */
 function showSideTab(target: SideMode | SideSection): void {
   const isSection = (SIDE_SECTIONS as readonly string[]).includes(target)
-  if (isSection) setSectionCollapsed(target as SideSection, false)
+  if (isSection) {
+    selectedSubagent = undefined
+    setSectionCollapsed(target as SideSection, false)
+  }
   setPanelOpen(true)
   setMode(isSection ? 'tasks' : target as SideMode)
   // The title bar's buttons draw which page is up.
@@ -2147,7 +2132,7 @@ function toggleSide(mode: SideMode): void {
 
 function openSubagent(id: string): void {
   selectedSubagent = id
-  showSideTab('subagents')
+  showSideTab('tasks')
 }
 
 /**

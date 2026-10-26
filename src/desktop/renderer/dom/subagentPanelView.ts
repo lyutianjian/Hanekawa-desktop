@@ -1,5 +1,5 @@
 /**
- * The side panel's 「子代理」 tab: the session's sub-agents as a list, and one of
+ * The task panel's sub-agents as a list, and one of
  * them as a page — its own conversation, read from the run's transcript file.
  *
  * Rebuilt only when what it shows changed: the pane repaints on every stream
@@ -11,12 +11,15 @@
 import { button } from './controls.js'
 import { copyText } from './clipboard.js'
 import { el, replace, show, type Child } from './dom.js'
+import { icon } from './icons.js'
 import { markdownChildren } from './markdownView.js'
+import { TONE_ICON } from './threadPanelView.js'
 import { createTranscriptView, type TranscriptView } from './transcriptView.js'
 import type { SessionRecord } from '../../../harness/types.js'
-import type { SubagentEntry } from '../model/subagentPanel.js'
+import { subagentTone, type SubagentEntry } from '../model/subagentPanel.js'
 import { createTranscriptState, formatWorkedDuration, toolStatusLabel, type TranscriptState } from '../model/transcript.js'
 import { modelName } from '../model/modelNames.js'
+import { replayActivity } from '../model/waiting.js'
 
 export interface SubagentPanelModel {
   readonly entries: readonly SubagentEntry[]
@@ -29,8 +32,6 @@ export interface SubagentPanelHandlers {
   /** The run's records so far; empty when it never wrote a transcript. */
   loadTranscript(agentId: string): Promise<readonly SessionRecord[]>
   onOpenPath(path: string, line: number | undefined): void
-  /** Stops the run started by this `Agent` call; the parent's turn goes on. */
-  onStop(id: string): void
   /** A failure with no place of its own in the page (a copy that did not happen). */
   onError?(message: string): void
 }
@@ -67,7 +68,7 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
   failure.setAttribute('role', 'alert')
   show(failure, false)
   let failureShown: string | undefined
-  let page: { id: string; agentId: string | undefined; view: TranscriptView } | undefined
+  let page: { id: string; agentId: string | undefined; finished: boolean; view: TranscriptView } | undefined
   let state: TranscriptState | undefined
   let recordsSeen: string | undefined
   /** The user's folds; every turn is open until they say otherwise. */
@@ -99,44 +100,46 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
     return node
   }
 
-  function meta(entry: SubagentEntry, withStatus: boolean): HTMLElement {
-    const parts = [
+  /**
+   * The row's one muted line. The page adds the type, the list does not; either way
+   * the time is one more fact on it, not a second column.
+   */
+  function meta(entry: SubagentEntry, withStatus: boolean, withType = false): HTMLElement {
+    const facts = [
+      withType ? entry.agentType : undefined,
       withStatus ? toolStatusLabel(entry.status) : undefined,
       entry.model === undefined ? undefined : modelName(entry.model),
-      entry.toolCount === undefined ? undefined : `${entry.toolCount} 工具`,
     ].filter((part) => part !== undefined && part.length > 0)
-    return el('div', 'subagent-meta', parts.join(' · '), duration(entry))
+    const time = duration(entry)
+    const lead = facts.length === 0 ? undefined : time === undefined ? facts.join(' · ') : `${facts.join(' · ')} · `
+    return el('div', 'subagent-meta', lead, time)
+  }
+
+  /**
+   * The row's leading mark: the thread list's, glyph for glyph. A running run
+   * turns the same spinner the status line does, so 「still going」 is one shape
+   * everywhere — the breathing dot it replaces said nothing the words did not.
+   */
+  function mark(entry: SubagentEntry): HTMLElement {
+    const tone = subagentTone(entry.status)
+    const node = el('span', `subagent-mark tone-${tone}`, icon(TONE_ICON[tone]))
+    node.setAttribute('aria-hidden', 'true')
+    return node
   }
 
   function heading(entry: SubagentEntry): Child[] {
-    const bead = el('span', `step-bead ${entry.status}`)
-    bead.setAttribute('aria-hidden', 'true')
     return [
-      bead,
-      el('span', 'subagent-name', entry.name),
-      entry.agentType === undefined ? undefined : el('span', 'step-tag', entry.agentType),
+      mark(entry),
+      el('span', 'subagent-name', entry.description),
     ]
   }
 
-  function liveLine(entry: SubagentEntry): HTMLElement | undefined {
-    if (entry.live === undefined) return undefined
-    return el(
-      'div',
-      'step-live',
-      el('span', 'step-live-arrow', '↳'),
-      el('span', 'step-name', entry.live.tool),
-      entry.live.summary.length > 0 ? el('span', 'step-summary', entry.live.summary) : undefined,
-    )
-  }
-
   function row(entry: SubagentEntry): HTMLElement {
-    const node = button('subagent-row', '', `${entry.name} · ${entry.description} · ${toolStatusLabel(entry.status)}`, () => handlers.onSelect(entry.id))
+    const node = button('subagent-row', '', `${entry.description} · ${toolStatusLabel(entry.status)}`, () => handlers.onSelect(entry.id))
     replace(
       node,
       el('div', 'subagent-title', ...heading(entry)),
-      entry.description.length > 0 ? el('div', 'subagent-desc', entry.description) : undefined,
       meta(entry, false),
-      liveLine(entry),
     )
     return node
   }
@@ -165,7 +168,10 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
     for (const item of state.items) {
       if (item.turnId !== undefined && !disclosure.has(item.turnId)) disclosure.set(item.turnId, true)
     }
-    page.view.render(state, disclosure)
+    // The page shows one turn, still open while the run is: `replayActivity` is what
+    // gives the turn its footer — time, model, copy, once, at the end — and, while
+    // it runs, the status line a thread's page draws instead of a finished footer.
+    page.view.render(state, disclosure, replayActivity(state, !page.finished))
   }
 
   function fetchRecords(): void {
@@ -252,6 +258,7 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
     page = {
       id: entry.id,
       agentId: entry.agentId,
+      finished: entry.finished,
       view: createTranscriptView(timeline, floatHost, {
         onToggle: (id, expanded) => {
           manual.set(id, !expanded)
@@ -275,18 +282,22 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
   function renderDetail(entry: SubagentEntry): void {
     if (page?.id !== entry.id) openPage(entry)
     else if (page.agentId === undefined && entry.agentId !== undefined) page.agentId = entry.agentId
+    // The run ending is the one change the transcript cannot see: no record says
+    // it, and the page was drawing a live turn a moment ago. Repaint before the
+    // read so the status line goes and the turn's footer takes its place.
+    if (page !== undefined && page.finished !== entry.finished) {
+      page.finished = entry.finished
+      paintTimeline()
+    }
     replace(
       pageHead,
       el(
         'div',
         'subagent-page-bar',
-        button('subagent-back', '全部子代理', '返回子代理列表', () => handlers.onSelect(undefined), { icon: 'arrow-left' }),
-        entry.finished ? undefined : button('subagent-stop', '停止', '停止这个子代理，父代理继续', () => handlers.onStop(entry.id)),
+        button('subagent-back', '全部任务', '返回任务列表', () => handlers.onSelect(undefined), { icon: 'arrow-left' }),
       ),
       el('div', 'subagent-title', ...heading(entry)),
-      entry.description.length > 0 ? el('div', 'subagent-desc', entry.description) : undefined,
-      meta(entry, true),
-      liveLine(entry),
+      meta(entry, true, true),
       entry.notes.length === 0 ? undefined : el('div', 'subagent-notes', entry.notes.join(' · ')),
     )
     replace(fallback, ...fallbackBody(entry))

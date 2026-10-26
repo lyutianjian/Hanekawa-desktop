@@ -18,7 +18,7 @@ import { configTool } from '../src/tools/ConfigTool/ConfigTool.js'
 import { createMonitorTool } from '../src/tools/MonitorTool/MonitorTool.js'
 import { resolveSubagentPermissionMode } from '../src/tools/AgentTool/AgentTool.js'
 import type { Tool, ToolContext } from '../src/harness/types.js'
-import { getProjectMemoryDir, getProjectPlansDir, getUserInstructionsPath } from '../src/utils/paths.js'
+import { getGlobalMyAgentDir, getProjectMemoryDir, getProjectPlansDir, getUserInstructionsPath } from '../src/utils/paths.js'
 
 function fileTool(name: string, readOnly: boolean): Tool {
   return {
@@ -34,6 +34,22 @@ function fileTool(name: string, readOnly: boolean): Tool {
 const readTool = fileTool('Read', true)
 const writeTool = fileTool('Write', false)
 const editTool = fileTool('Edit', false)
+
+test('global directory reads are allowed in every mode while writes and deny rules keep their policy', async (t) => {
+  const cwd = await scratch(t)
+  const config = path.join(getGlobalMyAgentDir(), 'config.json')
+  const custom = path.join(getGlobalMyAgentDir(), 'agents', 'reviewer.md')
+  for (const mode of ['default', 'plan', 'auto', 'bypass', 'readonly'] as PermissionMode[]) {
+    assert.equal(await harness(cwd, mode).outcome(readTool, { filePath: config }), 'allow', mode)
+    assert.equal(await harness(cwd, mode).outcome(bashTool, { command: `cat ${config}` }), 'allow', mode)
+    const write = mode === 'readonly' || mode === 'plan' ? 'deny' : mode === 'bypass' ? 'allow' : 'ask'
+    assert.equal(await harness(cwd, mode).outcome(writeTool, { filePath: config }), write, mode)
+    assert.equal(await harness(cwd, mode).outcome(writeTool, { filePath: custom }), write, mode)
+    const denied = { deny: [`Read(${getGlobalMyAgentDir()}/**)`] }
+    assert.equal(await harness(cwd, mode, denied).outcome(readTool, { filePath: config }), 'deny', mode)
+    assert.equal(await harness(cwd, mode, denied).outcome(bashTool, { command: `cat ${config}` }), 'deny', mode)
+  }
+})
 
 type Outcome = 'allow' | 'ask' | 'deny'
 
@@ -509,7 +525,7 @@ test('memory files: no prompt in any mode, but only direct *.md and only with me
   assert.equal(await gateFor('default')(bashTool, bash(`ls ${memoryDir} && grep -ril vim ${memoryDir}`)), 'allow')
   assert.equal(await gateFor('default')(bashTool, bash(`cat ${note}`)), 'allow')
   assert.equal(await gateFor('default')(bashTool, bash(`rm ${note}`)), 'ask')
-  assert.equal(await gateFor('default', {}, false)(bashTool, bash(`ls ${memoryDir}`)), 'ask')
+  assert.equal(await gateFor('default', {}, false)(bashTool, bash(`ls ${memoryDir}`)), 'allow')
   assert.equal(await gateFor('default', { deny: [`Read(${memoryDir}/**)`] })(bashTool, bash(`cat ${note}`)), 'deny')
 })
 

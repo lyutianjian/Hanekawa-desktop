@@ -177,7 +177,7 @@ export function createTitleBarView(
 
 const SIDE_ICONS: Readonly<Record<SideMode, IconName>> = {
   tasks: 'tasks',
-  threads: 'branch',
+  threads: 'network',
   changes: 'diff',
   browser: 'globe',
 }

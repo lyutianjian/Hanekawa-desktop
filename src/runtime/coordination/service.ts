@@ -25,6 +25,9 @@ import { REPORT_MAX, sanitizeReportText, sanitizeTitle } from '../../utils/repor
 import { projectDataKey } from '../../utils/paths.js'
 import { readGitBranch } from '../gitBranch.js'
 import { deleteSessionArtifacts } from '../deleteSession.js'
+import type { ConfigService } from '../../config/service.js'
+import { resolveSessionModelSelection } from '../sessionSelection.js'
+import { availableModelKeys } from '../../tools/modelCatalog.js'
 import type {
   CoordinationCaller,
   CoordinationErrorCode,
@@ -57,6 +60,7 @@ export interface CoordinationSessionStore {
 /** What the shell provides; implemented by `main.ts`, faked in tests. */
 export interface CoordinationPort {
   storeFor(cwd: string): CoordinationSessionStore
+  configFor(cwd: string): ConfigService
   /** The live lane of a session, when one is open. */
   laneControl(sessionId: string): CoordinationLaneControl | undefined
   /** Opens (or returns) the session's lane; `activate:false` leaves the visible lane alone. */
@@ -198,6 +202,13 @@ export class CoordinationService implements CoordinationHost {
   }
 
   private async startThreadIn(cwd: string, request: StartThreadRequest): Promise<StartedThread> {
+    const config = this.port.configFor(cwd)
+    const selection = resolveSessionModelSelection(config, {
+      coordination: { role: 'thread', modelOverride: request.model },
+    }, { defaultEffort: 'high' })
+    if (selection.issue || !selection.modelKey) {
+      throw new CoordinationError('MODEL_NOT_FOUND', `${selection.issue?.message ?? 'No thread model is configured.'} ${availableModelKeys(config.listSelectableModels())}`)
+    }
     const store = this.coordinationStore(cwd)
     const sessions = this.port.storeFor(cwd)
     const threadId = newThreadId()
@@ -252,7 +263,7 @@ export class CoordinationService implements CoordinationHost {
         throw new Error(`任务说明没能送达：${errorMessage(error)}`)
       }
 
-      return { threadId, sessionId: meta.id, ...(worktree ? { branch: worktree.branch } : {}) }
+      return { threadId, sessionId: meta.id, modelKey: selection.modelKey, ...(worktree ? { branch: worktree.branch } : {}) }
     } catch (error) {
       failed = true
       const cleanup = async (action: () => Promise<void>) => {

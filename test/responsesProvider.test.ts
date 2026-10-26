@@ -133,6 +133,46 @@ test('history maps to input items; tool images ride inside the function output',
   ])
 })
 
+test('explicit caching ends at durable history, before rebuilt reminders', () => {
+  const user: ModelContextItem = { kind: 'message', message: { id: 'u1', role: 'user', content: 'read', createdAt: at } }
+  const reminder = (content: string): ModelContextItem => ({
+    kind: 'message', message: { id: 'meta:context', role: 'user', content, createdAt: at, transient: true },
+  })
+  const first = buildResponsesPayload(request({ contextItems: [user, reminder('today')] }), { cacheBreakpoints: true })
+  const next = buildResponsesPayload(request({ contextItems: [
+    user,
+    { kind: 'tool_use', id: 'call_1', tool: 'Read', input: {} },
+    { kind: 'tool_result', toolUseId: 'call_1', tool: 'Read', ok: true, content: 'file' },
+    reminder('tomorrow'),
+  ] }), { cacheBreakpoints: true })
+
+  assert.deepEqual(first.prompt_cache_options, { mode: 'explicit' })
+  assert.deepEqual(first.input[0], { role: 'user', content: [{ type: 'input_text', text: 'read', prompt_cache_breakpoint: { mode: 'explicit' } }] })
+  assert.deepEqual(next.input[0], first.input[0], 'the previous cache endpoint stays in the next request')
+  assert.deepEqual(next.input[2], {
+    type: 'function_call_output', call_id: 'call_1',
+    output: [{ type: 'input_text', text: 'file', prompt_cache_breakpoint: { mode: 'explicit' } }],
+  })
+  assert.deepEqual(first.input.at(-1), { role: 'user', content: 'today' })
+  assert.deepEqual(next.input.at(-1), { role: 'user', content: 'tomorrow' })
+})
+
+test('one-shot requests disable implicit cache writes, and image boundaries keep all content', () => {
+  const bytes = { bytes: new Uint8Array([1]), mimeType: 'image/png' as const }
+  const input = request({
+    messages: [{ id: 'u1', role: 'user', content: 'look', images: [imageRef('pic')], createdAt: at }],
+    imageBytes: new Map([['pic', bytes]]),
+  })
+  const cached = buildResponsesPayload(input, { cacheBreakpoints: true })
+  assert.deepEqual(cached.input[0], { role: 'user', content: [
+    { type: 'input_text', text: 'look' },
+    { type: 'input_image', image_url: 'data:image/png;base64,AQ==', detail: 'auto', prompt_cache_breakpoint: { mode: 'explicit' } },
+  ] })
+  const oneShot = buildResponsesPayload({ ...input, promptCaching: false }, { cacheBreakpoints: true })
+  assert.deepEqual(oneShot.prompt_cache_options, { mode: 'explicit' })
+  assert.deepEqual(oneShot.input, buildResponsesPayload(input).input)
+})
+
 test('kept output items go back verbatim to the same model only, and only with all their calls present', () => {
   const history = (model: string, withToolUse = true): ModelRequest => request({
     model,
@@ -276,6 +316,26 @@ test('a stream that fails on prompt_cache_key is sent again without it', async (
   assert.deepEqual(payloads.map((payload) => 'prompt_cache_key' in payload), [true, false])
   assert.ok(payloads[1]?.headers, 'the session headers stay')
 })
+
+for (const field of ['prompt_cache_options', 'prompt_cache_breakpoint']) {
+  test(`a server that rejects ${field} falls back without changing the conversation or reasoning`, async () => {
+    resetCacheBreakDetection(SOURCE)
+    const provider = new ResponsesProvider({ provider: 'openai-responses', model: `cache-${field}`, apiKey: 'k' })
+    const payloads = install(provider, (payload) => 'prompt_cache_options' in payload
+      ? [{ type: 'response.failed', response: { error: { code: 'invalid_parameter', message: `${field} is not supported` } } }]
+      : [{ type: 'response.completed', response: finalResponse({ output: [messageItem] }) }], 'https://reject-caching.example/v1')
+    const input = request({ model: `cache-${field}`, promptCacheKey: 'session-caching', effort: 'high' })
+    await provider.createMessage(input)
+    await provider.createMessage(input)
+    resetCacheBreakDetection(SOURCE)
+    assert.deepEqual(payloads.map((payload) => 'prompt_cache_options' in payload), [true, false, false])
+    assert.equal(JSON.stringify(payloads[1]?.input).includes('prompt_cache_breakpoint'), false)
+    for (const payload of payloads) {
+      assert.equal(payload.prompt_cache_key, 'session-caching')
+      assert.deepEqual(payload.reasoning, { effort: 'high', summary: 'auto' })
+    }
+  })
+}
 
 test('a model that rejects reasoning is sent again without reasoning or include, and remembered', async () => {
   resetCacheBreakDetection(SOURCE)

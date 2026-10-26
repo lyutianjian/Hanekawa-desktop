@@ -25,6 +25,7 @@ function errorCodeFor(code: string): ToolResult['errorCode'] {
     case 'THREAD_RESOLVED':
     case 'NOT_COORDINATOR':
     case 'NO_COORDINATOR':
+    case 'MODEL_NOT_FOUND':
       return 'precondition_failed'
     default:
       return 'execution_failed'

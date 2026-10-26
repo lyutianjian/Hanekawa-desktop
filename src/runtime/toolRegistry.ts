@@ -18,7 +18,7 @@ const AGENT_TOOL_NAME = 'Agent'
 export class ToolRegistry {
   private readonly baseTools: readonly Tool[]
   private readonly toolsByServer = new Map<string, Tool[]>()
-  private readonly runtimeToolSets = new Map<Tool[], CoordinationRole | undefined>()
+  private readonly runtimeToolSets = new Map<Tool[], { role?: CoordinationRole; overrides: readonly Tool[] }>()
 
   constructor(baseTools: readonly Tool[]) {
     this.baseTools = baseTools
@@ -33,8 +33,8 @@ export class ToolRegistry {
   }
 
   /** Starts tracking `tools`; later MCP changes rewrite it in place. */
-  register(tools: Tool[], role?: CoordinationRole): void {
-    this.runtimeToolSets.set(tools, role)
+  register(tools: Tool[], role?: CoordinationRole, overrides: readonly Tool[] = []): void {
+    this.runtimeToolSets.set(tools, { role, overrides })
   }
 
   /** Stops tracking `tools`. Called from `AgentSession.dispose`. */
@@ -74,7 +74,7 @@ export class ToolRegistry {
 
   private refresh(): void {
     const mcpTools = [...this.toolsByServer.values()].flat()
-    for (const [tools, role] of this.runtimeToolSets) {
+    for (const [tools, { role, overrides }] of this.runtimeToolSets) {
       // The Agent tool is built per runtime, so it is not in `baseTools` and has
       // to be lifted out and put back.
       //
@@ -86,7 +86,8 @@ export class ToolRegistry {
       // before a server connected, and tool order is part of the prompt-cache
       // key — the two runtimes would then cache differently.
       const agentTool = tools.find((tool) => tool.name === AGENT_TOOL_NAME)
-      tools.splice(0, tools.length, ...this.baseFor(role), ...mcpTools)
+      const baseTools = this.baseFor(role).map((tool) => overrides.find((override) => override.name === tool.name) ?? tool)
+      tools.splice(0, tools.length, ...baseTools, ...mcpTools)
       if (agentTool) tools.push(agentTool)
     }
   }

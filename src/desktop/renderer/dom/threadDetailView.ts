@@ -13,7 +13,8 @@ import { TONE_ICON } from './threadPanelView.js'
 import { createTranscriptView, isScrolledToBottom, type TranscriptView } from './transcriptView.js'
 import type { WireShellThreadTranscriptResult } from '../../shellProtocol.js'
 import { describeError } from '../model/errorReport.js'
-import { splitThreadBrief, threadActivity, type ThreadPage } from '../model/threadDetail.js'
+import { splitThreadBrief, type ThreadPage } from '../model/threadDetail.js'
+import { replayActivity } from '../model/waiting.js'
 import { createTranscriptState, type ToolDisplayLookup, type TranscriptState } from '../model/transcript.js'
 
 type DetailPage = Extract<ThreadPage, { kind: 'detail' }>
@@ -73,7 +74,7 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
     const split = splitThreadBrief(state)
     if (split.brief === undefined) current.brief = undefined
     else if (current.brief?.text !== split.brief) current.brief = { text: split.brief, node: briefCard(split.brief) }
-    current.view.render(split.state, disclosure, threadActivity(state, current.running), undefined, current.brief?.node)
+    current.view.render(split.state, disclosure, replayActivity(state, current.running), undefined, current.brief?.node)
   }
 
   function showFailure(message: string | undefined): void {

@@ -23,7 +23,7 @@ import { MODEL_CONTEXT_WINDOW_DEFAULT } from '../prompts/budget.js'
 import type { ContextManagementConfig } from '../prompts/budget.js'
 import { JsonlRecordStream } from '../sessions/recordStream.js'
 import type { SessionMeta, SessionStore } from '../sessions/service.js'
-import { createAgentTool, prepareForkPreloadRecords } from '../tools/AgentTool/AgentTool.js'
+import { createAgentTool } from '../tools/AgentTool/AgentTool.js'
 import type { BaseAgentDefinition } from '../tools/AgentTool/AgentTool.js'
 import { restoreTaskStateFromRecords } from '../tools/taskState.js'
 import { rememberShownFiles } from '../tools/fileState.js'
@@ -33,6 +33,8 @@ import type { RecordProxy, UiBridges } from './bridges.js'
 import { RuntimeStartupError } from './errors.js'
 import type { ToolRegistry } from './toolRegistry.js'
 import type { AgentSession } from './types.js'
+import { resolveSessionModelSelection } from './sessionSelection.js'
+import { START_THREAD_TOOL_NAME, buildStartThreadDescription } from '../tools/StartThreadTool/prompt.js'
 
 function createModelProvider(modelKey: string, modelConfig: ModelConfig) {
   const validation = validateSettings({ models: { [modelKey]: modelConfig } })
@@ -104,7 +106,7 @@ export function createActiveModelRuntimeFactory(
 export interface CreateRuntimeDeps {
   /** The project root: keys data dirs (plans, memory, spill, transcripts). */
   cwd: string
-  /** Where tools run; a coordination thread's worktree. Defaults to `cwd`. */
+  /** Where tools run; the global workspace folder or a thread's worktree. Defaults to `cwd`. */
   workingDir?: string
   /** The session's coordination role, which filters the tool set. */
   role?: CoordinationRole
@@ -310,10 +312,22 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       : { type: 'adaptive' }
 
     const runtimeTools = toolRegistry.buildRuntimeTools(role)
+    const modelCatalog = config.listSelectableModels()
+    const agentDefinitions = getAgentDefinitions()
+    const threadModel = resolveSessionModelSelection(config, { coordination: { role: 'thread' } }, { defaultEffort: 'high' }).modelKey
+    const toolOverrides = runtimeTools.filter((tool) => tool.name === START_THREAD_TOOL_NAME).map((tool) => ({
+      ...tool,
+      description: buildStartThreadDescription(modelCatalog, threadModel),
+    }))
+    for (const tool of toolOverrides) runtimeTools[runtimeTools.findIndex((entry) => entry.name === tool.name)] = tool
     runtimeTools.push(createAgentTool({
       provider: targetProvider,
       model: targetModelConfig.model,
       modelKey,
+      modelCatalog,
+      routedModelKeys: Object.fromEntries(agentDefinitions.map((definition) => [
+        definition.type, config.resolveModelKeyFor({ kind: 'subagent', type: definition.type }, { currentModelKey: modelKey }),
+      ])),
       contextWindow: resolveContextWindow(targetModelConfig, contextManagement),
       providerName: targetProvider.name,
       promptCacheRetention: targetModelConfig.promptCacheRetention,
@@ -331,8 +345,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       system: config.get().agent.system,
       projectContext,
       skills: getSkills(),
-      agentDefinitions: getAgentDefinitions(),
-      loadParentRecords: async () => prepareForkPreloadRecords(await recordStream.load()),
+      agentDefinitions,
       contextManagement,
       isGitRepo,
       hooks: getSettings().hooks,
@@ -357,7 +370,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       ...(attachmentBytes ? { attachmentBytes } : {}),
     }))
 
-    toolRegistry.register(runtimeTools, role)
+    toolRegistry.register(runtimeTools, role, toolOverrides)
     const runtimeToolRunner = new ToolRunner(runtimeTools, permissionGate, {
       onRecord: async (record) => {
         await recordStream.append(record)
@@ -369,7 +382,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     }, {
       preToolUse: getSettings().hooks?.preToolUse,
       postToolUse: getSettings().hooks?.postToolUse,
-    })
+    }, config.redactToolOutput)
 
     // Only the coordinator lane reads the board; a superseded coordinator
     // (the pointer moved on) consumes nothing. A thread reads its own row, for
@@ -417,6 +430,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
         : {}
 
     const toolContext: ToolContext = {
+      redactToolOutput: config.redactToolOutput,
       cwd: workingDir,
       projectDir: cwd,
       sessionId: runtimeSession.id,

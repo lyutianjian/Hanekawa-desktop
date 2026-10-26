@@ -11,7 +11,7 @@ import { CODEX_ORIGINATOR, CODEX_USER_AGENT } from '../../utils/userAgent.js'
 import { safeJsonParse } from '../../utils/json.js'
 import { debugProviderPayload, debugProviderResponse, debugProviderSummary } from './debug.js'
 import { getOpenAICacheScope } from './openaiPayload.js'
-import { sendWithCacheKeyFallback, sendWithThinkingFallback, wantsThinking } from './openaiCompat.js'
+import { sendWithCacheBreakpointsFallback, sendWithCacheKeyFallback, sendWithThinkingFallback, wantsThinking } from './openaiCompat.js'
 import { buildResponsesPayload, responsesConversationId, type ResponsesPayloadOptions } from './responsesPayload.js'
 import { consumeWithIdleTimeout } from './streamIdle.js'
 import {
@@ -59,12 +59,12 @@ export class ResponsesProvider implements ModelProvider {
     const thinking = wantsThinking(request, this.thinkingOff) ? 'on' as const : 'off' as const
     const key = `${this.client.baseURL}\0${request.model}`
     return withRetry(
-      (attempt) => sendWithCacheKeyFallback(key, request, (cacheKey) => sendWithThinkingFallback(
+      (attempt) => sendWithCacheKeyFallback(key, request, (cacheKey) => sendWithCacheBreakpointsFallback(key, request, (cacheBreakpoints) => sendWithThinkingFallback(
         key,
         thinking === 'on' ? ['reasoning', 'include'] : [],
         request,
-        (withThinking) => this.sendMessage(request, attempt, { cacheKey, ...(withThinking ? { thinking } : {}) }),
-      )),
+        (withThinking) => this.sendMessage(request, attempt, { cacheKey, cacheBreakpoints, ...(withThinking ? { thinking } : {}) }),
+      ))),
       {
         maxRetries: request.retry?.maxRetries,
         callerKind: request.retry?.callerKind ?? 'interactive',

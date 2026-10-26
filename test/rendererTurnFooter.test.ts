@@ -14,6 +14,35 @@ test('tokens attach only to the footer of the turn that reported them', () => {
   assert.equal(splitTurnFooters(entries, 20).footers.get(0)?.tokens, undefined)
 })
 
+test('a wake turn continues the reply: its time joins the footer after the last turn', () => {
+  const before = new Date(2026, 4, 7, 10, 0).toISOString()
+  const after = new Date(2026, 4, 7, 10, 5).toISOString()
+  const entries = [
+    { kind: 'item', item: { id: 'u', kind: 'user', text: 'go', turnId: 't1' } },
+    { kind: 'item', item: { id: 'a1', kind: 'assistant', text: 'started', turnId: 't1', createdAt: before } },
+    { kind: 'item', item: { id: 'd1', kind: 'duration', text: '', durationMs: 7_000, turnId: 't1' } },
+    // No input between the turns: a background task woke the session.
+    { kind: 'item', item: { id: 'a2', kind: 'assistant', text: 'finished', turnId: 't2', createdAt: after } },
+    { kind: 'item', item: { id: 'd2', kind: 'duration', text: '', durationMs: 5_000, turnId: 't2' } },
+  ] as const
+  const { footers } = splitTurnFooters(entries, 3200, 't2')
+  assert.deepEqual([...footers.keys()], [2])
+  assert.deepEqual(footers.get(2), { durationMs: 12_000, createdAt: after, tokens: 3200 })
+  assert.equal(footers.has(1), false)
+})
+
+test('a still-streaming turn settles the previous reply footer before its own first entry', () => {
+  const before = new Date(2026, 4, 7, 10, 0).toISOString()
+  const entries = [
+    { kind: 'item', item: { id: 'a1', kind: 'assistant', text: 'started', turnId: 't1', createdAt: before } },
+    { kind: 'item', item: { id: 'd1', kind: 'duration', text: '', durationMs: 7_000, turnId: 't1' } },
+    { kind: 'item', item: { id: 'a2', kind: 'assistant', text: 'streaming', turnId: 't2' } },
+  ] as const
+  const { footers } = splitTurnFooters(entries, undefined, undefined, 't2')
+  assert.deepEqual([...footers.keys()], [0])
+  assert.deepEqual(footers.get(0), { durationMs: 7_000, createdAt: before })
+})
+
 /**
  * The window's one time label. A message stamp used to be a bare 「14:32」 from
  * any day, and the thread list counted 「3 小时前」 while the transcript said

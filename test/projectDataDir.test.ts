@@ -35,7 +35,7 @@ test('the key is readable and still tells apart paths that flatten alike', () =>
   assert.equal(path.dirname(getProjectDataDir('/a/b')), path.join(os.homedir(), '.myagent', 'projects'))
 })
 
-test('resolveToolPath takes data roots from projectDir while resolving against cwd', async () => {
+test('resolveToolPath resolves against cwd without restricting global data paths', async () => {
   const projectDir = await makeProject()
   const worktree = await makeProject()
   try {
@@ -46,13 +46,13 @@ test('resolveToolPath takes data roots from projectDir while resolving against c
       path.join(getCoordinationNotesDir(projectDir), 't.md'),
       path.join(getToolResultSpillDir(projectDir, 'session-a'), 'x.txt'),
       getUserInstructionsPath(),
+      path.join(getGlobalMyAgentDir(), 'settings.json'),
+      path.join(getProjectPlansDir(worktree), 'p.md'),
+      path.join(getProjectMemoryDir(worktree), 'n.md'),
+      path.join(getToolResultSpillDir(worktree, 'session-a'), 'x.txt'),
+      path.join(getSessionsDir(projectDir), 'index.json'),
     ]) assert.equal(resolveToolPath(context, p), p)
-    assert.throws(() => resolveToolPath(context, path.join(getGlobalMyAgentDir(), 'settings.json')), /runtime data/)
     assert.equal(resolveToolPath(context, 'a.ts'), path.join(worktree, 'a.ts'))
-    assert.throws(() => resolveToolPath(context, path.join(getProjectPlansDir(worktree), 'p.md')), /runtime data/)
-    assert.throws(() => resolveToolPath(context, path.join(getProjectMemoryDir(worktree), 'n.md')), /runtime data/)
-    assert.throws(() => resolveToolPath(context, path.join(getToolResultSpillDir(worktree, 'session-a'), 'x.txt')), /runtime data/)
-    assert.throws(() => resolveToolPath(context, path.join(getSessionsDir(projectDir), 'index.json')), /runtime data/)
   } finally {
     await rm(projectDir, { recursive: true, force: true })
     await rm(worktree, { recursive: true, force: true })
@@ -113,7 +113,7 @@ test('a renamed project starts empty and its old history stays under the old key
   }
 })
 
-test('file tools reach outside the project, but under ~/.myagent only this session\'s spill dir, the plans and memory dirs and the global instructions file', async () => {
+test('file tools can address global files across sessions and normalized relative paths', async () => {
   const cwd = await makeProject()
   try {
     const context = { cwd, sessionId: 'session-a' }
@@ -134,10 +134,12 @@ test('file tools reach outside the project, but under ~/.myagent only this sessi
     assert.equal(resolveToolPath(context, outside), outside)
 
     const otherSpill = path.join(getToolResultSpillDir(cwd, 'session-b'), 'toolu_1.txt')
-    assert.throws(() => resolveToolPath(context, otherSpill), /runtime data/)
-    assert.throws(() => resolveToolPath(context, path.join(getSessionsDir(cwd), 'index.json')), /runtime data/)
-    assert.throws(() => resolveToolPath(context, path.join(getProjectMemoryDir(cwd), '..', 'sessions', 'x.jsonl')), /runtime data/)
-    assert.throws(() => resolveToolPath(context, path.join(getProjectPlansDir(cwd), '..', 'sessions', 'x.jsonl')), /runtime data/)
+    assert.equal(resolveToolPath(context, otherSpill), otherSpill)
+    for (const file of [
+      path.join(getSessionsDir(cwd), 'index.json'),
+      path.join(getProjectMemoryDir(cwd), '..', 'sessions', 'x.jsonl'),
+      path.join(getProjectPlansDir(cwd), '..', 'sessions', 'x.jsonl'),
+    ]) assert.equal(resolveToolPath(context, file), file)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

@@ -129,10 +129,17 @@ export function countMessageTokens(
 
 /** Reasoning an assistant message hands back to its provider: outside `content`, but in the request. */
 function countReasoningReplayTokens(message: ChatMessage): number {
-  // Responses items also repeat the message text and tool calls, which are counted elsewhere.
-  const opaque = message.responseItems?.filter((item) => (item as { type?: unknown }).type === 'reasoning')
-    ?? message.reasoningDetails
-  if (opaque?.length) return countTextTokens(JSON.stringify(opaque))
+  if (message.responseItems?.length) {
+    return message.responseItems.reduce<number>((sum, item) => {
+      const reasoning = item as { type?: unknown; encrypted_content?: unknown } | null
+      if (reasoning?.type !== 'reasoning' || typeof reasoning.encrypted_content !== 'string') return sum
+      // Codex's coarse estimate: undo Base64 expansion, subtract the estimated
+      // 650-byte envelope, then use 4 bytes/token. Summaries and IDs add no replay cost.
+      const bytes = Math.max(0, Math.floor(reasoning.encrypted_content.length * 3 / 4) - 650)
+      return sum + Math.ceil(bytes / 4)
+    }, 0)
+  }
+  if (message.reasoningDetails?.length) return countTextTokens(JSON.stringify(message.reasoningDetails))
   return countTextTokens(message.reasoningContent ?? '')
     + (message.thinkingBlocks ?? []).reduce((sum, block) => sum + countTextTokens(block.thinking ?? block.data ?? ''), 0)
 }
@@ -155,7 +162,7 @@ export interface ToolSchemaCost {
   inputSchema?: unknown
 }
 
-/** Fixed request content, including any inherited history prefix, in tokens. */
+/** Fixed request content in tokens. */
 export interface RequestOverhead {
   /** The composed system prompt plus the instruction block counted into it. */
   systemTokens: number
@@ -175,10 +182,10 @@ export function countToolSchemasTokens(tools: readonly ToolSchemaCost[]): number
  * The one place a request's fixed cost is measured, so the compaction decision
  * and the request builder cannot disagree about what history may spend.
  */
-export function requestOverhead(input: { system?: string; tools?: readonly ToolSchemaCost[]; prefixTokens?: number }): RequestOverhead {
+export function requestOverhead(input: { system?: string; tools?: readonly ToolSchemaCost[] }): RequestOverhead {
   const systemTokens = input.system ? countTextTokens(input.system) : 0
   const toolSchemaTokens = input.tools?.length ? countToolSchemasTokens(input.tools) : 0
-  return { systemTokens, toolSchemaTokens, total: systemTokens + toolSchemaTokens + Math.max(0, input.prefixTokens ?? 0) }
+  return { systemTokens, toolSchemaTokens, total: systemTokens + toolSchemaTokens }
 }
 
 /** The window history may spend once the request's fixed parts are paid for. */
@@ -272,9 +279,8 @@ export function planContextItems(
   system?: string,
   tools?: readonly ToolSchemaCost[],
   imageTokenStrategy: ImageTokenStrategy = DEFAULT_IMAGE_TOKEN_STRATEGY,
-  prefixTokens = 0,
 ): ContextSelectionPlan {
-  const availableTokens = getAvailableTokensForOverhead(config, requestOverhead({ system, tools, prefixTokens }).total)
+  const availableTokens = getAvailableTokensForOverhead(config, requestOverhead({ system, tools }).total)
   const pinned = items.filter(isPinnedItem)
   const pinnedTokens = pinned.reduce((sum, item) => sum + countContextItemTokens(item, imageTokenStrategy), 0)
   // Pinned content must survive even when the fixed request leaves no budget;

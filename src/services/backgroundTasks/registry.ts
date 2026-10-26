@@ -11,6 +11,7 @@ import type {
 } from '../../harness/types.js'
 import { wrapInSystemReminder } from '../../harness/systemReminder.js'
 import { terminateProcessTree } from './processTree.js'
+import { redactApiKeyFields } from '../../config/apiKeys.js'
 
 export const MAX_BACKGROUND_OUTPUT_BYTES = 1_000_000
 /** Past this an output file keeps its head and the in-memory tail. */
@@ -100,7 +101,10 @@ export class BackgroundTaskRegistry {
   private readonly foregroundCalls = new Map<string, () => void>()
   private persistenceTail: Promise<void> = Promise.resolve()
 
-  constructor(private readonly persistRecord?: PersistRecord) {}
+  constructor(
+    private readonly persistRecord?: PersistRecord,
+    private readonly redact: (text: string) => string = redactApiKeyFields,
+  ) {}
 
   subscribe = (listener: () => void): (() => void) => {
     this.listeners.add(listener)
@@ -227,7 +231,7 @@ export class BackgroundTaskRegistry {
    */
   notifyParent(sessionId: string, content: string): void {
     const queue = this.parentNotifications.get(sessionId) ?? []
-    queue.push(wrapInSystemReminder(content))
+    queue.push(wrapInSystemReminder(this.redact(content)))
     this.parentNotifications.set(sessionId, queue)
     // A fresh snapshot, so a `useSyncExternalStore` shell re-renders too.
     this.invalidate(sessionId)
@@ -253,7 +257,7 @@ export class BackgroundTaskRegistry {
         if (note) queue.push(wrapInSystemReminder(note))
       }
     }
-    return queue
+    return queue.map(this.redact)
   }
 
   private takeMonitorEvents(task: InternalTask, events: MonitorEvents, midTurn: boolean): string | undefined {
@@ -342,7 +346,7 @@ export class BackgroundTaskRegistry {
     if (!events) return
     const lines = (events.partial + data.toString('utf8')).split('\n')
     events.partial = lines.pop()!
-    for (const line of lines) pushMonitorLine(events, line)
+    for (const line of lines) pushMonitorLine(events, this.redact(line))
   }
 
   /** The shell's stdio closed: nothing more will reach its output file. */
@@ -373,7 +377,7 @@ export class BackgroundTaskRegistry {
   private notifyShellEnded(task: InternalTask): void {
     if (task.status === 'killed') return
     if (task.monitor) {
-      if (task.monitor.partial) pushMonitorLine(task.monitor, task.monitor.partial)
+      if (task.monitor.partial) pushMonitorLine(task.monitor, this.redact(task.monitor.partial))
       task.monitor.partial = ''
       task.monitor.ended = task.status === 'completed'
         ? `Monitor ${task.id} ended: the script exited with code 0.`
@@ -384,7 +388,7 @@ export class BackgroundTaskRegistry {
     const outcome = task.status === 'completed'
       ? 'completed'
       : `failed${task.reason ? ` (${task.reason})` : ''}`
-    const lines = task.output.tail(NOTIFY_TAIL_MAX_CHARS * 4).toString('utf8').trimEnd().split(/\r?\n/)
+    const lines = this.redact(task.output.tail(NOTIFY_TAIL_MAX_CHARS * 4).toString('utf8')).trimEnd().split(/\r?\n/)
     let tail = lines.slice(-NOTIFY_TAIL_LINES).join('\n')
     if (tail.length > NOTIFY_TAIL_MAX_CHARS) tail = `…${tail.slice(-NOTIFY_TAIL_MAX_CHARS)}`
     this.notifyParent(task.sessionId, [
@@ -468,7 +472,8 @@ export class BackgroundTaskRegistry {
   peekOutput(sessionId: string, taskId: string, maxBytes = 4_096): string {
     const task = this.getInternal(sessionId, taskId)
     if (!task || task.kind !== 'shell') return ''
-    return task.output.tail(maxBytes).toString('utf8')
+    const output = Buffer.from(this.redact(task.output.tail(MAX_BACKGROUND_OUTPUT_BYTES).toString('utf8')))
+    return output.subarray(Math.max(0, output.length - maxBytes)).toString('utf8')
   }
 
   async restoreSession(sessionId: string, records: readonly SessionRecord[]): Promise<string[]> {

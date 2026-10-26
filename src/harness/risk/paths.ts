@@ -40,6 +40,7 @@ export function createRiskContext(options: RiskContextOptions): RiskContext {
     cwd,
     home,
     workspaceRoots: [cwd, ...[...additional, ...extraRoots].map(realPath), ...tempRoots],
+    readableRoots: [realPath(getGlobalMyAgentDir())],
     tempRoots,
     configFiles: [
       path.join(getGlobalMyAgentDir(), 'settings.json'),
@@ -175,7 +176,11 @@ export function classifyPath(target: PathTarget, access: PathAccess, ctx: RiskCo
 
   const root = real === undefined ? undefined : workspaceRootOf(real, ctx)
   if (root === undefined) {
-    if (access === 'read') add('normal', 'outside_read', `Reads ${shown} outside the workspace.`)
+    if (access === 'read') {
+      if (!real || !ctx.readableRoots?.some((allowed) => isSameOrInside(allowed, real))) {
+        add('normal', 'outside_read', `Reads ${shown} outside the workspace.`)
+      }
+    }
     else add('risky', 'outside_write', `Writes ${shown} outside the workspace.`)
   } else if (access === 'write') {
     add('normal', 'write', `Writes ${shown}.`)

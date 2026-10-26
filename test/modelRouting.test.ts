@@ -1,6 +1,6 @@
 import test, { beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { ConfigService } from '../src/config/service.js'
 import {
@@ -24,6 +24,27 @@ function tmpDir(): Promise<string> {
   return mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-routing-'))
 }
 
+test('selectable model catalog contains only public fields and resolvable keys in config order', async (t) => {
+  const dir = await tmpDir()
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeConfig(dir, {
+    endpoints: { remote: { provider: 'anthropic', baseUrl: 'https://private.example', apiKey: 'endpoint-secret' } },
+    models: {
+      worker: { endpoint: 'remote', model: 'worker-model', contextWindow: 200000 },
+      missingEndpoint: { endpoint: 'missing', model: 'unavailable' },
+      main: { provider: 'anthropic', model: 'main-model', apiKey: 'model-secret' },
+      inherit: { provider: 'anthropic', model: 'reserved-key' },
+    },
+    defaultModel: 'main',
+  })
+  const config = new ConfigService(dir)
+  await config.load()
+  assert.deepEqual(config.listSelectableModels(), [
+    { key: 'worker', model: 'worker-model', contextWindow: 200000 },
+    { key: 'main', model: 'main-model' },
+  ])
+})
+
 test('general routing reaches built-in types while explicit inherit survives save and reload', async () => {
   const dir = await tmpDir()
   try {
@@ -34,7 +55,7 @@ test('general routing reaches built-in types while explicit inherit survives sav
     const service = new ConfigService(dir)
     await service.load()
     for (let i = 0; i < 3; i++) {
-      for (const type of ['fork', 'explore', 'custom']) {
+      for (const type of ['general', 'explore', 'custom']) {
         assert.equal(service.resolveModelKeyFor({ kind: 'subagent', type }, { currentModelKey: 'main' }), 'small')
       }
       assert.equal(service.resolveModelKeyFor({ kind: 'subagent', type: 'plan' }, { currentModelKey: 'main' }), 'main')
@@ -65,7 +86,6 @@ test('mergeRouting: every role inherits by default', () => {
   assert.equal(merged.main, 'inherit')
   assert.equal(merged.plan, 'inherit')
   assert.equal(merged.compact, 'inherit')
-  assert.equal(merged.subagent?.fork, undefined)
   assert.equal(merged.subagent?.explore, undefined)
   assert.equal(merged.subagent?.plan, undefined)
 })
@@ -78,7 +98,33 @@ test('mergeRouting: deep-merges subagent overrides', () => {
   assert.equal(merged.main, 'small')
   assert.equal(merged.subagent?.explore, 'big')
   // Untouched defaults preserved.
-  assert.equal(merged.subagent?.fork, undefined)
+  assert.equal(merged.subagent?.plan, undefined)
+})
+
+test('retired fork routing is removed on load, updates, save and reload', async (t) => {
+  const dir = await tmpDir()
+  t.after(() => rm(dir, { recursive: true, force: true }))
+  await writeConfig(dir, {
+    models: { main: { provider: 'openai', model: 'main' } },
+    defaultModel: 'main',
+    routing: { subagent: { fork: 'main', explore: 'main', custom: 'main' } },
+  })
+  await writeFile(path.join(process.env.USERPROFILE!, '.myagent', 'settings.json'), JSON.stringify({
+    routing: { subagent: { fork: 'legacy', plan: 'main' } },
+  }))
+
+  const config = new ConfigService(dir)
+  await config.load()
+  const expected = { general: 'inherit', explore: 'main', plan: 'main', custom: 'main' }
+  assert.deepEqual(config.get().routing?.subagent, expected)
+  config.setRouting({ ...config.getRouting(), subagent: { ...expected, fork: 'main' } })
+  assert.deepEqual(config.getRouting().subagent, expected)
+  await config.save()
+  const persisted = JSON.parse(await readFile(config.getSaveTarget(), 'utf8'))
+  assert.deepEqual(persisted.routing.subagent, expected)
+  await config.load()
+  assert.deepEqual(config.get().routing?.subagent, expected)
+  assert.equal(config.resolveModelKeyFor({ kind: 'subagent', type: 'custom' }), 'main')
 })
 
 test('pickRoutedModel: subagent type override beats general fallback', () => {
@@ -213,7 +259,7 @@ test('ConfigService.resolveModelKeyFor: unrouted subagents inherit the parent mo
     })
     const cfg = new ConfigService(dir)
     await cfg.load()
-    for (const type of ['fork', 'explore', 'plan', 'general']) {
+    for (const type of ['general', 'explore', 'plan', 'custom']) {
       assert.equal(
         cfg.resolveModelKeyFor({ kind: 'subagent', type }, { currentModelKey: 'med' }),
         'med',
@@ -549,7 +595,7 @@ test('ConfigService write-back: setRouting persists deep-merged routing', async 
     assert.equal(after.main, 'y')
     assert.equal(after.subagent?.explore, 'y')
     // Untouched defaults preserved through reload.
-    assert.equal(after.subagent?.fork, undefined)
+    assert.equal(after.subagent?.plan, undefined)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

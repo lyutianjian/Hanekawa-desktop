@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { z } from 'zod/v3'
 import { buildAnthropicPayload } from '../src/config/providers.js'
+import { buildResponsesPayload } from '../src/config/providers/responsesPayload.js'
 import { ContextBuilder } from '../src/harness/contextBuilder.js'
 import { resetCacheTTLEvaluation, SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '../src/harness/cacheControl.js'
 import type { SessionRecord, Tool } from '../src/harness/types.js'
@@ -107,6 +108,46 @@ test('a coordination_update in the history keeps the breakpoint inside the commo
   const turnN = await payloadMessages(2, coordinatorRecords)
   assert.ok(JSON.stringify(turnN).includes('Thread note after res-1'), 'the update is part of the history')
   assertBreakpointInCommonPrefix(turnN, await payloadMessages(3, coordinatorRecords))
+})
+
+test('Responses reuses the previous history boundary through thread updates and changing reminders', async () => {
+  const builder = new ContextBuilder(undefined, { contextWindow: 200_000, summaryOutputTokens: 0 })
+  const payload = async (toolTurns: number) => {
+    const built = await builder.build({
+      records: coordinatorRecords(toolTurns),
+      tools: [tool],
+      rolePrompt: 'Coordinate threads',
+      projectContext: 'Stable project instructions',
+      permissionMode: toolTurns === 2 ? 'auto' : 'plan',
+      transientUserContext: [`Pending requests: ${toolTurns}`],
+      now: new Date(`2026-05-${toolTurns === 2 ? '10' : '11'}T12:00:00.000Z`),
+    })
+    return buildResponsesPayload({
+      cacheSource: 'agent:coordinator-cache-test',
+      promptCacheKey: 'coordinator-session',
+      model: 'gpt-6.1-sol',
+      messages: built.messages,
+      contextItems: built.contextItems,
+      system: built.system,
+      tools: [tool],
+    }, { cacheBreakpoints: true, cacheKey: true })
+  }
+  const first = await payload(2)
+  const next = await payload(3)
+  const marked = (value: unknown): boolean => {
+    if (!value || typeof value !== 'object') return false
+    if (Object.hasOwn(value, 'prompt_cache_breakpoint')) return true
+    return Object.values(value).some(marked)
+  }
+  const endpoint = first.input.reduce((last, item, index) => marked(item) ? index : last, -1)
+  assert.ok(endpoint >= 0 && endpoint < first.input.length - 1, 'the rebuilt suffix is outside the cache write')
+  assert.ok(JSON.stringify(first.input[endpoint]).includes('Thread note after res-1'), 'the durable thread update is cached')
+  assert.deepEqual(next.input.slice(0, endpoint + 1), first.input.slice(0, endpoint + 1), 'the complete previously cached prefix survives')
+  assert.deepEqual(next.instructions, first.instructions)
+  assert.deepEqual(next.tools, first.tools)
+  assert.equal(next.prompt_cache_key, first.prompt_cache_key)
+  assert.ok(first.input.slice(endpoint + 1).every((item) => !marked(item)))
+  assert.notDeepEqual(next.input.slice(endpoint + 1), first.input.slice(endpoint + 1))
 })
 
 test('the role prompt is static: identical across builds and ahead of the dynamic boundary', async () => {

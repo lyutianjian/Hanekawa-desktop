@@ -172,7 +172,7 @@ export interface SessionScope {
   session: SessionMeta
   /** The project root that keys this scope's data dirs. */
   projectDir: string
-  /** Where this scope's tools run: a thread's worktree, else `projectDir`. */
+  /** Where tools run: the global workspace folder, a thread's worktree, or `projectDir`. */
   workingDir: string
   /** The session's coordination role; undefined for a normal session. */
   role?: CoordinationRole

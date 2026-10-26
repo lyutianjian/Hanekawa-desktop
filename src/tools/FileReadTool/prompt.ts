@@ -5,6 +5,7 @@ export const DESCRIPTION = `Read a text file or view an image from the current p
 Usage:
 - Parameters are camelCase: \`filePath\` (required), \`offset\`, \`limit\`. Any other key is rejected — there is no \`pages\` parameter.
 - \`filePath\` may be absolute or relative to the working directory.
+- Global Hanekawa files under ~/.myagent are accessible. API keys are shown as [REDACTED]; other configuration fields remain visible.
 - Text content comes back with \`cat -n\` style line numbers. They are display only: never copy a line-number prefix into an Edit \`oldString\`.
 - CRLF files are normalized to LF on read, so a multi-line \`oldString\` written with \\n matches what you saw.
 - \`offset\` is a 1-based starting line and \`limit\` caps the lines returned (default 2000). A read also stops early once it reaches about 20k tokens, and lines longer than 2000 characters are cut; the result then says which lines it shows, so continue with \`offset\`. A windowed read still remembers the whole file, so a later Edit can match anywhere in it, not just inside the window.

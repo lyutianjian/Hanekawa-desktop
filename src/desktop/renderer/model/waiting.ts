@@ -1,14 +1,13 @@
 import {
   formatWorkedDuration,
-  isAgentCall,
-  toStep,
   type ActivityRun,
   type DraftCall,
   type TranscriptEntry,
   type TranscriptItem,
+  type TranscriptState,
   type TurnPhase,
 } from './transcript.js'
-import { batchPhrase, callPhrase, type CallStep } from './toolPhrases.js'
+import { callPhrase, type CallStep } from './toolPhrases.js'
 import { EDIT_TOOLS, runHasTools } from './thinking.js'
 import { markSpecFor, peekField, type MarkSpec } from './workingMark.js'
 import type { TaskCard } from './tasks.js'
@@ -122,6 +121,37 @@ export function rowLabel(row: WaitingRow, now: number): string {
 }
 
 /**
+ * The activity to draw for a turn whose records are read back from a file — a
+ * thread's page, or a sub-agent's own transcript — where no session snapshot says
+ * whether a turn is in flight. The caller's knowledge of whether the run is still
+ * going is that flag: live keeps the turn open and puts the status line at the
+ * end (the words above the fold stay as they are), settled closes it and draws its
+ * footers instead.
+ *
+ * A state built from records carries no `turnId` of its own, so the turn in flight
+ * is the newest stamped one — the last the file has. Naming it is what lets the
+ * status line read the run's own work (「运行 1 个命令」) and sit on it, rather than
+ * falling back to a word that fits every turn equally well. `startedAt` then comes
+ * from that turn's first record, as the live snapshot's does, so the counter reads
+ * from the turn's own beginning rather than from the paint.
+ */
+export function replayActivity(state: TranscriptState, running: boolean): WaitingInput {
+  if (!running) return { isStreaming: false, startedAt: undefined, turnId: undefined }
+  const turnId = state.turnId ?? lastStamped(state.items)
+  const start = state.items.find((item) => turnId !== undefined && item.turnId === turnId)?.createdAt
+  return { isStreaming: true, startedAt: start === undefined ? undefined : Date.parse(start), turnId }
+}
+
+/** The turn id of the transcript's newest stamped item — its turn in flight. */
+function lastStamped(items: TranscriptState['items']): string | undefined {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const turnId = items[index]?.turnId
+    if (turnId !== undefined) return turnId
+  }
+  return undefined
+}
+
+/**
  * The status for this paint.
  *
  * `ActivityRun.status` is deliberately not consulted for liveness: it reads
@@ -140,13 +170,6 @@ export function turnActivity(entries: readonly TranscriptEntry[], input: Waiting
     ? last.run
     : undefined
   if (asking !== undefined) return { row: row(asking), mark: { body: 'default', state: 'blocked' }, place: 'line' }
-  // A sub-agent is no run's step, so its own wait is named here.
-  if (last?.kind === 'item' && last.item.pending === true && isAgentCall(last.item) && last.item.turnId === input.turnId) {
-    const step = toStep(last.item) as CallStep
-    return step.tool.awaitingApproval === true
-      ? { row: row(`等待你确认 · ${callPhrase(step, true)}`), mark: { body: 'default', state: 'blocked' }, place: 'line' }
-      : { row: row(callPhrase(step)), mark: PLAIN, place: 'line' }
-  }
   const mark = markSpecFor(run ?? latestRun(entries, input.turnId), input.draftCall)
   // Until text follows it, the turn's tool group carries the status, even between its
   // steps. With a checklist on screen the status stays its own line, under the card.
@@ -155,7 +178,7 @@ export function turnActivity(entries: readonly TranscriptEntry[], input: Waiting
     const calls = run.steps.filter(isRunningCall)
     const waiting = calls.filter((step) => step.tool.awaitingApproval === true).at(-1)
     if (waiting) return { row: row(`等待你确认 · ${callPhrase(waiting, true)}`), mark, place }
-    if (calls.length > 0) return { row: row(batchPhrase(calls)), mark, place }
+    if (calls.length > 0) return { row: row(callPhrase(calls[0]!)), mark, place }
     const thought = run.steps[run.steps.length - 1]
     if (thought?.kind === 'thinking' && thought.pending === true) {
       return { row: row(WAITING_LABEL, { thinkingSince: thought.startedAt ?? input.startedAt }), mark, place: 'line' }

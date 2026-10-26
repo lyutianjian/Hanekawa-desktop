@@ -138,6 +138,7 @@ async function setup(t: TestContext, script: Script, options: { git?: boolean; s
     reseedCoordinator: (dir, id) => service.reseedCoordinator(dir, id),
   })
   service = new CoordinationService({
+    configFor: () => project.config,
     storeFor: () => project.store,
     laneControl: (id) => lanes.get(id)?.host,
     openLane: async (dir, id, o) => (await openLane(dir, id, o)).host,
@@ -653,7 +654,7 @@ test('a thread\'s first request already uses the model it was started with', asy
   h.project.config.setModelConfig('worker', { provider: 'anthropic', model: 'worker-model', apiKey: 'test-key' })
   await h.project.config.save()
 
-  await h.service.startThread(h.caller, {
+  const started = await h.service.startThread(h.caller, {
     title: 'Modeled',
     brief: 'BRIEF-M',
     background: BACKGROUND,
@@ -663,6 +664,7 @@ test('a thread\'s first request already uses the model it was started with', asy
   await h.settle()
 
   // The control for the reopen probe below: creation already picks the right model.
+  assert.equal(started.modelKey, 'worker')
   assert.deepEqual(threadModels, ['worker-model'])
 })
 

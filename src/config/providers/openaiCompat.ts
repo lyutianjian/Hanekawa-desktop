@@ -89,6 +89,7 @@ export function chatThinkingParams(
  */
 const rejectedThinking = new Set<string>()
 const rejectedCacheKey = new Set<string>()
+const rejectedCacheBreakpoints = new Set<string>()
 
 /** A 400/422, or a Responses stream that failed on an invalid parameter after a 200. */
 function isRequestRejection(error: unknown): error is Error {
@@ -140,4 +141,14 @@ export function sendWithCacheKeyFallback<T>(
   send: (withCacheKey: boolean) => Promise<T>,
 ): Promise<T> {
   return sendWithFallback(rejectedCacheKey, key, (error) => error.message.includes('prompt_cache_key'), 'cache-key', request, send)
+}
+
+/** Older Responses models and compatible servers may only support implicit caching. */
+export function sendWithCacheBreakpointsFallback<T>(
+  key: string,
+  request: Pick<ModelRequest, 'model' | 'retry'>,
+  send: (withCacheBreakpoints: boolean) => Promise<T>,
+): Promise<T> {
+  return sendWithFallback(rejectedCacheBreakpoints, key, (error) =>
+    /prompt_cache_(options|breakpoint)/i.test(error.message), 'cache-breakpoints', request, send)
 }

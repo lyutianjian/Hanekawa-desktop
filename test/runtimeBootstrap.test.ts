@@ -8,7 +8,7 @@ import { z } from 'zod/v3'
 import { bootstrap, RuntimeStartupError, switchToNewSession } from '../src/runtime/index.js'
 import { SessionStore } from '../src/sessions/service.js'
 import type { SessionMeta } from '../src/sessions/service.js'
-import type { SessionRecord, Tool } from '../src/harness/types.js'
+import type { ModelRequest, SessionRecord, Tool } from '../src/harness/types.js'
 import type { McpServerConfig } from '../src/services/mcp/index.js'
 import { createSessionPane, SessionWorkspace } from '../src/runtime/sessionWorkspace.js'
 import { refreshRuntimeSlot } from '../src/runtime/providerRuntime.js'
@@ -21,6 +21,9 @@ import type { FileHistoryService } from '../src/services/fileHistory/fileHistory
 import { SessionHost } from '../src/runtime/protocol/host.js'
 import { createMemoryChannelPair } from '../src/runtime/protocol/memoryChannel.js'
 import type { HostCommand, HostEvent } from '../src/runtime/protocol/wire.js'
+import { AnthropicProvider } from '../src/config/providers/anthropicProvider.js'
+import { getProjectMemoryDir, getSessionsDir } from '../src/utils/paths.js'
+import { writeFileTool } from '../src/tools/FileWriteTool/FileWriteTool.js'
 
 // `config.json` lives in `~/.myagent` alone and `loadMergedSettings` layers a
 // shared `~/.myagent` beneath the project one, so every test needs its own home.
@@ -414,6 +417,7 @@ test('bootstrap assembles a runtime bound to the configured model', async () => 
   assert.equal(host.initialModelKey, 'main')
   assert.deepEqual(host.mcp, { connected: [], failed: [] })
   assert.equal(host.hasRecoverableInterruption, false)
+  assert.equal(host.workingDir, cwd)
 
   const runtime = host.createRuntime(host.initialModelKey, session, host.existingRecords)
   assert.equal(runtime.modelKey, 'main')
@@ -423,6 +427,149 @@ test('bootstrap assembles a runtime bound to the configured model', async () => 
 
   runtime.dispose()
   await host.shutdown('test over')
+})
+
+test('global sessions run in Documents/myagent while keeping their home-keyed history and memory', async () => {
+  // Keep home beside the test temp root, so temp-file permissions cannot mask
+  // an accidentally home-wide workspace boundary.
+  const home = await mkdtemp(path.join(path.dirname(tmpdir()), 'myagent-recent-home-'))
+  process.env.HOME = home
+  process.env.USERPROFILE = home
+  await mkdir(path.join(home, '.myagent'))
+  await writeFile(path.join(home, '.myagent', 'config.json'), JSON.stringify(MODEL_CONFIG))
+  await writeFile(path.join(home, 'older.txt'), 'previous output')
+  const memoryDir = getProjectMemoryDir(home)
+  await mkdir(memoryDir, { recursive: true })
+  await writeFile(path.join(memoryDir, 'MEMORY.md'), '- retained memory')
+  const store = new SessionStore(home)
+  await store.init()
+  const session = await store.create('old recent session')
+  const oldMessage: SessionRecord = { type: 'message', id: 'old-user', role: 'user', content: 'previous conversation', createdAt: 'now' }
+  await store.appendRecord(session.id, oldMessage)
+  const workingDir = path.join(home, 'Documents', 'myagent')
+  assert.equal(existsSync(workingDir), false)
+
+  const host = await bootstrap({ cwd: home, store, session, confirmMcpTrust: denyTrust })
+  const runtime = host.createRuntime('main', session, host.existingRecords)
+  try {
+    assert.equal(host.projectDir, home)
+    assert.equal(host.workingDir, workingDir)
+    assert.equal(existsSync(workingDir), true)
+    assert.deepEqual(host.existingRecords, [oldMessage])
+    assert.equal(existsSync(path.join(getSessionsDir(home), `${session.id}.jsonl`)), true)
+    const fresh = await host.openScope(store.createDraft())
+    assert.equal(fresh.workingDir, workingDir)
+    fresh.dispose()
+
+    host.permissionGate.setMode('auto')
+    assert.equal(host.permissionGate.riskLevel(writeFileTool, { filePath: 'hello.txt', content: 'hello' }), 'normal')
+    assert.equal(host.permissionGate.riskLevel(writeFileTool, { filePath: path.join(home, 'outside.txt'), content: 'hello' }), 'risky')
+    const written = await runtime.loop.runTool({ id: 'write-output', name: 'Write', input: { filePath: 'hello.txt', content: 'hello' } })
+    assert.equal(written.ok, true, written.content)
+    assert.equal(await readFile(path.join(workingDir, 'hello.txt'), 'utf8'), 'hello')
+    assert.equal(existsSync(path.join(home, 'hello.txt')), false)
+    const pwd = await runtime.loop.runTool({ id: 'working-dir', name: 'Bash', input: { command: 'pwd' } })
+    assert.equal(pwd.ok, true, pwd.content)
+    assert.ok(pwd.content.includes(workingDir.replaceAll('\\', '/')), pwd.content)
+    assert.equal(await readFile(path.join(home, 'older.txt'), 'utf8'), 'previous output')
+    assert.equal(await readFile(path.join(memoryDir, 'MEMORY.md'), 'utf8'), '- retained memory')
+    assert.equal(existsSync(path.join(workingDir, '.myagent')), false)
+
+    await writeFile(path.join(workingDir, 'AGENTS.md'), 'instructions in the recent workspace')
+    assert.equal((await host.reloadSettings()).needsRuntimeRebuild, true)
+    assert.match(host.getProjectEntries().join('\n'), /instructions in the recent workspace/)
+  } finally {
+    runtime.dispose()
+    await host.shutdown('test over')
+  }
+
+  const reopened = await bootstrap({ cwd: home, store, session: (await store.resolve(session.id))!, confirmMcpTrust: denyTrust })
+  try {
+    assert.equal(reopened.workingDir, workingDir)
+    assert.deepEqual(reopened.existingRecords, [oldMessage])
+    assert.match(reopened.getProjectEntries().join('\n'), /instructions in the recent workspace/)
+  } finally {
+    await reopened.shutdown('test over')
+  }
+})
+
+test('a blocked recent workspace fails to open instead of using the home directory', async () => {
+  await createProject()
+  const home = process.env.HOME!
+  await mkdir(path.join(home, 'Documents'))
+  await writeFile(path.join(home, 'Documents', 'myagent'), 'not a directory')
+  const store = new SessionStore(home)
+  await store.init()
+  await assert.rejects(
+    bootstrap({ cwd: home, store, session: store.createDraft(), confirmMcpTrust: denyTrust }),
+    /EEXIST|ENOTDIR/,
+  )
+})
+
+test('runtime tools expose model catalogs, apply Agent.model and refresh their defaults after config reload', async (t) => {
+  const config = {
+    models: {
+      main: { provider: 'anthropic', model: 'main-model', apiKey: 'private-main-key' },
+      worker: { provider: 'anthropic', model: 'worker-v1', apiKey: 'private-worker-key', contextWindow: 200000 },
+    },
+    defaultModel: 'main',
+    routing: { thread: 'worker', subagent: { general: 'worker', plan: 'inherit' } },
+  }
+  const { cwd, store, session } = await createProject({ config })
+  await store.setCoordination(session.id, { role: 'coordinator', projectKey: 'test-project' })
+  const coordinator = (await store.resolve(session.id))!
+  const start: Tool = {
+    name: 'StartThread', description: 'base description', sessionRoles: ['coordinator'],
+    inputSchema: z.object({}), riskLevel: 'safe', execute: async () => ({ ok: true, content: '' }),
+  }
+  const host = await bootstrap({ cwd, store, session: coordinator, confirmMcpTrust: denyTrust, extraTools: [start] })
+  const pane = createSessionPane(host, host)
+  const options = () => (pane.runtimeSlot.requireCurrent().loop as unknown as { options: AgentLoopOptions }).options
+  const find = (name: string) => options().tools.find((tool) => tool.name === name)!
+  try {
+    const agent = find('Agent')
+    const thread = find('StartThread')
+    for (const tool of [agent, thread]) {
+      assert.match(tool.description, /key: "worker"; model: "worker-v1"; context window: 200000 tokens/)
+      assert.doesNotMatch(tool.description, /private-main-key|private-worker-key|apiKey/)
+    }
+    assert.match(agent.description, /"general": "worker"/)
+    assert.match(agent.description, /"plan": "main"/)
+    assert.match(thread.description, /Default thread model: "worker"/)
+    const requests: string[] = []
+    t.mock.method(AnthropicProvider.prototype, 'createMessage', async (request: ModelRequest) => {
+      requests.push(request.model)
+      if (requests.length === 1) return {
+        content: '', toolCalls: [{ id: 'read-config', name: 'Read', input: { filePath: path.join(process.env.USERPROFILE!, '.myagent', 'config.json') } }],
+      }
+      const readResult = request.contextItems?.find((item) => item.kind === 'tool_result' && item.toolUseId === 'read-config')
+      assert.ok(readResult?.kind === 'tool_result' && readResult.ok)
+      assert.match(readResult.content, /\[REDACTED\]/)
+      assert.doesNotMatch(JSON.stringify(request.contextItems), /private-main-key|private-worker-key/)
+      return { content: 'selected model answered', toolCalls: [] }
+    })
+    const result = await agent.execute({ task: 'Inspect', subagent_type: 'plan', model: 'worker' }, options().toolContext)
+    assert.equal(result.ok, true, result.content)
+    assert.match(result.content, /Model key: "worker"/)
+    assert.doesNotMatch(result.content, /private-worker-key/)
+    assert.deepEqual(requests, ['worker-v1', 'worker-v1'])
+    assert.equal(host.config.getRouting().subagent?.plan, 'inherit')
+
+    config.models.worker.model = 'worker-v2'
+    config.routing.thread = 'main'
+    config.routing.subagent.general = 'main'
+    await writeFile(path.join(process.env.USERPROFILE!, '.myagent', 'config.json'), JSON.stringify(config))
+    assert.equal((await host.reloadSettings()).needsRuntimeRebuild, true)
+    refreshRuntimeSlot({ config: host.config, runtimeSlot: pane.runtimeSlot, createRuntime: host.createRuntime, modelKey: 'main', session: coordinator })
+    assert.match(find('Agent').description, /model: "worker-v2"/)
+    assert.match(find('Agent').description, /"general": "main"/)
+    assert.match(find('StartThread').description, /Default thread model: "main"/)
+    assert.doesNotMatch(find('StartThread').description, /worker-v1/)
+    assert.equal(start.description, 'base description')
+  } finally {
+    await pane.close()
+    await host.shutdown('test over')
+  }
 })
 
 test('initialModelKey follows a default model changed after startup', async () => {

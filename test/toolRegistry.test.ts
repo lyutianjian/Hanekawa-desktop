@@ -138,3 +138,23 @@ test('role-filtered tool sets stay filtered across MCP refresh', () => {
   assert.deepEqual(toolNames(normal), ['Read', 'EnterPlanMode', 'ExitPlanMode', 'mcp__github__search'])
   assert.deepEqual(toolNames(coordinator), ['Read', 'Spawn', 'mcp__github__search', 'Agent'])
 })
+
+test('MCP refresh preserves each runtime model catalog without changing shared tools', () => {
+  const start = { ...testTool('StartThread'), sessionRoles: ['coordinator'] } as Tool
+  const registry = new ToolRegistry([testTool('Read'), start])
+  const runtimes = ['model-a', 'model-b'].map((model) => {
+    const override = { ...start, description: `Available: ${model}` }
+    const tools = registry.buildRuntimeTools('coordinator').map((tool) => tool === start ? override : tool)
+    tools.push(testTool('Agent'))
+    registry.register(tools, 'coordinator', [override])
+    return { tools, override }
+  })
+  registry.setServerTools('test', [testTool('mcp__test__read')])
+  registry.removeServerTools('test')
+  for (const { tools, override } of runtimes) {
+    assert.deepEqual(toolNames(tools), ['Read', 'StartThread', 'Agent'])
+    assert.equal(tools[1], override)
+  }
+  assert.equal(registry.buildRuntimeTools('coordinator')[1], start)
+  assert.deepEqual(toolNames(registry.buildRuntimeTools()), ['Read'])
+})

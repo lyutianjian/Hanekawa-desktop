@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import type { ActivityRun, ActivityStep, ToolStepStatus } from '../src/desktop/renderer/model/transcript.js'
 import { drawnSteps, isMemoryIndex, memoryOp } from '../src/desktop/renderer/model/memoryOps.js'
-import { batchPhrase, callParts, type CallStep } from '../src/desktop/renderer/model/toolPhrases.js'
+import { callParts, type CallStep } from '../src/desktop/renderer/model/toolPhrases.js'
 import { summarizeRun } from '../src/desktop/renderer/model/thinking.js'
 
 const DIR = '/home/me/.myagent/projects/p/memory'
@@ -46,11 +46,6 @@ test('rows read as memory work', () => {
   assert.equal(parts(step('a', 'Edit', `${DIR}/MEMORY.md`)), '整理记忆索引|')
   assert.equal(parts(step('a', 'Read', `${DIR}/MEMORY.md`)), '调取记忆索引|')
   assert.equal(parts(step('a', 'Read', '/p/src/a.ts', { memory: false })), '读取|a.ts')
-})
-
-test('a batch of memory reads is counted as memories', () => {
-  assert.equal(batchPhrase([step('a', 'Read', `${DIR}/a.md`), step('b', 'Read', `${DIR}/b.md`)]), '调取 2 条记忆')
-  assert.equal(batchPhrase([step('a', 'Read', `${DIR}/a.md`), step('b', 'Read', '/p/b.ts', { memory: false })]), '读取 2 个文件')
 })
 
 test('the run summary counts memories, not files, and leaves the index out', () => {

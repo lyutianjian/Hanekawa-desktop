@@ -115,16 +115,15 @@ test('a link out of the workspace is still judged by where it lands', async (t) 
   assert.equal(await readFile(path.join(outside, 'x.txt'), 'utf8'), 'allowed\n')
 })
 
-test('a link into Hanekawa runtime data is still refused', async (t) => {
+test('a link into Hanekawa runtime data follows the normal file-write path', async (t) => {
   const root = await scratch(t)
   const runtime = path.join(getGlobalMyAgentDir(), 'projects', 'nope')
   await mkdir(runtime, { recursive: true })
   await symlink(runtime, path.join(root, 'escape'))
 
-  await assert.rejects(
-    writeFileTool.execute({ filePath: 'escape/x.txt', content: 'x' }, context(root)),
-    /runtime data/,
-  )
+  const result = await writeFileTool.execute({ filePath: 'escape/x.txt', content: 'x' }, context(root))
+  assert.equal(result.ok, true, result.content)
+  assert.equal(await readFile(path.join(runtime, 'x.txt'), 'utf8'), 'x')
 })
 test('a directory swapped for a symlink before the write is refused', async (t) => {
   const root = await scratch(t)

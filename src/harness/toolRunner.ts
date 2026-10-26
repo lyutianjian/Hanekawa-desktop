@@ -6,6 +6,7 @@ import { normalizeToolInput } from '../tools/inputAliases.js'
 import { describeToolError } from '../tools/fsErrors.js'
 import { countTextTokens } from '../prompts/budget.js'
 import { wrapInSystemReminder } from './systemReminder.js'
+import { redactApiKeyFields, redactOutput } from '../config/apiKeys.js'
 import type { ImageAttachmentRef } from '../media/types.js'
 import type { ToolHooks } from './hooks.js'
 import type { SessionRecord, TaskDisplayCounts, TaskDisplayItem, TaskDisplaySnapshot, TaskItem, Tool, ToolCall, ToolContext, ToolErrorCode, ToolProgressEvent, ToolResultDisplay, ToolResultMetadata, ToolResultRecord, ToolUseRecord } from './types.js'
@@ -29,6 +30,7 @@ export class ToolRunner {
     private readonly permissionGate: PermissionGate,
     private readonly events: ToolRunEvents,
     private readonly hooks: ToolHooks = {},
+    private readonly redact: (text: string) => string = redactApiKeyFields,
   ) {}
 
   addRecordListener(listener: ToolRunRecordListener): () => void {
@@ -48,7 +50,7 @@ export class ToolRunner {
    * stream or in-memory caches.
    */
   fork(events: ToolRunEvents): ToolRunner {
-    return new ToolRunner(this.tools, this.permissionGate, events, this.hooks)
+    return new ToolRunner(this.tools, this.permissionGate, events, this.hooks, this.redact)
   }
 
   isReadonlyCall(tool: Tool, call: ToolCall): boolean {
@@ -95,6 +97,7 @@ export class ToolRunner {
 
     const executionContext: ToolContext = {
       ...context,
+      redactToolOutput: this.redact,
       abortSignal: signal ?? context.abortSignal,
       appendRecord: recordForRun,
       appendMetric: context.appendMetric,
@@ -180,14 +183,19 @@ export class ToolRunner {
       }
 
       try {
-        const result = await tool.execute(call.input, executionContext)
+        const result = redactOutput(await tool.execute(call.input, executionContext), this.redact)
         syncMutableToolContext(context, executionContext)
         const content = decision.reminder ? `${result.content}\n\n${wrapInSystemReminder(decision.reminder)}` : result.content
         const record = this.result(call, tool.name, result.ok, content, result.errorCode, result.errorDetails, turnId, tool.maxResultSizeChars, result.metadata?.display, result.images)
         // Map tool result to API format (e.g. tool_reference blocks for ToolSearch)
         if (tool.mapToolResultToToolResultBlockParam) {
           try {
-            record.apiResultBlock = tool.mapToolResultToToolResultBlockParam(result, call.id, executionContext)
+            const block = tool.mapToolResultToToolResultBlockParam(result, call.id, executionContext)
+            record.apiResultBlock = {
+              ...block,
+              content: typeof block.content === 'string' ? this.redact(block.content) : block.content?.map((item) =>
+                item.type === 'text' ? { ...item, text: this.redact(item.text) } : item),
+            }
           } catch {
             // Mapping is best-effort; fall back to plain-text content
           }
@@ -226,6 +234,10 @@ export class ToolRunner {
   }
 
   private async emitRecord(record: SessionRecord): Promise<void> {
+    // IDs, tool names and opaque provider replay blocks are protocol data.
+    // Only redact the output fields, never rewrite the record's identity.
+    if ('content' in record) record.content = redactOutput(record.content, this.redact)
+    if ('summary' in record && typeof record.summary === 'string') record.summary = this.redact(record.summary)
     await this.events.onRecord(record)
     for (const listener of this.recordListeners) {
       listener(record)
@@ -315,8 +327,8 @@ export class ToolRunner {
     display?: ToolResultDisplay,
     images?: ImageAttachmentRef[],
   ): ToolResultRecord {
-    const boundedContent = applyToolResultBudget(content, maxResultSizeChars)
-    const boundedDisplay = normalizeToolResultDisplay(display)
+    const boundedContent = applyToolResultBudget(this.redact(content), maxResultSizeChars)
+    const boundedDisplay = normalizeToolResultDisplay(redactOutput(display, this.redact))
     return {
       id: randomUUID(),
       type: 'tool_result',
@@ -327,7 +339,7 @@ export class ToolRunner {
       ...(boundedDisplay ? { display: boundedDisplay } : {}),
       _tokens: countTextTokens(`${tool}\n${boundedContent}`),
       ...(errorCode ? { errorCode } : {}),
-      ...(errorDetails !== undefined ? { errorDetails } : {}),
+      ...(errorDetails !== undefined ? { errorDetails: redactOutput(errorDetails, this.redact) } : {}),
       ...(turnId ? { turnId } : {}),
       ...(images !== undefined && images.length > 0 ? { images } : {}),
       createdAt: new Date().toISOString(),

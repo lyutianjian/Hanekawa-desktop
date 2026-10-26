@@ -1,4 +1,5 @@
 import { mkdirSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { EffortValue } from '../config/effort.js'
 import type { ConfigService } from '../config/service.js'
@@ -19,7 +20,7 @@ import { createRuntimeFactory } from './createRuntime.js'
 import { reconcileOrphanedAgents } from './sessionSwitch.js'
 import type { ToolRegistry } from './toolRegistry.js'
 import type { SessionScope } from './types.js'
-import { getCoordinationNotesDir, getProjectMemoryDir, getUserInstructionsPath } from '../utils/paths.js'
+import { getCoordinationNotesDir, getDefaultWorkingDir, getProjectMemoryDir, getUserInstructionsPath, isGlobalWorkspaceRoot } from '../utils/paths.js'
 import { initialPermissionMode, sessionRoleOf } from './sessionRole.js'
 
 /**
@@ -66,7 +67,8 @@ export async function createSessionScope(
 ): Promise<SessionScope> {
   const settings = deps.getSettings()
   const role = sessionRoleOf(session)
-  const workingDir = session.coordination?.workingDir ?? deps.cwd
+  const workingDir = session.coordination?.workingDir ?? getDefaultWorkingDir(deps.cwd)
+  if (isGlobalWorkspaceRoot(deps.cwd)) await mkdir(workingDir, { recursive: true })
   const additionalDirectories = [
     ...(settings.permissions?.additionalDirectories ?? []),
     // Coordinator and threads share notes through this dir; the coordinator

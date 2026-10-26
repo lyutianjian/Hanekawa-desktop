@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import test, { type TestContext } from 'node:test'
 import type { CoordinationDays } from '../src/config/coordination.js'
+import { ConfigService } from '../src/config/service.js'
 import type { CoordinationLaneControl } from '../src/runtime/protocol/coordinationHost.js'
 import {
   CoordinationService,
@@ -49,7 +50,12 @@ async function setup(t: TestContext, options: { git?: boolean } = {}) {
   const opened: Array<{ sessionId: string; activate: boolean }> = []
   const notices: Array<{ title: string; body: string; sessionId: string }> = []
   const days: CoordinationDays = { quietDays: 2 }
+  const config = new ConfigService(cwd)
+  config.setModelConfig('main', { provider: 'anthropic', model: 'main-model' })
+  config.setModelConfig('picked', { provider: 'anthropic', model: 'picked-model' })
+  config.setModelReference('defaultModel', 'main')
   const port: CoordinationPort = {
+    configFor: () => config,
     storeFor: () => sessions,
     laneControl: (id) => lanes.get(id),
     async openLane(_cwd, sessionId, { activate }) {
@@ -74,7 +80,7 @@ async function setup(t: TestContext, options: { git?: boolean } = {}) {
   const caller = { sessionId: coordinatorId, projectDir: cwd }
   const store = service.coordinationStore(cwd)
   const thread = async (id: string) => (await store.read()).threads.find((th) => th.threadId === id)!
-  return { cwd, git, sessions, lanes, port, engine, opened, notices, days, calls, service, caller, store, thread, coordinatorId }
+  return { cwd, git, sessions, config, lanes, port, engine, opened, notices, days, calls, service, caller, store, thread, coordinatorId }
 }
 
 const request = { title: 'Fix the bug', brief: 'Fix it', background: 'b'.repeat(80), writesCode: false }
@@ -385,9 +391,37 @@ test('opening a coordinator or thread lane applies no temporary pick', async (t)
 test('an explicit thread model is recorded before the lane opens', async (t) => {
   const s = await setup(t)
   const started = await s.service.startThread(s.caller, { ...request, model: 'picked' })
+  assert.equal(started.modelKey, 'picked')
   const meta = await s.sessions.resolve(started.sessionId)
   assert.equal(meta?.coordination?.modelOverride, 'picked')
   assert.deepEqual(s.opened, [{ sessionId: started.sessionId, activate: false }])
+})
+
+test('thread model defaults follow global routing without recording an override', async (t) => {
+  const s = await setup(t)
+  for (const route of ['picked', 'inherit']) {
+    s.config.setRouting({ thread: route })
+    const started = await s.service.startThread(s.caller, request)
+    assert.equal(started.modelKey, route === 'inherit' ? 'main' : 'picked')
+    assert.equal((await s.sessions.resolve(started.sessionId))?.coordination?.modelOverride, undefined)
+  }
+})
+
+test('an invalid thread model fails with available keys before creating artifacts', async (t) => {
+  const s = await setup(t, { git: true })
+  for (const model of ['missing', 'picked-model', 'inherit']) {
+    await assert.rejects(s.service.startThread(s.caller, { ...request, writesCode: true, model }), (error: unknown) => {
+      assert.ok(error instanceof Error && 'code' in error)
+      assert.equal(error.code, 'MODEL_NOT_FOUND')
+      assert.match(error.message, /Available model keys: "main", "picked"/)
+      return true
+    })
+  }
+  assert.deepEqual((await s.sessions.list()).map((session) => session.id), [s.coordinatorId])
+  assert.deepEqual((await s.store.read()).threads, [])
+  assert.deepEqual(s.opened, [])
+  assert.deepEqual(s.calls, [])
+  assert.equal(s.git('branch', '--list', 'hanekawa/*'), '')
 })
 
 test('a new coordinator starts nothing; startSurvey opens one survey thread and no coordinator turn', async (t) => {

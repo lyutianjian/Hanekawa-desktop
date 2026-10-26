@@ -7,6 +7,7 @@ import { assertTargetUnchanged, resolveSafeTarget } from '../pathSafety.js'
 import { readTextFile, writeTextFile } from '../textFile.js'
 import { trackFileEdit } from '../trackFileEdit.js'
 import { DESCRIPTION } from './prompt.js'
+import { configFileView, restoreConfigApiKeys } from '../configFileView.js'
 
 export const editFileTool: Tool = {
   name: 'Edit',
@@ -55,7 +56,8 @@ export const editFileTool: Tool = {
       return resolved.error
     }
     const { target } = resolved
-    const original = getReadFileContent(absolute, context) ?? (await readTextFile(absolute)).content
+    const raw = getReadFileContent(absolute, context) ?? (await readTextFile(absolute)).content
+    const original = configFileView(absolute, raw)
     const matches = findStringMatches(original, oldString)
     if (matches.length === 0) {
       return noMatchFailure(original, oldString)
@@ -75,6 +77,7 @@ export const editFileTool: Tool = {
       nextContent = replaceLiteralMatch(nextContent, oldString, effectiveNewString, match.index)
     }
 
+    nextContent = restoreConfigApiKeys(absolute, nextContent, raw)
     const meta = await resolveTextFileMeta(absolute, context)
     await trackFileEdit(context, absolute)
     const changed = await assertTargetUnchanged(target, filePath)
@@ -92,7 +95,7 @@ export const editFileTool: Tool = {
       metadata: {
         display: {
           summary: label,
-          ...patchDetail(absolute, original, nextContent),
+          ...patchDetail(absolute, original, configFileView(absolute, nextContent)),
         },
       },
     }

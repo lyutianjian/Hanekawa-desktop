@@ -4,12 +4,23 @@ import { toolToAPISchema } from '../../harness/toolApiSchema.js'
 import { buildOpenAIPromptCacheKey, imageDataUrls } from './openaiPayload.js'
 
 type InputItem = OpenAI.Responses.ResponseInputItem
+type InputContent = OpenAI.Responses.ResponseInputText | OpenAI.Responses.ResponseInputImage
 
 export interface ResponsesPayloadOptions {
   /** Absent sends no reasoning fields at all: the endpoint rejected them for this model. */
   thinking?: 'on' | 'off'
   /** `prompt_cache_key`; absent once the endpoint rejected it. */
   cacheKey?: boolean
+  /** Explicit boundaries on durable input; absent once the endpoint rejected them. */
+  cacheBreakpoints?: boolean
+}
+
+function withCacheBreakpoint(content: string | InputContent[], enabled: boolean): string | InputContent[] {
+  if (!enabled) return content
+  const blocks: InputContent[] = typeof content === 'string' ? [{ type: 'input_text', text: content }] : content
+  return blocks.map((block, index) => index === blocks.length - 1
+    ? { ...block, prompt_cache_breakpoint: { mode: 'explicit' } }
+    : block)
 }
 
 function isFunctionCall(item: unknown): item is { type: 'function_call'; call_id: string } {
@@ -28,7 +39,7 @@ function isFunctionCall(item: unknown): item is { type: 'function_call'; call_id
  * any other model, the message is rebuilt from its text and tool calls without
  * the reasoning.
  */
-export function buildResponsesInput(request: ModelRequest): InputItem[] {
+export function buildResponsesInput(request: ModelRequest, cacheBreakpoints = false): InputItem[] {
   const contextItems = request.contextItems ?? request.messages.map((message) => ({ kind: 'message', message }) satisfies ModelContextItem)
   const toolUseIds = new Set(contextItems.flatMap((item) => item.kind === 'tool_use' ? [item.id] : []))
   const replayedCalls = new Set<string>()
@@ -41,12 +52,12 @@ export function buildResponsesInput(request: ModelRequest): InputItem[] {
         const urls = imageDataUrls(message.images, request.imageBytes)
         input.push({
           role: 'user',
-          content: urls.length === 0
+          content: withCacheBreakpoint(urls.length === 0
             ? message.content
             : [
                 ...(message.content.trim() === '' ? [] : [{ type: 'input_text' as const, text: message.content }]),
                 ...urls.map((url) => ({ type: 'input_image' as const, image_url: url, detail: 'auto' as const })),
-              ],
+              ], cacheBreakpoints && !message.transient),
         })
         continue
       }
@@ -83,12 +94,12 @@ export function buildResponsesInput(request: ModelRequest): InputItem[] {
     input.push({
       type: 'function_call_output',
       call_id: item.toolUseId,
-      output: urls.length === 0
+      output: withCacheBreakpoint(urls.length === 0
         ? text
         : [
             ...(text.trim() === '' ? [] : [{ type: 'input_text' as const, text }]),
             ...urls.map((url) => ({ type: 'input_image' as const, image_url: url, detail: 'auto' as const })),
-          ],
+          ], cacheBreakpoints),
     })
   }
   return input
@@ -118,12 +129,15 @@ export function buildResponsesPayload(request: ModelRequest, options: ResponsesP
   return {
     model: request.model,
     ...(request.system ? { instructions: request.system } : {}),
-    input: buildResponsesInput(request),
+    // The rebuilt tail is not a reusable prefix. Implicit caching on GPT-5.6+
+    // writes through it; explicit boundaries keep previous history writes usable.
+    input: buildResponsesInput(request, options.cacheBreakpoints && request.promptCaching !== false),
     stream: true as const,
     store: false,
     ...(tools.length > 0 ? { tools } : {}),
     ...(request.maxOutputTokens ? { max_output_tokens: request.maxOutputTokens } : {}),
     ...(options.cacheKey ? { prompt_cache_key: responsesConversationId(request) } : {}),
+    ...(options.cacheBreakpoints ? { prompt_cache_options: { mode: 'explicit' as const } } : {}),
     ...(request.promptCacheRetention ? { prompt_cache_retention: request.promptCacheRetention } : {}),
     // Off sends nothing: `effort: 'none'` is refused outright by models that lack it.
     ...(options.thinking === 'on'

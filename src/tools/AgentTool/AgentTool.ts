@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { z } from 'zod/v3'
-import { agentCacheSource, forkCacheSource, resetCacheBreakDetection } from '../../harness/cacheBreakDetection.js'
+import { agentCacheSource, resetCacheBreakDetection } from '../../harness/cacheBreakDetection.js'
 import { ContextBuilder } from '../../harness/contextBuilder.js'
 import { AgentLoop, type ActiveModelRuntime } from '../../harness/loop.js'
 import {
@@ -25,13 +25,14 @@ import {
 import type { CacheRuntime } from '../../harness/cacheControl.js'
 import type { ThinkingConfig } from '../../config/service.js'
 import type { EffortLevel } from '../../config/effort.js'
+import type { ModelCatalogEntry } from '../../config/modelCatalog.js'
 import { runLifecycleHooks, type Hooks } from '../../harness/hooks.js'
 import type { AttachmentBytesLoader, AgentRunResult, ImageAttachmentImporter, ModelProvider, SessionRecord, SubagentTaskStatus, TokenUsage, Tool, ToolContext, ToolProgressEvent, ToolResult } from '../../harness/types.js'
 import type { AttachmentFactsResolver } from '../../harness/turnImages.js'
-import { countSessionRecordTokens } from '../../prompts/budget.js'
 import { formatTokenCount } from '../display.js'
 import type { AgentContinuation, BackgroundTaskRegistry } from '../../services/backgroundTasks/registry.js'
 import { buildAgentToolDescription } from './prompt.js'
+import { availableModelKeys } from '../modelCatalog.js'
 import { REPORT_MAX, sanitizeReportText } from '../../utils/reportSanitizer.js'
 
 // Tools that no sub-agent should ever call directly.
@@ -62,7 +63,6 @@ export const STATEFUL_AGENT_TOOL_NAMES = new Set([
 
 export const AGENT_MAX_RESULT_SIZE_CHARS = 32_000
 const SUBAGENT_TRANSCRIPT_SUMMARY_CHARS = 8_000
-export const FORK_PRELOAD_TOKEN_BUDGET = 50_000
 const ONE_SHOT_AGENT_TYPES = new Set(['explore', 'plan'])
 
 export type AgentType = string
@@ -96,20 +96,7 @@ const GENERAL_PURPOSE_AGENT: BaseAgentDefinition = {
   disallowedTools: ALL_AGENT_DISALLOWED_TOOLS,
   maxResultSizeChars: AGENT_MAX_RESULT_SIZE_CHARS,
   isReadOnlyAgent: true,
-  effort: 'medium',
-  getSystemPrompt: (baseSystem) => baseSystem,
-}
-
-const FORK_AGENT_BOILERPLATE = `# Forked Conversation Context
-You are running as an isolated fork of the parent conversation. The parent transcript is preloaded before your task, so use it as background context, but do not assume your intermediate work is visible to the parent. Return a concise result that the parent agent can use directly.`
-
-const FORK_AGENT: BaseAgentDefinition = {
-  type: 'fork',
-  description: 'Read-only sub-agent fork that continues from the parent transcript, reading the parent\'s prompt cache when its request fits.',
-  disallowedTools: ALL_AGENT_DISALLOWED_TOOLS,
-  maxResultSizeChars: AGENT_MAX_RESULT_SIZE_CHARS,
-  isReadOnlyAgent: true,
-  effort: 'medium',
+  effort: 'high',
   getSystemPrompt: (baseSystem) => baseSystem,
 }
 
@@ -123,7 +110,7 @@ const EXPLORE_AGENT: BaseAgentDefinition = {
   maxResultSizeChars: AGENT_MAX_RESULT_SIZE_CHARS,
   isReadOnlyAgent: true,
   omitProjectContext: true,
-  effort: 'low',
+  effort: 'high',
   getSystemPrompt: () => `You are a code exploration specialist for Hanekawa.
 
 You search and analyze existing code. You have Glob, Grep, Read, and Bash; Bash runs only commands the plan-mode safety analysis proves are read-only, and every other shell command is denied.
@@ -172,7 +159,6 @@ List 3-5 files most critical for implementing this plan:
 
 export const BUILT_IN_AGENT_DEFINITIONS = [
   GENERAL_PURPOSE_AGENT,
-  FORK_AGENT,
   EXPLORE_AGENT,
   PLAN_AGENT,
 ] as const
@@ -180,6 +166,7 @@ export const BUILT_IN_AGENT_DEFINITIONS = [
 const agentInputSchema = z.object({
   task: z.string().min(1).describe('The full brief for the sub-agent, which starts with no knowledge of this conversation.'),
   subagent_type: z.string().min(1).describe('Which agent to run. Must be one of the types listed in this tool\'s description.'),
+  model: z.string().trim().min(1).optional().describe('Exact model key from the tool description. Overrides the default for this agent only; omit to use the listed default.'),
   description: z.string().min(1).optional().describe('Short (3-5 word) label for this task, shown in the UI.'),
   run_in_background: z.boolean().optional().describe('Run detached and report back when finished. Defaults to false.'),
   name: z.string().min(1).optional().describe('Name to address this agent by with SendMessage.'),
@@ -194,6 +181,8 @@ export interface CreateAgentToolOptions {
   provider: ModelProvider
   model: string
   modelKey?: string
+  modelCatalog?: readonly ModelCatalogEntry[]
+  routedModelKeys?: Readonly<Record<string, string | undefined>>
   contextWindow?: number
   providerName?: string
   promptCacheRetention?: 'in_memory' | '24h'
@@ -217,7 +206,6 @@ export interface CreateAgentToolOptions {
   projectContext?: string
   skills?: SkillDefinition[]
   agentDefinitions?: BaseAgentDefinition[]
-  loadParentRecords?(): Promise<SessionRecord[]>
   contextManagement?: Partial<ContextManagementConfig>
   isGitRepo?: boolean
   hooks?: Hooks
@@ -234,15 +222,8 @@ export interface CreateAgentToolOptions {
    * so a subagent cannot name an owner session of its own choosing.
    */
   imageAttachments?: ImageAttachmentImporter
-  /**
-   * Read-only resolution for images a subagent *inherits* — the fork
-   * preload's history placeholders. Passed straight through: resolution is
-   * already keyed by registered `(ownerSessionId, imageId)` pairs, so an
-   * inherited ref outside the subagent's worktree resolves and nothing else
-   * does.
-   */
   attachmentFacts?: AttachmentFactsResolver
-  /** The same read-only right for the send bytes of an inherited image. */
+  /** Read-only access to registered images this agent reads. */
   attachmentBytes?: AttachmentBytesLoader
 }
 
@@ -316,7 +297,12 @@ export function createAgentTool(options: CreateAgentToolOptions): Tool {
   }
   return {
     name: 'Agent',
-    description: buildAgentToolDescription(agentDefinitions),
+    description: buildAgentToolDescription(agentDefinitions, options.modelCatalog, Object.fromEntries(agentDefinitions.map((definition) => {
+      const override = subagentModelOverride(definition.type, definition).key
+      const key = override === 'inherit' ? options.modelKey : override ?? options.routedModelKeys?.[definition.type] ?? options.modelKey
+      const available = !options.modelCatalog || options.modelCatalog.some((model) => model.key === key)
+      return [definition.type, key ? `${JSON.stringify(key)}${available ? '' : ' (unavailable; choose a listed key)'}` : JSON.stringify(options.model)]
+    }))),
     inputSchema: agentInputSchema,
     riskLevel: 'safe',
     maxResultSizeChars: undefined,
@@ -351,15 +337,15 @@ export function createAgentTool(options: CreateAgentToolOptions): Tool {
           throw new Error(`Unknown subagent_type "${parsed.subagent_type}". Available types: ${formatAgentTypes(agentDefinitions)}.`)
         }
         validateSubagentIsolation(agentDefinition)
+        const runtime = resolveSubagentRuntime(options, parsed.subagent_type, agentDefinition, parsed.model)
 
         const subAgentId = allocateSubagentId(options, context.sessionId, parsed.subagent_type)
         const runInBackground = parsed.run_in_background ?? agentDefinition.background ?? false
         if (runInBackground) {
           const transcriptPath = getSubagentTranscriptPath(options.projectDir ?? options.cwd, context.sessionId, subAgentId)
-          const plannedModel = resolveSubagentModelLabel(options, parsed.subagent_type, agentDefinition)
           await appendSubagentTaskRecord(context, parsed, subAgentId, 'running', {
             transcriptPath,
-            ...(plannedModel ? { model: plannedModel } : {}),
+            model: runtime.model,
             ...plannedIsolationDetails(options, agentDefinition, context.sessionId, subAgentId),
           })
           const backgroundAbort = new AbortController()
@@ -376,7 +362,7 @@ export function createAgentTool(options: CreateAgentToolOptions): Tool {
             },
           })
           backgroundRun = runBackgroundSubagent(
-            { options, parsed, agentDefinition, subAgentId, transcriptPath },
+            { options, parsed, agentDefinition, subAgentId, transcriptPath, runtime },
             context,
             backgroundAbort.signal,
           )
@@ -386,10 +372,10 @@ export function createAgentTool(options: CreateAgentToolOptions): Tool {
             ok: true,
             content: options.backgroundTasks
               ? appendAgentContinuationNotice(
-                  `Started ${parsed.subagent_type} sub-agent "${description}" in the background.`,
+                  `Started ${parsed.subagent_type} sub-agent "${description}" in the background.${modelNotice(runtime)}`,
                   subAgentId,
                 )
-              : `Started ${parsed.subagent_type} sub-agent "${description}" in the background.`,
+              : `Started ${parsed.subagent_type} sub-agent "${description}" in the background.${modelNotice(runtime)}`,
             metadata: {
               display: {
                 summary: `${parsed.subagent_type} background agent started`,
@@ -425,7 +411,7 @@ export function createAgentTool(options: CreateAgentToolOptions): Tool {
             await pending?.catch(() => {})
           },
         })
-        const run = startSubagent({ options, parsed, agentDefinition, subAgentId, transcriptPath }, context, signal)
+        const run = startSubagent({ options, parsed, agentDefinition, subAgentId, transcriptPath, runtime }, context, signal)
         pending = run
         let started: Awaited<typeof run>
         try {
@@ -445,9 +431,6 @@ export function createAgentTool(options: CreateAgentToolOptions): Tool {
         return started.session.toToolResult(started.turn)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        if (error instanceof ForkPreloadError) {
-          return { ok: false, content: `Fork failed: ${message}`, errorCode: 'execution_failed' }
-        }
         return { ok: false, content: `Sub-agent failed: ${message}`, errorCode: errorCodeFor(error) }
       }
     },
@@ -460,6 +443,7 @@ interface SubagentSpec {
   agentDefinition: BaseAgentDefinition
   subAgentId: string
   transcriptPath: string
+  runtime: ActiveModelRuntime
 }
 
 type SubagentTranscriptRecord = Extract<SessionRecord, { type: 'subagent_transcript' }>
@@ -501,16 +485,11 @@ class SubagentSession implements AgentContinuation {
 
   static async open(spec: SubagentSpec, context: ToolContext, signal: AbortSignal): Promise<SubagentSession> {
     const { options, parsed, agentDefinition, subAgentId } = spec
-    const isForkAgent = parsed.subagent_type === 'fork'
     const recordStream = new SidechainRecordStream(spec.transcriptPath)
     const worktree = await createSubagentWorktree(options, agentDefinition, context.sessionId, subAgentId)
     const effectiveCwd = worktree?.cwd ?? options.cwd
-    const subagentRuntime = resolveSubagentRuntime(options, parsed.subagent_type, agentDefinition)
+    const subagentRuntime = spec.runtime
     const subTools = filterToolsForSubAgent(options.tools(), agentDefinition)
-    const inheritedRequest = isForkAgent ? inheritableForkPrefix(context, subagentRuntime.model, worktree !== undefined) : undefined
-    // An inheriting fork advertises the parent's whole tool list (the bytes
-    // its cache hit depends on); anything beyond its own set answers "unavailable".
-    const runnerTools = inheritedRequest ? withUnavailableTools(subTools, inheritedRequest.tools ?? []) : subTools
     const sessionRuleStore = options.getSessionRuleStore?.()
     const agent = { id: subAgentId, type: parsed.subagent_type, description: subagentDescription(parsed) }
     const permissionGate = new PermissionGate((request) => options.permissionPrompt({ ...request, agent }), options.getConfigRules?.(), {
@@ -531,22 +510,11 @@ class SubagentSession implements AgentContinuation {
       ? pinAttachmentOwner(options.imageAttachments, context.sessionId)
       : undefined
     const toolContext = createSubAgentToolContext(context, subAgentId, signal, effectiveCwd, attachments, worktree === undefined)
-    const prelude = [
-      isForkAgent
-        ? buildForkAgentUserPrefix(
-            parsed.systemPrompt,
-            parsed.maxOutputTokens,
-            inheritedRequest ? subTools.map((tool) => tool.name) : undefined,
-          )
-        : undefined,
-      agentDefinition.initialPrompt,
-    ]
-    for (const content of prelude) {
-      if (!content) continue
+    if (agentDefinition.initialPrompt) {
+      const content = agentDefinition.initialPrompt
       await recordStream.append({ id: randomUUID(), type: 'message', role: 'user', content, createdAt: new Date().toISOString() })
     }
-    const preloadRecords = isForkAgent && !inheritedRequest ? await loadForkPreloadRecords(options) : undefined
-    const cacheSource = isForkAgent ? forkCacheSource(subAgentId, context.projectDir ?? context.cwd) : agentCacheSource(subAgentId, context.projectDir ?? context.cwd)
+    const cacheSource = agentCacheSource(subAgentId, context.projectDir ?? context.cwd)
     const createLoop = () => new AgentLoop({
       provider: subagentRuntime.provider,
       model: subagentRuntime.model,
@@ -554,7 +522,7 @@ class SubagentSession implements AgentContinuation {
       contextWindow: subagentRuntime.contextWindow,
       tools: subTools,
       contextBuilder: new ContextBuilder(undefined, options.contextManagement),
-      toolRunner: new ToolRunner(runnerTools, permissionGate, {
+      toolRunner: new ToolRunner(subTools, permissionGate, {
         onRecord: async (record) => {
           await recordStream.append(record)
         },
@@ -572,7 +540,7 @@ class SubagentSession implements AgentContinuation {
       }, {
         preToolUse: options.hooks?.preToolUse,
         postToolUse: options.hooks?.postToolUse,
-      }),
+      }, context.redactToolOutput),
       toolContext,
       system: buildAgentSystemPrompt(agentDefinition, parsed.systemPrompt, options.system, parsed.maxOutputTokens, worktree),
       criticalSystemReminder: agentDefinition.criticalSystemReminder,
@@ -585,15 +553,13 @@ class SubagentSession implements AgentContinuation {
       maxTurns: parsed.maxTurns ?? agentDefinition.maxTurns,
       maxTurnsExceededBehavior: 'partial',
       thinking: options.thinking ?? { type: 'adaptive' },
-      effort: agentDefinition.effort,
+      effort: agentDefinition.effort ?? 'high',
       fallbackModel: options.fallbackModel,
       compactModel: options.compactModel,
       fallbackRetryDelayMs: options.fallbackRetryDelayMs,
       hooks: subagentLoopHooks(options.hooks),
       cacheRuntime: options.cacheRuntime,
       cacheSource,
-      preloadRecords,
-      ...(inheritedRequest ? { inheritedRequest } : {}),
       // A locked plan gate constrains tools without turning this child loop
       // into an interactive plan-mode workflow that waits for ExitPlanMode.
       permissionMode: () => agentDefinition.lockPermissionMode ? 'default' : permissionGate.getMode(),
@@ -601,10 +567,6 @@ class SubagentSession implements AgentContinuation {
       // sub-agent's failures must not trip the parent's breaker. The loop
       // falls back to an in-memory count keyed by this agent's own id.
       recordStream,
-      // Read-only resolution for inherited history images, and the same pinned
-      // handle for anything this run imports. `supportsImageInput` above is the
-      // *subagent's* — a text-only child degrades the fork's preloaded images to
-      // placeholders on its own capability, never on the parent's conclusion.
       ...(attachments ? { imageAttachments: attachments } : {}),
       ...(options.attachmentFacts ? { attachmentFacts: options.attachmentFacts } : {}),
       ...(options.attachmentBytes ? { attachmentBytes: options.attachmentBytes } : {}),
@@ -698,7 +660,7 @@ class SubagentSession implements AgentContinuation {
         worktree,
       ),
       turn.stopHookOutput,
-    )
+    ) + modelNotice(this.spec.runtime)
     return {
       ok: true,
       content: options.backgroundTasks ? appendAgentContinuationNotice(content, subAgentId) : content,
@@ -711,6 +673,7 @@ class SubagentSession implements AgentContinuation {
           type: parsed.subagent_type,
           agentId: subAgentId,
           model: this.model,
+          modelKey: this.spec.runtime.modelKey,
           usage: result.usage,
           toolUseCount: transcriptRecord.toolUseCount,
           durationMs: turn.durationMs,
@@ -790,10 +753,9 @@ async function runBackgroundSubagent(spec: SubagentSpec, context: ToolContext, s
     if (!(status === 'cancelled' && signal.aborted)) {
       options.backgroundTasks?.completeAgent(context.sessionId, subAgentId, 'failed', message)
     }
-    const failedModel = resolveSubagentModelLabel(options, parsed.subagent_type, agentDefinition)
     await appendSubagentTaskRecord(context, parsed, subAgentId, status, {
       transcriptPath,
-      ...(failedModel ? { model: failedModel } : {}),
+      model: spec.runtime.model,
       ...plannedIsolationDetails(options, agentDefinition, context.sessionId, subAgentId),
       error: message,
     })
@@ -888,16 +850,6 @@ function truncateMiddle(value: string, maxLength: number): string {
   return `${value.slice(0, keep)}...${value.slice(value.length - keep)}`
 }
 
-async function loadForkPreloadRecords(options: CreateAgentToolOptions): Promise<SessionRecord[] | undefined> {
-  try {
-    const records = await options.loadParentRecords?.()
-    return records ? prepareForkPreloadRecords(records) : undefined
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new ForkPreloadError(message)
-  }
-}
-
 function validateSubagentIsolation(definition: BaseAgentDefinition): void {
   if (definition.isolation === undefined) return
   if (definition.isolation !== 'worktree') {
@@ -974,6 +926,7 @@ function resolveSubagentRuntime(
   options: CreateAgentToolOptions,
   subagentType: string,
   definition: BaseAgentDefinition,
+  explicitModel?: string,
 ): ActiveModelRuntime {
   const parentRuntime = {
     provider: options.provider,
@@ -985,38 +938,38 @@ function resolveSubagentRuntime(
     supportsImageInput: options.supportsImageInput,
   }
 
-  // Per-type env first, then generic, then the definition. Each names a model
-  // explicitly, so one that does not resolve fails the run rather than
-  // quietly running on another model.
-  const typeEnv = `MYAGENT_SUBAGENT_MODEL_${subagentType.toUpperCase()}`
-  const envSource = process.env[typeEnv]?.trim() ? typeEnv : process.env.MYAGENT_SUBAGENT_MODEL?.trim() ? 'MYAGENT_SUBAGENT_MODEL' : undefined
-  const requestedModelKey = envSource ? process.env[envSource]!.trim() : definition.model?.trim()
-  if (requestedModelKey === 'inherit') return parentRuntime
+  const { key: requestedModelKey, envSource } = subagentModelOverride(subagentType, definition, explicitModel)
+  if (!explicitModel && requestedModelKey === 'inherit') return parentRuntime
 
   if (requestedModelKey) {
     let runtime: ActiveModelRuntime | undefined
     try {
-      runtime = options.resolveSubagentModel?.(subagentType, requestedModelKey)
+      if (!options.modelCatalog || options.modelCatalog.some((model) => model.key === requestedModelKey)) {
+        runtime = options.resolveSubagentModel?.(subagentType, requestedModelKey)
+      }
     } catch {
       // Reported below with a subagent-specific message.
     }
     if (runtime) return runtime
-    throw new Error(`Unknown model for subagent "${subagentType}"${envSource ? ` (from ${envSource})` : ''}: ${requestedModelKey}`)
+    throw new Error(`Unknown model for subagent "${subagentType}"${envSource ? ` (from ${envSource})` : ''}: ${requestedModelKey}.${options.modelCatalog ? ` ${availableModelKeys(options.modelCatalog)}` : ''}`)
   }
 
   return options.resolveSubagentModel?.(subagentType) ?? parentRuntime
 }
 
-function resolveSubagentModelLabel(
-  options: CreateAgentToolOptions,
+function subagentModelOverride(
   subagentType: string,
   definition: BaseAgentDefinition,
-): string | undefined {
-  try {
-    return resolveSubagentRuntime(options, subagentType, definition).model
-  } catch {
-    return undefined
-  }
+  explicitModel?: string,
+): { key?: string; envSource?: string } {
+  if (explicitModel) return { key: explicitModel }
+  const typeEnv = `MYAGENT_SUBAGENT_MODEL_${subagentType.toUpperCase()}`
+  const envSource = process.env[typeEnv]?.trim() ? typeEnv : process.env.MYAGENT_SUBAGENT_MODEL?.trim() ? 'MYAGENT_SUBAGENT_MODEL' : undefined
+  return { key: envSource ? process.env[envSource]!.trim() : definition.model?.trim(), envSource }
+}
+
+function modelNotice(runtime: ActiveModelRuntime): string {
+  return runtime.modelKey ? `\n\nModel key: ${JSON.stringify(runtime.modelKey)} (model: ${JSON.stringify(runtime.model)}).` : ''
 }
 
 // Strictest first. A sub-agent cannot run the plan workflow (no ExitPlanMode),
@@ -1067,13 +1020,6 @@ function skillsForSubAgent(
   // A missing name is reported once, at startup (bootstrap's diagnostics).
   const requested = new Set(definition.skills)
   return skills.map((skill) => requested.has(skill.name) ? { ...skill, inclusion: 'always' as const } : skill)
-}
-
-class ForkPreloadError extends Error {
-  constructor(message: string) {
-    super(`parent records load error: ${message}`)
-    this.name = 'ForkPreloadError'
-  }
 }
 
 function summarizeTranscriptRecords(records: SessionRecord[]): {
@@ -1235,10 +1181,6 @@ function buildAgentSystemPrompt(
     : `Keep your final report under approximately ${maxOutputWords(maxOutputTokens)} words.`
   const isolationPrompt = worktree ? buildWorktreeIsolationPrompt(worktree) : undefined
 
-  if (definition.type === 'fork') {
-    return joinPromptParts([definition.getSystemPrompt(baseSystem), isolationPrompt])
-  }
-
   const parts = [
     definition.getSystemPrompt(baseSystem),
     overrideSystemPrompt ? `# Additional caller instructions\n${overrideSystemPrompt}` : undefined,
@@ -1247,74 +1189,6 @@ function buildAgentSystemPrompt(
   ]
 
   return joinPromptParts(parts)
-}
-
-function buildForkAgentUserPrefix(
-  overrideSystemPrompt: string | undefined,
-  maxOutputTokens: number | undefined,
-  usableTools?: readonly string[],
-): string | undefined {
-  const outputLimitPrompt = maxOutputTokens === undefined
-    ? undefined
-    : `Keep your final report under approximately ${maxOutputWords(maxOutputTokens)} words.`
-  return joinPromptParts([
-    FORK_AGENT_BOILERPLATE,
-    usableTools
-      ? `The tool list above is the parent's. This fork is read-only: only ${usableTools.join(', ') || 'no tools'} will run; any other tool call is refused.`
-      : undefined,
-    overrideSystemPrompt ? `# Additional caller instructions\n${overrideSystemPrompt}` : undefined,
-    outputLimitPrompt,
-  ])
-}
-
-/**
- * The parent's latest request prefix, when a fork can send it unchanged: the
- * same model (the cache is per model), the same cwd (the system prompt names
- * it), and room left for the fork's own work — otherwise the fork falls back
- * to a bounded preload of the parent's records.
- */
-function inheritableForkPrefix(context: ToolContext, model: string, hasWorktree: boolean) {
-  const prefix = context._forkPrefix
-  if (!prefix || hasWorktree || prefix.request.model !== model) return undefined
-  if (prefix.promptTokens + FORK_PRELOAD_TOKEN_BUDGET > prefix.usableContextWindow) return undefined
-  return prefix.request
-}
-
-function withUnavailableTools(own: Tool[], advertised: readonly Tool[]): Tool[] {
-  const ownNames = new Set(own.map((tool) => tool.name))
-  const unavailable = advertised
-    .filter((tool) => !ownNames.has(tool.name))
-    .map((tool): Tool => ({
-      name: tool.name,
-      description: tool.description,
-      inputSchema: z.object({}).passthrough(),
-      riskLevel: 'safe',
-      isReadOnly: true,
-      execute: async () => ({
-        ok: false,
-        content: `${tool.name} is not available in this read-only fork. Use a read-only tool, or report back to the parent agent.`,
-      }),
-    }))
-  return [...own, ...unavailable]
-}
-
-export function prepareForkPreloadRecords(
-  records: readonly SessionRecord[],
-  tokenBudget = FORK_PRELOAD_TOKEN_BUDGET,
-): SessionRecord[] {
-  const visibleRecords = records.filter((record) => record.type !== 'subagent_transcript')
-  const selected: SessionRecord[] = []
-  let used = 0
-
-  for (const record of [...visibleRecords].reverse()) {
-    const tokens = countSessionRecordTokens(record)
-    if (selected.length > 0 && used + tokens > tokenBudget) break
-    selected.push(record)
-    used += tokens
-    if (used >= tokenBudget) break
-  }
-
-  return selected.reverse()
 }
 
 function formatAgentTypes(definitions: readonly BaseAgentDefinition[]): string {
@@ -1360,6 +1234,7 @@ function createSubAgentToolContext(
   return {
     cwd,
     // Data dirs (plans, memory, spill) stay keyed to the project even when `cwd` is a worktree.
+    redactToolOutput: parent.redactToolOutput,
     projectDir: parent.projectDir ?? parent.cwd,
     sessionId: subAgentId,
     readFiles: new Set(),

@@ -1,5 +1,5 @@
 import { Marked } from 'marked'
-import type { Token, TokenizerAndRendererExtension, Tokens } from 'marked'
+import type { Rules, Token, TokenizerAndRendererExtension, TokenizerThis, Tokens } from 'marked'
 
 /**
  * Markdown as data: `marked`'s lexer folded into a small union the DOM layer can
@@ -148,6 +148,46 @@ const MATH_EXTENSIONS: TokenizerAndRendererExtension[] = [
   },
 ]
 
+// ── bare URLs ──
+//
+// GFM's autolink runs to the next whitespace and then backpedals over trailing
+// ASCII punctuation: right for English prose, wrong for Chinese, where a URL
+// sits in the sentence with no space either side. `http://host/x）复刻了三行`
+// became one anchor holding the rest of the paragraph, and its `href` — the
+// whole paragraph — was what a click would have opened. A URL as people write
+// one holds no raw CJK (a browser percent-encodes it), so the first such
+// character ends the link and hands the remainder back to the lexer, which
+// tokenizes it as the prose it is.
+//
+// The general punctuation block is there because Chinese prose marks a break
+// with `——` and `“”` rather than with a space: `http://host/x——“页面”` stops at
+// the dash, so the quotes around `页面` are not a URL either.
+
+const BARE_URL_STOP =
+  /[\u2013\u2014\u2018-\u201D\u2026\u3000-\u303F\u3040-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF\uFF00-\uFFEF]/
+
+/** marked's `url` tokenizer, cut at `BARE_URL_STOP`. */
+function bareUrl(this: TokenizerThis, src: string): Tokens.Link | undefined {
+  const { rules } = this as unknown as { rules: Rules }
+  const match = rules.inline.url.exec(src)
+  if (!match) return undefined
+  if (match[2] === '@') return bareLink(match[0], `mailto:${match[0]}`)
+  const stop = BARE_URL_STOP.exec(match[0])
+  let text = stop ? match[0].slice(0, stop.index) : match[0]
+  // marked's own backpedal, re-run: a comma or a closing paren is only trailing
+  // punctuation once the cut has put it at the end.
+  for (let previous = ''; previous !== text;) {
+    previous = text
+    text = rules.inline._backpedal.exec(text)?.[0] ?? ''
+  }
+  if (!text) return undefined
+  return bareLink(text, match[1] === 'www.' ? `http://${text}` : text)
+}
+
+function bareLink(text: string, href: string): Tokens.Link {
+  return { type: 'link', raw: text, href, text, tokens: [{ type: 'text', raw: text, text }] }
+}
+
 /**
  * A private lexer rather than `marked.use()`.
  *
@@ -155,7 +195,7 @@ const MATH_EXTENSIONS: TokenizerAndRendererExtension[] = [
  * the same process under `node --test`. Maths in a terminal is a separate
  * decision; it should not arrive as a side effect of importing this file.
  */
-const lexer = new Marked().use({ extensions: MATH_EXTENSIONS })
+const lexer = new Marked({ extensions: MATH_EXTENSIONS, tokenizer: { url: bareUrl } })
 
 /** Protocols a link may keep. Everything else degrades to its own text. */
 const SAFE_PROTOCOLS = ['http:', 'https:', 'mailto:']

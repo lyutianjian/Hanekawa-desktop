@@ -189,9 +189,11 @@ Anthropic 回复中的签名思考只会回传给产生它的同一模型和服�
 
 ### 界面与快捷键
 
-左侧是侧栏：会话搜索、按项目分组的会话列表、「最近」（不属于任何项目的会话）以及「项目」入口，宽度可拖动。右侧面板由标题栏右端的图标按钮切换，每个按钮一页，再点当前页的按钮收起面板：**任务**（计划、后台命令、子代理，各自可折叠；后台命令可展开查看输出末尾、停止运行中的进程；有内容在运行时按钮上显示圆点）、**线程**（仅项目有调度时出现）、**改动**（本会话各编辑工具改过的文件，同一文件多轮修改按顺序列出）、**浏览器**。各页分别记忆宽度，双击拖柄恢复默认宽度。
+左侧是侧栏：会话搜索、按项目分组的会话列表、「最近」（不属于任何项目的会话）以及「项目」入口，宽度可拖动。右侧面板由标题栏右端的图标按钮切换，每个按钮一页，再点当前页的按钮收起面板：**任务**（计划保持独立；后台命令和子代理混排在「运行中／已完成」两组，已完成默认收起，分组记住展开选择；子代理显示简短描述，点击查看对话；后台命令可展开查看输出末尾，运行项可单独停止；有内容在运行时按钮上显示圆点）、**线程**（仅项目调度的协调者和线程会话中出现）、**改动**（本会话各编辑工具改过的文件，同一文件多轮修改按顺序列出）、**浏览器**。各页分别记忆宽度，双击拖柄恢复默认宽度。
 
 空会话的首页可以切换 git 分支（「切换分支」），并显示用量卡片（概览/模型，全部 / 30 天 / 7 天）。会话标题栏可以重命名、删除会话，或「在 VS Code 中打开」项目。
+
+「最近」中的会话共享 `~/Documents/myagent` 作为工作目录，打开时自动创建。相对路径的文件写入、Bash 命令和「在 VS Code 中打开」都从这个目录开始，首页也显示这个位置。旧会话重新打开后同样使用这个目录；历史、记忆和配置保留原来的存储位置，之前生成的文件留在原处。
 
 | 操作 | macOS | Windows / Linux |
 |---|---|---|
@@ -291,6 +293,10 @@ agent 通过 `Browser` 工具使用同一组标签页：打开、导航、后退
 
 每次工具调用先由风险分级器（`src/harness/risk/`）定级，再由权限闸门把等级与你的规则和会话模式结合起来判断。
 
+全局 `~/.myagent/` 可以读取、搜索和编辑，不再按目录整体封锁。读取普通全局文件无需询问，协调者和只读子代理也可读取；写入仍遵守权限模式，修改 `config.json` 等权限配置仍按 `critical` 处理，deny 规则照常生效。从主目录做宽泛搜索时仍跳过项目运行数据，明确指定会话或数据目录即可搜索。
+
+模型收到的工具结果（包括 Read、Grep、Bash、后台通知和子代理结果）会把已加载配置中的 API 密钥及 JSON `apiKey` 字段替换为 `[REDACTED]`，模型 key、服务地址等普通配置保持可见。应用发请求时仍使用真实密钥。全局 `config.json` 和兼容的 `settings.json` 可按脱敏视图编辑；Edit、MultiEdit、Write 保存时恢复原位置的密钥，整文件覆盖时也会保留仍存在的端点／模型中省略的密钥。新增或改名后无法对应的占位符会拒绝保存，请在设置页配置对应密钥。这是正常文本输出的脱敏，不是对任意脚本编码、拆分密钥行为的凭据隔离。
+
 | 等级 | 含义 |
 |---|---|
 | `readonly` | 不做任何修改，只读工作区 |
@@ -357,7 +363,11 @@ hooks:
 
 ### 子代理
 
-模型通过 `Agent` 工具派出子代理。内置类型有 `general`、`fork`（预先载入父对话）、`explore` 和 `plan`（后两者为 `readonly`）。自定义 agent 定义从 `~/.myagent/agents/`、`<项目>/.myagent/agents/` 和 `~/.myagent/projects/<key>/agents.local/` 读取，`/agents` 可以查看和管理。子代理使用的模型由 `routing.subagent` 决定，也可以用环境变量 `MYAGENT_SUBAGENT_MODEL` 或 `MYAGENT_SUBAGENT_MODEL_<TYPE>` 覆盖。
+模型通过 `Agent` 工具派出子代理。内置类型有 `general`、`explore` 和 `plan`（后两者为 `readonly`）。所有子代理默认使用 `high` 思考强度，自定义 agent 可通过 frontmatter 的 `effort` 显式覆盖。自定义 agent 定义从 `~/.myagent/agents/`、`<项目>/.myagent/agents/` 和 `~/.myagent/projects/<key>/agents.local/` 读取，`/agents` 可以查看和管理。子代理使用的模型由 `routing.subagent` 决定，也可以用环境变量 `MYAGENT_SUBAGENT_MODEL` 或 `MYAGENT_SUBAGENT_MODEL_<TYPE>` 覆盖。
+
+旧的 `routing.subagent.fork` 配置不再生效，保存配置时会移除。
+
+`Agent` 和 `StartThread` 的工具说明会列出可选模型的配置 key、实际模型名、已配置的上下文长度，以及省略 `model` 时的默认模型；目录不包含 API key 或服务地址，配置重载并重建运行时后更新。主模型可传入 `model: "配置中的 key"` 为本次新建的子代理或线程选模型，不修改全局设置。`Agent.model` 优先于环境变量、自定义 agent 的 `model` 和路由；省略时沿用原有默认规则。`StartThread` 省略时使用全局线程默认模型。无效 key 会明确报错并列出可选项，不会悄悄换模型；启动或完成回执会返回实际使用的模型 key。
 
 ### MCP
 
@@ -466,9 +476,13 @@ OpenAI 官方端点（`api.openai.com`）的 Chat Completions 请求带上基于
 
 #### OpenAI Responses
 
-`openai-responses` 同样流式请求，系统提示放在 `instructions`，带 `store: false`；工具一律 `strict: false`（不写的话 Responses 会尝试把工具转成严格模式，可选参数过不了）。工具结果里的图片直接放进 `function_call_output`。`prompt_cache_key` 同样只发给 OpenAI 官方端点。
+`openai-responses` 同样流式请求，系统提示放在 `instructions`，带 `store: false`；工具一律 `strict: false`（不写的话 Responses 会尝试把工具转成严格模式，可选参数过不了）。工具结果里的图片直接放进 `function_call_output`。
+
+Responses 请求使用稳定的会话 ID 作为 `prompt_cache_key`，并回传同一回合的 `x-codex-turn-state` 路由令牌。对支持显式缓存的模型（GPT-5.6 及后续模型），发送 `prompt_cache_options: {mode: "explicit"}`，在持久用户消息和工具结果末尾放置 `prompt_cache_breakpoint`；日期、权限等每次重建的临时提示位于缓存边界之后。调度主会话已接收的线程快照和笔记作为持久消息参与缓存。一次性请求声明 `promptCaching: false` 时不设置写入边界。如果模型或兼容服务明确拒绝缓存键或显式缓存字段，则去掉对应字段重试，成功后在同一进程内记住该端点和模型的拒绝。
 
 开启思考时发送 `reasoning: {effort, summary: "auto"}` 和 `include: ["reasoning.encrypted_content"]`；关闭时整个 `reasoning` 都不发——`effort: "none"` 会被不支持它的模型直接拒绝。思考字段被拒时的退回与 Chat Completions 相同。
+
+Responses 的加密推理本地计数沿用 Codex 的估算：从编码长度回推字节数，扣除估计的 650 字节封装开销，再按 4 字节/token 换算；思考摘要和传输元数据不重复计入。有服务端用量时使用该用量加上后续新增内容的估算。本地估算用于上下文预算，费用和缓存命中率仍以服务端报告为准。
 
 模型思考过的回复，会把这次的输出项（推理、文本、函数调用）原样存在消息上，下次请求同一个模型时原样回传：加密推理只能交还给产生它的模型，而且要连同与它配对的输出项一起。换了模型，或历史里缺了其中某个函数调用，就退回为只发文本和工具调用、不带推理。回复以 `max_output_tokens` 截断记为输出上限；其他未完成状态和 `response.failed` 直接报错；流结束却没有收到完成事件按网络错误重试。
 

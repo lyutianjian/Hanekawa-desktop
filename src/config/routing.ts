@@ -11,11 +11,10 @@
  *  - compact:     used by autoCompact and tool-use summarizer
  *  - coordinator: the project's coordination session
  *  - thread:      sessions a coordinator starts for one task
- *  - subagent:    per subagent_type (general / explore / plan / fork / ...)
+ *  - subagent:    per subagent_type (general / explore / plan / ...)
  *
  * The router accepts an `'inherit'` sentinel to mean "fall back to the parent /
- * main loop model", which is essential for fork-style sub-agents that share
- * the parent's prompt-cache stream.
+ * main loop model".
  *
  * There is deliberately no tier layer. Routing names a model key directly, and
  * anything that is not a resolvable key degrades to `'inherit'` at the service.
@@ -44,7 +43,6 @@ export type RoutedModel = string
 
 export interface SubagentRouting {
   general?: RoutedModel
-  fork?: RoutedModel
   explore?: RoutedModel
   plan?: RoutedModel
   /** Custom subagent types declared via `.myagent/agents/*.md`. */
@@ -106,6 +104,8 @@ export function mergeRouting(...sources: (Routing | undefined)[]): Routing {
     }
   }
 
+  // Retired built-in routes must not return as custom rows in settings.
+  delete result.subagent!.fork
   return result
 }
 

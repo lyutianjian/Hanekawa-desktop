@@ -647,6 +647,8 @@ export type ModelReferenceWrite =
 
 export interface ToolContext {
   cwd: string
+  /** Hides configured API keys from tool output; inherited by subagents. */
+  redactToolOutput?(text: string): string
   /** Key for per-project data dirs (plans, memory, spill, transcripts). Absent means `cwd`. */
   projectDir?: string
   sessionId: string
@@ -712,8 +714,6 @@ export interface ToolContext {
   discoveredToolNames?: Set<string>
   /** Tool names discovered AFTER the last compaction — these still have tool_reference blocks in history. */
   _postCompactDiscoveredNames?: Set<string>
-  /** The durable prefix of this loop's latest request, for a fork to inherit. */
-  _forkPrefix?: ForkPrefix
   /** Current skill slash command invocation metadata, attached only for the active turn. */
   skillInvocation?: {
     skillName: string
@@ -1007,18 +1007,6 @@ export interface ContextToolResult {
 
 export type ModelContextItem = ContextChatMessage | ContextToolUse | ContextToolResult
 
-/**
- * A request's cacheable half — system, tools and history, minus the tail
- * rebuilt per request — with what a fork needs to judge whether it fits.
- */
-export interface ForkPrefix {
-  request: ModelRequest
-  /** Prompt tokens the provider counted for that request. */
-  promptTokens: number
-  /** Where the parent loop would auto-compact. */
-  usableContextWindow: number
-}
-
 export interface ModelRequest {
   thinkingSource?: string
   system?: string
@@ -1037,7 +1025,7 @@ export interface ModelRequest {
   /**
    * The conversation this request belongs to, for providers that route their
    * cache by conversation (Responses `prompt_cache_key` and Codex session
-   * headers). A fork carries its parent's.
+   * headers).
    */
   promptCacheKey?: string
   /** The loop turn: a Codex sticky-routing token holds only within one. */

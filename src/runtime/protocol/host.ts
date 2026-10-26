@@ -864,7 +864,7 @@ export class SessionHost implements CoordinationLaneControl {
         return {
           sessionId: this.session.id,
           session: this.session,
-          cwd: this.project.cwd,
+          cwd: this.scope.workingDir,
           projectRoot: projectRootKey(this.project.cwd),
           projectName: projectDisplayName(this.project.cwd),
           projectIsGlobal: isGlobalWorkspaceRoot(this.project.cwd),

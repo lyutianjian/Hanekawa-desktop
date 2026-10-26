@@ -8,6 +8,7 @@ import { patchDetail } from '../editPatch.js'
 import { readTextFile, writeTextFile } from '../textFile.js'
 import { trackFileEdit } from '../trackFileEdit.js'
 import { DESCRIPTION } from './prompt.js'
+import { configFileView, restoreConfigApiKeys } from '../configFileView.js'
 
 interface MultiEditItem {
   oldString: string
@@ -67,7 +68,8 @@ export const multiEditTool: Tool = {
     }
     const { target } = safe
 
-    const originalContent = getReadFileContent(absolute, context) ?? (await readTextFile(absolute)).content
+    const raw = getReadFileContent(absolute, context) ?? (await readTextFile(absolute)).content
+    const originalContent = configFileView(absolute, raw)
     // Validate all edits against the original content and find match positions
     const resolved: Array<{ oldString: string; newString: string; index: number; start: number; end: number }> = []
     for (const [index, edit] of edits.entries()) {
@@ -115,6 +117,7 @@ export const multiEditTool: Tool = {
       nextContent = replaceLiteralMatch(nextContent, edit.oldString, edit.newString, edit.start)
     }
 
+    nextContent = restoreConfigApiKeys(absolute, nextContent, raw)
     const meta = await resolveTextFileMeta(absolute, context)
     await trackFileEdit(context, absolute)
     const changed = await assertTargetUnchanged(target, filePath)
@@ -129,7 +132,7 @@ export const multiEditTool: Tool = {
       metadata: {
         display: {
           summary: `Applied ${edits.length} edit${edits.length === 1 ? '' : 's'} to ${filePath}`,
-          ...patchDetail(absolute, originalContent, nextContent),
+          ...patchDetail(absolute, originalContent, configFileView(absolute, nextContent)),
         },
       },
     }

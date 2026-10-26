@@ -231,6 +231,29 @@ export function createSidebarView(
   let measures = new Map<string, () => void>()
 
   /**
+   * Which names actually run past their box — the question the fade cannot ask
+   * itself.
+   *
+   * The mask is a gradient on the clipper, so it covers the box's last 24px
+   * whatever is in them: a name that fills the row down to its final glyph gets
+   * that glyph dimmed by an effect saying there is more to read, when there is
+   * not. Only layout knows, and `render()` may not ask (see `measure` below) —
+   * so the browser volunteers the answer, once when a row is first drawn and
+   * again whenever its box changes. The rail being dragged is the case that
+   * matters: the rows are kept across that, and nothing else would tell them.
+   *
+   * Feature-detected because the DOM test stub has no `ResizeObserver`; without
+   * it the rows simply never fade, which is the resting look minus one mask.
+   */
+  const overflowObserver = typeof ResizeObserver === 'function'
+    ? new ResizeObserver((entries) => {
+        for (const { target } of entries) {
+          target.classList.toggle('overflow', target.scrollWidth > target.clientWidth + 1)
+        }
+      })
+    : undefined
+
+  /**
    * One workspace's nodes, kept across repaints.
    *
    * The reason this map exists at all: `render()` rebuilds the list wholesale,
@@ -482,6 +505,9 @@ export function createSidebarView(
     track.appendChild(echo)
     title.appendChild(track)
     open.appendChild(title)
+    // Asked once the row has a box, never here: the answer is whether this name
+    // is cut, and `.overflow` is the only thing that puts the fade on it.
+    overflowObserver?.observe(title)
     // Measured on arrival, never during `render()`: this list repaints on every
     // shell snapshot — once per streamed token — and `scrollWidth` on each of its
     // rows would force a layout at that rate. One hovered row, once, is free, and

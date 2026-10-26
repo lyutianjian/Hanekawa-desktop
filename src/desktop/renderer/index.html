@@ -252,14 +252,15 @@
             <button type="button" id="side-section-plan-head" class="side-section-head" aria-expanded="true"></button>
             <div id="side-section-plan-body" class="side-section-body"><div id="plan-view"></div></div>
           </section>
-          <section class="side-section" id="side-section-commands" hidden>
-            <button type="button" id="side-section-commands-head" class="side-section-head" aria-expanded="true"></button>
-            <div id="side-section-commands-body" class="side-section-body"><div id="commands-view"></div></div>
+          <section class="side-section task-group" id="side-section-running" hidden>
+            <button type="button" id="side-section-running-head" class="side-section-head" aria-expanded="true"></button>
+            <div id="side-section-running-body" class="side-section-body"><div id="running-tasks-view" class="background-tasks-view"></div></div>
           </section>
-          <section class="side-section" id="side-section-subagents" hidden>
-            <button type="button" id="side-section-subagents-head" class="side-section-head" aria-expanded="true"></button>
-            <div id="side-section-subagents-body" class="side-section-body"><div id="subagent-view"></div></div>
+          <section class="side-section task-group" id="side-section-finished" hidden>
+            <button type="button" id="side-section-finished-head" class="side-section-head" aria-expanded="false"></button>
+            <div id="side-section-finished-body" class="side-section-body" hidden><div id="finished-tasks-view" class="background-tasks-view"></div></div>
           </section>
+          <div id="subagent-view" hidden></div>
           <p id="tasks-empty" hidden>暂无任务</p>
         </div>
       </aside>

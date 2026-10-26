@@ -99,7 +99,7 @@ export interface TitleBarView {
 }
 
 export interface SideRailView {
-  /** Left to right; 线程 only where the project has coordination. */
+  /** Left to right; 线程 only in coordinator or thread sessions. */
   readonly modes: readonly SideMode[]
   /** The page on screen, `undefined` while the panel is closed. */
   readonly open: SideMode | undefined

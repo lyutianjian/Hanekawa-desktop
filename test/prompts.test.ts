@@ -36,19 +36,42 @@ test('context management counts tokens', () => {
   assert.ok(multiTokens.total > tokens)
 })
 
-test('an assistant message counts the reasoning it replays to its provider', () => {
+test('an assistant message counts signed thinking and Chat Completions reasoning as before', () => {
   const base: ChatMessage = { id: 'a', role: 'assistant', content: 'ok', createdAt: new Date().toISOString() }
   const reasoning = 'x'.repeat(3000)
   const plain = countMessageTokens(base)
   assert.ok(countMessageTokens({ ...base, reasoningContent: reasoning }) >= plain + 1000)
   assert.ok(countMessageTokens({ ...base, thinkingBlocks: [{ type: 'thinking', thinking: reasoning }] }) >= plain + 1000)
-  // Only the reasoning items: the message and call items repeat what is counted elsewhere.
+  const details = [{ type: 'reasoning.encrypted', data: reasoning }]
+  assert.equal(countMessageTokens({ ...base, reasoningContent: reasoning, reasoningDetails: details }), plain + countTextTokens(JSON.stringify(details)))
+})
+
+test('Responses encrypted reasoning uses the Codex decoded-length estimate', () => {
+  const base: ChatMessage = { id: 'a', role: 'assistant', content: 'ok', createdAt: '2026-10-26T00:00:00.000Z' }
+  const plain = countMessageTokens(base)
+  // Codex: floor(encoded length * 3 / 4), subtract 650 bytes, then ceil(bytes / 4).
+  for (const [length, tokens] of [[0, 0], [800, 0], [867, 0], [868, 1], [900, 7], [1000, 25], [2000, 213]]) {
+    assert.equal(countMessageTokens({ ...base, responseItems: [
+      { type: 'reasoning', encrypted_content: 'a'.repeat(length) },
+    ] }), plain + tokens, `encoded length ${length}`)
+  }
+  assert.equal(countMessageTokens({ ...base, responseItems: [
+    { type: 'reasoning', encrypted_content: 'a'.repeat(900) },
+    { type: 'reasoning', encrypted_content: 'a'.repeat(1000) },
+  ] }), plain + 32, 'each reasoning item has its own envelope and rounding')
+})
+
+test('Responses reasoning estimates exclude summaries and transport metadata', () => {
+  const base: ChatMessage = { id: 'a', role: 'assistant', content: 'ok', createdAt: '2026-10-26T00:00:00.000Z' }
+  const reasoning = 'x'.repeat(3000)
   const items = [
+    { type: 'reasoning', id: reasoning, encrypted_content: 'a'.repeat(1000), summary: [{ type: 'summary_text', text: reasoning }] },
     { type: 'reasoning', content: [{ type: 'reasoning_text', text: reasoning }] },
     { type: 'function_call', arguments: 'y'.repeat(3000) },
+    { type: 'message', content: [{ type: 'output_text', text: base.content }] },
   ]
-  const withItems = countMessageTokens({ ...base, reasoningContent: reasoning, responseItems: items })
-  assert.ok(withItems >= plain + 1000 && withItems < plain + 1100)
+  assert.equal(countMessageTokens({ ...base, reasoningContent: reasoning, responseItems: items }), countMessageTokens(base) + 25)
+  assert.equal(countMessageTokens({ ...base, reasoningContent: reasoning, responseItems: [items[1]] }), countMessageTokens(base), 'plaintext Responses reasoning is excluded from replay accounting')
 })
 
 test('context management thresholds follow the defaults', () => {

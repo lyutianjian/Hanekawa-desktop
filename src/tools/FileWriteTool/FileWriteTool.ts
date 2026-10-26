@@ -9,6 +9,7 @@ import { assertTargetUnchanged, resolveSafeTarget } from '../pathSafety.js'
 import { writeTextFile } from '../textFile.js'
 import { trackFileEdit } from '../trackFileEdit.js'
 import { DESCRIPTION } from './prompt.js'
+import { configFileView, restoreConfigApiKeys } from '../configFileView.js'
 
 export const writeFileTool: Tool = {
   name: 'Write',
@@ -27,7 +28,7 @@ export const writeFileTool: Tool = {
     return filePath ? `Writing ${filePath}` : 'Writing file'
   },
   async execute(input, context) {
-    const { filePath, content } = input as { filePath: string; content: string }
+    const { filePath, content: requestedContent } = input as { filePath: string; content: string }
     const absolute = resolveToolPath(context, filePath)
     const resolved = await resolveSafeTarget(absolute, filePath, { approvedTarget: context.approvedWriteTarget })
     if ('error' in resolved) {
@@ -49,6 +50,7 @@ export const writeFileTool: Tool = {
     // text in hand; a new file diffs against nothing. Either way the patch
     // costs no extra filesystem read.
     const previousContent = exists ? getReadFileContent(absolute, context) : ''
+    const content = restoreConfigApiKeys(absolute, requestedContent, previousContent)
     // An existing file keeps its on-disk encoding, BOM and line endings; a new
     // one is UTF-8/LF without a BOM. Either way the remembered content stays LF
     // (and BOM-free) so a later Edit matches a model-supplied string.
@@ -72,7 +74,7 @@ export const writeFileTool: Tool = {
       metadata: {
         display: {
           summary: exists ? `Overwrote ${filePath}` : `Created ${filePath}`,
-          ...(previousContent !== undefined ? patchDetail(absolute, previousContent, content) : {}),
+          ...(previousContent !== undefined ? patchDetail(absolute, configFileView(absolute, previousContent), configFileView(absolute, content)) : {}),
         },
       },
     }

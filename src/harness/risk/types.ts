@@ -46,6 +46,8 @@ export interface RiskContext {
   home: string
   /** `cwd`, additional directories, the session's spill/plan dirs and the system temp dirs, all resolved. */
   workspaceRoots: string[]
+  /** App configuration/data can be read without making outside writes ordinary. */
+  readableRoots?: string[]
   /** The system temp dirs, resolved; also in `workspaceRoots`. */
   tempRoots: string[]
   /** Hanekawa's own permission-bearing settings files; writing one is self-escalation. */

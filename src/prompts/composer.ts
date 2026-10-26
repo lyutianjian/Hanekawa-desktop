@@ -15,7 +15,6 @@ export interface ComposerOptions {
   /** The tool schemas the request declares; they hold budget the history cannot. */
   tools?: readonly ToolSchemaCost[]
   imageTokenStrategy?: ImageTokenStrategy
-  prefixTokens?: number
 }
 
 export class PromptComposer {
@@ -50,7 +49,7 @@ export class PromptComposer {
       return { system, contextItems: [], messages: [], selection: emptySelection() }
     }
 
-    const selection = planContextItems(items, contextManagement, system, tools, options.imageTokenStrategy, options.prefixTokens)
+    const selection = planContextItems(items, contextManagement, system, tools, options.imageTokenStrategy)
     const contextItems = selection.items
     const messages = contextItems
       .filter((item): item is ModelContextItem & { kind: 'message' } => item.kind === 'message')

@@ -4,7 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { z } from 'zod/v3'
-import { BUILT_IN_AGENT_DEFINITIONS, createAgentTool, filterToolsForSubAgent, prepareForkPreloadRecords, resolveSubagentPermissionMode } from '../src/tools/AgentTool/AgentTool.js'
+import { BUILT_IN_AGENT_DEFINITIONS, createAgentTool, filterToolsForSubAgent, resolveSubagentPermissionMode } from '../src/tools/AgentTool/AgentTool.js'
 import { AgentDefinitionLoader } from '../src/services/agents/agentDefinitionLoader.js'
 import { ToolRunner } from '../src/harness/toolRunner.js'
 import { PermissionGate, type PermissionMode } from '../src/harness/permissions.js'
@@ -432,7 +432,7 @@ test('explicit run_in_background false overrides custom agent background default
   assert.equal(result.content, 'sync result')
 })
 
-test('Agent tool uses routed sub-agent runtime without exposing model input', async () => {
+test('Agent tool uses routed sub-agent runtime when model is omitted', async () => {
   const parentProvider: ModelProvider = {
     name: 'parent',
     async createMessage() {
@@ -468,7 +468,7 @@ test('Agent tool uses routed sub-agent runtime without exposing model input', as
   const result = await agentTool.execute({ task: 'map files', subagent_type: 'explore' }, toolContext())
 
   assert.equal(result.ok, true)
-  assert.equal(result.content, 'routed result')
+  assert.match(result.content, /^routed result\n\nModel key: "explore-key"/)
   assert.equal(seenModel, 'explore-model')
 })
 
@@ -519,10 +519,111 @@ test('custom agent model frontmatter requests a concrete model key', async () =>
   const result = await agentTool.execute({ task: 'use model', subagent_type: 'modelled' }, toolContext())
 
   assert.equal(result.ok, true)
-  assert.equal(result.content, 'model-specific result')
+  assert.match(result.content, /^model-specific result\n\nModel key: "fast-model-key"/)
   assert.equal(requestedType, 'modelled')
   assert.equal(requestedModelKey, 'fast-model-key')
   assert.equal(seenModel, 'fast-provider-model')
+})
+
+test('explicit Agent.model wins over environment, definition and routing in foreground and background', async (t) => {
+  const previous = process.env.MYAGENT_SUBAGENT_MODEL_REVIEWER
+  process.env.MYAGENT_SUBAGENT_MODEL_REVIEWER = 'env-key'
+  t.after(() => {
+    if (previous === undefined) delete process.env.MYAGENT_SUBAGENT_MODEL_REVIEWER
+    else process.env.MYAGENT_SUBAGENT_MODEL_REVIEWER = previous
+  })
+  for (const background of [false, true]) {
+    const requests: ModelRequest[] = []
+    const records: SessionRecord[] = []
+    const selectedProvider: ModelProvider = {
+      name: 'selected',
+      async createMessage(request) {
+        requests.push(request)
+        return { content: 'selected result', toolCalls: [] }
+      },
+    }
+    const agentTool = createAgentTool({
+      provider: { name: 'parent', async createMessage() { throw new Error('wrong provider') } },
+      model: 'parent-model',
+      modelKey: 'parent-key',
+      tools: () => [],
+      permissionPrompt: async () => true,
+      cwd: testCwd,
+      agentDefinitions: [{
+        type: 'reviewer', description: 'Review code.', model: 'definition-key',
+        disallowedTools: ['Agent'], isReadOnlyAgent: true, getSystemPrompt: () => 'Review.',
+      }],
+      modelCatalog: [{ key: 'selected-key', model: 'selected-model' }],
+      routedModelKeys: { reviewer: 'routed-key' },
+      resolveSubagentModel: (type, key) => {
+        assert.equal(type, 'reviewer')
+        assert.equal(key, 'selected-key')
+        return { provider: selectedProvider, model: 'selected-model', modelKey: key }
+      },
+    })
+    const result = await agentTool.execute({
+      task: 'Review the change', subagent_type: 'reviewer', model: ' selected-key ', run_in_background: background,
+    }, { ...toolContext(), appendRecord: async (record) => { records.push(record) } })
+    assert.equal(result.ok, true, result.content)
+    assert.match(result.content, /Model key: "selected-key"/)
+    if (background) await waitFor(() => records.some((record) => record.type === 'subagent_task' && record.status === 'completed'))
+    assert.deepEqual(requests.map((request) => request.model), ['selected-model'])
+  }
+})
+
+test('unknown explicit agent keys fail before starting a foreground or background task', async () => {
+  const records: SessionRecord[] = []
+  const registry = new BackgroundTaskRegistry()
+  const agentTool = createAgentTool({
+    provider: { name: 'parent', async createMessage() { throw new Error('must not run') } },
+    model: 'parent-model', modelKey: 'main', cwd: testCwd,
+    tools: () => [], permissionPrompt: async () => true, backgroundTasks: registry,
+    modelCatalog: [{ key: 'main', model: 'parent-model' }],
+    resolveSubagentModel: () => { assert.fail('unknown keys must not reach the runtime resolver') },
+  })
+  for (const background of [false, true]) {
+    for (const model of ['missing', 'parent-model', 'inherit']) {
+      const result = await agentTool.execute({
+        task: 'Inspect', subagent_type: 'general', model, run_in_background: background,
+      }, { ...toolContext(), appendRecord: async (record) => { records.push(record) } })
+      assert.equal(result.ok, false)
+      assert.match(result.content, /Unknown model for subagent "general"/)
+      assert.match(result.content, /Available model keys: "main"/)
+    }
+  }
+  assert.deepEqual(records, [])
+  assert.deepEqual(registry.getSnapshot('parent'), [])
+})
+
+test('agent description reports defaults from environment, definition, routing and inheritance', async (t) => {
+  const previous = { generic: process.env.MYAGENT_SUBAGENT_MODEL, specific: process.env.MYAGENT_SUBAGENT_MODEL_GENERAL }
+  delete process.env.MYAGENT_SUBAGENT_MODEL
+  t.after(() => {
+    for (const [key, value] of [['MYAGENT_SUBAGENT_MODEL', previous.generic], ['MYAGENT_SUBAGENT_MODEL_GENERAL', previous.specific]] as const) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  })
+  const cases = [
+    { env: 'env', definition: 'defined', route: 'routed', expected: 'env' },
+    { env: undefined, definition: 'defined', route: 'routed', expected: 'defined' },
+    { env: undefined, definition: undefined, route: 'routed', expected: 'routed' },
+    { env: 'inherit', definition: 'defined', route: 'routed', expected: 'main' },
+    { env: undefined, definition: 'inherit', route: 'routed', expected: 'main' },
+    { env: undefined, definition: undefined, route: 'main', expected: 'main' },
+  ]
+  for (const entry of cases) {
+    if (entry.env === undefined) delete process.env.MYAGENT_SUBAGENT_MODEL_GENERAL
+    else process.env.MYAGENT_SUBAGENT_MODEL_GENERAL = entry.env
+    const tool = createAgentTool({
+      provider: { name: 'unused', async createMessage() { throw new Error('must not run') } },
+      model: 'main-model', modelKey: 'main', cwd: testCwd, tools: () => [], permissionPrompt: async () => true,
+      agentDefinitions: [{ ...BUILT_IN_AGENT_DEFINITIONS[0], model: entry.definition }],
+      modelCatalog: ['main', 'env', 'defined', 'routed'].map((key) => ({ key, model: `${key}-model` })),
+      routedModelKeys: { general: entry.route },
+    })
+    assert.ok(tool.description.includes(`- "general": "${entry.expected}"`), tool.description)
+  }
 })
 
 test('custom agent model inherit skips sub-agent routing', async () => {
@@ -558,7 +659,7 @@ test('custom agent model inherit skips sub-agent routing', async () => {
   const result = await agentTool.execute({ task: 'inherit model', subagent_type: 'inheriting' }, toolContext())
 
   assert.equal(result.ok, true)
-  assert.equal(result.content, 'parent result')
+  assert.match(result.content, /^parent result\n\nModel key: "parent-key"/)
   assert.equal(requests[0]!.model, 'parent-model')
 })
 
@@ -1260,184 +1361,6 @@ test('Agent tool uses an isolated agent cache source', async () => {
   assert.equal(requests.length, 1)
   assert.match(requests[0]!.cacheSource, /^agent:/)
   assert.notEqual(displayCacheSource(requests[0]!.cacheSource!), 'agent:parent-session')
-})
-
-test('fork Agent without a parent request prefix preloads bounded parent records under its own cache source', async () => {
-  const requests: ModelRequest[] = []
-  const provider: ModelProvider = {
-    name: 'fake',
-    async createMessage(request) {
-      requests.push(request)
-      return { content: 'done', toolCalls: [] }
-    },
-  }
-  const parentRecords: SessionRecord[] = [{
-    type: 'message',
-    id: 'parent-1',
-    role: 'user',
-    content: 'parent context',
-    createdAt: '2026-05-10T00:00:00.000Z',
-  }, {
-    type: 'subagent_transcript',
-    id: 'transcript-1',
-    agentId: 'child',
-    subagentType: 'general',
-    summary: 'nested child summary',
-    records: [],
-    usage: { inputTokens: 1, cacheReadInputTokens: 0, outputTokens: 0 },
-    createdAt: '2026-05-10T00:00:01.000Z',
-  }]
-  const agentTool = createAgentTool({
-    provider,
-    model: 'fake-model',
-    tools: () => [],
-    permissionPrompt: async () => true,
-    cwd: testCwd,
-    loadParentRecords: async () => parentRecords,
-  })
-
-  const result = await agentTool.execute({ task: 'continue from parent', subagent_type: 'fork' }, toolContext('parent-session'))
-
-  assert.equal(result.ok, true)
-  assert.equal(requests.length, 1)
-  assert.match(displayCacheSource(requests[0]!.cacheSource!), /^agent:fork:(?!parent-session$)/)
-  assert.ok(requests[0]!.contextItems?.some(
-    (item) => item.kind === 'message'
-      && item.message.id === 'parent-1'
-      && item.message.content === 'parent context',
-  ))
-  assert.ok(!requests[0]!.contextItems?.some(
-    (item) => item.kind === 'message'
-      && /nested child summary/.test(item.message.content),
-  ))
-  assert.doesNotMatch(requests[0]!.system ?? '', /Forked Conversation Context/)
-  assert.ok(requests[0]!.contextItems?.some(
-    (item) => item.kind === 'message'
-      && item.message.role === 'user'
-      && /Forked Conversation Context/.test(item.message.content),
-  ))
-})
-
-function forkParentContext(promptTokens: number): ToolContext {
-  const message = { id: 'parent-1', role: 'user' as const, content: 'parent context', createdAt: '2026-05-10T00:00:00.000Z' }
-  return {
-    ...toolContext('parent-session'),
-    _forkPrefix: {
-      request: {
-        system: 'PARENT SYSTEM',
-        systemBlocks: ['PARENT SYSTEM'],
-        messages: [message],
-        contextItems: [{ kind: 'message', message }],
-        tools: [readOnlyTool('Read'), safeTool('Edit')],
-        model: 'fake-model',
-        thinking: { type: 'adaptive' },
-        cacheSource: 'agent:parent-session',
-      },
-      promptTokens,
-      usableContextWindow: 200_000,
-    },
-  }
-}
-
-test('a fork sends the parent\'s request prefix unchanged and refuses the tools it lacks', async () => {
-  const requests: ModelRequest[] = []
-  let parentRecordLoads = 0
-  const provider: ModelProvider = {
-    name: 'fake',
-    async createMessage(request) {
-      requests.push(request)
-      return requests.length === 1
-        ? { content: '', toolCalls: [{ id: 'edit-1', name: 'Edit', input: {} }] }
-        : { content: 'done', toolCalls: [] }
-    },
-  }
-  const agentTool = createAgentTool({
-    provider,
-    model: 'fake-model',
-    tools: () => [readOnlyTool('Read'), safeTool('Edit')],
-    permissionPrompt: async () => true,
-    cwd: testCwd,
-    loadParentRecords: async () => { parentRecordLoads += 1; return [] },
-  })
-
-  const result = await agentTool.execute({ task: 'look around', subagent_type: 'fork' }, forkParentContext(1_000))
-
-  assert.equal(result.ok, true)
-  // An inheriting fork never loads the parent's records.
-  assert.equal(parentRecordLoads, 0)
-  const first = requests[0]!
-  assert.deepEqual(first.systemBlocks, ['PARENT SYSTEM'])
-  assert.deepEqual(first.tools?.map((tool) => tool.name), ['Read', 'Edit'])
-  assert.equal(first.contextItems?.[0]?.kind === 'message' ? first.contextItems[0].message.id : undefined, 'parent-1')
-  assert.ok(first.contextItems?.some((item) => item.kind === 'message' && /only Read will run/.test(item.message.content)))
-  const refused = requests[1]!.contextItems?.find((item) => item.kind === 'tool_result')
-  assert.ok(refused?.kind === 'tool_result' && !refused.ok && /not available in this read-only fork/.test(refused.content))
-})
-
-test('a fork whose parent prefix leaves too little room falls back to the bounded preload', async () => {
-  let parentRecordLoads = 0
-  const requests: ModelRequest[] = []
-  const agentTool = createAgentTool({
-    provider: { name: 'fake', async createMessage(request) { requests.push(request); return { content: 'done', toolCalls: [] } } },
-    model: 'fake-model',
-    tools: () => [readOnlyTool('Read')],
-    permissionPrompt: async () => true,
-    cwd: testCwd,
-    loadParentRecords: async () => { parentRecordLoads += 1; return [] },
-  })
-
-  await agentTool.execute({ task: 'look around', subagent_type: 'fork' }, forkParentContext(190_000))
-
-  assert.equal(parentRecordLoads, 1)
-  assert.notDeepEqual(requests[0]!.systemBlocks, ['PARENT SYSTEM'])
-})
-
-test('prepareForkPreloadRecords keeps the recent tail within budget', () => {
-  const records: SessionRecord[] = [
-    {
-      type: 'message',
-      id: 'old',
-      role: 'user',
-      content: 'x'.repeat(600),
-      createdAt: '2026-05-10T00:00:00.000Z',
-    },
-    {
-      type: 'message',
-      id: 'recent',
-      role: 'assistant',
-      content: 'recent context',
-      createdAt: '2026-05-10T00:00:01.000Z',
-    },
-  ]
-
-  const prepared = prepareForkPreloadRecords(records, 50)
-
-  assert.deepEqual(prepared.map((record) => record.type === 'message' ? record.id : record.type), ['recent'])
-})
-
-test('fork Agent reports parent record load failures clearly', async () => {
-  const provider: ModelProvider = {
-    name: 'fake',
-    async createMessage() {
-      return { content: 'unused', toolCalls: [] }
-    },
-  }
-  const agentTool = createAgentTool({
-    provider,
-    model: 'fake-model',
-    tools: () => [],
-    permissionPrompt: async () => true,
-    cwd: testCwd,
-    loadParentRecords: async () => {
-      throw new Error('bad jsonl')
-    },
-  })
-
-  const result = await agentTool.execute({ task: 'continue from parent', subagent_type: 'fork' }, toolContext('parent-session'))
-
-  assert.equal(result.ok, false)
-  assert.equal(result.errorCode, 'execution_failed')
-  assert.match(result.content, /Fork failed: parent records load error: bad jsonl/)
 })
 
 test('Agent tool gives sub-agents an independent abort signal bridged from the parent', async () => {
@@ -2279,12 +2202,12 @@ test('parallel custom read-only sub-agents receive isolated tool contexts', asyn
   assert.deepEqual(observedContexts.map((item) => item.readFilesBefore), [0, 0])
 })
 
-test('Agent tool reports a clear runtime error for unknown custom subagent types', async () => {
+test('Agent tool rejects unknown types and the removed fork type before calling the provider', async () => {
   const agentTool = createAgentTool({
     provider: {
       name: 'fake',
       async createMessage() {
-        return { content: 'unused', toolCalls: [] }
+        assert.fail('an unknown agent type must not call the provider')
       },
     },
     model: 'fake-model',
@@ -2293,11 +2216,12 @@ test('Agent tool reports a clear runtime error for unknown custom subagent types
     cwd: testCwd,
   })
 
-  const result = await agentTool.execute({ task: 'hello', subagent_type: 'missing-agent' }, toolContext())
-
-  assert.equal(result.ok, false)
-  assert.match(result.content, /Unknown subagent_type "missing-agent"/)
-  assert.match(result.content, /general, fork, explore, plan/)
+  for (const type of ['missing-agent', 'fork']) {
+    const result = await agentTool.execute({ task: 'hello', subagent_type: type }, toolContext())
+    assert.equal(result.ok, false)
+    assert.ok(result.content.includes(`Unknown subagent_type "${type}"`))
+    assert.match(result.content, /general, explore, plan/)
+  }
 })
 
 test('custom agent maxResultSizeChars controls its result budget', async () => {
@@ -2441,6 +2365,30 @@ test('AgentDefinitionLoader warns for risky custom agent definitions', async () 
 // Phase 1: Differentiated Turn Limits
 // ============================================================================
 
+test('the three built-in agents send high effort to the provider', async () => {
+  const requests: ModelRequest[] = []
+  const agentTool = createAgentTool({
+    provider: {
+      name: 'fake',
+      async createMessage(request) {
+        requests.push(request)
+        return { content: 'done', toolCalls: [] }
+      },
+    },
+    model: 'fake-model',
+    tools: () => [],
+    permissionPrompt: async () => true,
+    cwd: testCwd,
+  })
+
+  assert.deepEqual(BUILT_IN_AGENT_DEFINITIONS.map((definition) => definition.type), ['general', 'explore', 'plan'])
+  for (const type of ['general', 'explore', 'plan']) {
+    const result = await agentTool.execute({ task: 'research', subagent_type: type }, toolContext())
+    assert.equal(result.ok, true)
+    assert.equal(requests.at(-1)?.effort, 'high', type)
+  }
+})
+
 test('built-in agents have no turn cap', () => {
   for (const definition of BUILT_IN_AGENT_DEFINITIONS) {
     assert.equal(definition.maxTurns, undefined, definition.type)
@@ -2469,7 +2417,7 @@ test('explicit maxTurns in input overrides per-type default', async () => {
 
   const result = await agentTool.execute({
     task: 'loop',
-    subagent_type: 'fork',
+    subagent_type: 'general',
     maxTurns: 2,
   }, toolContext())
 
@@ -2560,35 +2508,6 @@ test('sub-agents never receive the Agent tool', () => {
   assert.ok(filtered.some((t) => t.name === 'Glob'))
   assert.ok(filtered.some((t) => t.name === 'Grep'))
   assert.ok(!filtered.some((t) => t.name === 'Agent'))
-})
-
-test('fork agent runs with the parent records preloaded', async () => {
-  const provider: ModelProvider = {
-    name: 'fake',
-    async createMessage() {
-      return { content: 'fork result', toolCalls: [] }
-    },
-  }
-  const parentRecords: SessionRecord[] = [{
-    type: 'message',
-    id: 'normal-msg',
-    role: 'user',
-    content: 'normal parent context',
-    createdAt: '2026-05-10T00:00:00.000Z',
-  }]
-  const agentTool = createAgentTool({
-    provider,
-    model: 'fake-model',
-    tools: () => [],
-    permissionPrompt: async () => true,
-    cwd: testCwd,
-    loadParentRecords: async () => parentRecords,
-  })
-
-  const result = await agentTool.execute({ task: 'normal fork', subagent_type: 'fork' }, toolContext())
-
-  assert.equal(result.ok, true)
-  assert.equal(result.content, 'fork result')
 })
 
 // ============================================================================
@@ -2722,7 +2641,7 @@ test('MYAGENT_SUBAGENT_MODEL overrides default routing', async () => {
     const result = await agentTool.execute({ task: 'map files', subagent_type: 'explore' }, toolContext())
 
     assert.equal(result.ok, true)
-    assert.equal(result.content, 'env routed result')
+    assert.match(result.content, /^env routed result\n\nModel key: "fast-model"/)
     assert.equal(requestedModelKey, 'fast-model')
   } finally {
     if (originalEnv === undefined) {
@@ -2821,6 +2740,44 @@ test('an unresolvable MYAGENT_SUBAGENT_MODEL fails the run instead of switching 
 // ============================================================================
 // Phase 3: CriticalSystemReminder in Custom Agents
 // ============================================================================
+
+test('custom agents default to high effort and preserve explicit frontmatter effort', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agent-effort-'))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const cwd = path.join(root, 'project')
+  const agentDir = path.join(cwd, '.myagent', 'agents')
+  await mkdir(agentDir, { recursive: true })
+  const cases = [undefined, 'low', 'medium', 'high', 'xhigh', 'max'] as const
+  for (const effort of cases) {
+    const type = effort ?? 'default'
+    await writeFile(path.join(agentDir, `${type}.md`), [
+      '---', `name: ${type}`, 'description: Research agent.',
+      ...(effort ? [`effort: ${effort}`] : []),
+      '---', 'Research the task.',
+    ].join('\n'))
+  }
+  const requests: ModelRequest[] = []
+  const agentTool = createAgentTool({
+    provider: {
+      name: 'fake',
+      async createMessage(request) {
+        requests.push(request)
+        return { content: 'done', toolCalls: [] }
+      },
+    },
+    model: 'fake-model',
+    tools: () => [],
+    permissionPrompt: async () => true,
+    cwd,
+    agentDefinitions: await new AgentDefinitionLoader(cwd, path.join(root, 'home')).list(),
+  })
+
+  for (const effort of cases) {
+    const result = await agentTool.execute({ task: 'research', subagent_type: effort ?? 'default' }, { ...toolContext(), cwd })
+    assert.equal(result.ok, true)
+    assert.equal(requests.at(-1)?.effort, effort ?? 'high')
+  }
+})
 
 test('AgentDefinitionLoader rejects a numeric effort and reports it as a warning', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agents-'))
@@ -3085,115 +3042,6 @@ test('a sub-agent without an attachment store keeps no handle at all', async () 
   // Not a store bound to some other session: nothing, so the Read tool answers
   // with `attachment-store-unavailable` rather than reaching for pixels.
   assert.equal(handle, undefined)
-})
-
-test('a fork sub-agent resolves inherited image refs and only those', async () => {
-  const requests: ModelRequest[] = []
-  const asked: string[] = []
-  const inherited = attachmentRef()
-  const foreign = attachmentRef({ id: 'img-elsewhere', ownerSessionId: 'other-session', name: 'other.png' })
-  const provider: ModelProvider = {
-    name: 'fake',
-    async createMessage(request) {
-      requests.push(request)
-      return { content: 'done', toolCalls: [] }
-    },
-  }
-  const parentRecords: SessionRecord[] = [{
-    type: 'message',
-    id: 'parent-1',
-    role: 'user',
-    content: 'here is a screenshot',
-    images: [inherited, foreign],
-    createdAt: '2026-09-09T00:00:00.000Z',
-  }]
-  const agentTool = createAgentTool({
-    provider,
-    model: 'fake-model',
-    supportsImageInput: true,
-    tools: () => [],
-    permissionPrompt: async () => true,
-    cwd: testCwd,
-    loadParentRecords: async () => parentRecords,
-    // Registered refs resolve; anything else is a per-image miss, which is the
-    // whole of the "only through registered exact references" rule.
-    attachmentBytes: {
-      async readSendBytes(ref) {
-        asked.push(`${ref.ownerSessionId}/${ref.id}`)
-        if (ref.ownerSessionId === 'parent-session' && ref.id === inherited.id) {
-          return { ok: true, value: { bytes: Uint8Array.from([1, 2, 3]), mimeType: 'image/png' } }
-        }
-        return { ok: false, reason: 'file-missing', message: 'not registered here' }
-      },
-    },
-  })
-
-  const result = await agentTool.execute({ task: 'continue', subagent_type: 'fork' }, toolContext('parent-session'))
-
-  assert.equal(result.ok, true)
-  assert.deepEqual(asked.sort(), ['other-session/img-elsewhere', 'parent-session/img-parent-1'])
-  assert.deepEqual([...(requests[0]?.imageBytes?.keys() ?? [])], [inherited.id])
-})
-
-test('a text-only fork sub-agent degrades inherited images without asking the parent', async () => {
-  const requests: ModelRequest[] = []
-  let bytesRequested = 0
-  const inherited = attachmentRef()
-  const childProvider: ModelProvider = {
-    name: 'child',
-    async createMessage(request) {
-      requests.push(request)
-      return { content: 'done', toolCalls: [] }
-    },
-  }
-  const agentTool = createAgentTool({
-    provider: {
-      name: 'parent',
-      async createMessage() {
-        throw new Error('the parent provider must not serve the sub-agent')
-      },
-    },
-    model: 'parent-model',
-    // The parent sees images; the child's own model does not. The child has to
-    // decide on its own capability, never on this conclusion.
-    supportsImageInput: true,
-    tools: () => [],
-    permissionPrompt: async () => true,
-    cwd: testCwd,
-    loadParentRecords: async () => [{
-      type: 'message',
-      id: 'parent-1',
-      role: 'user',
-      content: 'here is a screenshot',
-      images: [inherited],
-      createdAt: '2026-09-09T00:00:00.000Z',
-    }],
-    resolveSubagentModel: () => ({
-      provider: childProvider,
-      model: 'text-only-model',
-      modelKey: 'text-only',
-      providerName: 'child',
-      supportsImageInput: false,
-    }),
-    attachmentBytes: {
-      async readSendBytes() {
-        bytesRequested += 1
-        return { ok: true, value: { bytes: Uint8Array.from([1, 2, 3]), mimeType: 'image/png' } }
-      },
-    },
-  })
-
-  const result = await agentTool.execute({ task: 'continue', subagent_type: 'fork' }, toolContext('parent-session'))
-
-  assert.equal(result.ok, true)
-  assert.equal(bytesRequested, 0, 'a text-only child must not load image bytes')
-  assert.equal(requests[0]?.imageBytes, undefined)
-  const preloaded = requests[0]?.contextItems?.find(
-    (item) => item.kind === 'message' && item.message.id === 'parent-1',
-  )
-  assert.ok(preloaded && preloaded.kind === 'message')
-  assert.equal(preloaded.message.images, undefined)
-  assert.match(preloaded.message.content, /screenshot\.png/)
 })
 
 test('a subagent turn stops the background shells registered under its own id', async () => {

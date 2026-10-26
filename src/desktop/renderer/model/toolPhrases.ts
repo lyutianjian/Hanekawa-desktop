@@ -39,20 +39,6 @@ const PHRASES: Record<string, { readonly verb: string; readonly target?: 'file' 
   Config: { verb: '修改设置' },
 }
 
-const PLURALS: Record<string, readonly [string, string]> = {
-  Read: ['读取', '个文件'],
-  Edit: ['编辑', '个文件'],
-  MultiEdit: ['编辑', '个文件'],
-  Write: ['写入', '个文件'],
-  Delete: ['删除', '个文件'],
-  Grep: ['搜索', '处'],
-  Glob: ['查找', '组文件'],
-  Bash: ['运行', '个命令'],
-  WebFetch: ['抓取', '个网页'],
-  WebSearch: ['联网搜索', '次'],
-  Agent: ['运行', '个子代理'],
-}
-
 const TARGET_MAX = 40
 
 /**
@@ -127,24 +113,4 @@ export function callPhrase(step: CallStep, approving = false): string {
   if (target.length === 0) return verb
   const clipped = target.length > TARGET_MAX ? `${target.slice(0, TARGET_MAX - 1)}…` : target
   return bare ? clipped : `${verb}${step.toolName === 'Agent' ? ' · ' : ' '}${clipped}`
-}
-
-/**
- * Calls that run together, said once: the same tool as a count (「读取 3 个文件」),
- * a mix as the last one plus how many (「… 等 3 项」) — the last because a batch
- * settles in order and the one still open is the one being waited on.
- */
-export function batchPhrase(running: readonly CallStep[]): string {
-  const last = running[running.length - 1]!
-  if (running.length === 1) return callPhrase(last)
-  if (running.every((step) => isRecall(step))) return `调取 ${running.length} 条记忆`
-  const plural = last.toolName !== undefined && running.every((step) => step.toolName === last.toolName)
-    ? PLURALS[last.toolName]
-    : undefined
-  return plural ? `${plural[0]} ${running.length} ${plural[1]}` : `${callPhrase(last)} 等 ${running.length} 项`
-}
-
-function isRecall(step: CallStep): boolean {
-  const op = memoryOp(step)
-  return (op === 'recall' || op === 'search') && !isMemoryIndex(step)
 }

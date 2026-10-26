@@ -101,15 +101,15 @@ describe('buildFileToolPreview', () => {
     assert.equal(preview.newText, '')
   })
 
-  it('keeps unreachable paths in a non-crashing message preview', () => {
+  it('previews global runtime paths like other files', () => {
     const preview = buildFileToolPreview('Write', {
       filePath: path.join(getSessionsDir(cwd), 'x.jsonl'),
       content: 'nope',
     }, { cwd, readFile })
 
-    assert.equal(preview?.kind, 'message')
-    if (preview?.kind !== 'message') return
-    assert.match(preview.message, /runtime data/)
+    assert.equal(preview?.kind, 'diff')
+    if (preview?.kind !== 'diff') return
+    assert.equal(preview.newText, 'nope')
   })
 })
 

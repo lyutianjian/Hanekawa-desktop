@@ -238,14 +238,6 @@ export interface AgentLoopOptions {
   hooks?: Hooks
   cacheRuntime?: CacheRuntime
   cacheSource?: CacheBreakSource
-  /**
-   * A fork's inherited prefix: every request sends the parent's system, tools
-   * and history byte for byte ahead of this loop's own records, so it reads
-   * the parent's cache. The loop never auto-compacts under one — compacting
-   * its own records cannot shrink what it inherited.
-   */
-  inheritedRequest?: ModelRequest
-  preloadRecords?: SessionRecord[]
   permissionMode?(): PermissionMode
   planModeManager?: PlanModeManager
   getCompactFailureCount?(): Promise<number>
@@ -309,7 +301,7 @@ export class ContextOverflowError extends Error {
           'Compaction could not shrink them further. Switch to a model with a larger context window, or start a new session.',
         ].join(' ')
       : [
-          `This request cannot be sent: the system prompt, instruction files and tool schemas, together with any inherited conversation prefix, take ${fixedOverheadTokens} tokens,`,
+          `This request cannot be sent: the system prompt, instruction files and tool schemas take ${fixedOverheadTokens} tokens,`,
           `leaving nothing of the model's ${usableContextWindow}-token window for the conversation.`,
           'Compaction cannot shrink them. Trim AGENTS.md/MEMORY.md, drop tools, or switch to a model with a larger context window.',
         ].join(' '))
@@ -1039,13 +1031,6 @@ export class AgentLoop {
       }
 
       usage = addTokenUsage(usage, response.usage)
-      if (response.usage) {
-        this.options.toolContext._forkPrefix = {
-          request: durablePrefix(modelRequest),
-          promptTokens: promptTokens(response.usage),
-          usableContextWindow: this.getContextBudget().usableContextWindow,
-        }
-      }
       lastForegroundResponseUsage = response.usage
       // Per request, not per turn: this is the only point where the provider's
       // own count for the context just sent is known, and a multi-step turn
@@ -1466,20 +1451,14 @@ export class AgentLoop {
     records: SessionRecord[],
     currentTurnId: string,
     currentUserMessageId: string,
-    preloadRecords?: SessionRecord[],
   ): Promise<{
     records: SessionRecord[]
-    preloadRecords?: SessionRecord[]
     imageBytes?: Map<string, RequestImageBytes>
   }> {
-    const unchanged = { records, ...(preloadRecords ? { preloadRecords } : {}) }
+    const unchanged = { records }
     const bearing: Array<SessionRecord & { images: ImageAttachmentRef[] }> = []
     const refs = new Map<string, { ref: ImageAttachmentRef; currentTurn: boolean }>()
-    // Preloaded records are scanned with the session's own, so an inherited
-    // image that survived the capability projection gets real bytes loaded for
-    // it — and one whose files are gone degrades to the same placeholder
-    // instead of being sent as a ref with nothing behind it.
-    for (const record of [...(preloadRecords ?? []), ...records]) {
+    for (const record of records) {
       if (record.type !== 'message' && record.type !== 'tool_result') continue
       if (!record.images || record.images.length === 0) continue
       const currentTurn = recordIsCurrentTurn(record, currentTurnId, currentUserMessageId)
@@ -1557,38 +1536,8 @@ export class AgentLoop {
     })
     return {
       records: applyProjection(records),
-      ...(preloadRecords ? { preloadRecords: applyProjection(preloadRecords) } : {}),
       imageBytes,
     }
-  }
-
-  /**
-   * The per-request image rules applied to the fork preload — the parent
-   * transcript a fork subagent inherits (design §12.3).
-   *
-   * The preload never passes through `loadPreparedRecords`: it is not this
-   * session's log, and it must not be compacted, repaired, or written back. So
-   * the capability projection has to be applied here, or an inherited image
-   * would reach a model that may not accept images at all.
-   *
-   * Every preloaded record is history by construction — nothing in it carries
-   * this loop's turn id — so there is no current-turn exemption to grant: a
-   * text-only child degrades all of them to placeholders on *its own*
-   * capability, never on the parent's conclusion. The count and byte caps stay
-   * on the session's own records; the preload is already bounded by the fork's
-   * token budget before it gets here.
-   */
-  private async projectPreloadImages(currentTurnId: string): Promise<SessionRecord[] | undefined> {
-    const preload = this.options.preloadRecords
-    if (!preload || preload.length === 0) return preload
-    const projection = await projectTurnImagesForRequest({
-      records: preload,
-      currentTurnId,
-      supportsImageInput: this.activeModel.supportsImageInput,
-      modelLabel: this.activeModel.model,
-      ...(this.options.attachmentFacts ? { resolveAttachmentFacts: this.options.attachmentFacts } : {}),
-    })
-    return projection.records
   }
 
   /**
@@ -1878,10 +1827,8 @@ export class AgentLoop {
     return {
       tools,
       system: this.options.system,
-      // An inherited prefix already opens with the parent's instructions message.
-      ...(this.options.inheritedRequest
-        ? {}
-        : { projectContext: this.options.projectContext, memoryIndex: this.options.memoryIndex }),
+      projectContext: this.options.projectContext,
+      memoryIndex: this.options.memoryIndex,
       memoryPrompt: this.options.memoryPrompt,
       rolePrompt: this.options.rolePrompt,
       criticalSystemReminder: this.options.criticalSystemReminder,
@@ -1890,7 +1837,6 @@ export class AgentLoop {
       toolContext: this.options.toolContext,
       env,
       dynamicToolSearchEnabled,
-      inheritedRequest: this.options.inheritedRequest,
       imageTokenStrategy: resolveImageTokenStrategy(this.activeModel.providerName, this.activeModel.supportsImageInput),
     }
   }
@@ -1946,19 +1892,14 @@ export class AgentLoop {
     cacheSource: CacheBreakSource,
     tail: { includeUserContext: boolean; permissionMode?: PermissionMode; transientUserContext?: () => string[] },
   ): Promise<{ request: ModelRequest; selection: ContextSelectionPlan; overhead: RequestOverhead; inputTokens: number }> {
-    // The inherited half of the request, re-derived per iteration for the
-    // same reason the session records are: the model serving this attempt
-    // decides what its images become.
-    const preloadRecords = await this.projectPreloadImages(turnId)
     // Final image-byte loading (design §11.1 step 5): after every projection,
     // cap, and compaction decision above, load the send-version bytes the
     // request will actually carry. Current-turn files that cannot be loaded
     // stop the request; unloadable history degrades to placeholders here.
-    const imageSend = await this.prepareRequestImages(records, turnId, userMessageId, preloadRecords)
+    const imageSend = await this.prepareRequestImages(records, turnId, userMessageId)
     const { toolSearchState, toolsForContext } = this.toolsForRequest()
 
     const built = await this.options.contextBuilder.build({
-      preloadRecords: imageSend.preloadRecords,
       records: imageSend.records,
       ...this.fixedContextInput(toolsForContext, toolSearchState.enabled),
       includeUserContext: tail.includeUserContext,
@@ -2028,7 +1969,7 @@ export class AgentLoop {
       ...(imageSend.imageBytes ? { imageBytes: imageSend.imageBytes } : {}),
     }
     return {
-      request: this.options.inheritedRequest ? withInheritedPrefix(this.options.inheritedRequest, request) : request,
+      request,
       selection: built.selection,
       overhead: built.overhead,
       inputTokens: built.inputTokens,
@@ -2059,9 +2000,8 @@ export class AgentLoop {
   }
 
   /**
-   * One compaction attempt with everything both paths share. An inheriting fork
-   * compacts only its own records: the parent prefix ahead of them is sent
-   * unchanged, so its cache still hits. The summary is a model call of its own,
+   * One compaction attempt with everything both paths share.
+   * The summary is a model call of its own,
    * often the longest wait in the turn; bracketed so a shell can say so while it runs.
    */
   private async runCompaction(
@@ -2738,55 +2678,6 @@ function startsWithInterruptionCommand(input: string, commands: readonly string[
 
 function isUserCancelAbort(signal: AbortSignal | undefined): boolean {
   return signal?.aborted === true && signal.reason === 'user-cancel'
-}
-
-/** The cacheable half of a request: no per-request tail, no per-attempt fields. */
-function durablePrefix(request: ModelRequest): ModelRequest {
-  const isTransient = (message: ChatMessage) => message.transient === true
-  return {
-    system: request.system,
-    systemBlocks: request.systemBlocks,
-    messages: request.messages.filter((message) => !isTransient(message)),
-    contextItems: request.contextItems?.filter((item) => !(item.kind === 'message' && isTransient(item.message))),
-    tools: request.tools,
-    model: request.model,
-    promptCacheRetention: request.promptCacheRetention,
-    thinking: request.thinking,
-    effort: request.effort,
-    cacheSource: request.cacheSource,
-    cacheRuntime: request.cacheRuntime,
-    promptCacheKey: request.promptCacheKey,
-    hasDeferredTools: request.hasDeferredTools,
-    allDeferredToolNames: request.allDeferredToolNames,
-    postCompactDiscoveredNames: request.postCompactDiscoveredNames,
-    ...(request.imageBytes ? { imageBytes: request.imageBytes } : {}),
-  }
-}
-
-/**
- * `own` behind the inherited prefix. Everything that renders ahead of the
- * history comes from the parent, so the bytes match; a tool this loop found
- * that the parent's request lacked trails the parent's list.
- */
-function withInheritedPrefix(inherited: ModelRequest, own: ModelRequest): ModelRequest {
-  const inheritedTools = inherited.tools ?? []
-  const inheritedNames = new Set(inheritedTools.map((tool) => tool.name))
-  const imageBytes = new Map([...(inherited.imageBytes ?? []), ...(own.imageBytes ?? [])])
-  return {
-    ...own,
-    system: inherited.system,
-    systemBlocks: inherited.systemBlocks,
-    thinking: inherited.thinking,
-    effort: inherited.effort,
-    promptCacheKey: inherited.promptCacheKey ?? own.promptCacheKey,
-    tools: [...inheritedTools, ...(own.tools ?? []).filter((tool) => !inheritedNames.has(tool.name))],
-    hasDeferredTools: inherited.hasDeferredTools,
-    allDeferredToolNames: inherited.allDeferredToolNames,
-    postCompactDiscoveredNames: new Set([...(inherited.postCompactDiscoveredNames ?? []), ...(own.postCompactDiscoveredNames ?? [])]),
-    messages: [...inherited.messages, ...own.messages],
-    contextItems: [...(inherited.contextItems ?? []), ...(own.contextItems ?? [])],
-    ...(imageBytes.size > 0 ? { imageBytes } : {}),
-  }
 }
 
 function userMessageInput(message: ChatMessage): UserInput {

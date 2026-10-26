@@ -1317,6 +1317,34 @@ test('the canvas is a flush clipped pane divided by a hairline', () => {
   assert.ok(declares(divider, 'top', '0') && declares(divider, 'bottom', '0'))
 })
 
+test('the window material tints the frame on every platform that can draw one', () => {
+  // macOS's vibrancy and the Windows 11 acrylic backdrop (`main.ts`) are the same
+  // arrangement: the window stays clear, and this tint is the only fill over it.
+  // A platform left out of these rules shows the desktop unfiltered behind its
+  // text, because `#titlebar` and `#sidebar` paint no fill of their own.
+  const platforms = ['darwin', 'win32']
+  const tint = (platform: string): Block | undefined => blocks.find((block) =>
+    block.at === undefined
+    && block.selector.includes(`:root[data-platform="${platform}"] body`)
+    && declares(block, 'background-color', 'color-mix(in srgb, var(--surface-base) 55%, transparent)'))
+  for (const platform of platforms) {
+    assert.ok(tint(platform), `${platform}: the frame's fill must be a tint over the window material`)
+  }
+
+  // Over a material an opaque ladder rung is a slab on the blur, so the sidebar's
+  // two rungs become washes of the text colour instead.
+  const washes = blocks.find((block) =>
+    block.at === undefined
+    && declares(block, '--surface-hover', 'color-mix(in srgb, var(--text-primary) 5%, transparent)'))
+  assert.ok(washes, 'the sidebar must wash its hover rung over a material')
+  for (const platform of platforms) {
+    assert.ok(
+      washes.selector.includes(`:root[data-platform="${platform}"] #sidebar`),
+      `${platform}: a hover rung without its platform is a wash no window can use`,
+    )
+  }
+})
+
 test('the settings screen scrolls full width and reads in a column', () => {
   // todo V7: two nodes, two jobs. Merging them back into one gives the reading
   // measure a scrollbar of its own, floating mid-canvas.
@@ -1489,7 +1517,25 @@ test('a long session name cannot widen its row out of the rail', () => {
   // its size and the name is the half that gives way.
   const title = blockFor('.session-title')
   assert.ok(declares(title, 'min-width', '0'), 'the title must be allowed to shrink below its text')
-  assert.ok(declares(title, 'text-overflow', 'ellipsis'), 'the truncation is the ellipsis')
+  assert.ok(
+    !title.decls.some((decl) => decl.prop === 'text-overflow'),
+    'the name is cut by the fade on the right edge, not by an ellipsis three dots wide',
+  )
+  // The fade belongs to a cut, not to every row: the mask covers the box's last
+  // 24px whatever is in them, so on a name that fills the row down to its final
+  // glyph it would dim that glyph while claiming there is more to read. `.overflow`
+  // is the browser's own answer to "is this name cut" (`sidebarView`'s
+  // `ResizeObserver`, after layout), so the resting rule must stay maskless.
+  assert.ok(
+    !title.decls.some((decl) => decl.prop === 'mask-image'),
+    'a name that fits must not lose its last glyph to a fade over nothing',
+  )
+  assert.ok(
+    blockFor('.session-title.overflow').decls.some(
+      (decl) => decl.prop === 'mask-image' && decl.value.includes('calc(100% - 24px)'),
+    ),
+    'the cut has to be a fade, or the last glyph is guillotined mid-stroke',
+  )
   assert.ok(
     declares(blockFor('.session-actions'), 'flex', '0 0 auto'),
     'the actions slot never shrinks, so the delete button keeps its place',
@@ -1497,11 +1543,12 @@ test('a long session name cannot widen its row out of the rail', () => {
 })
 
 test('the hover marquee loops in one direction, inside the clip', () => {
-  // Three halves that only work together: `.session-title` is the box with the
-  // ellipsis, `.session-title-text` is the track that travels inside it, and
-  // `.session-title-echo` is the second copy the loop wraps onto. Animating the
-  // box would slide the already-truncated result out of view instead of revealing
-  // anything, and without the echo the restart is a visible jump.
+  // Three halves that only work together: `.session-title` is the clipping box
+  // with the fade on its right edge, `.session-title-text` is the track that
+  // travels inside it, and `.session-title-echo` is the second copy the loop
+  // wraps onto. Animating the box would slide the already-clipped result out of
+  // view instead of revealing anything, and without the echo the restart is a
+  // visible jump.
   assert.ok(
     declares(blockFor('.session-title'), 'overflow', 'hidden'),
     'the title is the clipper the text moves behind',
@@ -1535,14 +1582,15 @@ test('the hover marquee loops in one direction, inside the clip', () => {
     ),
     'the echo joins the track only while it is moving',
   )
-  assert.ok(
-    declares(
-      blockFor('.session-row:hover .session-title.marquee, .session-row:focus-within .session-title.marquee'),
-      'text-overflow',
-      'clip',
-    ),
-    'the ellipsis and the scroll must never describe the same frame',
+  // One cut for every state of the name, which is what makes the marquee
+  // invisible as a change of state before it moves: the ellipsis it used to swap
+  // off never comes back (nor does the reduced-motion block put it back), and
+  // the fade it swaps on is already there. A `text-overflow` on this element in
+  // any state would let two truncations describe frames of the same name.
+  const titleStates = blocks.filter(
+    (block) => block.selector.includes('.session-title') && block.decls.some((decl) => decl.prop === 'text-overflow'),
   )
+  assert.deepEqual(titleStates.map((block) => block.selector), [])
 
   // One direction, and exactly two steps. A third would mean somebody
   // reintroduced the shuttle — a marquee that scrolls back is reading backwards.
@@ -2430,7 +2478,6 @@ test('nothing in a turn can widen the transcript', () => {
   // what stops the fold from being optional, because a flex item that will not
   // shrink is the column's floor whether or not its text may wrap.
   for (const selector of [
-    '.step-summary',
     '.search-file-head .btn-label',
     '.search-hit-text',
   ]) {

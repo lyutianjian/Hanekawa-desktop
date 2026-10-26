@@ -1881,12 +1881,28 @@ test('get-settings projects models, routing and the save target', async () => {
   assert.equal(settings.routing.plan, 'inherit', 'an unset role reads as inherit')
   assert.deepEqual(
     settings.routing.subagent.map((row) => row.type),
-    ['general', 'fork', 'explore', 'plan'],
-    'the four built-ins always get a row',
+    ['general', 'explore', 'plan'],
+    'the three built-ins always get a row',
   )
   assert.match(settings.saveTarget, /config\.json$/)
   assert.deepEqual(settings.providers, ['anthropic', 'openai', 'openai-responses'])
   assert.deepEqual(projects, [{ projectRoot: h.entry.root, projectName: 'alpha' }])
+})
+
+test('settings exclude retired fork routing while preserving custom agent model rows', async () => {
+  const h = createHarness()
+  seedConfig(h.project)
+  h.project.config.config.routing!.subagent = { fork: 'small', explore: 'small', reviewer: 'big' }
+
+  const { settings } = await h.client.getSettings(h.entry.root)
+
+  assert.deepEqual(settings.subagentTypes, ['general', 'explore', 'plan', 'reviewer'])
+  assert.deepEqual(settings.routing.subagent, [
+    { type: 'general', value: 'inherit' },
+    { type: 'explore', value: 'small' },
+    { type: 'plan', value: 'inherit' },
+    { type: 'reviewer', value: 'big' },
+  ])
 })
 
 test('a configured model that cannot resolve is still listed, and says so', async () => {
@@ -2741,6 +2757,25 @@ test('open-in-editor hands over the project cwd, not the normalized root', async
   assert.deepEqual(h.editorRequests, [{ cwd: fixturePath('Repo', 'Alpha') }])
   assert.notEqual(h.entry.root, fixturePath('Repo', 'Alpha'), 'the key differs from the cwd, or this proves nothing')
 })
+
+for (const open of [true, false]) {
+  test(`open-in-editor uses Documents/myagent for a ${open ? 'live' : 'closed'} global workspace`, async () => {
+    const home = os.homedir()
+    const h = createHarness({ cwd: open ? home : fixturePath('repo', 'alpha') })
+    const root = projectRootKey(home)
+    const workingDir = path.join(home, 'Documents', 'myagent')
+    assert.equal(existsSync(workingDir), false)
+    await h.client.openInEditor(root)
+    await h.client.openInEditor(root, { path: 'hello.txt', line: 3 })
+    assert.equal(existsSync(workingDir), true)
+    assert.deepEqual(h.editorRequests, [
+      { cwd: workingDir },
+      { cwd: workingDir, target: { path: path.join(workingDir, 'hello.txt'), line: 3 } },
+    ])
+    await assert.rejects(h.client.openInEditor(root, { path: '../outside.txt' }), /在项目目录之外/)
+    assert.equal(h.editorRequests.length, 2)
+  })
+}
 
 test('open-in-editor reports a launch failure rather than answering ok', async () => {
   const h = createHarness()

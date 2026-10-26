@@ -31,8 +31,8 @@ import {
 export type WelcomePillKind = 'project' | 'branch'
 
 export const WELCOME_TITLE = '接下来做什么？'
-/** Where the global workspace's records land — the pill says so. */
-export const WELCOME_GLOBAL_LOCATION = '~/.myagent'
+/** Where files created by global sessions land. */
+export const WELCOME_GLOBAL_LOCATION = '~/Documents/myagent'
 /** Shown until `hello` answers; the name is unknown for a frame or two. */
 export const WELCOME_PROJECT_FALLBACK = '当前项目'
 

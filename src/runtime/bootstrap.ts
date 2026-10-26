@@ -20,6 +20,7 @@ import { ImageAttachmentService, attachmentSendVersionPath } from '../services/i
 import type { AttachmentFactsResolver } from '../harness/turnImages.js'
 import { removeLegacyShadowGit } from '../services/fileHistory/legacyShadowGit.js'
 import { clearProjectContextCache, getProjectEntries } from '../services/context/projectContext.js'
+import { getDefaultWorkingDir } from '../utils/paths.js'
 import type { SessionMeta } from '../sessions/service.js'
 import { registerBuiltinCommands } from '../commands/index.js'
 import { CommandRegistry } from '../commands/registry.js'
@@ -100,6 +101,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
 
   const backgroundTasks = new BackgroundTaskRegistry(
     (sessionId, record) => store.appendRecord(sessionId, record),
+    (text) => config.redactToolOutput(text),
   )
 
   // One per project, like `backgroundTasks` above: attachments are addressed
@@ -133,10 +135,11 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
     )
   }
 
-  // `AGENTS.md` / `CLAUDE.md` from cwd upwards, read once here. Mutable for the
+  // `AGENTS.md` / `CLAUDE.md` from the working directory upwards, read once here. Mutable for the
   // same reason `settings` is: `reloadSettings()` re-reads them and the next
   // runtime built picks up the new contents.
-  let projectEntries = await getProjectEntries(cwd)
+  const contextDir = getDefaultWorkingDir(cwd)
+  let projectEntries = await getProjectEntries(contextDir)
 
   // Read live rather than captured: the default model is editable from the
   // settings screen, and a new session opened afterwards has to start on the
@@ -228,8 +231,8 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
     settings = next
     const configChanged = previousConfig !== JSON.stringify(config.get())
 
-    clearProjectContextCache(cwd)
-    const nextProjectEntries = await getProjectEntries(cwd)
+    clearProjectContextCache(contextDir)
+    const nextProjectEntries = await getProjectEntries(contextDir)
     const projectEntriesChanged = JSON.stringify(nextProjectEntries) !== JSON.stringify(projectEntries)
     projectEntries = nextProjectEntries
 

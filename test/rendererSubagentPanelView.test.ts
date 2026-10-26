@@ -34,6 +34,30 @@ function find(view: StubView, name: string): StubView | undefined {
   return undefined
 }
 
+test('agent headings use the short task description, with the type on the detail meta line', () => {
+  const stub = installDomStub()
+  try {
+    const container = stub.createContainer('subagents')
+    const selected: Array<string | undefined> = []
+    const view = createSubagentPanelView(container, {
+      onSelect: (id) => selected.push(id), loadTranscript: async () => [], onOpenPath: () => {},
+    })
+    const run = { ...entry, name: '子代理', description: '核对工具权限', agentType: 'explore' }
+    view.render({ entries: [run], selected: undefined })
+    assert.equal(find(stub.inspect(container), 'subagent-name')?.text, '核对工具权限')
+    assert.equal(stub.inspect(container).text.includes('子代理'), false)
+    view.render({ entries: [run], selected: run.id })
+    assert.equal(find(stub.inspect(container), 'subagent-name')?.text, '核对工具权限')
+    assert.equal(find(stub.inspect(container), 'subagent-meta')?.text, 'explore · 完成')
+    // Stopping belongs to the task list's rows, not to the run's own page.
+    assert.equal(find(stub.inspect(container), 'subagent-stop'), undefined)
+    stub.click(find(stub.inspect(container), 'subagent-back')!.node)
+    assert.deepEqual(selected, [undefined])
+  } finally {
+    stub.uninstall()
+  }
+})
+
 test('a transcript that cannot be read says so, and 重试 reads it again', async (t) => {
   const stub = installDomStub()
   t.after(() => stub.uninstall())
@@ -48,7 +72,6 @@ test('a transcript that cannot be read says so, and 重试 reads it again', asyn
       return []
     },
     onOpenPath: () => {},
-    onStop: () => {},
   })
   const settle = () => new Promise((resolve) => setImmediate(resolve))
 
@@ -107,7 +130,6 @@ test('a hidden page stops reading and stops its clock, and comes back in one rea
       return []
     },
     onOpenPath: () => {},
-    onStop: () => {},
   })
 
   const startedAt = Date.now()
@@ -157,7 +179,6 @@ test('a read that lands after the page was hidden does not paint over it', async
       return Promise.resolve(records)
     },
     onOpenPath: () => {},
-    onStop: () => {},
   })
   const timeline = () => find(stub.inspect(container), 'subagent-transcript')!
 
@@ -178,6 +199,65 @@ test('a read that lands after the page was hidden does not paint over it', async
   assert.equal(timeline().hidden, false, 'and this one is on screen, so it lands')
 })
 
+/**
+ * The page's turns. It used to render its transcript with no activity at all, so
+ * every assistant message drew a meta row of its own — time, 复制 and the model
+ * under each sentence, as if each one had settled a turn on its own. One turn has
+ * one end, and the row belongs there; a turn still running has none, and says it is
+ * running instead.
+ */
+
+const turnRecords: SessionRecord[] = [
+  { type: 'message', id: 'u1', role: 'user', content: '看一下', turnId: 't1', createdAt: '2026-10-10T00:00:00.000Z' },
+  { type: 'message', id: 'a1', role: 'assistant', content: '先看目录', turnId: 't1', createdAt: '2026-10-10T00:00:01.000Z' },
+  {
+    type: 'message',
+    id: 'a2',
+    role: 'assistant',
+    content: '看完了',
+    turnId: 't1',
+    createdAt: '2026-10-10T00:00:02.000Z',
+    model: 'claude-opus-4-1',
+  },
+]
+
+function descendants(view: StubView): StubView[] {
+  return [view, ...view.children.flatMap(descendants)]
+}
+
+function metasIn(node: StubView): StubView[] {
+  return node.children.filter((child) => child.classes.includes('item-meta'))
+}
+
+test('a turn draws one meta row, at its end, and only once the run has settled', async (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('subagents')
+  const view = createSubagentPanelView(container, {
+    onSelect: () => {},
+    loadTranscript: async () => turnRecords,
+    onOpenPath: () => {},
+  })
+  const answers = (node: StubView): StubView[] => descendants(node).filter((child) => child.classes.includes('assistant'))
+
+  view.render({ entries: [running], selected: 'call-2' })
+  await flush()
+  const live = find(stub.inspect(container), 'subagent-transcript')!
+  assert.equal(live.hidden, false, 'the transcript is the page')
+  assert.deepEqual(answers(live).map((node) => metasIn(node).length), [0, 0], 'no meta row under the turn\'s prose while it runs')
+  assert.equal(text(live, 'waiting').includes('处理中'), true, 'the open turn says what it is doing, once, at its end')
+
+  // The records do not change when the run ends: the flag is the news, and the page
+  // has to repaint on it rather than wait for a read that will not come.
+  view.render({ entries: [{ ...running, finished: true, status: 'done' }], selected: 'call-2' })
+  assert.equal(text(stub.inspect(container), 'waiting'), '', 'a settled turn has no status line')
+  const settled = find(stub.inspect(container), 'subagent-transcript')!
+  assert.deepEqual(answers(settled).map((node) => metasIn(node).length), [0, 1], 'only the turn\'s last message ends it')
+  const footer = metasIn(answers(settled)[1]!)[0]!
+  assert.equal(find(footer, 'item-copy') !== undefined, true, 'and that end offers its copy')
+  assert.equal(find(footer, 'item-time') !== undefined, true, 'and its time')
+})
+
 test('closing the page stops its poll as well', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] })
   const stub = installDomStub()
@@ -191,7 +271,6 @@ test('closing the page stops its poll as well', async (t) => {
       return []
     },
     onOpenPath: () => {},
-    onStop: () => {},
   })
   view.setVisible(true)
   view.render({ entries: [running], selected: 'call-2' })

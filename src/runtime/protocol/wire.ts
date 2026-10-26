@@ -564,18 +564,15 @@ export interface WireRunToolResult {
 export interface WireHelloResult {
   sessionId: string
   session: SessionMeta
+  /** This scope's working directory, where tools run. */
   cwd: string
   /**
-   * The same `cwd`, normalized the way `WirePaneInfo.projectRoot` is
-   * (`projectRootKey`).
-   *
-   * Separate from `cwd` because that one is for display and this one is for
-   * comparison: on Windows and macOS the filesystem does not care about case, so
-   * a raw `cwd` from argv may not match the key the pane list carries — and the
-   * tab bar decides from that comparison whether a row is closable.
+   * The normalized project root (`projectRootKey`), which keys the session's
+   * data and matches `WirePaneInfo.projectRoot`. Separate from the working
+   * directory for global sessions and coordination threads.
    */
   projectRoot: string
-  /** `basename(cwd)` — the same value `WirePaneInfo.projectName` carries. */
+  /** The project display name — the same value `WirePaneInfo.projectName` carries. */
   projectName: string
   /**
    * Whether this pane runs in the global (home-rooted) workspace rather than a

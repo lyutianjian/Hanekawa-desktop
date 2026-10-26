@@ -18,8 +18,7 @@ export function runtimeDataRoots(): string[] {
  * both backends take exclusions: relative to `target` with `/` separators.
  *
  * Only a broad search gets these. A search the user pointed somewhere else
- * inside `~/.myagent` — a spill directory, a plan — keeps every file there;
- * `resolveToolPath` already decided that path was reachable.
+ * inside `~/.myagent` — including a session directory — keeps every file there.
  */
 export function runtimeDataExclusions(target: string): string[] {
   const result: string[] = []

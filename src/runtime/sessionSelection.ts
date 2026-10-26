@@ -18,6 +18,8 @@ import { logDiagnostics } from '../harness/diagnostics.js'
 import type { SessionMeta } from '../sessions/service.js'
 import type { RuntimeConfigurationIssue } from './errors.js'
 
+type SelectionSession = { coordination?: Pick<NonNullable<SessionMeta['coordination']>, 'role' | 'modelOverride' | 'effortOverride'> }
+
 export interface SessionModelSelection {
   modelKey?: string
   /** Already clamped to what `modelKey` accepts; the preference itself is untouched. */
@@ -28,7 +30,7 @@ export interface SessionModelSelection {
 
 export function resolveSessionModelSelection(
   config: ConfigService,
-  session: Pick<SessionMeta, 'coordination'>,
+  session: SelectionSession,
   options: { defaultEffort: EffortLevel },
 ): SessionModelSelection {
   const coordination = session.coordination
@@ -48,7 +50,7 @@ export function resolveSessionModelSelection(
 
 function resolveModel(
   config: ConfigService,
-  coordination: SessionMeta['coordination'],
+  coordination: SelectionSession['coordination'],
 ): { modelKey?: string; issue?: RuntimeConfigurationIssue } {
   const override = coordination?.modelOverride?.trim()
   if (override) {

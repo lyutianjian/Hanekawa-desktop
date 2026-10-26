@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { subagentEntries } from '../src/desktop/renderer/model/subagentPanel.js'
+import { subagentEntries, subagentTone } from '../src/desktop/renderer/model/subagentPanel.js'
 import { createTranscriptState, withDetachedRuns, type TranscriptItem } from '../src/desktop/renderer/model/transcript.js'
 
 function agent(id: string, overrides: Partial<TranscriptItem> = {}, tool: Partial<NonNullable<TranscriptItem['tool']>> = {}): TranscriptItem {
@@ -41,18 +41,40 @@ test('an entry carries the task, the fuller reply without the model-facing notic
   assert.equal(entry?.reply, '完整的回复，比摘要长。')
   assert.deepEqual(entry?.notes, ['输出可能不完整'])
   assert.equal(entry?.model, 'opus')
-  assert.equal(entry?.toolCount, 12)
   assert.equal(entry?.agentType, 'explore')
   assert.equal(entry?.durationMs, 41_000)
 })
 
-test('a running entry shows its latest tool and live count; a background start notice yields to the run summary', () => {
+test('the short description survives replay and results independently of the full task', () => {
+  const records = [
+    { type: 'tool_use', id: 'call', tool: 'Agent', riskLevel: 'safe', input: { subagent_type: 'explore', description: '核对工具权限', task: '阅读所有工具，逐一核对它们的权限和风险分类。' }, createdAt: '2026-10-25T00:00:00Z' },
+    { type: 'tool_result', id: 'result', tool: 'Agent', toolUseId: 'call', ok: true, content: '检查完毕', createdAt: '2026-10-25T00:00:03Z' },
+  ] as const
+  const [running] = subagentEntries(createTranscriptState(records.slice(0, 1)).items)
+  const [done] = subagentEntries(createTranscriptState(records).items)
+  assert.equal(running?.description, '核对工具权限')
+  assert.equal(done?.description, '核对工具权限')
+  assert.equal(done?.task, '阅读所有工具，逐一核对它们的权限和风险分类。')
+  assert.equal(done?.reply, '检查完毕')
+})
+
+test('old calls without a description get a bounded single-line preview, not the whole brief', () => {
+  const task = `目标目录是 /project，\n${'检查所有工具的权限。'.repeat(30)}`
+  const [entry] = subagentEntries([agent('old', {}, { task })])
+  assert.equal(entry?.description.length, 80)
+  assert.equal(entry?.description.includes('\n'), false)
+  assert.ok(entry?.description.endsWith('…'))
+  assert.equal(entry?.task, task)
+})
+
+test('a running entry says when it started, not what it is doing or how much; a background start notice yields to the run summary', () => {
   const [running] = subagentEntries([agent('a', { pending: true }, {
     startedAt: '2026-09-24T10:00:00.000Z',
     live: { tool: 'Read', summary: 'notes.txt', toolCount: 3 },
   })])
-  assert.deepEqual(running?.live, { tool: 'Read', summary: 'notes.txt', toolCount: 3 })
-  assert.equal(running?.toolCount, 3)
+  // The run's own page lists its steps: a count beside the row would be the same
+  // thing said twice, and a tool name there was a third place to keep in step.
+  assert.deepEqual(['live' in (running ?? {}), 'toolCount' in (running ?? {})], [false, false])
   assert.equal(running?.startedAt, Date.parse('2026-09-24T10:00:00.000Z'))
 
   const [background] = subagentEntries([agent('b', {}, {
@@ -91,4 +113,10 @@ test('an Agent call the stop cut off is interrupted, not failed', () => {
   ]).sort((x, y) => x.id.localeCompare(y.id))
   assert.deepEqual([stopped?.status, stopped?.finished], ['interrupted', true])
   assert.equal(failed?.status, 'failed')
+})
+
+test('a status wears the thread list\'s tone, so one state reads the same in both lists', () => {
+  const statuses = ['running', 'awaiting-approval', 'done', 'failed', 'interrupted'] as const
+  // A stopped run gets the neutral rung, not the failure colour: nothing failed.
+  assert.deepEqual(statuses.map(subagentTone), ['running', 'attention', 'muted', 'danger', 'neutral'])
 })

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  autoOpensThreads,
   isSectionCollapsed,
   keepSelectedSubagent,
   parsePanelClosed,
@@ -13,10 +12,8 @@ import {
   threadStripText,
   threadStripView,
   threadsHeadView,
-  visibleSections,
   withSectionCollapsed,
   type SidePanelInput,
-  type SideSection,
 } from '../src/desktop/renderer/model/sidePanel.js'
 import type { WireCoordinationThreads, WireThreadInfo, WireThreadStatus } from '../src/desktop/shellProtocol.js'
 
@@ -31,7 +28,7 @@ function input(overrides: Overrides = {}): SidePanelInput {
     mode: 'tasks',
     panelClosed: false,
     ...rest,
-    has: { plan: false, commands: false, subagents: false, threads: false, ...has },
+    has: { plan: false, running: false, finished: false, ...has },
   }
 }
 
@@ -40,10 +37,8 @@ test('an ordinary session follows its lane switch and always offers its three pa
   const cases: Array<[Overrides, unknown]> = [
     [{}, { open: false, mode: 'tasks', modes: pages, sections: [] }],
     [{ laneOpen: true, mode: 'browser' }, { open: true, mode: 'browser', modes: pages, sections: [] }],
-    [{ laneOpen: true, mode: 'changes', has: { plan: true, commands: true, subagents: true } }, { open: true, mode: 'changes', modes: pages, sections: ['plan', 'commands', 'subagents'] }],
-    // The project has coordination: 线程 sits after 任务.
-    [{ laneOpen: true, mode: 'threads', has: { threads: true } }, { open: true, mode: 'threads', modes: ['tasks', 'threads', 'changes', 'browser'], sections: [] }],
-    // 线程 chosen, then the project's coordination went away: back to 任务.
+    [{ laneOpen: true, mode: 'changes', has: { plan: true, running: true, finished: true } }, { open: true, mode: 'changes', modes: pages, sections: ['plan', 'running', 'finished'] }],
+    // A previous 线程 selection cannot expose that page in an ordinary session.
     [{ laneOpen: true, mode: 'threads' }, { open: true, mode: 'tasks', modes: pages, sections: [] }],
     [{ panelClosed: true, laneOpen: true }, { open: true, mode: 'tasks', modes: pages, sections: [] }],
   ]
@@ -56,47 +51,40 @@ test('a coordination session follows its project switch, whatever the lane switc
     [{ mode: 'threads' }, { open: true, mode: 'threads', modes: pages, sections: [] }],
     [{ mode: 'threads', panelClosed: true }, { open: false, mode: 'threads', modes: pages, sections: [] }],
     [{ mode: 'browser', laneOpen: true, panelClosed: true }, { open: false, mode: 'browser', modes: pages, sections: [] }],
-    [{ mode: 'tasks', has: { plan: true, subagents: true } }, { open: true, mode: 'tasks', modes: pages, sections: ['plan', 'subagents'] }],
+    [{ mode: 'tasks', has: { plan: true, finished: true } }, { open: true, mode: 'tasks', modes: pages, sections: ['plan', 'finished'] }],
   ]
   for (const [overrides, expected] of cases) {
-    assert.deepEqual(sidePanelView(input({ ...overrides, coordinated: true, has: { threads: true, ...overrides.has } })), expected)
+    assert.deepEqual(sidePanelView(input({ ...overrides, coordinated: true })), expected)
   }
 })
 
 test('folds are remembered per project and survive bad storage', () => {
   let folded = parseSectionsCollapsed(null)
   assert.equal(isSectionCollapsed(folded, '/a', 'plan'), false)
+  assert.equal(isSectionCollapsed(folded, '/a', 'finished'), true)
+  assert.equal(isSectionCollapsed(folded, undefined, 'finished'), true)
   folded = withSectionCollapsed(folded, '/a', 'plan', true)
-  folded = withSectionCollapsed(folded, '/b', 'commands', true)
+  folded = withSectionCollapsed(folded, '/b', 'running', true)
+  folded = withSectionCollapsed(folded, '/b', 'finished', false)
   assert.equal(isSectionCollapsed(folded, '/a', 'plan'), true)
-  assert.equal(isSectionCollapsed(folded, '/a', 'commands'), false)
+  assert.equal(isSectionCollapsed(folded, '/a', 'running'), false)
+  assert.equal(isSectionCollapsed(folded, '/b', 'finished'), false)
   assert.equal(isSectionCollapsed(folded, undefined, 'plan'), false)
   const again = parseSectionsCollapsed(serializeSectionsCollapsed(folded))
   assert.deepEqual([...again.get('/a')!], ['plan'])
-  assert.deepEqual([...again.get('/b')!], ['commands'])
+  assert.deepEqual([...again.get('/b')!], ['running', 'finished'])
+  assert.equal(isSectionCollapsed(again, '/b', 'finished'), false)
+  assert.equal(isSectionCollapsed(withSectionCollapsed(again, '/b', 'finished', true), '/b', 'finished'), true)
   // Opening the last folded section drops the project's entry; the input is untouched.
   const opened = withSectionCollapsed(folded, '/a', 'plan', false)
   assert.equal(opened.has('/a'), false)
   assert.equal(isSectionCollapsed(folded, '/a', 'plan'), true)
-  // A section from before the task page (the old 线程 section) reads as nothing folded.
-  for (const raw of [null, '', 'nope', '[]', '{"/a":"plan"}', '{"/a":["threads"]}', '{"/a":["plan",3]}']) {
+  // Retired kind-based sections do not change the new groups' defaults.
+  for (const raw of [null, '', 'nope', '[]', '{"/a":"plan"}', '{"/a":["threads"]}', '{"/a":["commands","subagents"]}', '{"/a":["plan",3]}']) {
     const parsed = parseSectionsCollapsed(raw)
     assert.deepEqual([...(parsed.get('/a') ?? [])], raw === '{"/a":["plan",3]}' ? ['plan'] : [])
+    assert.equal(isSectionCollapsed(parsed, '/a', 'finished'), true)
   }
-})
-
-test('a page inside a section stands alone only while that section is open', () => {
-  const all: SideSection[] = ['plan', 'commands', 'subagents']
-  assert.deepEqual(visibleSections(all, new Set(), undefined), { sections: all, focus: undefined })
-  assert.deepEqual(visibleSections(all, new Set(), 'subagents'), { sections: ['subagents'], focus: 'subagents' })
-  assert.deepEqual(visibleSections(all, new Set<SideSection>(['subagents']), 'subagents'), { sections: all, focus: undefined })
-  assert.deepEqual(visibleSections(['plan'], new Set(), 'subagents'), { sections: ['plan'], focus: undefined })
-})
-
-test('a new thread raises the thread page only when the user has not closed the panel', () => {
-  assert.equal(autoOpensThreads(true, false), true)
-  assert.equal(autoOpensThreads(true, true), false)
-  assert.equal(autoOpensThreads(false, false), false)
 })
 
 test('the closed set round-trips and survives bad storage', () => {

@@ -5,6 +5,7 @@ import type { Tool, ToolContext, ToolResult } from '../../harness/types.js'
 import { countTextTokens } from '../../prompts/budget.js'
 import { resolveToolPath } from '../../utils/paths.js'
 import { readFileAndRemember } from '../fileState.js'
+import { configFileView } from '../configFileView.js'
 import {
   formatImageCaption,
   IMAGE_FILE_EXTENSIONS,
@@ -83,7 +84,8 @@ export const readFileTool: Tool = {
     // The full file is always remembered, even for a windowed read: Edit
     // matches against the remembered content, so a partial view must not
     // narrow what a later edit can address.
-    const content = await readFileAndRemember(absolute, context)
+    const raw = await readFileAndRemember(absolute, context)
+    const content = configFileView(absolute, context.redactToolOutput?.(raw) ?? raw)
     const totalLines = countLines(content)
 
     const window = sliceLines(content, offset, limit)

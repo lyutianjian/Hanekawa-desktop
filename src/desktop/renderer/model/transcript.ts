@@ -160,7 +160,7 @@ export interface ToolStepDetail {
   readonly durationMs?: number
   /** The call has a `tool_use` record but no approval yet (§3). */
   readonly awaitingApproval?: boolean
-  /** `Bash` and `Monitor` only: the model's own words for what the command does (`input.description`). */
+  /** `Bash`, `Monitor`, and `Agent`: the model's short description (`input.description`). */
   readonly description?: string
   /** `Bash` and `Monitor` only: the full command (`input.command`), untruncated, for the body and its copy button. */
   readonly command?: string
@@ -1530,11 +1530,6 @@ export function groupTranscript(input: readonly TranscriptItem[]): readonly Tran
   return entries
 }
 
-/** An `Agent` tool call: standalone in the transcript rather than a step of a run. */
-export function isAgentCall(item: TranscriptItem): boolean {
-  return item.kind === 'tool' && item.toolName === AGENT_TOOL && item.tool !== undefined
-}
-
 function isRunItem(item: TranscriptItem): boolean {
   return item.kind === 'thinking' || item.kind === 'tool' || item.kind === 'subagent'
 }
@@ -1583,13 +1578,6 @@ function buildTranscriptEntries(input: readonly TranscriptItem[]): TranscriptEnt
     if (asked) {
       flush(false)
       entries.push({ kind: 'item', item: receiptItem(item.id, item, asked) })
-      continue
-    }
-    // A sub-agent is its own line, not a row of the work around it: that work
-    // splits into a run on either side.
-    if (isAgentCall(item)) {
-      flush(false)
-      entries.push({ kind: 'item', item })
       continue
     }
     // A thought is a line of its own, never a row of the work around it.
@@ -1738,12 +1726,13 @@ function receiptItem(id: string, item: TranscriptItem, receipt: Receipt): Transc
   }
 }
 
-function agentTask(input: unknown): { task?: string; agentType?: string } {
+function agentTask(input: unknown): { task?: string; agentType?: string; description?: string } {
   if (typeof input !== 'object' || input === null) return {}
-  const { task, subagent_type: agentType } = input as { task?: unknown; subagent_type?: unknown }
+  const { task, subagent_type: agentType, description } = input as { task?: unknown; subagent_type?: unknown; description?: unknown }
   return {
     ...(typeof task === 'string' && task.length > 0 ? { task } : {}),
     ...(typeof agentType === 'string' && agentType.length > 0 ? { agentType } : {}),
+    ...(typeof description === 'string' && description.trim().length > 0 ? { description: description.trim() } : {}),
   }
 }
 

@@ -4,9 +4,9 @@
  * and what the thread tag above the composer says. Pure, from wire types only.
  *
  * Each page has its own button at the title bar's far end: 任务 (a column of
- * collapsible sections — plan, background commands, sub-agents — each present
- * only while it has something to show), 线程 (only where the project has
- * coordination), 改动 (the session's edited files) and 浏览器, a native view
+ * collapsible sections — plan, running tasks, finished tasks — each present
+ * only while it has something to show), 线程 (only in coordinator or thread
+ * sessions), 改动 (the session's edited files) and 浏览器, a native view
  * that needs one steady rectangle. A coordinator or thread session's open state
  * is remembered per project; an ordinary session's per lane.
  */
@@ -15,9 +15,9 @@ import type { WireCoordinationThreads } from '../../shellProtocol.js'
 import { coordinationCounts, threadBlocked } from './coordinationStatus.js'
 
 export type SideMode = 'tasks' | 'threads' | 'changes' | 'browser'
-export type SideSection = 'plan' | 'commands' | 'subagents'
+export type SideSection = 'plan' | 'running' | 'finished'
 
-export const SIDE_SECTIONS: readonly SideSection[] = ['plan', 'commands', 'subagents']
+export const SIDE_SECTIONS: readonly SideSection[] = ['plan', 'running', 'finished']
 
 export const SIDE_MODE_LABELS: Readonly<Record<SideMode, string>> = {
   tasks: '任务',
@@ -44,7 +44,7 @@ export function serializePanelClosed(closed: ReadonlySet<string>): string {
   return JSON.stringify([...closed])
 }
 
-/** The sections each project's user folded; everything else is open. */
+/** Exceptions to the defaults: finished is folded, plan and running are open. */
 export type SectionsCollapsed = ReadonlyMap<string, ReadonlySet<SideSection>>
 
 export function parseSectionsCollapsed(raw: string | null): SectionsCollapsed {
@@ -68,14 +68,15 @@ export function serializeSectionsCollapsed(collapsed: SectionsCollapsed): string
 }
 
 export function isSectionCollapsed(collapsed: SectionsCollapsed, root: string | undefined, section: SideSection): boolean {
-  return root !== undefined && collapsed.get(root)?.has(section) === true
+  const toggled = root !== undefined && collapsed.get(root)?.has(section) === true
+  return section === 'finished' ? !toggled : toggled
 }
 
 /** The map with one section of one project folded or opened; the input is left alone. */
 export function withSectionCollapsed(collapsed: SectionsCollapsed, root: string, section: SideSection, fold: boolean): SectionsCollapsed {
   const next = new Map(collapsed)
   const folded = new Set(collapsed.get(root))
-  if (fold) folded.add(section)
+  if (fold !== (section === 'finished')) folded.add(section)
   else folded.delete(section)
   if (folded.size > 0) next.set(root, folded)
   else next.delete(root)
@@ -94,9 +95,8 @@ export interface SidePanelInput {
   /** What each part has behind it. */
   readonly has: {
     readonly plan: boolean
-    readonly commands: boolean
-    readonly subagents: boolean
-    readonly threads: boolean
+    readonly running: boolean
+    readonly finished: boolean
   }
 }
 
@@ -111,28 +111,9 @@ export interface SidePanelView {
 
 export function sidePanelView(input: SidePanelInput): SidePanelView {
   const sections = SIDE_SECTIONS.filter((section) => input.has[section])
-  const modes: SideMode[] = input.has.threads ? ['tasks', 'threads', 'changes', 'browser'] : ['tasks', 'changes', 'browser']
+  const modes: SideMode[] = input.coordinated ? ['tasks', 'threads', 'changes', 'browser'] : ['tasks', 'changes', 'browser']
   const mode = modes.includes(input.mode) ? input.mode : 'tasks'
   return { open: input.coordinated ? !input.panelClosed : input.laneOpen, mode, modes, sections }
-}
-
-/**
- * The sections to draw. A page opened inside a section (a sub-agent's or a
- * thread's transcript) needs the column's height, so it stands alone while it
- * is open and unfolded; the others come back on its back button.
- */
-export function visibleSections(
-  sections: readonly SideSection[],
-  collapsed: ReadonlySet<SideSection>,
-  page: SideSection | undefined,
-): { readonly sections: readonly SideSection[]; readonly focus: SideSection | undefined } {
-  const focus = page !== undefined && sections.includes(page) && !collapsed.has(page) ? page : undefined
-  return { sections: focus === undefined ? sections : [focus], focus }
-}
-
-/** A new thread raises the panel only for a user who has not closed it for that project. */
-export function autoOpensThreads(started: boolean, panelClosed: boolean): boolean {
-  return started && !panelClosed
 }
 
 export interface ThreadStripView {

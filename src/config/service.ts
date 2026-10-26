@@ -3,6 +3,8 @@ import { readConfigurationFile, updateConfigurationFile } from './file.js'
 import { getGlobalConfigPath } from '../utils/paths.js'
 import type { ContextManagementConfig } from '../prompts/budget.js'
 import type { ModelPricing } from '../harness/types.js'
+import type { ModelCatalogEntry } from './modelCatalog.js'
+import { ApiKeyRedactor } from './apiKeys.js'
 import { loadUserSettings, type MyAgentSettings } from './settings.js'
 import type { ChatThinkingFormat } from './providers/openaiCompat.js'
 import {
@@ -176,6 +178,11 @@ export interface ConfigServiceOptions {
  * this file; merged project settings never enter the account configuration.
  */
 export class ConfigService {
+  private readonly apiKeyRedactor = new ApiKeyRedactor()
+  redactToolOutput = (text: string): string => {
+    this.apiKeyRedactor.rememberConfig(this.config)
+    return this.apiKeyRedactor.redact(text)
+  }
   private config: Config
   private configPath: string
   private persistedConfig: Partial<Config> = {}
@@ -200,6 +207,8 @@ export class ConfigService {
       const persisted = structuredClone(loaded)
       const userSettings = await loadUserSettings()
       const settingsConfig = configFromSettings(userSettings)
+      this.apiKeyRedactor.rememberConfig(settingsConfig)
+      this.apiKeyRedactor.rememberConfig(loaded)
       this.config = deepMergeConfig(deepMergeConfig(DEFAULT_CONFIG, settingsConfig), loaded)
       this.migrateMaxEffort()
       this.legacyModelFindings = this.migrateLegacyTiers([userSettings, loaded])
@@ -400,6 +409,14 @@ export class ConfigService {
   /** Every configured model key, in config order. */
   listModelKeys(): string[] {
     return Object.keys(this.config.models)
+  }
+
+  /** Safe, explicit projection in configuration order; unresolved endpoints are omitted. */
+  listSelectableModels(): ModelCatalogEntry[] {
+    return this.listModelKeys().flatMap((key) => {
+      const model = this.resolveModelReference(key) ? this.resolveModel(key) : undefined
+      return model ? [{ key, model: model.model, ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }) }] : []
+    })
   }
 
   addModel(name: string, model: ModelConfig): void {

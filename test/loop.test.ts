@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { z } from 'zod/v3'
 import { AgentLoop } from '../src/harness/loop.js'
-import { displayCacheSource, forkCacheSource } from '../src/harness/cacheBreakDetection.js'
+import { displayCacheSource } from '../src/harness/cacheBreakDetection.js'
 import { ContextBuilder } from '../src/harness/contextBuilder.js'
 import { PromptComposer } from '../src/prompts/composer.js'
 import { SystemPromptSectionCache } from '../src/harness/sections.js'
@@ -187,7 +187,7 @@ test('the loop persists thinking provenance and the context builder carries it i
   const persisted = JSON.parse(JSON.stringify(records)) as SessionRecord[]
   const assistant = persisted.find((record) => record.type === 'message' && record.role === 'assistant')
   assert.equal(assistant?.type === 'message' ? assistant.thinkingSource : undefined, 'endpoint-identity')
-  const built = await cheapContextBuilder().build({ preloadRecords: persisted, records: [], tools: [], includeUserContext: false })
+  const built = await cheapContextBuilder().build({ records: persisted, tools: [], includeUserContext: false })
   assert.equal(built.messages.find((message) => message.id === assistant?.id)?.thinkingSource, 'endpoint-identity')
 })
 
@@ -1982,7 +1982,9 @@ test('agent loop includes sub-agent transcript usage in returned turn usage', as
   assert.ok(records.some((record) => record.type === 'subagent_transcript'))
 })
 
-test('an inheriting fork opens with the parent\'s instructions message and builds none of its own', async () => {
+test('general agents start with their own instructions, history and effort', async (t) => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-agent-context-'))
+  t.after(() => rm(cwd, { recursive: true, force: true }))
   const requests: ModelRequest[] = []
   const provider: ModelProvider = {
     name: 'fake',
@@ -1990,7 +1992,7 @@ test('an inheriting fork opens with the parent\'s instructions message and build
       requests.push(request)
       const usage = { inputTokens: 1, cacheReadInputTokens: 0, outputTokens: 1 }
       if (requests.length === 1) {
-        return { content: '', toolCalls: [{ id: 'fork-call', name: 'Agent', input: { task: 'look', subagent_type: 'fork' } }], usage }
+        return { content: '', toolCalls: [{ id: 'agent-call', name: 'Agent', input: { task: 'look', subagent_type: 'general' } }], usage }
       }
       return { content: 'done', toolCalls: [], usage }
     },
@@ -2001,7 +2003,7 @@ test('an inheriting fork opens with the parent\'s instructions message and build
     model: 'fake-model',
     tools: () => runtimeTools,
     permissionPrompt: async () => true,
-    cwd: process.cwd(),
+    cwd,
     projectContext: 'PROJECT RULES',
   })
   runtimeTools = [testTool('Read'), agentTool]
@@ -2014,21 +2016,27 @@ test('an inheriting fork opens with the parent\'s instructions message and build
     toolRunner: new ToolRunner(runtimeTools, new PermissionGate(async () => true), {
       onRecord: async (record) => { records.push(record) },
     }),
-    toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
+    toolContext: { cwd, sessionId: 's1', readFiles: new Set() },
     recordStream: recordStreamFor(records),
     projectContext: 'PROJECT RULES',
     memoryIndex: 'MEMORY INDEX',
+    effort: 'low',
   })
 
   await loop.run({ text: 'start' })
 
-  const [parent, fork] = requests
-  assert.ok(parent && fork)
+  const [parent, child] = requests
+  assert.ok(parent && child)
   const parentPrefix = parent.messages.filter((message) => !message.transient)
   assert.equal(parentPrefix[0]?.content, '<system-reminder>\nPROJECT RULES\n\nMEMORY INDEX\n</system-reminder>')
-  assert.deepEqual(fork.messages.slice(0, parentPrefix.length), parentPrefix)
-  assert.equal(fork.messages.filter((message) => /PROJECT RULES/.test(message.content)).length, 1)
-  assert.equal(fork.contextItems?.filter((item) => item.kind === 'message' && /PROJECT RULES/.test(item.message.content)).length, 1)
+  assert.equal(parent.effort, 'low')
+  assert.equal(child.effort, 'high')
+  assert.equal(child.messages[0]?.content, '<system-reminder>\nPROJECT RULES\n</system-reminder>')
+  assert.ok(child.messages.some((message) => message.content === 'look'))
+  assert.ok(!child.messages.some((message) => message.content === 'start'))
+  assert.notEqual(child.promptCacheKey, parent.promptCacheKey)
+  assert.equal(child.messages.filter((message) => /PROJECT RULES/.test(message.content)).length, 1)
+  assert.equal(child.contextItems?.filter((item) => item.kind === 'message' && /PROJECT RULES/.test(item.message.content)).length, 1)
 })
 
 test('agent loop excludes compact summarizer usage from status usage', async () => {
@@ -2882,66 +2890,6 @@ test('auto-compaction sends the conversation\'s own request with the compact pro
   assert.match(boundary?.type === 'compact_boundary' ? boundary.summary : '', /shared summary/)
 })
 
-test('an inheriting fork auto-compacts its own records behind the unchanged parent prefix', async () => {
-  resetAutoCompactFailureState()
-  const records: SessionRecord[] = [
-    { type: 'message', id: 'fork-user', role: 'user', content: 'fork context '.repeat(200), createdAt: '2026-05-10T00:00:00.000Z' },
-    { type: 'message', id: 'fork-assistant', role: 'assistant', content: 'fork answer '.repeat(200), createdAt: '2026-05-10T00:01:00.000Z' },
-  ]
-  const parentMessage: ChatMessage = { id: 'parent-history', role: 'user', content: 'parent history', createdAt: '2026-05-10T00:00:00.000Z' }
-  const inheritedRequest: ModelRequest = {
-    system: 'parent system',
-    messages: [parentMessage],
-    contextItems: [{ kind: 'message', message: parentMessage }],
-    tools: [],
-    model: 'fake-model',
-    cacheSource: forkCacheSource('parent', process.cwd()),
-    promptCacheKey: 'parent-session',
-  }
-  const requests: ModelRequest[] = []
-  const provider: ModelProvider = {
-    name: 'fake',
-    async createMessage(request) {
-      requests.push(request)
-      const last = request.contextItems?.at(-1)
-      const isCompact = last?.kind === 'message' && last.message.id === 'compact-request'
-      return { content: isCompact ? '<summary>fork summary</summary>' : 'done', toolCalls: [] }
-    },
-  }
-  const loop = new AgentLoop({
-    provider,
-    model: 'fake-model',
-    tools: [],
-    contextBuilder: new ContextBuilder(),
-    toolRunner: new ToolRunner([], new PermissionGate(async () => true), {
-      onRecord: async (record) => { records.push(record) },
-    }),
-    toolContext: { cwd: process.cwd(), sessionId: 'fork-compact', readFiles: new Set() },
-    contextWindow: 10_000,
-    contextManagement: { contextWindow: 10_000, summaryOutputTokens: 100, autoCompactReserveRatio: 0.95 },
-    recordStream: recordStreamFor(records),
-    inheritedRequest,
-  })
-
-  await loop.run({ text: 'latest request' })
-
-  assert.ok(records.some((record) => record.type === 'compact_boundary'))
-  const [compact, main] = requests
-  for (const request of [compact!, main!]) {
-    assert.equal(request.system, 'parent system')
-    assert.equal(request.promptCacheKey, 'parent-session', 'a fork routes its cache with its parent')
-    assert.ok(request.turnId)
-    const first = request.contextItems?.[0]
-    assert.equal(first?.kind === 'message' ? first.message.id : undefined, 'parent-history')
-  }
-
-  await loop.run({ text: 'next request' })
-  const next = requests.at(-1)!
-  const firstNext = next.contextItems?.[0]
-  assert.equal(firstNext?.kind === 'message' ? firstNext.message.id : undefined, 'parent-history')
-  assert.ok(!next.contextItems!.some((item) => item.kind === 'message' && item.message.id === 'fork-user'))
-})
-
 test('agent loop includes compact summary on the next user turn after compaction', async () => {
   const records: SessionRecord[] = [
     {
@@ -3325,50 +3273,41 @@ test('auto-compact counts the instruction files the request carries', async () =
   assert.deepEqual(await run(instructions), ['compact', 'model'])
 })
 
-for (const prefix of ['preload', 'inherited', 'transient'] as const) {
-  test(`auto-compact counts ${prefix} context before the actual request can lose history`, async () => {
-    const sessionId = `full-request-${prefix}`
-    resetAutoCompactFailureState(sessionId)
-    const records: SessionRecord[] = [
-      { type: 'message', id: 'own-old-user', role: 'user', content: 'own history '.repeat(3000), createdAt: '2026-05-10T00:00:00.000Z' },
-      { type: 'message', id: 'own-old-assistant', role: 'assistant', content: 'ack', createdAt: '2026-05-10T00:01:00.000Z' },
-    ]
-    const parent: ChatMessage = { id: 'parent-history', role: 'user', content: 'parent context '.repeat(2400), createdAt: '2026-05-09T00:00:00.000Z' }
-    const inheritedRequest: ModelRequest = {
-      system: 'parent system', messages: [parent], contextItems: [{ kind: 'message', message: parent }],
-      tools: [], model: 'fake-model', cacheSource: forkCacheSource('parent', process.cwd()),
-    }
-    const requests: ModelRequest[] = []
-    const loop = new AgentLoop({
-      provider: { name: 'fake', createMessage: async (request) => {
-        requests.push(request)
-        return { content: displayCacheSource(request.cacheSource) === 'compact' ? 'full request summary' : 'done', toolCalls: [] }
-      } },
-      model: 'fake-model', tools: [], contextBuilder: cheapContextBuilder(),
-      toolRunner: new ToolRunner([], new PermissionGate(async () => true), { onRecord: async (record) => { records.push(record) } }),
-      toolContext: { cwd: process.cwd(), sessionId, readFiles: new Set() }, recordStream: recordStreamFor(records),
-      contextWindow: 20_000, contextManagement: { contextWindow: 20_000, summaryOutputTokens: 0 },
-      ...(prefix === 'preload' ? { preloadRecords: [{ type: 'message', ...parent }] } : {}),
-      ...(prefix === 'inherited' ? { inheritedRequest } : {}),
-      ...(prefix === 'transient' ? { planModeManager: { beforeTurn: async () => {}, getActivePlanAttachment: () => parent.content } as unknown as PlanModeManager } : {}),
-    })
-    await loop.run({ text: 'continue' })
-    const summary = requests.find((request) => request.contextItems?.some((item) => item.kind === 'message' && item.message.id === 'compact-request'))
-    assert.ok(summary, 'the full request must trigger a summary call before sending')
-    const boundary = records.find((record) => record.type === 'compact_boundary')
-    assert.ok(boundary)
-    const sentIds = requests.at(-1)!.contextItems!.map((item) => item.kind === 'message' ? item.message.id : item.kind)
-    assert.ok(sentIds.includes(boundary.id), 'the actual request carries the compacted own history')
-    assert.ok(!sentIds.includes('own-old-user'))
-    if (prefix !== 'transient') assert.ok(sentIds.includes('parent-history'), 'the actual request retains parent history')
-    else assert.ok(requests.at(-1)!.messages.some((message) => message.content === parent.content))
-  })
-}
-
-test('failed compaction reports any history trimmed from the actual request', async () => {
-  resetAutoCompactFailureState('preload-trim-notice')
+test('auto-compact counts transient context before the actual request can lose history', async () => {
+  const sessionId = 'full-request-transient'
+  resetAutoCompactFailureState(sessionId)
   const records: SessionRecord[] = [
     { type: 'message', id: 'own-old-user', role: 'user', content: 'own history '.repeat(3000), createdAt: '2026-05-10T00:00:00.000Z' },
+    { type: 'message', id: 'own-old-assistant', role: 'assistant', content: 'ack', createdAt: '2026-05-10T00:01:00.000Z' },
+  ]
+  const parent: ChatMessage = { id: 'parent-history', role: 'user', content: 'parent context '.repeat(2400), createdAt: '2026-05-09T00:00:00.000Z' }
+  const requests: ModelRequest[] = []
+  const loop = new AgentLoop({
+    provider: { name: 'fake', createMessage: async (request) => {
+      requests.push(request)
+      return { content: displayCacheSource(request.cacheSource) === 'compact' ? 'full request summary' : 'done', toolCalls: [] }
+    } },
+    model: 'fake-model', tools: [], contextBuilder: cheapContextBuilder(),
+    toolRunner: new ToolRunner([], new PermissionGate(async () => true), { onRecord: async (record) => { records.push(record) } }),
+    toolContext: { cwd: process.cwd(), sessionId, readFiles: new Set() }, recordStream: recordStreamFor(records),
+    contextWindow: 20_000, contextManagement: { contextWindow: 20_000, summaryOutputTokens: 0 },
+    planModeManager: { beforeTurn: async () => {}, getActivePlanAttachment: () => parent.content } as unknown as PlanModeManager,
+  })
+  await loop.run({ text: 'continue' })
+  const summary = requests.find((request) => request.contextItems?.some((item) => item.kind === 'message' && item.message.id === 'compact-request'))
+  assert.ok(summary, 'the full request must trigger a summary call before sending')
+  const boundary = records.find((record) => record.type === 'compact_boundary')
+  assert.ok(boundary)
+  const sentIds = requests.at(-1)!.contextItems!.map((item) => item.kind === 'message' ? item.message.id : item.kind)
+  assert.ok(sentIds.includes(boundary.id), 'the actual request carries the compacted own history')
+  assert.ok(!sentIds.includes('own-old-user'))
+  assert.ok(requests.at(-1)!.messages.some((message) => message.content === parent.content))
+})
+
+test('failed compaction reports any history trimmed from the actual request', async () => {
+  resetAutoCompactFailureState('history-trim-notice')
+  const records: SessionRecord[] = [
+    { type: 'message', id: 'own-old-user', role: 'user', content: 'own history '.repeat(6000), createdAt: '2026-05-10T00:00:00.000Z' },
     { type: 'message', id: 'own-old-assistant', role: 'assistant', content: 'ack', createdAt: '2026-05-10T00:01:00.000Z' },
   ]
   const events: ModelStreamEvent[] = []
@@ -3380,15 +3319,14 @@ test('failed compaction reports any history trimmed from the actual request', as
       return { content: 'done', toolCalls: [] }
     } }, model: 'fake-model', tools: [], contextBuilder: cheapContextBuilder(),
     toolRunner: new ToolRunner([], new PermissionGate(async () => true), { onRecord: async (record) => { records.push(record) } }),
-    toolContext: { cwd: process.cwd(), sessionId: 'preload-trim-notice', readFiles: new Set() }, recordStream: recordStreamFor(records),
+    toolContext: { cwd: process.cwd(), sessionId: 'history-trim-notice', readFiles: new Set() }, recordStream: recordStreamFor(records),
     contextWindow: 20_000, contextManagement: { contextWindow: 20_000, summaryOutputTokens: 0 },
-    preloadRecords: [{ type: 'message', id: 'parent-history', role: 'user', content: 'parent context '.repeat(2400), createdAt: '2026-05-09T00:00:00.000Z' }],
     onStreamEvent: (event) => events.push(event),
   })
   await loop.run({ text: 'continue' })
   assert.equal(records.filter((record) => record.type === 'compact_attempt_failed').length, 1)
   assert.ok(events.some((event) => event.type === 'context_trim_notice'))
-  assert.ok(!requests.at(-1)!.messages.some((message) => message.id === 'parent-history'))
+  assert.ok(!requests.at(-1)!.messages.some((message) => message.id === 'own-old-user'))
 })
 
 test('instruction files that alone exhaust the window stop the turn before it is sent', async () => {

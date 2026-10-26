@@ -24,6 +24,7 @@ export type CoordinationErrorCode =
   | 'NOT_COORDINATOR'
   | 'NO_COORDINATOR'
   | 'WORKTREE_FAILED'
+  | 'MODEL_NOT_FOUND'
 
 export interface StartThreadRequest {
   title: string
@@ -36,6 +37,7 @@ export interface StartThreadRequest {
 export interface StartedThread {
   threadId: string
   sessionId: string
+  modelKey: string
   /** Present for a thread that got its own worktree. */
   branch?: string
 }

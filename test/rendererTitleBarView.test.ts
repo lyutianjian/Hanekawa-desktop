@@ -354,6 +354,13 @@ test('the side panel\'s pages sit at the far end, one button each, and report th
   assert.ok(threads!.classes.includes('open'))
   assert.equal(threads!.children.find((child) => child.classes.includes('titlebar-side-badge'))?.text, '9+')
   assert.equal(tasks!.children.find((child) => child.classes.includes('titlebar-side-dot'))?.hidden, false)
+
+  r.stub.click(threads!.node)
+  assert.deepEqual(r.actions, ['toggle-changes', 'toggle-browser', 'toggle-threads'])
+
+  r.render(viewOf())
+  assert.deepEqual(group().children.map((child) => child.attributes.get('aria-label')), ['显示任务', '显示改动', '显示浏览器'])
+  assert.equal(group().children.some((child) => child.node === threads!.node), false)
 })
 
 test('the thread badge is empty with nothing blocked and caps at 9+', () => {

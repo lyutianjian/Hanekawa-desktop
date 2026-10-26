@@ -234,8 +234,8 @@ test('home aliases and both search backends exclude runtime data while explicit 
       assert.match(internalGrep.content, /plan\.md/)
       assert.match(internalGlob.content, /plan\.md/)
       const sessions = path.join(cwd, '.myagent', 'projects', 'demo', 'sessions')
-      await assert.rejects(() => grepTool.execute({ pattern: 'alias-needle', path: sessions }, ownContext), /runtime data/)
-      await assert.rejects(() => globTool.execute({ pattern: '**/*', path: sessions }, ownContext), /runtime data/)
+      assert.match((await grepTool.execute({ pattern: 'alias-needle', path: sessions }, ownContext)).content, /private\.jsonl/)
+      assert.match((await globTool.execute({ pattern: '**/*', path: sessions }, ownContext)).content, /private\.jsonl/)
     }
   }
   try {

@@ -198,6 +198,56 @@ test('safeHref admits only http, https and mailto', () => {
   assert.equal(safeHref('#anchor'), undefined)
 })
 
+test('a bare URL in Chinese prose ends where the prose starts', () => {
+  // GFM's autolink stops at a space, and Chinese puts none after a URL — the
+  // anchor used to hold the rest of the paragraph, `href` included, so a click
+  // would have opened the paragraph.
+  const source = '静态页（http://127.0.0.1:8731/index.html）复刻了三行工具行，页面还在跑'
+  const paragraph = only(source)
+  assert.equal(paragraph.kind, 'paragraph')
+  const inline = paragraph.kind === 'paragraph' ? paragraph.inline : []
+  const link = inline.find((node) => node.kind === 'link')
+  assert.ok(link && link.kind === 'link')
+  assert.equal(link.href, 'http://127.0.0.1:8731/index.html')
+  assert.equal(textOf(link.children), 'http://127.0.0.1:8731/index.html')
+  assert.equal(textOf(inline), source, 'the prose must still be there, outside the anchor')
+})
+
+test('what a bare URL stops at is still lexed as markdown, not as its text', () => {
+  const paragraph = only('见 http://a.example/x，**重点** 与 `code`')
+  const inline = paragraph.kind === 'paragraph' ? paragraph.inline : []
+  assert.equal(textOf(inline), '见 http://a.example/x，重点 与 code')
+  assert.ok(inline.some((node) => node.kind === 'strong'))
+  assert.ok(inline.some((node) => node.kind === 'code'))
+})
+
+test('a bare URL stops at an em dash and a full-width closing paren too', () => {
+  for (const [source, href] of [
+    ['http://a.example——“看这个”', 'http://a.example'],
+    ['www.example.com工作正常', 'http://www.example.com'],
+    ['http://a.example/x，继续', 'http://a.example/x'],
+  ] as const) {
+    const paragraph = only(source)
+    const link = paragraph.kind === 'paragraph'
+      ? paragraph.inline.find((node) => node.kind === 'link')
+      : undefined
+    assert.equal(link?.kind === 'link' && link.href, href, source)
+    assert.equal(paragraph.kind === 'paragraph' && textOf(paragraph.inline), source, source)
+  }
+})
+
+test('a bare URL inside Latin prose still takes its whole spelling', () => {
+  const paragraph = only('see http://a.example/a_(b)?x=1&y=2 for details')
+  const link = paragraph.kind === 'paragraph'
+    ? paragraph.inline.find((node) => node.kind === 'link')
+    : undefined
+  assert.equal(link?.kind === 'link' && link.href, 'http://a.example/a_(b)?x=1&y=2')
+  assert.equal(
+    paragraph.kind === 'paragraph' && textOf(paragraph.inline),
+    'see http://a.example/a_(b)?x=1&y=2 for details',
+  )
+})
+
 test('a raw HTML block stays literal text', () => {
   // The parse-time half of the no-innerHTML rule. If this ever yields anything
   // but text, model output can put an attribute on the page.

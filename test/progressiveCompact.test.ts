@@ -190,6 +190,17 @@ function toolResultContent(records: SessionRecord[], id: string): string {
   return record.content
 }
 
+test('a server usage baseline does not count Responses encrypted reasoning twice', () => {
+  const user = userTurn(0)
+  const assistant: SessionRecord = {
+    type: 'message', id: 'assistant-0', role: 'assistant', content: 'ok', createdAt: user.createdAt,
+    responseItems: [{ type: 'reasoning', encrypted_content: 'a'.repeat(100_000) }],
+  }
+  const result = toolPair(0, 'pending output')[1]!
+  const records = [user, assistant, { ...result, _tokens: 7 }]
+  assert.equal(estimateCurrentTokens({ records, lastResponseTokenCount: 1000, lastResponseRecordId: user.id }), 1007)
+})
+
 test('applyProgressiveCompaction triggers time-based microcompact when gap exceeds threshold', () => {
   const records: SessionRecord[] = []
   for (let index = 0; index < 8; index++) {

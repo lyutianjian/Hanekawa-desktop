@@ -97,6 +97,8 @@ interface Harness {
  * fixed — a test that needs a different runtime builds its own.
  */
 interface HarnessOptions {
+  /** The execution directory, when it differs from the project data root. */
+  workingDir?: string
   /** Omit the three shell callbacks: a shell that owns exactly one project. */
   singleProject?: boolean
   /** What `onFocusPane` answers. Defaults to "the window was there". */
@@ -284,6 +286,7 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
 
   const runtimeHost = {
     cwd,
+    workingDir: options.workingDir ?? cwd,
     session,
     store,
     bridges,
@@ -1534,7 +1537,8 @@ test('switch-branch refuses a name git must never see, without reaching git', as
 })
 
 test('hello reports the global workspace when cwd is the home directory', async () => {
-  const harness = await createHarness()
+  const workingDir = path.join(tmpdir(), 'Documents', 'myagent')
+  const harness = await createHarness({ workingDir })
   // `os.homedir()` answers from USERPROFILE/HOME on the platforms this suite
   // runs on; pointing both at the scratch project makes it the global root
   // without a filesystem move. Restored before any other assertion can run.
@@ -1549,9 +1553,11 @@ test('hello reports the global workspace when cwd is the home directory', async 
       'a hello reply',
     )
     assert.ok(reply.type === 'reply')
-    const result = reply.result as { projectIsGlobal: boolean; projectName: string }
+    const result = reply.result as { projectIsGlobal: boolean; projectName: string; cwd: string; projectRoot: string }
     assert.equal(result.projectIsGlobal, true)
     assert.equal(result.projectName, '最近')
+    assert.equal(result.cwd, workingDir)
+    assert.equal(result.projectRoot, projectRootKey(harness.cwd))
   } finally {
     if (previousProfile === undefined) delete process.env.USERPROFILE
     else process.env.USERPROFILE = previousProfile

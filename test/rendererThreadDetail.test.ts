@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { splitThreadBrief, threadActivity, threadPage } from '../src/desktop/renderer/model/threadDetail.js'
+import { splitThreadBrief, threadPage } from '../src/desktop/renderer/model/threadDetail.js'
+import { replayActivity } from '../src/desktop/renderer/model/waiting.js'
 import { createTranscriptState, type TranscriptItem } from '../src/desktop/renderer/model/transcript.js'
 import type { WireCoordinationThreads, WireThreadInfo, WireThreadStatus } from '../src/desktop/shellProtocol.js'
 
@@ -58,12 +59,16 @@ test('the first user message is the brief and leaves the conversation; later one
   assert.equal(splitThreadBrief(createTranscriptState([])).brief, undefined)
 })
 
-test('a running thread streams from its turn\'s first record; a settled one is idle', () => {
+test('a replayed turn counts from its first record; a settled one is idle', () => {
   const items: TranscriptItem[] = [
     { id: 'a0', kind: 'assistant', text: 'old', turnId: 't0', createdAt: '2026-10-10T00:00:00Z' },
     { id: 'u1', kind: 'user', text: 'go', turnId: 't1', createdAt: '2026-10-10T00:01:00Z' },
   ]
   const state = { ...createTranscriptState([]), items, turnId: 't1' }
-  assert.deepEqual(threadActivity(state, true), { isStreaming: true, startedAt: Date.parse('2026-10-10T00:01:00Z'), turnId: 't1' })
-  assert.deepEqual(threadActivity(state, false), { isStreaming: false, startedAt: undefined, turnId: undefined })
+  assert.deepEqual(replayActivity(state, true), { isStreaming: true, startedAt: Date.parse('2026-10-10T00:01:00Z'), turnId: 't1' })
+  assert.deepEqual(replayActivity(state, false), { isStreaming: false, startedAt: undefined, turnId: undefined })
+  // A state built from records names no turn, so the newest stamped one is the turn
+  // in flight — the one whose records the status line is about.
+  const replayed = { ...createTranscriptState([]), items }
+  assert.deepEqual(replayActivity(replayed, true), { isStreaming: true, startedAt: Date.parse('2026-10-10T00:01:00Z'), turnId: 't1' })
 })

@@ -9,7 +9,6 @@ import {
   agentCacheSource,
   checkResponseForCacheBreak,
   formatCacheHitRate,
-  forkCacheSource,
   notifyCompaction,
   recordPromptState,
   requireCacheSource,
@@ -116,21 +115,21 @@ test('compact source does not pollute main conversation cache baseline', () => {
   assert.equal(result, null)
 })
 
-test('fork cache source partitions parent while sharing fork children', () => {
+test('agent cache sources keep child and parent baselines separate', () => {
   resetCacheBreakDetection()
   const parent = agentCacheSource('parent')
-  const fork = forkCacheSource('parent')
+  const child = agentCacheSource('child')
 
-  assert.equal(fork, 'agent:fork:parent')
-  assert.notEqual(fork, parent)
+  assert.equal(child, 'agent:child')
+  assert.notEqual(child, parent)
 
   recordPromptState({ system: 'parent system', toolsJson: '[]', model: 'model-a' }, parent)
   assert.equal(checkResponseForCacheBreak(50_000, 1_000, parent), null)
-  recordPromptState({ system: 'fork system', toolsJson: '[]', model: 'model-a' }, fork)
-  assert.equal(checkResponseForCacheBreak(40_000, 1_000, fork), null)
+  recordPromptState({ system: 'child system', toolsJson: '[]', model: 'model-a' }, child)
+  assert.equal(checkResponseForCacheBreak(40_000, 1_000, child), null)
 
-  recordPromptState({ system: 'fork system', toolsJson: '[]', model: 'model-a' }, fork)
-  assert.equal(checkResponseForCacheBreak(39_500, 1_000, fork), null)
+  recordPromptState({ system: 'child system', toolsJson: '[]', model: 'model-a' }, child)
+  assert.equal(checkResponseForCacheBreak(39_500, 1_000, child), null)
 
   recordPromptState({ system: 'parent system changed', toolsJson: '[]', model: 'model-a' }, parent)
   const parentBreak = checkResponseForCacheBreak(10_000, 1_000, parent)

@@ -72,8 +72,8 @@ test('what the status reads, by priority', () => {
     ['a running call, in words', '跑测试', turn([THINKING, RUNNING_BASH])],
     ['an undescribed command says only that a command runs', '正在运行命令', turn([bare])],
     ['and only that when it waits on approval', '等待你确认 · 运行命令', turn([{ ...bare, tool: { ...bare.tool!, awaitingApproval: true } }])],
-    ['one tool in parallel is counted', '读取 3 个文件', turn([read('r1', 'a.ts'), read('r2', 'b.ts'), read('r3', 'c.ts')])],
-    ['a mix names the last', '读取 a.ts 等 2 项', turn([RUNNING_BASH, read('r1', 'a.ts')])],
+    ['parallel calls show the first one, not a count', '读取 a.ts', turn([read('r1', 'a.ts'), read('r2', 'b.ts'), read('r3', 'c.ts')])],
+    ['a mix keeps to the call order', '跑测试', turn([RUNNING_BASH, read('r1', 'a.ts')])],
     ['a tool with no phrase of its own says only that a tool runs', '正在运行工具', turn([mcp])],
     ['an approval outranks running calls', '等待你确认 · 写入 a.ts', turn([asking, RUNNING_BASH])],
     ['a question outranks an approval', '正在提问 · 数据库', turn([asking]), { asking: '数据库' }],
@@ -86,6 +86,12 @@ test('what the status reads, by priority', () => {
   for (const [name, want, items, extra, noTurn] of cases) {
     assert.equal(activity(items, true, noTurn ? undefined : TURN, extra).row?.label, want, name)
   }
+})
+
+test('a batch advances one call at a time, in the order they were issued', () => {
+  const two = turn([RUNNING_BASH, read('r1', 'a.ts')])
+  assert.equal(activity(two).row?.label, '跑测试', 'the first still-running call holds the line')
+  assert.equal(activity(turn([DONE_BASH, read('r1', 'a.ts')])).row?.label, '读取 a.ts', 'the next one takes over once it settles')
 })
 
 test('the status is there only while the turn is running, and an old run is not this turn’s', () => {

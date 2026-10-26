@@ -562,48 +562,12 @@ test('two builds of the same conversation measure the same fixed cost', async ()
   assert.equal(second.selection.availableTokens, first.selection.availableTokens)
 })
 
-test('ContextBuilder prepends preloaded history before child records', async () => {
-  const builder = new ContextBuilder(undefined, contextWindow(8000))
-  const preloadRecords: SessionRecord[] = [{
-    type: 'message',
-    id: 'parent-message',
-    role: 'user',
-    content: 'parent context',
-    createdAt: '2026-05-10T00:00:00.000Z',
-  }]
-  const records: SessionRecord[] = [{
-    type: 'message',
-    id: 'child-directive',
-    role: 'user',
-    content: 'child directive',
-    createdAt: '2026-05-10T00:01:00.000Z',
-  }]
-
-  const originalPreload = [...preloadRecords]
-  const built = await builder.build({
-    preloadRecords,
-    records,
-    tools: [],
-    includeUserContext: false,
-  })
-
-  assert.deepEqual(preloadRecords, originalPreload)
-  assert.deepEqual(
-    built.contextItems
-      .filter((item) => item.kind === 'message')
-      .map((item) => item.message.id),
-    ['parent-message', 'child-directive'],
-  )
-})
-
-test('full request estimates use the serving model image strategy for preload and inherited history', async () => {
+test('full request estimates use the serving model image strategy for history', async () => {
   const image = makeImageAttachmentRef({ width: 2000, height: 1125 })
-  const parent = { id: 'inherited', role: 'user' as const, content: 'parent', createdAt: '', images: [image] }
+  const history = { type: 'message' as const, id: 'history', role: 'user' as const, content: 'history', createdAt: '', images: [image, { ...image, id: 'second-image' }] }
   const input: BuildContextInput = {
-    inheritedRequest: { model: 'model', system: '', messages: [parent], contextItems: [{ kind: 'message', message: parent }], cacheSource: 'agent:test' },
-    preloadRecords: [{ type: 'message', ...parent, id: 'preload' }],
-    records: [{ type: 'message', id: 'latest', role: 'user', content: 'continue', createdAt: '' }],
-    tools: [], includeUserContext: false,
+    records: [history, { type: 'message', id: 'latest', role: 'user', content: 'continue', createdAt: '' }],
+    tools: [], includeUserContext: false, enabledSections: [],
   }
   const builder = new ContextBuilder(undefined, contextWindow(5000))
   const text = await builder.build({ ...input, imageTokenStrategy: 'none' })
@@ -611,15 +575,14 @@ test('full request estimates use the serving model image strategy for preload an
   const openai = await builder.build({ ...input, imageTokenStrategy: 'openai' })
   assert.equal(anthropic.inputTokens - text.inputTokens, 6000, 'both images cost 3000 tokens before trimming')
   assert.equal(openai.inputTokens - text.inputTokens, 2210, 'both images cost 1105 tokens for OpenAI')
-  assert.equal(anthropic.overhead.total - text.overhead.total, 3000, 'the inherited image reserves prefix space')
-  assert.ok(anthropic.selection.trimmed.ids.includes('message:user:preload'))
+  assert.ok(anthropic.selection.trimmed.ids.includes('message:user:history'))
   assert.equal(openai.selection.trimmed.count, 0)
   assert.deepEqual(anthropic.messages.map((message) => message.id), ['latest'])
 })
 
 test('an oversized latest instruction stays pinned instead of being replaced by older history', async () => {
   const built = await new ContextBuilder(undefined, contextWindow(4000)).build({
-    inheritedRequest: { model: 'model', system: 's'.repeat(10_500), messages: [], cacheSource: 'agent:test' },
+    system: 's'.repeat(10_500),
     records: [
       { type: 'message', id: 'old', role: 'user', content: 'old', createdAt: '' },
       { type: 'message', id: 'latest', role: 'user', content: 'latest instruction '.repeat(2000), createdAt: '' },

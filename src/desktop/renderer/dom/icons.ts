@@ -59,11 +59,11 @@ export type IconName =
   // --- the sidebar footer and the title bar (5g) ---
   | 'help'
   | 'sidebar'
-  // --- the title bar's side panel buttons (threads reuse `branch`) ---
+  // --- the title bar's side panel buttons ---
   | 'tasks'
   | 'diff'
   | 'globe'
-  // --- the sidebar's 项目调度 row ---
+  // --- the sidebar's 项目调度 row and the title bar's 线程 button ---
   | 'network'
   // --- the inline permission request ---
   | 'terminal'
