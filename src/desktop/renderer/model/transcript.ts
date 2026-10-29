@@ -1,7 +1,7 @@
-import type { ModelStreamEvent, PersistedQueuedMessage, SessionRecord, SubagentTaskStatus, ToolErrorCode, ToolResultDisplay } from '../../../harness/types.js'
+import type { ModelStreamEvent, PersistedQueuedMessage, SessionRecord, SubagentTaskStatus, TokenUsage, ToolErrorCode, ToolResultDisplay } from '../../../harness/types.js'
 import type { SessionEvent, SubagentActivity } from '../../../runtime/sessionController.js'
 import type { ImageAttachmentRef } from '../../../media/types.js'
-import type { ToolDisplayDto } from '../../../runtime/protocol/wire.js'
+import type { PermissionRequestDto, ToolDisplayDto } from '../../../runtime/protocol/wire.js'
 import { parseCoordinationUpdate, parseThreadNoteMessage, type ThreadNotesData } from './threadNotes.js'
 import { turnFailureCard, type TurnFailureCard } from './turnFailure.js'
 
@@ -113,6 +113,9 @@ export interface SubagentRun {
   readonly toolUseCount?: number
   /** The run's persisted transcript: its final report. */
   readonly summary?: string
+  readonly usage?: TokenUsage
+  /** Elapsed through the run's completion, rather than its background start notice. */
+  readonly durationMs?: number
 }
 
 /** A running sub-agent's latest tool, from `tool-progress`'s `subagents`. */
@@ -158,7 +161,7 @@ export interface ToolStepDetail {
   readonly startedAt?: string
   /** `tool_result.createdAt − tool_use.createdAt`; absent if either is unparseable. */
   readonly durationMs?: number
-  /** The call has a `tool_use` record but no approval yet (§3). */
+  /** A live permission request is actually waiting for the user. Never inferred from records. */
   readonly awaitingApproval?: boolean
   /** `Bash`, `Monitor`, and `Agent`: the model's short description (`input.description`). */
   readonly description?: string
@@ -212,6 +215,19 @@ export type Receipt =
   | { readonly kind: 'question'; readonly rows: readonly { readonly question: string; readonly answer?: string }[] }
   | { readonly kind: 'plan'; readonly accepted: boolean; readonly text: string; readonly planContent?: string }
 
+/** One picture on a message that is being sent: a stored ref, or a file still being read. */
+export type PendingSendImage =
+  | { readonly kind: 'ready'; readonly ref: ImageAttachmentRef }
+  | { readonly kind: 'loading'; readonly name: string; readonly previewUrl?: string }
+
+/** A message the composer has taken but the host does not have yet — its images are still importing. */
+export interface PendingSendEntry {
+  readonly id: string
+  readonly text: string
+  readonly images: readonly PendingSendImage[]
+  readonly createdAt: string
+}
+
 export interface TranscriptItem {
   /** Stable within a state: a record id, or a synthetic key for live items. */
   readonly id: string
@@ -223,6 +239,12 @@ export interface TranscriptItem {
    * on every other kind, and on records from before images existed.
    */
   readonly images?: readonly ImageAttachmentRef[]
+  /**
+   * On a message staged in the composer and not yet the host's: the pictures it
+   * will carry, in the order they were attached. A `loading` row is still being
+   * read or imported and paints a local preview until its ref exists.
+   */
+  readonly pendingImages?: readonly PendingSendImage[]
   /** Still arriving: a streaming draft, or a tool with no result yet. */
   readonly pending?: boolean
   readonly failed?: boolean
@@ -394,16 +416,11 @@ export function createTranscriptState(
   records: readonly SessionRecord[] = [],
   toolDisplays?: ToolDisplayLookup,
 ): TranscriptState {
-  // Approvals are matched over the *records*, in order, not over the items: the
-  // approval record names no `tool_use`, so the only honest link is «the earliest
-  // unanswered call of that tool». Matching over collapsed items would let a
-  // finished call's approval clear a later, still-waiting one of the same name.
-  const context: ItemContext = { toolDisplays, approved: approvedToolUseIds(records) }
   const retried = new Set(records.flatMap((record) => (record.type === 'turn_retry' ? [record.failureId] : [])))
   return {
     items: mergeAdjacentThinking(collapseById(records
       .filter((record) => !retried.has(record.id))
-      .flatMap((record) => recordItems(record, context)))),
+      .flatMap((record) => recordItems(record, toolDisplays)))),
     generation: 0,
     toolProgress: undefined,
     isThinking: false,
@@ -422,6 +439,27 @@ export function presentationTranscript(state: TranscriptState): TranscriptState 
       return id === undefined ? item : { ...item, id }
     }),
   }
+}
+
+/** Only a real, unanswered UI request marks a call as waiting on the user. */
+export function withPendingApprovals(
+  state: TranscriptState,
+  requests: readonly Pick<PermissionRequestDto, 'toolUseId' | 'agent'>[],
+): TranscriptState {
+  const calls = new Set(requests.flatMap((request) => !request.agent && request.toolUseId ? [request.toolUseId] : []))
+  const agents = new Set(requests.flatMap((request) => request.agent ? [request.agent.id] : []))
+  let changed = false
+  const items = state.items.map((item) => {
+    if (item.tool === undefined) return item
+    const agentId = item.tool.live?.agentId ?? item.tool.subagent?.agentId
+    const waiting = (item.pending === true || item.tool.detached === true)
+      && (calls.has(item.id) || (agentId !== undefined && agents.has(agentId)))
+    if (waiting === (item.tool.awaitingApproval === true)) return item
+    changed = true
+    const { awaitingApproval: _awaiting, ...tool } = item.tool
+    return { ...item, tool: waiting ? { ...tool, awaitingApproval: true } : tool }
+  })
+  return changed ? { ...state, items } : state
 }
 
 /**
@@ -460,6 +498,29 @@ export function withQueuedMessages(
       text: message.content,
       ...(message.images && message.images.length > 0 ? { images: message.images } : {}),
       queuedMessageId: message.id,
+    }))],
+  }
+}
+
+/**
+ * The transcript with the messages the composer has taken but not yet handed
+ * over — a send whose images are still importing.
+ *
+ * Drawn at the tail like a queued message, and for the same reason: the message
+ * appears at the moment the reader sends it, not when a picture finishes
+ * decoding. The host's `turn-start` then carries the same words, so the reader
+ * sees one message rather than a second one arriving behind it.
+ */
+export function withPendingSends(state: TranscriptState, pending: readonly PendingSendEntry[]): TranscriptState {
+  if (pending.length === 0) return state
+  return {
+    ...state,
+    items: [...state.items, ...pending.map((entry): TranscriptItem => ({
+      id: `sending:${entry.id}`,
+      kind: 'user',
+      text: entry.text,
+      createdAt: entry.createdAt,
+      ...(entry.images.length > 0 ? { pendingImages: entry.images } : {}),
     }))],
   }
 }
@@ -872,18 +933,11 @@ function applyRecord(
   // segment is inside its group before `turn-end` names the turn (§4.1).
   const turnId = recordStamp(record).turnId ?? state.turnId
 
-  // The approval is bookkeeping — it draws nothing — but it is what moves a call
-  // out of 「等待你确认」. Live it needs no queue: the call it belongs to is simply
-  // the earliest one of that tool still waiting, because a second call of the
-  // same tool cannot be recorded while this one holds the gate.
-  if (record.type === 'tool_approval') {
-    return { ...state, turnId, items: clearAwaitingApproval(state.items, record) }
-  }
   if (record.type === 'turn_retry') {
     return { ...state, turnId, items: state.items.filter((item) => item.id !== record.failureId) }
   }
 
-  const produced = recordItems(record, { toolDisplays })
+  const produced = recordItems(record, toolDisplays)
   if (produced.length === 0) return { ...state, turnId }
 
   // An assistant message *replaces* what streamed rather than following it.
@@ -977,14 +1031,8 @@ function isSubagentSummaryBlock(text: string): boolean {
     && (trimmed.endsWith('/>') || trimmed.endsWith('</subagent-summary>'))
 }
 
-interface ItemContext {
-  readonly toolDisplays?: ToolDisplayLookup
-  /** Replay only: `tool_use` ids an approval record has already answered. */
-  readonly approved?: ReadonlySet<string>
-}
-
 /** One record to zero or more items. Records with no visual meaning yield none. */
-function recordItems(record: SessionRecord, context: ItemContext = {}): TranscriptItem[] {
+function recordItems(record: SessionRecord, toolDisplays?: ToolDisplayLookup): TranscriptItem[] {
   const stamp = recordStamp(record)
   switch (record.type) {
     case 'message': {
@@ -1025,17 +1073,13 @@ function recordItems(record: SessionRecord, context: ItemContext = {}): Transcri
     }
 
     case 'tool_use': {
-      const dto = context.toolDisplays?.(record.id)
+      const dto = toolDisplays?.(record.id)
       const search = searchCaption(record.tool, record.input)
       const tool: ToolStepDetail = {
         // The Agent family names the run in words; its type rides as a tag.
         displayName: record.tool === AGENT_TOOL ? AGENT_LABEL : search?.displayName ?? dto?.displayName ?? record.tool,
         useSummary: search?.useSummary ?? dto?.useSummary ?? toolCallDetail(record.input),
         ...(record.createdAt === undefined ? {} : { startedAt: record.createdAt }),
-        // Recorded, not yet approved. The approval record clears it; a call the
-        // gate waved through clears it just as fast, so the state is only ever
-        // visible for as long as the user is actually being asked.
-        ...(context.approved?.has(record.id) === true ? {} : { awaitingApproval: true }),
         ...(dto ? { captioned: true } : {}),
         ...(dto?.memory ? { memory: true, ...memoryNote(record.tool, record.input) } : {}),
         ...(record.tool === AGENT_TOOL ? agentTask(record.input) : {}),
@@ -1099,6 +1143,8 @@ function recordItems(record: SessionRecord, context: ItemContext = {}): Transcri
         ...(record.model === undefined ? {} : { model: record.model }),
         ...(record.toolUseCount === undefined ? {} : { toolUseCount: record.toolUseCount }),
         ...(record.summary === undefined ? {} : { summary: record.summary }),
+        usage: record.usage,
+        ...(record.durationMs === undefined ? {} : { durationMs: record.durationMs }),
       }
       if (record.parentToolUseId !== undefined) {
         return [{
@@ -1221,7 +1267,11 @@ function mergeToolItems(call: TranscriptItem, result: TranscriptItem): Transcrip
   // caption, the span or the outcome the way a result does — it only hands
   // over the run's own facts.
   if (resultTool.subagent !== undefined) {
-    return { ...call, tool: { ...callTool, subagent: resultTool.subagent } }
+    const subagent = {
+      ...resultTool.subagent,
+      ...(resultTool.subagent.durationMs === undefined ? spanBetween(callTool.startedAt, result.createdAt) : {}),
+    }
+    return { ...call, tool: { ...callTool, subagent } }
   }
   if (resultTool.plan !== undefined) {
     return { ...call, tool: { ...callTool, plan: resultTool.plan } }
@@ -1247,56 +1297,6 @@ function spanBetween(startedAt: string | undefined, finishedAt: string | undefin
   const end = finishedAt === undefined ? NaN : Date.parse(finishedAt)
   if (!Number.isFinite(start) || !Number.isFinite(end)) return {}
   return { durationMs: Math.max(0, end - start) }
-}
-
-/**
- * Which `tool_use` records an approval has already answered (replay).
- *
- * `ToolApprovalRecord` names no call, so calls of the same tool are matched in
- * order — which is exact, because `ToolRunner` records the approval before the
- * next call of that tool can reach the gate. A host that does name the call
- * (`toolUseId`) is believed instead.
- */
-function approvedToolUseIds(records: readonly SessionRecord[]): Set<string> {
-  const approved = new Set<string>()
-  const waiting = new Map<string, string[]>()
-  for (const record of records) {
-    if (record.type === 'tool_use') {
-      const queue = waiting.get(record.tool)
-      if (queue) queue.push(record.id)
-      else waiting.set(record.tool, [record.id])
-      continue
-    }
-    if (record.type !== 'tool_approval') continue
-    const named = (record as { toolUseId?: unknown }).toolUseId
-    if (typeof named === 'string') {
-      approved.add(named)
-      const queue = waiting.get(record.tool)
-      if (queue) waiting.set(record.tool, queue.filter((id) => id !== named))
-      continue
-    }
-    const next = waiting.get(record.tool)?.shift()
-    if (next !== undefined) approved.add(next)
-  }
-  return approved
-}
-
-/** The live counterpart of `approvedToolUseIds`, one record at a time. */
-function clearAwaitingApproval(
-  items: readonly TranscriptItem[],
-  record: Extract<SessionRecord, { type: 'tool_approval' }>,
-): readonly TranscriptItem[] {
-  const named = (record as { toolUseId?: unknown }).toolUseId
-  const index = items.findIndex((item) => (
-    item.kind === 'tool'
-    && item.tool?.awaitingApproval === true
-    && (typeof named === 'string' ? item.id === named : item.toolName === record.tool)
-  ))
-  if (index === -1) return items
-  const next = [...items]
-  const { awaitingApproval: _awaiting, ...tool } = next[index]!.tool!
-  next[index] = { ...next[index]!, tool }
-  return next
 }
 
 /** Not every record variant declares `turnId`, and a few carry no clock either. */

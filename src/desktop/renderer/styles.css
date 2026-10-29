@@ -262,6 +262,9 @@
      overhang cancels that — the capsule is wider, the two runs of text are not.
      Matched to `#composer`'s horizontal padding; move them together. */
   --composer-overhang: 16px;
+  --composer-input-indent: 0px;
+  --composer-scroll-y: 0px;
+  --composer-scrollbar-width: 0px;
 
   /* The rail's width, and the only layout number the renderer is allowed to
      write: `app.ts` re-declares this property on `documentElement` when the
@@ -1748,14 +1751,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
 #subagent-view {
   flex: 1 1 auto;
   min-height: 0;
-  overflow-y: auto;
-  overflow-x: clip;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
-  /* No top inset: the page's own 36px bar starts at the panel's top edge, in
-     line with the close button that floats over its right end. */
-  padding: 0 var(--space-2) var(--space-2);
 }
 /* Commands and agents share flat rows in the panel's single scroller. */
 .background-tasks-view {
@@ -1764,8 +1762,10 @@ body.resizing #browser-resizer::after { opacity: 1; }
   flex-direction: column;
   padding: 0 var(--space-2) var(--space-2);
 }
-.task-row { position: relative; display: flex; flex-direction: column; min-width: 0; border-bottom: 1px solid var(--border-subtle); }
-.task-head {
+/* `bt-` is this panel's own namespace: the checklist card in the transcript
+   already owns every flat `task-*` name. */
+.bt-row { position: relative; display: flex; flex-direction: column; min-width: 0; border-bottom: 1px solid var(--border-subtle); }
+.bt-head {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
@@ -1780,11 +1780,11 @@ body.resizing #browser-resizer::after { opacity: 1; }
   text-align: left;
   cursor: pointer;
 }
-.task-head:hover { background: var(--surface-hover); }
-.task-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.task-row:has(.task-stop) .task-head { padding-right: 40px; }
-.task-title { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-.task-text {
+.bt-head:hover { background: var(--surface-hover); }
+.bt-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.bt-row:has(.bt-stop) .bt-head { padding-right: 40px; }
+.bt-title { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.bt-text {
   flex: 1;
   min-width: 0;
   color: var(--text-primary);
@@ -1793,15 +1793,15 @@ body.resizing #browser-resizer::after { opacity: 1; }
   white-space: nowrap;
   overflow: hidden;
 }
-.task-mark { flex: none; display: inline-flex; color: var(--text-tertiary); }
-.task-mark .icon, .task-chevron .icon { width: 14px; height: 14px; }
-.task-mark.tone-running { color: var(--accent-brand-strong); }
-.task-mark.tone-running .icon { animation: spin var(--motion-running) linear infinite; }
-.task-mark.tone-attention { color: var(--text-warn); }
-.task-mark.tone-danger { color: var(--text-danger); }
-.task-chevron { display: inline-flex; color: var(--text-tertiary); }
-.task-chevron.open { transform: rotate(90deg); }
-.task-meta {
+.bt-mark { flex: none; display: inline-flex; color: var(--text-tertiary); }
+.bt-mark .icon, .bt-chevron .icon { width: 14px; height: 14px; }
+.bt-mark.tone-running { color: var(--accent-brand-strong); }
+.bt-mark.tone-running .icon { animation: spin var(--motion-running) linear infinite; }
+.bt-mark.tone-attention { color: var(--text-warn); }
+.bt-mark.tone-danger { color: var(--text-danger); }
+.bt-chevron { display: inline-flex; color: var(--text-tertiary); }
+.bt-chevron.open { transform: rotate(90deg); }
+.bt-meta {
   display: flex;
   gap: var(--space-2);
   padding-left: calc(14px + var(--space-2));
@@ -1809,7 +1809,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   font-size: var(--type-meta);
   font-variant-numeric: tabular-nums;
 }
-.task-stop {
+.bt-stop {
   position: absolute;
   top: var(--space-1);
   right: var(--space-1);
@@ -1825,10 +1825,23 @@ body.resizing #browser-resizer::after { opacity: 1; }
   padding: var(--space-1);
   cursor: pointer;
 }
-.task-stop .icon { width: 16px; height: 16px; }
-.task-stop:hover { background: var(--surface-hover); color: var(--text-danger); }
-.task-stop:focus-visible { outline: 2px solid var(--focus-ring); }
-.task-output-status { padding: var(--space-1) var(--space-2); color: var(--text-tertiary); font-size: var(--type-meta); }
+.bt-stop .icon { width: 16px; height: 16px; }
+.bt-stop:hover { background: var(--surface-hover); color: var(--text-danger); }
+.bt-stop:focus-visible { outline: 2px solid var(--focus-ring); }
+/* The full command, shown above the output once a row is expanded (the head truncates it). */
+.bt-command {
+  margin: 0 var(--space-2) var(--space-2);
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: var(--type-code);
+  line-height: var(--leading-dense);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.bt-output-status { padding: var(--space-1) var(--space-2); color: var(--text-tertiary); font-size: var(--type-meta); }
 .command-output {
   margin: 0 var(--space-2) var(--space-2);
   max-height: 240px;
@@ -1850,13 +1863,19 @@ body.resizing #browser-resizer::after { opacity: 1; }
   flex-direction: column;
   overflow: hidden;
 }
-.thread-detail-head {
+.thread-detail-head,
+.subagent-page-head {
   flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
   padding: 0 var(--space-2) var(--space-2);
   border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface-card);
 }
 /* As tall as `.side-action`, and clear of it: the panel's close button floats over this row's right end. */
-.thread-detail-bar {
+.thread-detail-bar,
+.subagent-page-bar {
   height: 36px;
   display: flex;
   align-items: center;
@@ -1882,6 +1901,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .thread-detail-open { margin-left: auto; }
 .thread-detail-title {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
   min-width: 0;
@@ -1890,45 +1910,11 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 .thread-detail-name {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
   color: var(--text-primary);
 }
-/* The coordinator's brief, above the conversation: one line until opened. */
-.thread-brief {
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
-  font-size: var(--type-meta);
-}
-.thread-brief-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-  padding: var(--space-1) var(--space-2);
-  list-style: none;
-  cursor: pointer;
-}
-.thread-brief-head::-webkit-details-marker { display: none; }
-.thread-brief-head:hover { background: var(--surface-hover); border-radius: var(--radius-sm); }
-.thread-brief-label { flex: none; color: var(--text-secondary); }
-.thread-brief-preview {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-tertiary);
-}
-.thread-brief[open] .thread-brief-preview { display: none; }
-.thread-brief-text {
-  padding: 0 var(--space-2) var(--space-2);
-  color: var(--text-secondary);
-  line-height: var(--leading-dense);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.thread-detail-body {
+.thread-detail-body,
+.subagent-page-body {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
@@ -1976,31 +1962,10 @@ body.resizing #browser-resizer::after { opacity: 1; }
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
-/* The page's head, shaped like the thread page's: a 36px bar that leaves the
-   panel's close button its corner, then the title and one meta line over a
-   hairline. It pins to the scroller's top, so going back and the run's name stay
-   reachable while its conversation scrolls under them. It takes no `z-index`:
-   a sticky box paints above the in-flow transcript on its own, and the close
-   button's `--z-raised` keeps it over this head. */
-.subagent-page-head {
-  position: sticky;
-  top: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border-subtle);
-  background: var(--surface-card);
-}
 .subagent-page-head .subagent-title,
 .subagent-page-head .subagent-meta,
-.subagent-page-head .subagent-notes { padding: 0 var(--space-1); }
-.subagent-page-bar {
-  display: flex;
-  align-items: center;
-  height: 36px;
-  padding-right: 36px;
-}
+.subagent-page-head .subagent-notes,
+.thread-detail-head .subagent-meta { padding: 0 var(--space-1); }
 .subagent-back {
   display: inline-flex;
   align-items: center;
@@ -2408,38 +2373,58 @@ body.resizing #browser-resizer::after { opacity: 1; }
   cursor: pointer;
 }
 .project-menu-item:hover:enabled { background: var(--surface-hover); }
-/* The rows behind a heading, and the one thing in the list that folds.
+/* One row of a workspace, and the only thing in the list that folds.
    `grid-template-rows: 1fr → 0fr` over a single track is the only way to animate
-   to *content height* without measuring it in JS; `.project-rows` carries the
+   to *content height* without measuring it in JS: the slot carries the
    `min-height: 0` that lets the track actually shrink, and `overflow: hidden`
-   crops the rows while it does.
+   crops the row while it does.
 
-   It works only because `sidebarView` keeps this node across repaints — the list
+   A slot per row rather than one track around them all, because a shut
+   workspace still shows the session on screen. Folding one track took that row
+   with it, and lifting the row out of the track to keep it visible put it
+   *below* the fold: it dropped the group's full height on the first frame and
+   the folding track carried it back up, a jump in both directions. Folding
+   every row where it stands is one motion for the rows that leave, and no
+   motion at all for the one that stays.
+
+   It works only because `sidebarView` keeps the slot across repaints — the list
    is otherwise rebuilt wholesale, and a freshly inserted element starts at its
    final style rather than transitioning to it. An entrance `@keyframes` is not
    the alternative: the render signature covers the badges, so a streaming answer
    repaints this list continuously and the animation would replay on every flush.
-   The rows are unmounted when the fold *settles*, not when it starts.
 
    The *column* has to be declared too, and it is the reason this is a grid at
    all rather than a block: an implicit `auto` track is sized to its item's
-   max-content, and `.project-rows`'s max-content is the widest un-wrapped
-   session title. A long enough name grew this track to ~650px inside the
-   rail, `overflow: hidden` cropped everything past the edge, and the crop lands
-   exactly on `.session-actions` — the delete button was not pushed out of the
-   row, the row was pushed out of the sidebar, and the name never truncated
-   because it never had to. `minmax(0, 1fr)` caps the track at the rail; the
-   item's own `min-width: 0` is the same statement from the other side, and both
-   are kept because either one alone silently carries the fix. */
-.project-body {
+   max-content, and a session row's max-content is its widest un-wrapped title.
+   A long enough name grew this track to ~650px inside the rail, `overflow:
+   hidden` cropped everything past the edge, and the crop lands exactly on
+   `.session-actions` — the delete button was not pushed out of the row, the row
+   was pushed out of the sidebar, and the name never truncated because it never
+   had to. `minmax(0, 1fr)` caps the track at the rail; the row's own
+   `min-width: 0` is the same statement from the other side, and both are kept
+   because either one alone silently carries the fix. */
+.session-slot {
   display: grid;
   grid-template-rows: 1fr;
   grid-template-columns: minmax(0, 1fr);
-  overflow: hidden;
+  min-height: 0;
   transition: grid-template-rows var(--motion-disclosure) var(--ease-snap);
 }
-.project-group.collapsed > .project-body { grid-template-rows: 0fr; }
-.project-rows { min-height: 0; min-width: 0; }
+/* Folded, and `inert` in the DOM: what unmounting the rows used to do for the
+   tab order, without taking the node the unfold needs. */
+.session-slot.folded { grid-template-rows: 0fr; }
+/* The row is not the grid item, and this node exists for that one reason: a
+   track cannot shrink past its item's floor, and a row's floor is not only its
+   `min-height` (34px, so a row with a short name keeps its height) but its
+   padding and margin — 8px + 8px + 1px + 1px, which `min-height: 0` cannot take
+   away. Folded, the track stopped on those 18px and left a sliver of every
+   folded row on screen. This clipper has no floor of its own: the track reaches
+   zero while the row inside keeps its height and is simply cut. That also leaves
+   the row's box alone, so nothing inside it shifts when the fold starts. */
+.session-clip {
+  min-height: 0;
+  overflow: hidden;
+}
 /* A project kept for its own sake says so, rather than reading as a list that
    has not finished loading. */
 .project-empty {
@@ -2450,6 +2435,30 @@ body.resizing #browser-resizer::after { opacity: 1; }
   color: var(--text-tertiary);
   font-size: var(--type-meta);
 }
+/* The 展开/收起 row under a workspace that holds more sessions than the rail
+   lists. As quiet as the empty text above it, and a row the pointer can find:
+   it is the only way to the older half of a long history. It starts where a
+   session title does, the same inset `.project-empty` uses. */
+.project-expand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  width: 100%;
+  background: transparent;
+  color: var(--text-tertiary);
+  border: 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-1) var(--space-3) var(--space-2)
+           calc(var(--space-2) + var(--space-3) + 14px + var(--space-2));
+  font: inherit;
+  font-size: var(--type-meta);
+  text-align: left;
+  cursor: pointer;
+}
+.project-expand:hover { color: var(--text-primary); background: var(--surface-hover); }
+.project-expand:focus { outline: none; }
+.project-expand:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
+.project-expand .icon { width: 12px; height: 12px; }
 /* `8px 12px` around a single `--type-ui` line lands the row at ~34px
    (design_guidance 四.3). The vertical padding lives here and not on
    `.session-open` inside it, so the hit area and the paint are the same box. */
@@ -2505,8 +2514,8 @@ body.resizing #browser-resizer::after { opacity: 1; }
   cursor: pointer;
 }
 /* The one thing in a row that gives way. It can only do so while the row itself
-   is capped at the rail's width — see `.project-body`, which is what a long
-   session name used to defeat.
+   is capped at the rail's width — see `.session-slot`'s `minmax(0, 1fr)` column,
+   which is what a long session name used to defeat.
 
    Where it gives way is a fade, not an ellipsis: three dots spend a character
    and a half of the row saying *that* the name was cut, in a shape the eye
@@ -2887,10 +2896,15 @@ body.resizing #browser-resizer::after { opacity: 1; }
    bubble and aligned with it, because what was sent was a picture — a line of
    text naming it describes the message instead of being it. The box is capped
    rather than fixed, so a wide image and a tall one both keep their shape; a
-   click opens the window's fullscreen viewer. */
+   click opens the window's fullscreen viewer.
+
+   `flex-end` is load-bearing: a row's default is `stretch`, which pulls a
+   thumbnail to the tallest one's height and lets `object-fit` crop the very
+   picture the thumbnail exists to show. */
 .user-images {
   display: flex;
   flex-wrap: wrap;
+  align-items: flex-end;
   gap: var(--space-2);
   justify-content: flex-end;
   margin-bottom: var(--space-2);
@@ -2903,11 +2917,18 @@ body.resizing #browser-resizer::after { opacity: 1; }
   /* The empty box before the data URL settles: the same surface the bubble sits
      on, so the arrival is a picture appearing rather than a hole filling in. */
   background: var(--surface-card);
-  object-fit: cover;
+  object-fit: contain;
   cursor: pointer;
   transition: border-color var(--motion-micro) var(--ease-out);
 }
 .user-image-thumb:hover { border-color: var(--border-strong); }
+/* A picture on a message still being sent: there is no viewer to open yet, and
+   the box keeps its place while only the local preview (or nothing) is there. */
+.user-image-thumb.pending {
+  min-width: 64px;
+  min-height: 64px;
+  cursor: default;
+}
 /* --- a message's meta row ---
    复制 · 模型 · 时间, under the message it belongs to. Worth having, not worth a
    permanent line of chrome under every message — so the row is always in flow
@@ -2988,6 +3009,19 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 .file-chip .icon { width: 12px; height: 12px; }
 .file-chip-label { font-family: var(--font-mono); }
+/* The command a message opened with — the accent token the composer showed while
+   it was being typed, kept after the send. A built-in keeps its slash; a skill
+   drops it for the package mark, so the bubble and the input say the same thing
+   about the same words. The mark is a box of its own because `.icon` is
+   `display: block`, and the baseline shift is the composer's own (see
+   `.composer-skill-icon`); the icon keeps `.icon`'s 14px, the size of the text
+   it sits in, rather than the composer's 18px display token. */
+.user-command { color: var(--accent-info); }
+.user-command-mark {
+  display: inline-block;
+  margin-right: 4px;
+  vertical-align: -2px;
+}
 /* Text stays still except a thought still arriving or a compaction running, which shimmer; otherwise
    only status marks move. Reduced-motion lives at the end of the sheet: the
    token parser allows no other nested rule here except `@keyframes`. */
@@ -3054,6 +3088,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+.line-label { animation: fade-in var(--motion-disclosure) var(--ease-out); }
 .line-meta { flex: none; color: var(--text-tertiary); }
 .waiting .line-meta { display: flex; gap: 6px; color: inherit; }
 .waiting.thinking .line-elapsed { order: -1; }
@@ -3210,25 +3245,6 @@ body.resizing #browser-resizer::after { opacity: 1; }
 /* The row's counts sit against the name rather than at the far right: beside the
    chevron, where a folded run's line puts its own diff. */
 .step-right { flex: none; }
-/* A running command's 转后台, laid over the head's right end: the head is a
-   button, so the control cannot sit inside it. */
-.step:has(> .step-background) { position: relative; }
-.step:has(> .step-background) > .step-head { padding-right: 84px; }
-.step-background {
-  position: absolute;
-  top: 6px;
-  right: var(--space-3);
-  padding: 2px var(--space-2);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  background: var(--surface-base);
-  color: var(--text-secondary);
-  font: inherit;
-  font-size: var(--type-meta);
-  cursor: pointer;
-}
-.step-background:hover { color: var(--text-primary); background: var(--surface-hover); }
-.step-background:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* The Agent row is prose, like a tool row but with the description as its link:
    the row itself is not a button. It sits in a run card like any other step. */
 .step-head.agent-ran { cursor: default; }
@@ -4190,30 +4206,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   margin-bottom: var(--space-2);
   pointer-events: none;
 }
-/* The running-process tag: a quiet pill above the composer that opens `/tasks`. */
-#process-strip:empty { display: none; }
-#process-strip { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-2); }
-.process-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1);
-  background: var(--surface-card);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
-  padding: var(--space-1) var(--space-3);
-  font: inherit;
-  font-size: var(--type-meta);
-  cursor: pointer;
-}
-.process-chip:hover { color: var(--text-primary); background: var(--surface-hover); }
-/* 14px box draws a 7px dot; the soft halo is what reads as a live status light. */
-.process-chip .icon {
-  width: 14px;
-  height: 14px;
-  color: var(--text-success);
-  filter: drop-shadow(0 0 3px color-mix(in srgb, currentColor 60%, transparent));
-}
 /* The thread chip under a coordination session's messages. */
 .thread-chip-row { margin-bottom: var(--space-5); }
 .thread-chip {
@@ -4471,7 +4463,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    The capsule interpolates its measured height into the new content's natural
    height. Business intent switches controls immediately; a closing request is
    an inert visual laid over the available textarea until its exit settles. */
-#composer.request-open > #input,
+#composer.request-open > #composer-editor,
 #composer.request-open > #composer-bar,
 #composer.request-open > #composer-attachments { display: none; }
 #composer.request-changing { overflow: clip; }
@@ -4570,7 +4562,9 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 /* The thumbnail (S12): a size-capped data URL fetched on demand — never part
    of a snapshot, so a streaming turn does not re-send it per frame. The alt
    text carries the facts until the load settles, and the box is the tile's, so
-   the grid does not reflow when the pixels arrive. */
+   the grid does not reflow when the pixels arrive. `contain` rather than
+   `cover`: the tile is square and a picture rarely is, and a thumbnail that
+   crops what it was sent to show is not one. */
 .attachment-thumb,
 .attachment-placeholder {
   width: 100%;
@@ -4578,7 +4572,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border-radius: var(--radius-md);
   border: 1px solid var(--border-subtle);
   background: var(--surface-hover);
-  object-fit: cover;
+  object-fit: contain;
   padding: 0;
   transition: border-color var(--motion-micro) var(--ease-out);
 }
@@ -4703,7 +4697,12 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   white-space: pre-wrap;
   word-break: break-all;
 }
+#composer-editor { position: relative; min-width: 0; }
 #input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  text-indent: var(--composer-input-indent);
   background: transparent;
   color: var(--text-primary);
   border: 0;
@@ -4717,9 +4716,29 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
      a stylesheet cannot do that arithmetic. */
   max-height: 200px;
 }
+.composer-highlight {
+  position: absolute;
+  inset: 0;
+  right: var(--composer-scrollbar-width);
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 2px;
+  pointer-events: none;
+}
+.composer-highlight-text {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  transform: translateY(var(--composer-scroll-y));
+}
+#input.decorated { color: transparent; caret-color: var(--text-primary); }
+#input.decorated::selection { color: transparent; }
+.composer-command { color: var(--accent-info); }
+.composer-skill-icon { display: inline-block; width: 24px; vertical-align: -3px; }
+.composer-skill-icon .icon { width: 18px; height: 18px; }
+.composer-slash-measure { position: absolute; visibility: hidden; pointer-events: none; }
 /* Scrolled down: the line above the top edge fades out instead of being cut
    through its middle. `composerView` sets the class from `scrollTop`. */
-#input.scrolled {
+#input.scrolled, .composer-highlight.scrolled {
   mask-image: linear-gradient(to bottom, transparent, currentColor 12px);
 }
 #composer-bar {
@@ -6237,6 +6256,63 @@ body.projects-open #browser-resizer,
   font-size: var(--type-meta);
 }
 
+.settings-project-scope { display: flex; align-items: center; margin-left: auto; border-radius: var(--radius-sm); }
+.settings-project-scope .settings-pill { border: 0; background: transparent; }
+.settings-project-scope .settings-menu { right: 0; left: auto; min-width: 180px; }
+.settings-project-clear {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--control-sm);
+  height: var(--control-sm);
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+}
+.settings-project-clear .icon { width: 12px; height: 12px; }
+.settings-project-clear:hover { color: var(--text-primary); background: var(--surface-hover); }
+
+/* The 技能 / MCP tab strip. The selected tab takes the same fill as the nav's
+   selected item, so the two read as one "you are here" language. */
+.settings-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding-bottom: var(--space-5);
+}
+
+.settings-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.settings-tab:hover {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+.settings-tab.selected {
+  background: var(--surface-active);
+  color: var(--text-primary);
+}
+
+.settings-tab-count {
+  color: var(--text-tertiary);
+  font-size: var(--type-meta);
+}
+
 /* A group is a heading over rows divided by hairlines, with no box around it:
    the space after it is what says where it ends. No `overflow` either — a row's
    dropdown is positioned against `.settings-menu-shell` and opens below it. */
@@ -6260,6 +6336,37 @@ body.projects-open #browser-resizer,
   font-size: var(--type-meta);
 }
 
+/* A card's own actions, on its heading line and right-aligned: they act on the
+   list under them, not on the row they would otherwise follow. */
+.settings-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.settings-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+/* Ghost and one size down from a form button: they are repeatedly available
+   housekeeping, not the screen's one call to action. */
+.settings-card-header .settings-btn {
+  height: 28px;
+  padding: 0 var(--space-2);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+}
+
+.settings-card-header .settings-btn:hover:enabled {
+  background: var(--surface-hover);
+  color: var(--text-primary);
+}
+
 /* Something the user has to read before the rows make sense — a retired
    per-project value the migration refused to choose for them. */
 .settings-card-warning {
@@ -6281,6 +6388,7 @@ body.projects-open #browser-resizer,
 }
 
 .settings-card-title + .settings-row,
+.settings-card-header + .settings-row,
 .settings-card-note + .settings-row {
   border-top: 0;
 }
@@ -6292,6 +6400,78 @@ body.projects-open #browser-resizer,
 
 .settings-row-name {
   color: var(--text-primary);
+}
+
+/* A row that is a thing on disk rather than a setting gets a leading mark at a
+   fixed size, so every name on the page starts on the same line. */
+.settings-row-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-subtle);
+  border-radius: 50%;
+  color: var(--text-secondary);
+}
+
+.settings-row-icon .icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Where the thing comes from, in the quietest voice the row has. */
+.settings-row-badge {
+  flex: 0 0 auto;
+  color: var(--text-tertiary);
+  font-size: var(--type-meta);
+}
+
+/* A skill is a name and a gist. The line stays one line and is cut with an
+   ellipsis; the whole definition is in the row's hover text. */
+.settings-card--skills .settings-row-name {
+  font-size: var(--type-body);
+  font-weight: 600;
+}
+
+.settings-card--skills .settings-card-header { flex-wrap: wrap; }
+.settings-card--skills .settings-card-actions { flex-wrap: wrap; }
+.settings-card--skills .settings-card-note { padding: var(--space-2) 0 var(--space-4); }
+.settings-card--skills .settings-row {
+  min-height: 84px;
+  margin: var(--space-1) calc(-1 * var(--space-3));
+  padding: var(--space-3);
+  border: 0;
+  border-radius: var(--radius-md);
+}
+.settings-card--skills .settings-row--open { cursor: pointer; }
+.settings-card--skills .settings-row:hover,
+.settings-card--skills .settings-row:focus-within { background: var(--surface-hover); }
+.settings-row-open {
+  display: block;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.settings-card--skills .settings-row-icon { width: 44px; height: 44px; }
+.settings-card--skills .settings-row-icon .icon { width: 20px; height: 20px; }
+.settings-card--skills .settings-row-badge { max-width: 24%; text-align: right; overflow-wrap: anywhere; }
+.settings-card--skills .settings-row:has(.settings-toggle:not(.on)) .settings-row-name { color: var(--text-secondary); }
+
+.settings-card--skills .settings-row-desc {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  margin-top: 5px;
+  cursor: pointer;
 }
 
 .settings-row-desc {
@@ -6434,8 +6614,35 @@ body.projects-open #browser-resizer,
   gap: var(--space-2);
 }
 
+/* The header's project picker: at the far right of the title row, drawn as the
+   row dropdowns' ghost trigger — the value and a chevron, no box until the
+   pointer or the keyboard is on it. A native `<select>` underneath, so it keeps
+   the keyboard and screen-reader behaviour the rows' menu re-implements. */
 .settings-project {
-  min-width: 140px;
+  height: 28px;
+  min-width: 0;
+  max-width: 260px;
+  margin-left: auto;
+  padding: 0 24px 0 var(--space-2);
+  border: 0;
+  background-color: transparent;
+  color: var(--text-secondary);
+  font-size: var(--type-dense);
+  /* Right-aligned so the value keeps the chevron's company: the box is as wide
+     as its widest project, and a left-aligned value would drift away from it. */
+  text-align: right;
+  text-overflow: ellipsis;
+}
+
+.settings-project:hover,
+.settings-project:focus {
+  background-color: var(--surface-hover);
+  color: var(--text-primary);
+}
+
+/* The shared focus ring is a border, and this control has none. */
+.settings-project:focus {
+  box-shadow: inset 0 0 0 1px var(--focus-ring);
 }
 
 /* The row dropdown: a ghost trigger — the value and a chevron, no box until it
@@ -6812,6 +7019,64 @@ body.projects-open #browser-resizer,
   color: var(--text-secondary);
   font-size: var(--type-meta);
 }
+
+.settings-dialog--skill {
+  width: min(860px, 100%);
+  min-height: 0;
+  border-radius: var(--radius-lg);
+  background: var(--surface-canvas);
+}
+.settings-skill-head { padding: var(--space-5) var(--space-6) var(--space-4); }
+.settings-skill-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.settings-skill-icon { width: 52px; height: 52px; }
+.settings-skill-icon .icon { width: 24px; height: 24px; }
+.settings-skill-controls { display: flex; align-items: center; gap: var(--space-4); }
+.settings-skill-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
+.settings-skill-title-line .settings-dialog-title {
+  flex: 0 1 auto;
+  font-size: var(--type-title);
+  line-height: var(--leading-heading);
+  overflow-wrap: anywhere;
+}
+.settings-skill-status {
+  padding: 3px var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+  white-space: nowrap;
+}
+.settings-skill-status.on { color: var(--text-primary); }
+.settings-skill-kind { color: var(--text-tertiary); font-size: var(--type-body); }
+.settings-skill-description { margin-top: var(--space-2); color: var(--text-secondary); overflow-wrap: anywhere; }
+.settings-skill-source { margin-top: var(--space-2); color: var(--text-tertiary); font-size: var(--type-meta); }
+.settings-skill-body { display: block; padding: 0 var(--space-6); overscroll-behavior: contain; }
+.settings-skill-markdown {
+  padding: var(--space-5);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font-size: var(--type-reading);
+  line-height: var(--leading-prose);
+  overflow-wrap: anywhere;
+}
+.settings-skill-markdown p { margin-bottom: var(--space-3); }
+.settings-skill-markdown li { margin: var(--space-1) 0; }
+.settings-skill-content-note { padding: var(--space-3) 0; color: var(--text-secondary); font-size: var(--type-meta); }
+.settings-skill-info { margin-top: var(--space-3); }
+.settings-skill-info-title { padding: var(--space-2) 0; color: var(--text-secondary); font-size: var(--type-meta); cursor: pointer; }
+.settings-skill-info .settings-row { align-items: flex-start; flex-wrap: wrap; gap: var(--space-2); }
+.settings-skill-info .settings-row-control { flex-shrink: 1; overflow-wrap: anywhere; }
+.settings-skill-foot { justify-content: space-between; flex-wrap: wrap; padding: var(--space-4) var(--space-6) var(--space-5); }
+.settings-skill-file-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-left: auto; }
+.settings-dialog--skill > .settings-confirm { margin: var(--space-3) var(--space-6) 0; }
 
 /* A field is its label over its control, the control full width: a form read
    top to bottom, not a column of right-aligned boxes of different widths. */
@@ -7370,6 +7635,7 @@ body.projects-open #browser-resizer,
 .project-new,
 .project-more,
 .project-menu-item,
+.project-expand,
 .session-row,
 .session-open,
 .session-delete,
@@ -7553,6 +7819,7 @@ body.projects-open #browser-resizer,
   }
   .step-bead,
   .task-mark .icon,
+  .bt-mark .icon,
   .task-card,
   .thread-status .icon,
   .session-title-text {

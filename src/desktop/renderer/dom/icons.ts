@@ -34,6 +34,7 @@ export type IconName =
   | 'chevron-left'
   | 'chevron-right'
   | 'chevron-down'
+  | 'chevron-up'
   | 'arrow-down'
   | 'arrow-left'
   | 'arrow-right'
@@ -95,6 +96,8 @@ export type IconName =
   | 'eye-off'
   // --- the transcript's compaction line ---
   | 'fold-vertical'
+  // --- a skill's settings row and the 技能 card's 导入 button ---
+  | 'package'
 
 type ShapeTag = 'path' | 'circle' | 'rect' | 'ellipse' | 'line'
 
@@ -138,6 +141,8 @@ const ICONS = {
   'chevron-left': ['m15 18-6-6 6-6'],
   'chevron-right': ['m9 18 6-6-6-6'],
   'chevron-down': ['m6 9 6 6 6-6'],
+  // The 展开 row's pair: the same glyph turned over.
+  'chevron-up': ['m18 15-6-6-6 6'],
   // A full arrow, not the chevron: the jump-to-bottom button is the only place
   // that means "go to the end", and a bare chevron there reads as "collapse".
   'arrow-down': ['M12 5v14', 'm19 12-7 7-7-7'],
@@ -234,6 +239,13 @@ const ICONS = {
     'm2 2 20 20',
   ],
   'fold-vertical': ['M12 22v-6', 'M12 8V2', 'M4 12H2', 'M10 12H8', 'M16 12h-2', 'M22 12h-2', 'm15 19-3-3-3 3', 'm15 5-3 3-3-3'],
+  // package: a skill is a folder of instructions, not a document.
+  package: [
+    'M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z',
+    'M12 22V12',
+    'm3.3 7 8.7 5 8.7-5',
+    'm7.5 4.27 9 5.15',
+  ],
 } as const satisfies Record<IconName, IconSpec>
 
 export function icon(name: IconName, className = 'icon'): SVGSVGElement {

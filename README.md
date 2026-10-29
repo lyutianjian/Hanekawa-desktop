@@ -18,6 +18,8 @@ npm run start:desktop
 
 `build:desktop` 用 `tsc` 编译主进程，用 esbuild 打包 preload 和渲染进程，再把渲染进程资源复制到 `dist/`。`start:desktop` 让 Electron 运行这份 `dist/`，所以改了源码要重新构建。
 
+回合进行时，状态行优先显示最近仍在执行的工具描述；普通切换过滤 150 毫秒的短暂变化，工具描述保留约 650 毫秒，工具结束后切回「处理中」前缓冲 650 毫秒（两段等待重叠计算）。空档中来了下一条工具描述就接上，极短的中间步骤可能略过，文字切换轻淡入，动画和计时继续。思考、正文输出、真实的人工审批请求、重试和错误立即更新；自动审批不显示「等待你确认」，回合结束立即收起状态行。缓冲只影响状态文字，执行结果和计时照常更新。
+
 ## 配置
 
 ### 模型与服务商
@@ -161,6 +163,8 @@ Anthropic 回复中的签名思考只会回传给产生它的同一模型和服�
 
 不填时先回落到 `agent.contextManagement.contextWindow`，再回落到 272,000。这个值决定上下文预算、历史选择、压缩阈值、ToolSearch 阈值和状态显示；Hanekawa 不会根据模型名推断它。
 
+设置页所有手动填写的 token 数量（上下文窗口、模型上下文长度、最大输出 Token、摘要输出上限、手动压缩预留）均支持 K/M 后缀，不区分大小写，也支持小数：`32k` = 32,000，`1.5k` = 1,500，`1m` = 1,000,000；整数输入仍然有效，保存时自动换算为数值。
+
 ### 模型价格
 
 模型行的「价格」里填每百万 token 的单价：输入、输出、缓存写入、缓存命中，币种 USD 或 CNY，对应配置里的 `pricing`（`inputPerMillionTokens`、`outputPerMillionTokens`、`cacheWriteInputPerMillionTokens`、`cacheReadInputPerMillionTokens`、`currency`）。四项都空表示不计价；填了任何一项就必须填输入和输出；缓存两项留空时按输入单价计。
@@ -176,12 +180,15 @@ Anthropic 回复中的签名思考只会回传给产生它的同一模型和服�
 | 模型与服务商、子代理路由、上下文管理、线程调度（协调者／线程的模型与思考强度、安静天数、自动结案天数） | `~/.myagent/config.json` |
 | 权限规则、默认权限模式、扩展思考、1 小时提示词缓存、MCP 服务器与信任、技能开关 | `~/.myagent/projects/<key>/settings.local.json`（每项目一份，不在项目目录里） |
 | 个性化 › 自定义指令 | `~/.myagent/AGENTS.md` |
-| 技能和 MCP › 导入技能 | 复制到 `<项目>/.myagent/skills/` |
+| 技能和 MCP › 导入技能 | 复制到 `<项目>/.myagent/skills/`；「导入到个人」复制到 `~/.agents/skills/` |
+| 技能 ›「个人」范围的技能开关 | `~/.myagent/settings.json`（所有项目的默认值，项目自有的 `skills.disabled` 列表优先） |
 | 外观 › 界面主题 | 只存在应用本地 |
 
 需要知道的几点：
 
 - 权限规则跨层**拼接**、MCP 信任取**并集**，所以设置页只能编辑 `settings.local.json` 里的条目。继承自 `~/.myagent/settings.json` 或项目 `settings.json` 的规则以只读方式列出；在 `~/.myagent/settings.json` 授予的 MCP 信任无法在页面上撤销，要去那个文件里删。
+- 「技能和 MCP」是两个横向标签页，技能在前、MCP 在后，标签上带数量；搜索框会同时过滤两页并显示命中数。技能行在悬停时显示圆角底色，点击打开详情弹窗：顶部可以启停技能，中间显示渲染后的完整 `SKILL.md`，来源、加载方式与风险提示收在「技能信息」中，底部可以「打开」「在 Finder 中显示」「复制 Markdown」，Hanekawa 管理的技能还有「卸载」。点击遮罩、关闭按钮或按 Esc 返回列表，原搜索与滚动位置保留。带 hooks 的技能导入后默认关闭，读过详情再打开。
+- 技能页右上角可以选择项目，查看该项目可用的项目技能与个人技能。点击项目旁的 × 取消选择后显示「个人」，只管理个人技能；开关写入全局默认，已打开的项目同步重新加载。项目已有的独立开关设置保持优先。个人范围中的文件操作和卸载指向个人副本，即使项目里有同名技能也不会改动它。
 - 六个上下文管理数值在项目启动时读取一次，修改后重启生效。
 - 默认权限模式只影响之后新开的会话；线程调度的六项设置存在全局配置里，所有项目共用，跟随全局的协调者或线程在下一回合采用新值，会话里手动指定的模型不被覆盖。其余设置立即作用于已打开的会话。
 
@@ -191,9 +198,11 @@ Anthropic 回复中的签名思考只会回传给产生它的同一模型和服�
 
 左侧是侧栏：会话搜索、按项目分组的会话列表、「最近」（不属于任何项目的会话）以及「项目」入口，宽度可拖动。右侧面板由标题栏右端的图标按钮切换，每个按钮一页，再点当前页的按钮收起面板：**任务**（计划保持独立；后台命令和子代理混排在「运行中／已完成」两组，已完成默认收起，分组记住展开选择；子代理显示简短描述，点击查看对话；后台命令可展开查看输出末尾，运行项可单独停止；有内容在运行时按钮上显示圆点）、**线程**（仅项目调度的协调者和线程会话中出现）、**改动**（本会话各编辑工具改过的文件，同一文件多轮修改按顺序列出）、**浏览器**。各页分别记忆宽度，双击拖柄恢复默认宽度。
 
+子代理预览显示模型和累计 token，不显示时间；详情页显示状态、模型和实际耗时，运行时计时，结束后固定。子代理和调度线程的详情页共用对话布局：顶部信息固定，对话单独滚动，运行反馈显示在对话底部。线程的初始任务、后续调度消息和回复按顺序显示在对话中。
+
 空会话的首页可以切换 git 分支（「切换分支」），并显示用量卡片（概览/模型，全部 / 30 天 / 7 天）。会话标题栏可以重命名、删除会话，或「在 VS Code 中打开」项目。
 
-「最近」中的会话共享 `~/Documents/myagent` 作为工作目录，打开时自动创建。相对路径的文件写入、Bash 命令和「在 VS Code 中打开」都从这个目录开始，首页也显示这个位置。旧会话重新打开后同样使用这个目录；历史、记忆和配置保留原来的存储位置，之前生成的文件留在原处。
+「最近」中的会话共享 `~/Documents/myagent` 作为工作目录，打开时自动创建。相对路径的文件写入、Bash 命令和「在 VS Code 中打开」都从这个目录开始，首页不显示工作区目录按钮。旧会话重新打开后同样使用这个目录；历史、记忆和配置保留原来的存储位置，之前生成的文件留在原处。
 
 | 操作 | macOS | Windows / Linux |
 |---|---|---|
@@ -239,6 +248,8 @@ macOS 上标题栏为原生红绿灯按钮预留位置（缩放、全屏切换�
 | `/attachments` | 列出或移除草稿中的图片附件 |
 
 技能也会注册成斜杠命令，见下文「技能」。
+
+输入框只将精确匹配的命令名（含别名）或技能名视为调用：命令名显示为蓝色，技能显示为图标和蓝色名称，技能标记可用退格移除，后面的参数仍可编辑。发出后，气泡里这一行保持同样的显示：命令名蓝色，技能是蓝色图标加名称。未匹配的 `/...` 保留原文作为普通消息发送；回合进行中发送时，照常加入当前回合。
 
 ### 图片输入
 
@@ -325,13 +336,15 @@ agent 通过 `Browser` 工具使用同一组标签页：打开、导航、后退
 
 文件规则匹配解析后的绝对路径。以 `/` 或 `~` 开头的模式是绝对路径，其他都相对于项目根目录，所以 `Read(.env)` 只匹配根目录的 `.env`——要匹配所有的请写 `Read(**/.env)`。`Read`/`Edit` 的 deny 规则也会尽力应用到从 Bash 命令中提取出的路径。`Bash(...)` 的 deny/ask 规则会逐个检查命令里实际会运行的每条命令：`while`/`for`/`if` 循环体、子 shell 与 `{ }` 分组、`$(...)` 替换、`sudo`/`timeout`/`xargs` 等包装以及 `sh -c`/`eval` 的内容都算在内，所以 `Bash(curl:*)` 也拦得住 `while true; do curl …; done`。规则名有家族别名：`Bash` 涵盖 `Monitor`，`Edit` 涵盖所有写入工具，`Read` 涵盖 `Grep`/`Glob`。
 
-项目 `.myagent/settings.json` 里的 `permissions.mode` 和 `mcp.trustedServers` 会被忽略并给出诊断，请在用户或本地设置中设置。`Config` 工具不能修改权限模式。`WebFetch` 只跟随同一主机内的重定向；跨主机重定向会返回给模型，它的下一次请求重新经过权限闸门。
+项目 `.myagent/settings.json` 里的 `permissions.mode` 和 `mcp.trustedServers` 会被忽略并给出诊断，请在用户或本地设置中设置。`Config` 工具不能修改权限模式。`WebFetch` 只跟随同一主机内的重定向；跨主机重定向不算失败，会把目标地址返回给模型，它的下一次请求重新经过权限闸门。
 
 ## 扩展
 
 ### 技能
 
 技能放在 `<项目>/.myagent/skills/<name>/SKILL.md`，或所有项目共享的 `~/.agents/skills/<name>/SKILL.md`（同名时项目内的优先），带 YAML frontmatter：
+
+除了这两个文件夹，还会读取其他工具的技能目录，写好的技能不改动就能用：项目里的 `.claude/skills/`、`.agents/skills/`，以及个人目录下的 `~/.claude/skills/`、`~/.codex/skills/`、`~/.gemini/skills/`。这些目录只读——可以在设置里关掉某个技能，但不能在 Hanekawa 里卸载，删除要去原工具里做。
 
 ```markdown
 ---
@@ -387,6 +400,8 @@ hooks:
 ```
 
 `mcp.trustedServers` 只能在用户设置或本地设置中授予。MCP 工具默认延迟加载，由模型通过 `ToolSearch` 按需取用。
+
+仓库根目录的 `.mcp.json`（Claude Code 的项目文件）也会被读取，不需要改动就能用；同名时 `.myagent/mcp.json` 与各设置层里的条目优先。两处的服务器都要先信任：启动时会逐个弹窗询问，拒绝的服务器记为 `not trusted`，接受后写进本地设置的信任列表，设置页里来自 `.mcp.json` 的行会标出来源。
 
 ### 钩子
 
@@ -504,11 +519,15 @@ Responses 的加密推理本地计数沿用 Codex 的估算：从编码长度回
 每个内置工具一个目录 `src/tools/<Name>Tool/`，包含实现文件和 `prompt.ts`（工具描述及工具名常量），统一在 `src/tools/index.ts` 注册：
 
 - 文件：`Read`、`Write`、`Edit`、`MultiEdit`、`Delete`、`NotebookEdit`、`Grep`、`Glob`
-- Shell：`Bash`、`KillShell`。后台命令的输出边跑边写进会话的 tool-results 目录（超过 5 MB 只保留开头和结尾），模型用 `Read` 读取；命令结束时通知会附上最后 20 行，并唤醒空闲的会话，所以不需要轮询
+- Shell：`Bash`、`KillShell`。后台命令的输出边跑边写进会话的 tool-results 目录（超过 5 MB 只保留开头和结尾），模型用 `Read` 读取；命令结束时通知会附上最后 20 行，并唤醒空闲的会话，所以不需要轮询。命令卡在前台时你也可以直接发消息：仍在跑的命令会移到后台继续跑，你的消息在模型下一步开始时并入这一轮，不必等命令结束
 - 监控：`Monitor` 在后台跑一个脚本，它 stdout 的每一行是一个事件，在模型下一步开始时合并送进对话（每个监控最多带最近 50 行，多出的只留计数和输出文件路径）。事件只在模型工作时送达：会话空闲时不唤醒，攒到用户下一条消息一起带上；工作中一次送达就超出上限的监控会被自动停掉。默认 5 分钟后结束，最长 1 小时，`persistent` 不限时；用 `KillShell` 停止。命令按 Bash 的分级和 `Bash(...)` 规则判定，子代理不提供
-- 网络：`WebFetch`、`WebSearch`
+- 网络：`WebFetch`、`WebSearch`。`WebFetch` 抓一个 URL 并返回正文 markdown：先删掉脚本、样式、导航、cookie 横幅、侧栏和页脚再转换，`<script>` 里的代码不会再混进结果（实测 qq.com 从 12.6 万字符 HTML 降到 1.7 千字符正文）；表格转成 GFM 表格，相对链接改写成绝对地址，GBK/Big5/Shift_JIS 按页面声明的编码解码，不再出现乱码。`pattern` 只回命中行（带行号与两行上下文），`offset` 按行翻页，单次约 4 万字符，页尾会写明下一页从哪一行开始；PDF 与二进制会直接说明原因，并指向 `Browser` 或 `pdftotext`。同一页面 15 分钟内重复读取走缓存。`WebSearch` 一次可发 1–4 条 query（每条可带 `recencyDays`、`domains`，整轮可带 `blockedDomains`），按引擎链逐个尝试（DuckDuckGo → Bing → Baidu → Wikipedia，中文 query 先问 Baidu；配了 `HANEKAWA_SEARCH_URL` / `HANEKAWA_BRAVE_API_KEY` 时它们排最前）。刚连不上的引擎会被跳过约 2 分钟、被反爬挑战的跳过约 1 分钟，所以开着代理时直接用上好引擎，代理关掉时也只白等一次超时而不是每条 query 都等；窗口过期后会自动重试，不用重启。结果还要校验确实提到了 query——引擎对不上的 query 会拿兜底结果充数，这种结果会被判掉而不是当成答案；全部失败时逐条列出每个引擎失败的原因
 - 规划与交互：`EnterPlanMode`、`ExitPlanMode`、`AskUserQuestion`、`TaskCreate`、`TaskList`、`TaskGet`、`TaskUpdate`
 - 其他：`Agent`、`SendMessage`、`Skill`、`ToolSearch`、`Config`
+
+`Edit` / `MultiEdit` 可以直接替换从搜索、Bash 或对话中已知的准确文本，无需为了满足前置条件再调用一次 `Read`。替换始终匹配磁盘上的当前内容；文件其他位置有修改时保留这些修改，目标文本找不到、匹配不唯一或批量范围重叠时不写入。需要了解周边逻辑时仍应先读取。已有文件的整文件覆盖（`Write`）、删除和 notebook 编辑仍要求先读过且文件未过期。
+
+字符串编辑保持原编码、BOM、换行风格和文件权限，只接受 UTF-8 或带 BOM 的 UTF-16LE 文本。对应文件的 `Read` deny/ask 规则也约束编辑工具的内部读取；`Read` allow 规则不会授权写入。
 
 桌面端还通过 `extraTools` 注入 `Browser` 和项目调度工具（`StartThread`、`ListThreads`、`MessageThread`、`FetchThread`、`ResolveThread`、`StopThread`、`AskCoordinator`，按会话角色开放）。
 
@@ -546,6 +565,7 @@ npm test -- test/config.test.ts test/cacheBreakDetection.test.ts
 - `MYAGENT_STREAM_IDLE_WARNING_MS=N`：流空闲多久发出警告（默认 90 秒；旧名 `MYAGENT_STREAM_IDLE_TIMEOUT_MS` 仍可用）
 - `MYAGENT_STREAM_IDLE_HARD_TIMEOUT_MS=N`：流空闲多久中止请求（默认 10 分钟）
 - `MYAGENT_SUBAGENT_MODEL` / `MYAGENT_SUBAGENT_MODEL_<TYPE>`：覆盖子代理使用的模型
-- `HANEKAWA_SEARCH_URL`：`WebSearch` 使用的 SearXNG 地址
+- `HANEKAWA_SEARCH_URL`：`WebSearch` 优先使用的 SearXNG 地址（JSON API 关闭时会退回解析它的 HTML）。自建实例是唯一能自己控制的检索源，在网络封锁了内置引擎时最有用
+- `HANEKAWA_BRAVE_API_KEY`（或 `BRAVE_API_KEY`）：设置后 Brave Search 排在引擎链最前
 - `MYAGENT_BASH_PATH`：指定 Bash 可执行文件（仅 Windows 生效）
 - ToolSearch 相关变量见上文「ToolSearch」

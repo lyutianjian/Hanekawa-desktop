@@ -419,6 +419,9 @@ test('the palette is the one that was agreed, value for value', () => {
       '--reading-measure': '760px',
       '--reading-gutter': 'clamp(16px, 4cqi, 40px)',
       '--composer-overhang': '16px',
+      '--composer-input-indent': '0px',
+      '--composer-scroll-y': '0px',
+      '--composer-scrollbar-width': '0px',
       // The rail's resting width. A layout number, not a colour: `app.ts`
       // re-declares it on the document element when the handle is dragged, and
       // this declaration is the fallback every fresh profile resolves.
@@ -579,6 +582,9 @@ test('the palette is the one that was agreed, value for value', () => {
       '--reading-measure': '760px',
       '--reading-gutter': 'clamp(16px, 4cqi, 40px)',
       '--composer-overhang': '16px',
+      '--composer-input-indent': '0px',
+      '--composer-scroll-y': '0px',
+      '--composer-scrollbar-width': '0px',
       // The rail's resting width. A layout number, not a colour: `app.ts`
       // re-declares it on the document element when the handle is dragged, and
       // this declaration is the fallback every fresh profile resolves.

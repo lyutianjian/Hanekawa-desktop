@@ -34,7 +34,7 @@ function find(view: StubView, name: string): StubView | undefined {
   return undefined
 }
 
-test('agent headings use the short task description, with the type on the detail meta line', () => {
+test('agent previews show tokens, while the detail shows status, model and duration without the type', () => {
   const stub = installDomStub()
   try {
     const container = stub.createContainer('subagents')
@@ -42,13 +42,16 @@ test('agent headings use the short task description, with the type on the detail
     const view = createSubagentPanelView(container, {
       onSelect: (id) => selected.push(id), loadTranscript: async () => [], onOpenPath: () => {},
     })
-    const run = { ...entry, name: '子代理', description: '核对工具权限', agentType: 'explore' }
+    const run = { ...entry, name: '子代理', description: '核对工具权限', agentType: 'explore', model: 'deepseek', tokens: 5_200, durationMs: 41_000 }
     view.render({ entries: [run], selected: undefined })
     assert.equal(find(stub.inspect(container), 'subagent-name')?.text, '核对工具权限')
     assert.equal(stub.inspect(container).text.includes('子代理'), false)
+    assert.equal(find(stub.inspect(container), 'subagent-meta')?.text, 'deepseek · 5.2k token')
+    assert.equal(find(stub.inspect(container), 'subagent-time'), undefined)
     view.render({ entries: [run], selected: run.id })
     assert.equal(find(stub.inspect(container), 'subagent-name')?.text, '核对工具权限')
-    assert.equal(find(stub.inspect(container), 'subagent-meta')?.text, 'explore · 完成')
+    assert.equal(find(stub.inspect(container), 'subagent-meta')?.text, '完成 · deepseek · 41 秒')
+    assert.equal(find(stub.inspect(container), 'subagent-page-body')?.text.includes('全部任务'), false, 'the back button is outside the scrolling body')
     // Stopping belongs to the task list's rows, not to the run's own page.
     assert.equal(find(stub.inspect(container), 'subagent-stop'), undefined)
     stub.click(find(stub.inspect(container), 'subagent-back')!.node)
@@ -137,13 +140,17 @@ test('a hidden page stops reading and stops its clock, and comes back in one rea
   view.render({ entries: [{ ...running, startedAt }], selected: 'call-2' })
   await flush()
   assert.equal(reads, 1, 'the page it just opened reads once')
+  const column = find(stub.inspect(container), 'transcript-column')!
+  assert.equal(column.children.at(-1)?.classes.includes('waiting'), true, 'the spinner is at the end even before records exist')
+  assert.ok(find(column, 'mark'))
 
   t.mock.timers.tick(1000)
   await flush()
   assert.equal(reads, 2, 'and once a second while it runs')
   assert.equal(text(stub.inspect(container), 'subagent-time'), '1 秒')
 
-  container.scrollTop = 120
+  const body = find(stub.inspect(container), 'subagent-page-body')!
+  stub.setMetrics(body.node, { scrollTop: 120 })
   view.setVisible(false)
   t.mock.timers.tick(5000)
   await flush()
@@ -154,7 +161,7 @@ test('a hidden page stops reading and stops its clock, and comes back in one rea
   await flush()
   assert.equal(reads, 3, 'showing again catches up in one read, not five')
   assert.equal(text(stub.inspect(container), 'subagent-time'), '6 秒', 'and the clock reads the time that passed')
-  assert.equal(stub.inspect(container).scrollTop, 120, 'and the reader is left where they were')
+  assert.equal(find(stub.inspect(container), 'subagent-page-body')?.scrollTop, 120, 'and the reader is left where they were')
 
   for (let second = 0; second < 3; second++) {
     t.mock.timers.tick(1000)
@@ -181,22 +188,26 @@ test('a read that lands after the page was hidden does not paint over it', async
     onOpenPath: () => {},
   })
   const timeline = () => find(stub.inspect(container), 'subagent-transcript')!
+  const fallback = () => find(stub.inspect(container), 'subagent-fallback')!
 
   view.setVisible(true)
   view.render({ entries: [running], selected: 'call-2' })
   await flush()
   assert.equal(reads, 1)
-  assert.equal(timeline().hidden, true, 'the fallback shows until the transcript arrives')
+  assert.equal(fallback().hidden, false, 'the task fallback shows until the transcript arrives')
+  assert.ok(find(timeline(), 'waiting'), 'the running feedback does not wait for that read')
 
   view.setVisible(false)
   release(records)
   await flush()
-  assert.equal(timeline().hidden, true, 'a read for a page that left the screen paints nothing')
+  assert.equal(fallback().hidden, false, 'a read for a page that left the screen paints nothing')
+  assert.equal(find(timeline(), 'assistant'), undefined)
 
   view.setVisible(true)
   await flush()
   assert.equal(reads, 2, 'coming back asks again rather than waiting on the dropped read')
   assert.equal(timeline().hidden, false, 'and this one is on screen, so it lands')
+  assert.equal(fallback().hidden, true)
 })
 
 /**
@@ -288,4 +299,31 @@ test('closing the page stops its poll as well', async (t) => {
   t.mock.timers.tick(5000)
   await flush()
   assert.equal(reads, 3, 'the list has no page to keep fresh')
+})
+
+test('a running tool keeps the agent spinner below its expanded steps, then settling removes it', async (t) => {
+  t.mock.timers.enable({ apis: ['setInterval'] })
+  const stub = installDomStub()
+  const container = stub.createContainer('subagents')
+  const view = createSubagentPanelView(container, {
+    onSelect: () => {},
+    loadTranscript: async () => [
+      turnRecords[0]!,
+      { type: 'tool_use', id: 'read', tool: 'Read', input: { file_path: 'README.md' }, riskLevel: 'safe', turnId: 't1', createdAt: '2026-10-10T00:00:01.000Z' },
+      { type: 'tool_approval', id: 'approval', tool: 'Read', input: { file_path: 'README.md' }, riskLevel: 'safe', approved: true, turnId: 't1', createdAt: '2026-10-10T00:00:01.010Z' },
+    ],
+    onOpenPath: () => {},
+  })
+  view.setVisible(true)
+  t.after(() => { view.setVisible(false); stub.uninstall() })
+  view.render({ entries: [running], selected: running.id })
+  await flush()
+  const column = find(stub.inspect(container), 'transcript-column')!
+  const waiting = column.children.at(-1)!
+  assert.ok(waiting.classes.includes('waiting'))
+  assert.ok(find(waiting, 'mark'))
+  assert.ok(find(column, 'step-head'), 'the tool steps are expanded above it')
+  view.render({ entries: [{ ...running, finished: true, status: 'done', durationMs: 42_000 }], selected: running.id })
+  assert.equal(find(stub.inspect(container), 'waiting'), undefined)
+  assert.equal(find(stub.inspect(container), 'subagent-time')?.text, '42 秒')
 })

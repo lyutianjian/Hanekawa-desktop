@@ -1,6 +1,7 @@
 import type { BackgroundTaskGroups, BackgroundTaskRow, TaskGroup } from '../model/backgroundTasks.js'
 import { formatElapsed } from '../model/commandsPanel.js'
 import { modelName } from '../model/modelNames.js'
+import { formatTokens } from '../model/usage.js'
 import { button } from './controls.js'
 import { el, replace } from './dom.js'
 import { icon } from './icons.js'
@@ -67,11 +68,13 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
 
   function rowNode(row: BackgroundTaskRow): HTMLElement {
     const open = row.kind === 'shell' && expanded.has(row.id)
-    const mark = el('span', `task-mark tone-${row.tone}`, icon(TONE_ICON[row.tone]))
+    const mark = el('span', `bt-mark tone-${row.tone}`, icon(TONE_ICON[row.tone]))
     mark.setAttribute('aria-hidden', 'true')
-    const time = el('span', 'task-time', row.durationMs === undefined ? '' : formatElapsed(row.durationMs))
-    if (row.running && row.startedAt !== undefined) clocks.push({ node: time, startedAt: row.startedAt })
-    const head = button('task-head', '', `${row.title} · ${row.status}，${row.kind === 'agent' ? '查看详情' : open ? '收起输出' : '查看输出'}`, () => {
+    const metric = row.kind === 'agent'
+      ? row.tokens === undefined ? undefined : el('span', 'bt-tokens', `${formatTokens(row.tokens)} token`)
+      : el('span', 'bt-time', row.durationMs === undefined ? '' : formatElapsed(row.durationMs))
+    if (row.kind === 'shell' && row.running && row.startedAt !== undefined && metric !== undefined) clocks.push({ node: metric, startedAt: row.startedAt })
+    const head = button('bt-head', '', `${row.title} · ${row.status}，${row.kind === 'agent' ? '查看详情' : open ? '收起输出' : '查看输出'}`, () => {
       if (row.kind === 'agent') handlers.onSelectAgent(row.id)
       else {
         if (expanded.has(row.id)) expanded.delete(row.id)
@@ -86,11 +89,11 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
     const status = row.tone === 'attention' || row.tone === 'danger' || row.tone === 'neutral' ? row.status : undefined
     replace(
       head,
-      el('div', 'task-title', mark, el('span', 'task-text', row.title), row.running ? undefined : el('span', `task-chevron${open ? ' open' : ''}`, icon('chevron-right'))),
-      el('div', 'task-meta',
-        status === undefined ? undefined : el('span', 'task-status', status),
-        row.model === undefined ? undefined : el('span', 'task-model', modelName(row.model)),
-        time,
+      el('div', 'bt-title', mark, el('span', 'bt-text', row.title), row.running ? undefined : el('span', `bt-chevron${open ? ' open' : ''}`, icon('chevron-right'))),
+      el('div', 'bt-meta',
+        status === undefined ? undefined : el('span', 'bt-status', status),
+        row.model === undefined ? undefined : el('span', 'bt-model', modelName(row.model)),
+        metric,
       ),
     )
     const output = open ? el('pre', 'command-output', outputs.get(row.id) || EMPTY_OUTPUT) : undefined
@@ -99,10 +102,11 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
     const failure = failed === undefined
       ? undefined
       : el('div', 'load-error', el('span', 'load-error-text', `无法读取输出：${failed}`), button('load-retry', '重试', '重新读取输出', () => load(row.id)))
-    return el('div', 'task-row',
+    return el('div', 'bt-row',
       head,
-      row.running ? button('task-stop', '', `停止 ${row.title}`, () => handlers.onStop(row), { icon: 'stop' }) : undefined,
-      open ? el('div', 'task-output-status', row.status) : undefined,
+      row.running ? button('bt-stop', '', `停止 ${row.title}`, () => handlers.onStop(row), { icon: 'stop' }) : undefined,
+      open ? el('pre', 'bt-command', row.title) : undefined,
+      open ? el('div', 'bt-output-status', row.status) : undefined,
       output,
       failure,
     )

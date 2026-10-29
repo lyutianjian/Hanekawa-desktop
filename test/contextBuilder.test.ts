@@ -67,6 +67,24 @@ test('ContextBuilder injects layered system and user context', async () => {
   assert.doesNotMatch(built.system ?? '', /Read: Read a file from disk/)
 })
 
+test('a provider baseline keeps the history the local estimate over-counts', async () => {
+  const builder = new ContextBuilder(undefined, contextWindow(8000))
+  const records: SessionRecord[] = [
+    { type: 'message', id: 'old', role: 'user', content: 'old '.repeat(6000), createdAt: '2026-05-10T00:00:00.000Z' },
+    { type: 'message', id: 'new', role: 'user', content: 'read file', createdAt: '2026-05-10T00:00:01.000Z' },
+  ]
+  const estimateOnly = await builder.build({ records, tools: [] })
+  assert.ok(estimateOnly.selection.trimmed.count > 0, 'the estimate alone trims the history')
+
+  const measured = await builder.build({
+    records,
+    tools: [],
+    usageBaseline: { tokens: 6900, localEstimate: estimateOnly.inputTokens },
+  })
+  assert.equal(measured.selection.trimmed.count, 0)
+  assert.ok(measured.contextItems.some((item) => item.kind === 'message' && item.message.id === 'old'))
+})
+
 test('ContextBuilder excludes message queue records from model context', async () => {
   const builder = new ContextBuilder(undefined, contextWindow(8000))
   const records: SessionRecord[] = [{

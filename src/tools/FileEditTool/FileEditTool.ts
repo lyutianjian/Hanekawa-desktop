@@ -2,9 +2,9 @@ import { z } from 'zod/v3'
 import type { Tool, ToolResult } from '../../harness/types.js'
 import { resolveToolPath } from '../../utils/paths.js'
 import { patchDetail } from '../editPatch.js'
-import { getReadFileContent, rememberReadFile, requireFreshRead, resolveTextFileMeta } from '../fileState.js'
-import { assertTargetUnchanged, resolveSafeTarget } from '../pathSafety.js'
-import { readTextFile, writeTextFile } from '../textFile.js'
+import { prepareFileEdit, rememberReadFile } from '../fileState.js'
+import { assertTargetUnchanged } from '../pathSafety.js'
+import { writeTextFile } from '../textFile.js'
 import { trackFileEdit } from '../trackFileEdit.js'
 import { DESCRIPTION } from './prompt.js'
 import { configFileView, restoreConfigApiKeys } from '../configFileView.js'
@@ -42,21 +42,13 @@ export const editFileTool: Tool = {
         errorCode: 'invalid_input',
       }
     }
-    const stale = await requireFreshRead(absolute, filePath, context)
-    if (stale) {
-      return stale
-    }
     if (oldString.length === 0) {
       return { ok: false, content: 'Refusing to edit: oldString must not be empty.', errorCode: 'precondition_failed' }
     }
-    // Resolve the real target before reading content to prevent TOCTOU: an
-    // attacker could swap the file with a symlink between read and write.
-    const resolved = await resolveSafeTarget(absolute, filePath, { approvedTarget: context.approvedWriteTarget })
-    if ('error' in resolved) {
-      return resolved.error
-    }
-    const { target } = resolved
-    const raw = getReadFileContent(absolute, context) ?? (await readTextFile(absolute)).content
+    const prepared = await prepareFileEdit(absolute, filePath, context)
+    if ('error' in prepared) return prepared.error
+    const { target, file, notice } = prepared
+    const raw = file.content
     const original = configFileView(absolute, raw)
     const matches = findStringMatches(original, oldString)
     if (matches.length === 0) {
@@ -78,20 +70,19 @@ export const editFileTool: Tool = {
     }
 
     nextContent = restoreConfigApiKeys(absolute, nextContent, raw)
-    const meta = await resolveTextFileMeta(absolute, context)
     await trackFileEdit(context, absolute)
     const changed = await assertTargetUnchanged(target, filePath)
     if (changed) {
       return changed
     }
-    await writeTextFile(target.canonical, nextContent, meta)
-    await rememberReadFile(absolute, nextContent, context, meta)
+    await writeTextFile(target.canonical, nextContent, file)
+    await rememberReadFile(absolute, nextContent, context, file)
     const label = matches.length > 1
       ? `Edited ${filePath} (${matches.length} occurrences)`
       : `Edited ${filePath}`
     return {
       ok: true,
-      content: label,
+      content: label + notice,
       metadata: {
         display: {
           summary: label,

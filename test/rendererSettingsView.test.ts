@@ -42,7 +42,6 @@ function snapshotOf(): WireSettingsSnapshot {
     permissions: {
       localPath: 'C:\\repo\\alpha\\.myagent\\settings.local.json',
       mode: 'default',
-      modeIsLocal: false,
       groups: [
         { behavior: 'allow', local: [], inherited: [] },
         { behavior: 'ask', local: [], inherited: [] },
@@ -51,6 +50,7 @@ function snapshotOf(): WireSettingsSnapshot {
     },
     skills: [],
     skillsDir: 'C:\\repo\\alpha\\.myagent\\skills',
+    sharedSkillsDir: 'C:\\Users\\me\\.agents\\skills',
     mcpServers: [],
     contextManagement: {
       contextWindow: 200_000,
@@ -77,6 +77,14 @@ function stateOf(overrides: Partial<SettingsState> = {}): SettingsState {
     ],
     ...overrides,
   }
+}
+
+function skillSnapshot(): WireSettingsSnapshot {
+  return { ...snapshotOf(), skills: [{
+    name: 'release', description: 'Cuts a release.', enabled: true, scope: 'project', inclusion: 'manual', hasHooks: false,
+    dir: 'C:\\repo\\alpha\\.myagent\\skills\\release', file: 'C:\\repo\\alpha\\.myagent\\skills\\release\\SKILL.md',
+    rootLabel: '.myagent/skills', origin: 'managed', removable: true, risk: 'low', riskNotes: [], content: '# Release\n\nCuts a **release**.\n\n- Review changes\n- Publish notes',
+  }] }
 }
 
 interface Rendered {
@@ -322,6 +330,17 @@ test('the header project picker and the single-choice form fields stay native se
   assert.ok(selects.length > 0, 'the provider dialog has choice fields')
   assert.deepEqual(new Set(selects.map((node) => node.tagName)), new Set(['SELECT']))
   assert.equal(findAll(form, 'settings-pill').length, 0)
+})
+
+test('the header keeps the project picker when there is only one project', (t) => {
+  // Always on: it is what says which project the page edits. Hiding it at one
+  // choice left the page anonymous until a second project happened to be open.
+  const { view } = mount(
+    t,
+    stateOf({ category: 'general', projects: [{ projectRoot: 'C:\\repo\\alpha', projectName: 'alpha' }] }),
+  )
+  const picker = findOne(findOne(region(view(), 'settings-body'), 'settings-header'), 'settings-project')
+  assert.equal(picker.tagName, 'SELECT')
 })
 
 test('an error sits in the open form, under its row, or pins to the screen', (t) => {
@@ -719,10 +738,10 @@ test('every view model field this file relies on is really produced', (t) => {
 
 // --- kept nodes ---------------------------------------------------------------
 
-/** The `.settings-card` whose title node reads `title`. */
+/** The `.settings-card` whose title node reads `title` — a card with actions keeps that title one level down. */
 function cardTitled(view: StubView, title: string): StubView {
   const found = findAll(view, 'settings-card').find(
-    (card) => card.children.some((kid) => kid.classes.includes('settings-card-title') && kid.text === title),
+    (card) => findAll(card, 'settings-card-title')[0]?.text === title,
   )
   assert.ok(found, `no card titled ${title}`)
   return found
@@ -750,6 +769,41 @@ test('a repaint keeps the card and row nodes rather than rebuilding them', (t) =
     control.node,
     'a rebuilt control cell re-parents whatever it holds, which blurs it',
   )
+})
+
+test("a card's own actions ride on its title line, and a skill row reads as one", (t) => {
+  const snapshot: WireSettingsSnapshot = {
+    ...snapshotOf(),
+    skills: [{
+      name: 'release',
+      description: 'Cuts a release.',
+      enabled: true,
+      scope: 'personal',
+      inclusion: 'manual',
+      hasHooks: false,
+      dir: 'C:\\Users\\me\\.agents\\skills\\release',
+      file: 'C:\\Users\\me\\.agents\\skills\\release\\SKILL.md',
+      rootLabel: '~/.agents/skills',
+      origin: 'managed',
+      removable: true,
+      risk: 'low',
+      riskNotes: [],
+      content: 'Cuts a release.',
+    }],
+  }
+  const card = cardTitled(region(mount(t, stateOf({ category: 'extensions', snapshot })).view(), 'settings-body'), '技能')
+  const header = child(card, 'settings-card-header')
+  assert.equal(child(header, 'settings-card-title').text, '技能')
+  assert.deepEqual(findAll(header, 'settings-btn').map((node) => node.text), ['导入', '导入到个人', '重新加载'])
+
+  // Mark, name, where it came from, switch — in that order, which is the row's
+  // whole design and not something a repaint may reorder.
+  const row = findOne(card, 'settings-row')
+  assert.deepEqual(
+    row.children.map((node) => node.classes.find((name) => name.startsWith('settings-row-'))),
+    ['settings-row-icon', 'settings-row-label', 'settings-row-badge', 'settings-row-control'],
+  )
+  assert.equal(findOne(row, 'settings-row-badge').text, '个人')
 })
 
 test('typing in a form field keeps that input node, so the caret survives', (t) => {
@@ -1048,4 +1102,134 @@ test('the nav keeps its buttons across renders and moves the selection on them',
   assert.equal(after.filter((item) => item.attributes.get('aria-current') === 'page').length, 1)
   assert.equal(after.filter((item) => item.classes.includes('selected')).length, 1)
   assert.ok(after[selectedAt()]!.classes.includes('selected'))
+})
+
+test('the extensions page draws a tab strip and only the selected tab’s card', (t) => {
+  const { view, apply, stub, intents } = mount(t)
+  apply({ kind: 'select-category', category: 'extensions' })
+  const body = () => region(view(), 'settings-body')
+  const tabs = () => findAll(body(), 'settings-tab')
+
+  assert.deepEqual(tabs().map((tab) => tab.attributes.get('aria-label')), ['技能（0）', 'MCP（0）'])
+  assert.deepEqual(tabs().map((tab) => tab.attributes.get('aria-selected')), ['true', 'false'])
+  assert.ok(tabs()[0]!.classes.includes('selected'))
+  assert.equal(findAll(body(), 'settings-card--skills').length, 1)
+  assert.equal(findAll(body(), 'settings-card--mcp').length, 0, 'the other card is not rendered at all')
+
+  const before = tabs().map((tab) => tab.node)
+  stub.dispatch(tabs()[1]!.node, 'click')
+  assert.deepEqual(intents.at(-1), { kind: 'select-extensions-tab', tab: 'mcp' })
+  apply(intents.pop()!)
+
+  assert.deepEqual(tabs().map((tab) => tab.node), before, 'the tab buttons are kept across the switch')
+  assert.deepEqual(tabs().map((tab) => tab.attributes.get('aria-selected')), ['false', 'true'])
+  assert.equal(findAll(body(), 'settings-card--skills').length, 0)
+  assert.equal(findAll(body(), 'settings-card--mcp').length, 1)
+})
+
+test('other pages draw no tab strip', (t) => {
+  const { view, apply } = mount(t)
+  apply({ kind: 'select-category', category: 'general' })
+  assert.equal(findAll(region(view(), 'settings-body'), 'settings-tab').length, 0)
+})
+
+test('the skill scope picker clears a selected project with x and labels the empty selection personal', (t) => {
+  const { view, apply, stub, intents } = mount(t, stateOf({ category: 'extensions', snapshot: skillSnapshot() }))
+  const scope = () => findOne(view(), 'settings-project-scope')
+  const clear = findOne(scope(), 'settings-project-clear')
+  assert.equal(clear.hidden, false)
+  stub.click(clear.node)
+  assert.deepEqual(intents.pop(), { kind: 'select-skill-project' })
+  apply({ kind: 'select-skill-project' })
+  assert.equal(findOne(scope(), 'settings-project-clear').hidden, true)
+  assert.equal(findOne(scope(), 'settings-pill').text, '个人')
+})
+
+test('a skill dialog renders Markdown above the list and preserves its file actions', (t) => {
+  const snapshot: WireSettingsSnapshot = {
+    ...snapshotOf(),
+    skills: [{
+      name: 'release',
+      description: 'Cuts a release.',
+      enabled: true,
+      scope: 'project',
+      inclusion: 'manual',
+      hasHooks: false,
+      dir: 'C:\\repo\\alpha\\.myagent\\skills\\release',
+      file: 'C:\\repo\\alpha\\.myagent\\skills\\release\\SKILL.md',
+      rootLabel: '.myagent/skills',
+      origin: 'managed',
+      removable: true,
+      risk: 'low',
+      riskNotes: [],
+      content: '# Release\n\nCuts a release.',
+    }],
+  }
+  const { view, intents, stub } = mount(t, stateOf({
+    category: 'extensions',
+    snapshot,
+    skillDetail: 'release',
+  }))
+  const card = dialogOf(view())
+
+  assert.ok(card.classes.includes('settings-dialog--skill'))
+  assert.equal(findOne(card, 'settings-skill-markdown').children[0]?.tagName, 'H1')
+  assert.equal(findOne(card, 'settings-skill-markdown').children[0]?.text, 'Release')
+  assert.equal(findOne(card, 'settings-skill-markdown').children[1]?.tagName, 'P')
+  assert.equal(findAll(region(view(), 'settings-body'), 'settings-card--skills').length, 1)
+
+  const footer = findOne(card, 'settings-skill-file-actions')
+  const buttons = findAll(footer, 'settings-btn')
+  assert.deepEqual(buttons.map((node) => node.text), ['打开', '在 Finder 中显示', '复制 Markdown'])
+  for (const button of buttons) stub.dispatch(button.node, 'click')
+  assert.deepEqual(intents, [
+    { kind: 'open-skill-file', name: 'release' },
+    { kind: 'reveal-skill', name: 'release' },
+    { kind: 'copy-skill-markdown', name: 'release' },
+  ])
+})
+
+test('the whole skill row opens its dialog, while its switch is an independent action', (t) => {
+  const { view, apply, stub, intents } = mount(t, stateOf({ category: 'extensions', snapshot: skillSnapshot() }))
+  const row = findOne(region(view(), 'settings-body'), 'settings-row')
+  const switchButton = findOne(row, 'settings-toggle')
+  const switched = stub.dispatch(switchButton.node, 'click')
+  assert.equal(switched.propagationStopped, true)
+  assert.deepEqual(intents.pop(), { kind: 'set-skill-enabled', name: 'release', enabled: false })
+  stub.dispatch(row.node, 'click', { target: switchButton.node })
+  assert.equal(intents.length, 0)
+  stub.dispatch(row.node, 'click', { target: findOne(row, 'settings-row-desc').node })
+  assert.deepEqual(intents.pop(), { kind: 'open-skill-detail', name: 'release' })
+  const name = findOne(row, 'settings-row-open').node
+  apply({ kind: 'open-skill-detail', name: 'release' })
+  assert.equal(stub.activeElement(), findOne(dialogOf(view()), 'settings-dialog-close').node)
+  for (const regionName of ['settings-nav', 'settings-body']) assert.ok(region(view(), regionName).attributes.has('inert'))
+  const layer = child(view(), 'settings-dialog-layer')
+  stub.dispatch(layer.node, 'pointerdown', { target: dialogOf(view()).node })
+  assert.equal(intents.length, 0)
+  stub.dispatch(layer.node, 'pointerdown')
+  assert.deepEqual(intents.pop(), { kind: 'close-skill-detail' })
+  apply({ kind: 'close-skill-detail' })
+  assert.equal(stub.activeElement(), name)
+})
+
+test('a skill toggle preserves its Markdown and the list scroll, and uninstall confirms inside the dialog', (t) => {
+  const snapshot = skillSnapshot()
+  const { view, apply } = mount(t, stateOf({ category: 'extensions', snapshot }))
+  const body = region(view(), 'settings-body').node as HTMLElement
+  body.scrollTop = 120
+  apply({ kind: 'open-skill-detail', name: 'release' })
+  const markdown = findOne(dialogOf(view()), 'settings-skill-markdown')
+  const toggle = findOne(dialogOf(view()), 'settings-toggle')
+  apply({ kind: 'set-skill-enabled', name: 'release', enabled: false })
+  assert.equal(findOne(dialogOf(view()), 'settings-toggle').node, toggle.node)
+  assert.equal(findOne(dialogOf(view()), 'settings-toggle').disabled, true)
+  assert.equal(findOne(dialogOf(view()), 'settings-skill-markdown').children[0]?.node, markdown.children[0]?.node)
+  assert.equal(findOne(dialogOf(view()), 'settings-skill-status').text, '已禁用')
+  assert.equal(body.scrollTop, 120)
+  apply({ kind: 'request-remove', target: { kind: 'skill', name: 'release' } })
+  assert.equal(findAll(view(), 'settings-confirm').length, 1)
+  assert.equal(findAll(dialogOf(view()), 'settings-confirm').length, 1)
+  apply({ kind: 'close-skill-detail' })
+  assert.equal(body.scrollTop, 120)
 })

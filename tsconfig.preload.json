@@ -10,7 +10,7 @@
     "noEmit": true,
     "isolatedModules": true
   },
-  "include": ["src/desktop/preload.ts", "src/desktop/types.ts", "src/desktop/ipc/electronChannel.ts"],
+  "include": ["src/desktop/preload.ts", "src/desktop/types.ts", "src/desktop/ipc/electronChannel.ts", "src/types/domino.d.ts"],
   // See `tsconfig.renderer.json`: the base config excludes `preload.ts`, so
   // inheriting that `exclude` would leave this program with nothing in it.
   "exclude": ["node_modules", "dist"]

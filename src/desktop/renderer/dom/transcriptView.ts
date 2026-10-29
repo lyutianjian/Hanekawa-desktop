@@ -19,6 +19,7 @@ import {
   toolStatusLabel,
   type ActivityRun,
   type ActivityStep,
+  type PendingSendImage,
   type Receipt,
   type SubagentRun,
   type TranscriptEntry,
@@ -29,7 +30,7 @@ import { absoluteTime, footerFacts, relativeTime, splitTurnFooters, type TurnFoo
 import { collectTurnEdits, type TurnEdits } from '../model/turnEdits.js'
 import { anchorPadding, anchorTopGap, readingCandidate, TRANSCRIPT_PAD_VARIABLE, viewportPolicy } from '../model/transcriptAnchor.js'
 import { PRESENCE_FALLBACK_MS } from '../model/presence.js'
-import { splitFileMentions } from '../model/userMessage.js'
+import { splitUserMessage, type UserMessageSegment } from '../model/userMessage.js'
 import { splitAttachedPaths } from '../../../media/attachedPaths.js'
 import { pathTileNode } from './pathTile.js'
 import { AGENT_TOOL, agentDescription } from '../model/subagentPanel.js'
@@ -49,6 +50,7 @@ import { drawnSteps } from '../model/memoryOps.js'
 import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
 import type { ThreadNoteCard } from '../model/threadNotes.js'
 import { failureCopyText, failureDetailFolds, type TurnFailureCard } from '../model/turnFailure.js'
+import type { WireCommandInfo } from '../../../runtime/protocol/wire.js'
 import type { WireThreadStatus } from '../../shellProtocol.js'
 import { pausedTaskCard, TASK_LOCATE_FALLBACK_MS, type TaskCard, type TaskRowStatus } from '../model/tasks.js'
 import { button } from './controls.js'
@@ -172,10 +174,21 @@ export interface TranscriptHandlers {
   onRetryTurn?(failureId: string): void
   /** A context-overflow failure's 「压缩对话」: `/compact`. Absent draws no button. */
   onCompactConversation?(): void
-  /** A running `Bash` row's 转后台: stop blocking the turn on it. */
-  onBackgroundTool?(toolUseId: string): void
   /** An edited-files card's row or 查看全部: the turn's changes in the side panel, `path` scrolled to. Absent draws no card. */
   onViewEdits?(edits: TurnEdits, path: string | undefined): void
+  /**
+   * The slash-command registry this lane completes from, read live.
+   *
+   * A user bubble draws the `/name` it opens with the way the composer drew it
+   * while it was being typed, and which token that is — and whether it is a
+   * skill, whose slash gives way to the package mark — is that registry's
+   * answer, not the text's. A getter rather than an array: the list arrives
+   * after the first paint and is replaced on reload, so the view cannot hold a
+   * copy. Absent (a sub-agent panel, a thread timeline) draws that token as
+   * plain text, and the signature keeps `undefined` so those bubbles are not
+   * rebuilt on every paint.
+   */
+  commands?(): readonly WireCommandInfo[]
 }
 
 export function createTranscriptView(
@@ -365,9 +378,9 @@ export function createTranscriptView(
     if (!status || !labelNode || !clockNode) return
     const { row, tokens } = status
     const now = Date.now()
-    const settled = settleLabel(gate, statusLabel(row, now), row.startedAt, now)
+    const settled = settleLabel(gate, statusLabel(row, now), row.startedAt, now, row.timing)
     gate = settled.gate
-    if (labelNode.textContent !== settled.label) labelNode.textContent = settled.label
+    if (labelNode.textContent !== settled.label) labelNode.replaceChildren(el('span', 'line-label', settled.label))
     // Empty under the model's threshold: a short wait is not worth a number.
     const meta = row.startedAt === undefined ? [] : statusMeta(now - row.startedAt, tokens)
     const shown = meta.join('\n')
@@ -390,7 +403,7 @@ export function createTranscriptView(
    */
   function runClock(startedAt: number | undefined): void {
     paintStatus()
-    if (startedAt === undefined || document.hidden) {
+    if (!status || document.hidden) {
       stopClock()
       return
     }
@@ -916,13 +929,13 @@ function createPainter(
     onOpenPath: handlers.onOpenPath,
     onViewImage: handlers.onViewImage,
     imageThumbUrl: handlers.imageThumbUrl,
+    commands: handlers.commands,
     onCopy: handlers.onCopy,
     onRewind: handlers.onRewind,
     onOpenThread: handlers.onOpenThread,
     onOpenProviderSettings: handlers.onOpenProviderSettings,
     onRetryTurn: handlers.onRetryTurn,
     onCompactConversation: handlers.onCompactConversation,
-    onBackgroundTool: handlers.onBackgroundTool,
     onViewEdits: handlers.onViewEdits,
     node(key, className, signature, fill, create) {
       filling.at(-1)?.push(key)
@@ -1490,11 +1503,7 @@ function toolRow(painter: Painter, step: ToolLike): HTMLElement {
       const content = body()
       return painter.node(bodyKey, 'step-body', [step.text, detail], () => [...content.childNodes])
     })
-    // A sibling of the head, which is itself a button.
-    const toBackground = step.kind === 'tool' && step.toolName === 'Bash' && status === 'running' && painter.onBackgroundTool !== undefined
-      ? button('step-background', '转后台', '不再等待这条命令，让它在后台继续运行', () => painter.onBackgroundTool!(step.id))
-      : undefined
-    return [head, toBackground, shown]
+    return [head, shown]
   })
 }
 
@@ -1839,21 +1848,37 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
     // Joined into one string, not left as an array: signatures are compared
     // element by element with `===`, and a fresh array per paint would never
     // match itself — every streamed chunk would refill this node.
-    const thumbs = item.images?.map((image) => painter.imageThumbUrl(image.id) ?? '').join(' ')
+    // A staged send (the composer's optimistic bubble) draws its pictures the
+    // same way, except one still being read has only a local preview to paint.
+    const stagedImages = item.pendingImages
+    const thumbs = stagedImages === undefined
+      ? (item.images ?? []).map((image) => painter.imageThumbUrl(image.id) ?? '').join('\x00')
+      : stagedImages.map((image) => image.kind === 'ready'
+        ? painter.imageThumbUrl(image.ref.id) ?? ''
+        : image.previewUrl ?? '').join('\x00')
     const expanded = isExpanded(painter.disclosure, item.id)
+    // The registry the composer completed from. Read here, not inside the fill,
+    // because it belongs in the signature too: it arrives after a resumed
+    // session's first paint, and the bubble drawn before it has no way to know
+    // its `/review` was a skill. The array is the pane's own, replaced only when
+    // the list is reloaded — so `===` holds between streamed paints and fails
+    // exactly once, on the paint that brings the answer.
+    const commands = painter.commands?.()
     return painter.node(
       key,
       classes.join(' '),
-      [item.text, item.createdAt, item.images, thumbs, expanded],
+      [item.text, item.createdAt, item.images, stagedImages, thumbs, expanded, commands],
       () => {
         const { text, paths } = splitAttachedPaths(item.text)
+        const images = stagedImages === undefined
+          ? item.images?.map((image, index) => imageTileNode(painter, image, index))
+          : stagedImages.map((image, index) => image.kind === 'ready'
+            ? imageTileNode(painter, image.ref, index)
+            : pendingImageTile(image, index))
         return [
           paths.length > 0 ? el('div', 'user-paths', ...paths.map(pathTileNode)) : undefined,
-          item.images !== undefined && item.images.length > 0
-            ? el('div', 'user-images', ...item.images.map((image, index) =>
-              imageTileNode(painter, image, index)))
-            : undefined,
-          text.trim().length > 0 || paths.length === 0 ? userBubble(painter, item.id, text, expanded) : undefined,
+          images !== undefined && images.length > 0 ? el('div', 'user-images', ...images) : undefined,
+          text.trim().length > 0 || paths.length === 0 ? userBubble(painter, item.id, text, expanded, commands) : undefined,
           metaRow(painter, item),
         ]
       },
@@ -1988,12 +2013,15 @@ function metaRow(painter: Painter, item: TranscriptItem, footer?: TurnFooter): H
   const model = item.kind === 'assistant' && item.model !== undefined ? modelName(item.model) : undefined
   // A draft has no stamp of its own; copying half a sentence is not the offer.
   if (time === undefined && model === undefined) return undefined
-  const copy = itemCopyButton(painter, item)
+  // A staged send has no record behind it yet: copying it would offer the words
+  // that are already leaving, and a rewind has no message id to address.
+  const staged = item.pendingImages !== undefined
+  const copy = staged ? undefined : itemCopyButton(painter, item)
   const onRewind = painter.onRewind
   const timeLabel = time === undefined ? undefined : timeNode(time, item.createdAt)
   // The user's row hangs off the bubble's right edge, read right to left: the controls end it.
   if (item.kind === 'user') {
-    const rewind = onRewind
+    const rewind = onRewind !== undefined && !staged
       ? button('item-rewind', '', '回退到此消息之前', () => onRewind(item.id), { icon: 'rewind' })
       : undefined
     return el('div', 'item-meta', timeLabel, copy, rewind)
@@ -2076,8 +2104,14 @@ function quiet(className: string, text: string): HTMLElement {
 }
 
 /** The bubble around the user's words: a long one is clamped, with 显示更多 under it once it overflows. */
-function userBubble(painter: Painter, id: string, source: string, expanded: boolean): HTMLElement {
-  const text = el('div', 'user-text', ...userParts(source))
+function userBubble(
+  painter: Painter,
+  id: string,
+  source: string,
+  expanded: boolean,
+  commands: readonly WireCommandInfo[] | undefined,
+): HTMLElement {
+  const text = el('div', 'user-text', ...userParts(source, commands))
   const label = expanded ? '收起' : '显示更多'
   const more = button('user-more', label, label, () => painter.onToggle(id, expanded))
   const bubble = el('div', expanded ? 'user-bubble' : 'user-bubble clamped', text, more)
@@ -2086,19 +2120,40 @@ function userBubble(painter: Painter, id: string, source: string, expanded: bool
 }
 
 /**
- * The user's bubble, with every `@` mention drawn as a pill in place.
+ * The user's words, with every `@` mention drawn as a pill in place and the
+ * command the message opened with drawn as the composer drew it.
  *
- * Still character-for-character: the pill's label is the mention's own substring and
- * nothing around it is touched, which is what `splitFileMentions` guarantees. A
+ * Still character-for-character: a pill's label is the mention's own substring and
+ * nothing around it is touched, which is what `splitUserMessage` guarantees. A
  * `<span>`, not a `<button>`: clicking it does nothing, and a control that does
  * nothing is a worse lie than plain text (the same call 5c made for the context
  * pills).
  */
-function userParts(text: string): Child[] {
-  return splitFileMentions(text).map((segment) =>
-    segment.kind === 'text'
-      ? segment.text
-      : el('span', 'file-chip', icon('file'), el('span', 'file-chip-label', segment.label)),
+function userParts(text: string, commands: readonly WireCommandInfo[] | undefined): Child[] {
+  return splitUserMessage(text, commands ?? []).map((segment) => {
+    switch (segment.kind) {
+      case 'text':
+        return segment.text
+      case 'file':
+        return el('span', 'file-chip', icon('file'), el('span', 'file-chip-label', segment.label))
+      case 'command':
+        return commandToken(segment)
+    }
+  })
+}
+
+/**
+ * The command a message opened with, drawn the way the composer drew it while it
+ * was being typed: accent-coloured, and a skill by its name behind the package
+ * mark that takes the slash's place. Not a control, like the file pill: the
+ * command has already run, and nothing here re-runs it.
+ */
+function commandToken(segment: Extract<UserMessageSegment, { kind: 'command' }>): HTMLElement {
+  return el(
+    'span',
+    segment.isSkill ? 'user-command skill' : 'user-command',
+    segment.isSkill ? el('span', 'user-command-mark', icon('package')) : undefined,
+    segment.label,
   )
 }
 
@@ -2131,6 +2186,21 @@ function imageTileNode(painter: Painter, image: ImageAttachmentRef, index: numbe
     event.preventDefault()
     open()
   })
+  return thumb
+}
+
+/**
+ * One picture on a message that is still being sent: the local preview the
+ * renderer can paint before the image has a stored id, or an empty box when
+ * even that is not there yet (a path the host is reading). Not a control — there
+ * is nothing to open until the picture is an attachment.
+ */
+function pendingImageTile(image: PendingSendImage & { readonly kind: 'loading' }, index: number): HTMLElement {
+  const facts = `图片 ${index + 1}：${image.name}，导入中`
+  const thumb = el('img', 'user-image-thumb pending')
+  if (image.previewUrl !== undefined) thumb.setAttribute('src', image.previewUrl)
+  thumb.setAttribute('alt', facts)
+  thumb.title = facts
   return thumb
 }
 

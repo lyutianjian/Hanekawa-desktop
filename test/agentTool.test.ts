@@ -137,10 +137,12 @@ test('Agent tool marks only read-only agent types as concurrency-safe inputs', (
   assert.equal(agentTool.isConcurrencySafeInput?.({ task: 'missing type' }), false)
 })
 
-test('Agent tool bridges sub-agent transcripts without leaking child tool records', async () => {
+test('Agent tool bridges sub-agent transcripts and measured time without leaking child tool records', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'] })
   const provider: ModelProvider = {
     name: 'fake',
     async createMessage() {
+      t.mock.timers.tick(42_000)
       return {
         content: 'sub-agent result',
         toolCalls: [],
@@ -175,6 +177,7 @@ test('Agent tool bridges sub-agent transcripts without leaking child tool record
   assert.ok(transcript && transcript.type === 'subagent_transcript')
   assert.equal(transcript.model, 'fake-model')
   assert.deepEqual(transcript.usage, { inputTokens: 10, cacheReadInputTokens: 2, outputTokens: 3 })
+  assert.equal(transcript.durationMs, 42_000)
   assert.equal(transcript.summary, 'sub-agent result')
   assert.equal(transcript.recordCount, 2)
   assert.equal(transcript.messageCount, 2)
@@ -184,7 +187,7 @@ test('Agent tool bridges sub-agent transcripts without leaking child tool record
   assert.equal(summary.role, 'assistant')
   assert.match(summary.content, /<subagent-summary type="general"/)
   assert.match(summary.content, /tokens="15"/)
-  assert.equal(result.display?.summary, 'Done (0 tool uses · 15 tokens · 1s)')
+  assert.equal(result.display?.summary, 'Done (0 tool uses · 15 tokens · 42s)')
   assert.equal(result.display?.headerSuffix, 'fake-model')
 })
 

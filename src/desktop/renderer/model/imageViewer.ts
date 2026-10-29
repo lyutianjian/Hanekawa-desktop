@@ -22,6 +22,17 @@ export interface ImageViewerState {
   readonly name: string
   /** `W×H`, with ，动画首帧 appended when the import took the first frame. */
   readonly dimensions: string
+  /**
+   * The picture's own pixel size, and the box the view lays it out in.
+   *
+   * The two tiers of pixels arrive at different natural sizes — the 256px
+   * thumbnail the strip already holds, then the screen-sized copy — so an
+   * `<img>` at its natural size would change size under a fixed zoom when the
+   * sharp copy landed. Laid out at this instead, the swap changes sharpness
+   * only, and `zoom` stays "one picture pixel per CSS pixel" throughout.
+   */
+  readonly width: number
+  readonly height: number
   /** Whether the screen-sized copy has arrived, is still coming, or failed. */
   readonly status: 'loading' | 'ready' | 'failed'
   /**
@@ -120,6 +131,9 @@ export interface OpenImageViewerInput {
   readonly imageId: string
   readonly name: string
   readonly dimensions: string
+  /** The picture's own pixel size; the view lays the image out at it. */
+  readonly width: number
+  readonly height: number
   /** The thumbnail already in hand, when there is one. */
   readonly thumbUrl?: string
   /** The zoom to open at; `fitZoom`'s answer once the viewport is measured. */
@@ -131,6 +145,8 @@ export function openImageViewer(input: OpenImageViewerInput): ImageViewerState {
     imageId: input.imageId,
     name: input.name,
     dimensions: input.dimensions,
+    width: input.width,
+    height: input.height,
     status: 'loading',
     ...(input.thumbUrl !== undefined ? { dataUrl: input.thumbUrl } : {}),
     zoom: clampZoom(input.zoom ?? 1),

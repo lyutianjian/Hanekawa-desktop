@@ -13,7 +13,7 @@ import { TONE_ICON } from './threadPanelView.js'
 import { createTranscriptView, isScrolledToBottom, type TranscriptView } from './transcriptView.js'
 import type { WireShellThreadTranscriptResult } from '../../shellProtocol.js'
 import { describeError } from '../model/errorReport.js'
-import { splitThreadBrief, type ThreadPage } from '../model/threadDetail.js'
+import type { ThreadPage } from '../model/threadDetail.js'
 import { replayActivity } from '../model/waiting.js'
 import { createTranscriptState, type ToolDisplayLookup, type TranscriptState } from '../model/transcript.js'
 
@@ -49,7 +49,7 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
   failure.setAttribute('role', 'alert')
   show(failure, false)
   // The head stays put; only the conversation under it scrolls.
-  const body = el('div', 'thread-detail-body', failure, timeline, empty, floatHost)
+  const body = el('div', 'thread-detail-body', failure, empty, timeline, floatHost)
   let drawn: string | undefined
   let failureShown: string | undefined
   let current: {
@@ -59,7 +59,6 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
     busy: boolean
     again: boolean
     running: boolean
-    brief?: { text: string; node: HTMLElement }
   } | undefined
   let state: TranscriptState | undefined
   let manual = new Map<string, boolean>()
@@ -71,10 +70,7 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
     for (const item of state.items) {
       if (item.turnId !== undefined && !disclosure.has(item.turnId)) disclosure.set(item.turnId, true)
     }
-    const split = splitThreadBrief(state)
-    if (split.brief === undefined) current.brief = undefined
-    else if (current.brief?.text !== split.brief) current.brief = { text: split.brief, node: briefCard(split.brief) }
-    current.view.render(split.state, disclosure, replayActivity(state, current.running), undefined, current.brief?.node)
+    current.view.render(state, disclosure, { ...replayActivity(state, current.running), statusAtEnd: true })
   }
 
   function showFailure(message: string | undefined): void {
@@ -101,7 +97,7 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
       page.token = result.token
       const displays: ToolDisplayLookup = (recordId) => result.toolDisplays?.[recordId]
       state = createTranscriptState(result.records, displays)
-      show(timeline, result.records.length > 0)
+      show(timeline, true)
       show(empty, result.records.length === 0)
       // A reader at the tail follows the thread; one who scrolled up keeps their place.
       const following = isScrolledToBottom(body)
@@ -137,8 +133,9 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
     close()
     replace(timeline)
     replace(floatHost)
-    show(timeline, false)
+    show(timeline, true)
     show(empty, false)
+    state = createTranscriptState([])
     current = {
       threadId,
       token: undefined,
@@ -186,13 +183,14 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
       el(
         'div',
         'thread-detail-bar',
-        button('thread-detail-icon thread-detail-back', '', '返回线程列表', handlers.onBack, { icon: 'arrow-left' }),
+        button('subagent-back thread-detail-back', '全部线程', '返回线程列表', handlers.onBack, { icon: 'arrow-left' }),
         button('thread-detail-icon thread-detail-open', '', '在主画布打开', () => handlers.onOpen(page.sessionId), { icon: 'external' }),
         page.canStop
           ? button('thread-detail-icon thread-detail-stop', '', '停止这个线程', () => handlers.onStop(page.threadId), { icon: 'stop', enabled: !page.stopPending })
           : undefined,
       ),
       el('div', 'thread-detail-title', mark, name),
+      el('div', 'subagent-meta', page.statusLabel),
       page.needsYou
         ? button('thread-detail-needs-you', '需要你处理 · 去处理', '在主画布处理这个线程的请求', () => handlers.onOpen(page.sessionId))
         : undefined,
@@ -209,14 +207,4 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
   }
 
   return { render }
-}
-
-/** The coordinator's brief: collapsed to its first line, opened to read in full. */
-function briefCard(text: string): HTMLElement {
-  return el(
-    'details',
-    'thread-brief',
-    el('summary', 'thread-brief-head', el('span', 'thread-brief-label', '任务说明'), el('span', 'thread-brief-preview', text.split('\n', 1)[0]!)),
-    el('div', 'thread-brief-text', text),
-  )
 }

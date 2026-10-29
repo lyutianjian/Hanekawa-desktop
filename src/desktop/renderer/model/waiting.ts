@@ -49,17 +49,22 @@ export interface WaitingInput {
   readonly phase?: TurnPhase
   /** The `header` of the question the user is being asked, while one is pending. */
   readonly asking?: string
+  /** The live UI queue contains a permission request, including a sub-agent's. */
+  readonly awaitingApproval?: boolean
   /** Background tasks still running; the status line keeps a button for them, turn or no turn. */
   readonly backgroundTasks?: number
   /** The tool call whose arguments are streaming in (`TranscriptState.draftCall`). */
   readonly draftCall?: DraftCall
   /** The checklist card drawn above the status line; absent between turns. */
   readonly taskCard?: TaskCard
+  /** Detail panels keep the running feedback below the conversation. */
+  readonly statusAtEnd?: boolean
 }
 
 export interface WaitingRow {
   readonly label: string
   readonly startedAt: number | undefined
+  readonly timing: 'tool' | 'gap' | 'immediate'
   /** Set while the model is thinking: when that began, for `thinkingPhaseLabel` to escalate from. */
   readonly thinkingSince?: number
 }
@@ -135,11 +140,11 @@ export function rowLabel(row: WaitingRow, now: number): string {
  * from that turn's first record, as the live snapshot's does, so the counter reads
  * from the turn's own beginning rather than from the paint.
  */
-export function replayActivity(state: TranscriptState, running: boolean): WaitingInput {
+export function replayActivity(state: TranscriptState, running: boolean, startedAt?: number): WaitingInput {
   if (!running) return { isStreaming: false, startedAt: undefined, turnId: undefined }
   const turnId = state.turnId ?? lastStamped(state.items)
   const start = state.items.find((item) => turnId !== undefined && item.turnId === turnId)?.createdAt
-  return { isStreaming: true, startedAt: start === undefined ? undefined : Date.parse(start), turnId }
+  return { isStreaming: true, startedAt: start === undefined ? startedAt : Date.parse(start), turnId }
 }
 
 /** The turn id of the transcript's newest stamped item — its turn in flight. */
@@ -162,7 +167,7 @@ function lastStamped(items: TranscriptState['items']): string | undefined {
  */
 export function turnActivity(entries: readonly TranscriptEntry[], input: WaitingInput): TurnActivity {
   if (!input.isStreaming) return IDLE
-  const row = (label: string, extra?: Partial<WaitingRow>): WaitingRow => ({ label, startedAt: input.startedAt, ...extra })
+  const row = (label: string, extra?: Partial<WaitingRow>): WaitingRow => ({ label, startedAt: input.startedAt, timing: 'immediate', ...extra })
   if (input.phase) return { row: row(phaseLabel(input.phase)), mark: PLAIN, place: 'line' }
   const asking = input.asking === undefined ? undefined : `${ASKING_LABEL} · ${input.asking}`
   const last = entries[entries.length - 1]
@@ -173,20 +178,29 @@ export function turnActivity(entries: readonly TranscriptEntry[], input: Waiting
   const mark = markSpecFor(run ?? latestRun(entries, input.turnId), input.draftCall)
   // Until text follows it, the turn's tool group carries the status, even between its
   // steps. With a checklist on screen the status stays its own line, under the card.
-  const place: StatusPlace = input.taskCard === undefined && run !== undefined && runHasTools(run) ? { run: run.id } : 'line'
+  const place: StatusPlace = !input.statusAtEnd && input.taskCard === undefined && run !== undefined && runHasTools(run) ? { run: run.id } : 'line'
+  const calls = run?.steps.filter(isRunningCall) ?? []
+  const waiting = calls.filter((step) => step.tool.awaitingApproval === true).at(-1)
+  if (waiting || input.awaitingApproval === true) {
+    const label = waiting ? `等待你确认 · ${callPhrase(waiting, true)}` : '等待你确认'
+    return { row: row(label), mark: { ...mark, state: 'blocked' }, place }
+  }
   if (run) {
-    const calls = run.steps.filter(isRunningCall)
-    const waiting = calls.filter((step) => step.tool.awaitingApproval === true).at(-1)
-    if (waiting) return { row: row(`等待你确认 · ${callPhrase(waiting, true)}`), mark, place }
-    if (calls.length > 0) return { row: row(callPhrase(calls[0]!)), mark, place }
+    if (calls.length > 0) return { row: row(callPhrase(calls.at(-1)!), { timing: 'tool' }), mark, place }
     const thought = run.steps[run.steps.length - 1]
     if (thought?.kind === 'thinking' && thought.pending === true) {
       return { row: row(WAITING_LABEL, { thinkingSince: thought.startedAt ?? input.startedAt }), mark, place: 'line' }
     }
   }
-  if (input.draftCall !== undefined) return { row: row(draftLabel(input.draftCall)), mark, place }
+  if (input.draftCall !== undefined) {
+    const label = draftLabel(input.draftCall)
+    return { row: row(label, { timing: label === PROCESSING_LABEL ? 'gap' : 'tool' }), mark, place }
+  }
   if (last?.kind === 'item' && isArriving(last.item)) return { row: row(WRITING_LABEL), mark, place }
-  return { row: row(PROCESSING_LABEL), mark, place }
+  const step = run?.steps.at(-1)
+  const failed = step !== undefined && (step.kind === 'tool' || step.kind === 'task') && (step.status === 'failed' || step.status === 'interrupted')
+  const interrupted = last?.kind === 'item' && (last.item.interrupt === true || last.item.kind === 'turn-failure')
+  return { row: row(PROCESSING_LABEL, { timing: failed || interrupted ? 'immediate' : 'gap' }), mark, place }
 }
 
 /** A call the model is still writing: 「正在编写 a.ts」 for an edit, 「正在准备命令」 for the shell. */
@@ -242,12 +256,15 @@ function isArriving(item: TranscriptItem): boolean {
 
 /** A new label shows once it has held this long... */
 export const LABEL_DEBOUNCE_MS = 150
-/** ...and the one it replaces has been up at least this long. */
+/** A tool description stays readable, even when its call finishes sooner. */
 export const LABEL_MIN_SHOWN_MS = 650
+/** A brief gap can give way to the next tool without flashing 「处理中」. */
+export const LABEL_GAP_DEBOUNCE_MS = 650
 
 export interface LabelGate {
   readonly shown: string
   readonly shownAt: number
+  readonly timing: WaitingRow['timing']
   /** A restart of the turn (its start time): the old words say nothing about the new one. */
   readonly epoch: number | undefined
   readonly pending?: { readonly label: string; readonly since: number }
@@ -263,11 +280,13 @@ export function settleLabel(
   want: string,
   epoch: number | undefined,
   now: number,
+  timing: WaitingRow['timing'],
 ): { readonly gate: LabelGate; readonly label: string; readonly recheckAt?: number } {
-  if (!gate || gate.epoch !== epoch) return { gate: { shown: want, shownAt: now, epoch }, label: want }
+  if (!gate || gate.epoch !== epoch || timing === 'immediate') return { gate: { shown: want, shownAt: now, epoch, timing }, label: want }
   if (want === gate.shown) return { gate: { ...gate, pending: undefined }, label: gate.shown }
   const pending = gate.pending?.label === want ? gate.pending : { label: want, since: now }
-  const at = Math.max(pending.since + LABEL_DEBOUNCE_MS, gate.shownAt + LABEL_MIN_SHOWN_MS)
-  if (now >= at) return { gate: { shown: want, shownAt: now, epoch }, label: want }
+  const delay = timing === 'gap' ? LABEL_GAP_DEBOUNCE_MS : LABEL_DEBOUNCE_MS
+  const at = Math.max(pending.since + delay, gate.shownAt + (gate.timing === 'tool' ? LABEL_MIN_SHOWN_MS : 0))
+  if (now >= at) return { gate: { shown: want, shownAt: now, epoch, timing }, label: want }
   return { gate: { ...gate, pending }, label: gate.shown, recheckAt: at }
 }

@@ -1,7 +1,8 @@
 import { open, stat } from 'node:fs/promises'
 import type { ReadFileState, ToolContext, ToolResult } from '../harness/types.js'
 import type { Stats } from 'node:fs'
-import { decodeTextBuffer, readTextFile, type LineEndings } from './textFile.js'
+import { decodeTextBuffer, readEditableTextFile, readTextFile, type LineEndings, type TextFileRead } from './textFile.js'
+import { resolveSafeTarget, type SafeTarget } from './pathSafety.js'
 
 type FileSignature = Pick<ReadFileState, 'mtimeMs' | 'ctimeMs' | 'size' | 'dev' | 'ino'>
 
@@ -230,4 +231,33 @@ export async function requireFreshRead(absolute: string, filePath: string, conte
 
 export function getReadFileContent(absolute: string, context: ToolContext): string | undefined {
   return context.readFileState?.get(absolute)?.content
+}
+
+/** String replacements use current disk content; their matching text is the precondition. */
+export async function prepareFileEdit(absolute: string, filePath: string, context: ToolContext): Promise<
+  { target: SafeTarget; file: TextFileRead; notice: string } | { error: ToolResult }
+> {
+  const resolved = await resolveSafeTarget(absolute, filePath, { approvedTarget: context.approvedWriteTarget })
+  if ('error' in resolved) return resolved
+  const { target } = resolved
+  if (target.identity.kind !== 'file') {
+    return { error: {
+      ok: false,
+      content: `Cannot edit ${filePath}: ${target.identity.kind === 'missing' ? 'file does not exist' : 'target is not a regular file'}.`,
+      errorCode: target.identity.kind === 'missing' ? 'not_found' : 'invalid_input',
+    } }
+  }
+  const file = await readEditableTextFile(target.canonical)
+  if (!file) {
+    return { error: {
+      ok: false,
+      content: `Cannot edit ${filePath}: unsupported text encoding or binary content. Edit supports UTF-8 and UTF-16LE with a BOM.`,
+      errorCode: 'invalid_input',
+    } }
+  }
+  const previous = getReadFileContent(absolute, context)
+  const notice = previous !== undefined && previous !== file.content
+    ? '\nThe file changed since it was last read. The replacements matched its current content; other changes were preserved. Read it before edits that depend on surrounding code.'
+    : ''
+  return { target, file, notice }
 }

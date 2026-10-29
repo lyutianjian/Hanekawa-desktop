@@ -98,7 +98,7 @@ export class BackgroundTaskRegistry {
   private readonly agentRuntimeStates = new Map<string, AgentRuntimeState>()
   private readonly agentIdCounters = new Map<string, number>()
   private readonly parentNotifications = new Map<string, string[]>()
-  private readonly foregroundCalls = new Map<string, () => void>()
+  private readonly foregroundCalls = new Map<string, Set<() => void>>()
   private persistenceTail: Promise<void> = Promise.resolve()
 
   constructor(
@@ -152,21 +152,33 @@ export class BackgroundTaskRegistry {
   }
 
   /**
-   * A Bash call still blocking its turn, so the user can push it to the
-   * background early. Returns the unregister for when the call settles.
+   * A Bash call still blocking its turn. Keyed by session, not by call: what
+   * releases it is a message arriving mid-turn, and that names no call.
+   * Returns the unregister for when the call settles.
    */
-  registerForeground(sessionId: string, toolUseId: string, promote: () => void): () => void {
-    const key = this.key(sessionId, toolUseId)
-    this.foregroundCalls.set(key, promote)
+  registerForeground(sessionId: string, promote: () => void): () => void {
+    const calls = this.foregroundCalls.get(sessionId) ?? new Set<() => void>()
+    this.foregroundCalls.set(sessionId, calls)
+    calls.add(promote)
     return () => {
-      if (this.foregroundCalls.get(key) === promote) this.foregroundCalls.delete(key)
+      calls.delete(promote)
+      if (calls.size === 0 && this.foregroundCalls.get(sessionId) === calls) this.foregroundCalls.delete(sessionId)
     }
   }
 
-  backgroundForeground(sessionId: string, toolUseId: string): boolean {
-    const promote = this.foregroundCalls.get(this.key(sessionId, toolUseId))
-    promote?.()
-    return promote !== undefined
+  /**
+   * Lets every foreground call this session is blocked on go on in the
+   * background, so its turn can reach the next step. Called when the user
+   * speaks: their message joins that turn, and it cannot join while a tool
+   * call is still waiting. Returns how many calls were released.
+   */
+  promoteForeground(sessionId: string): number {
+    const calls = this.foregroundCalls.get(sessionId)
+    if (!calls) return 0
+    this.foregroundCalls.delete(sessionId)
+    const pending = [...calls]
+    for (const promote of pending) promote()
+    return pending.length
   }
 
   registerAgent(input: {

@@ -66,6 +66,8 @@ interface Harness {
     defaultModels: string[]
     shutdowns: string[]
     modeChanges: string[]
+    /** Times a mid-turn message released the session's foreground calls. */
+    foregroundPromotions: number
     cacheInvalidations: number
     /** `clearCachedSections()` calls — `# Environment` embeds the model name. */
     clearedSections: number
@@ -141,6 +143,7 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
     defaultModels: [],
     shutdowns: [],
     modeChanges: [],
+    foregroundPromotions: 0,
     cacheInvalidations: 0,
     clearedSections: 0,
     summarized: [],
@@ -321,6 +324,10 @@ async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
       stopAll: async () => {},
       peekOutput: () => 'tail of the output',
       killTask: async (_sessionId: string, taskId: string) => ({ id: taskId, status: 'killed' }),
+      promoteForeground: () => {
+        calls.foregroundPromotions += 1
+        return 0
+      },
     },
     config: {
       get: () => ({
@@ -1193,21 +1200,16 @@ test('input that is not a slash command comes back unhandled', async () => {
   harness.dispose()
 })
 
-test('an unknown command is handled, and explains itself as a written line', async () => {
+test('an unknown slash name comes back unhandled without a command error', async () => {
   const harness = await createHarness()
   registerBuiltinCommands(harness.commands)
 
   harness.send({ type: 'run-command', id: 'c1', input: '/nosuchthing' })
   const reply = await waitFor(() => harness.received.find((event) => event.type === 'reply'), 'the reply')
 
-  // Same tolerance as the TUI's dispatch: a bad command name is not a protocol
-  // failure, so this must not be a `fail`.
   assert.ok(reply.type === 'reply')
-  assert.deepEqual(reply.result, { handled: true })
-  const effect = harness.received.find((event) => event.type === 'command-effect')
-  assert.ok(effect?.type === 'command-effect' && effect.effect.kind === 'write-line')
-  assert.match(effect.effect.text, /未知命令：\/nosuchthing/)
-  assert.equal(effect.effect.tone, 'error')
+  assert.deepEqual(reply.result, { handled: false })
+  assert.equal(harness.received.some((event) => event.type === 'command-effect'), false)
   harness.dispose()
 })
 
@@ -1843,6 +1845,7 @@ test('file-suggestions answers nothing when the caret is not in a mention', asyn
 test('list-commands ships metadata only, with no callable on the wire', async () => {
   const harness = await createHarness()
   registerBuiltinCommands(harness.commands)
+  harness.commands.registerSkill({ name: 'template-creator', description: 'Create templates', run: async () => {} })
 
   harness.send({ type: 'list-commands', id: 'lc1' })
   const reply = await waitFor(
@@ -1854,6 +1857,8 @@ test('list-commands ships metadata only, with no callable on the wire', async ()
 
   assert.ok(result.commands.length > 0, 'the built-ins are registered')
   assert.ok(result.commands.some((command) => command.name === 'help'))
+  assert.equal(result.commands.find((command) => command.name === 'template-creator')?.isSkill, true)
+  assert.equal(result.commands.find((command) => command.name === 'help')?.isSkill, undefined)
 
   for (const command of result.commands) {
     assert.equal(typeof command.name, 'string')
@@ -1928,6 +1933,7 @@ test('a message queued mid-turn is held, then sent when the turn ends', async ()
 
   assert.deepEqual(harness.calls.submits, [], 'nothing may be sent while a turn is running')
   assert.deepEqual(latestQueue(harness.received), ['second thought'])
+  assert.equal(harness.calls.foregroundPromotions, 1, 'the message must release what the turn is waiting on')
 
   // The false edge is the pump's trigger: it arrives as a snapshot publish, which
   // is the only signal the host gets that a turn is over.
@@ -2572,6 +2578,73 @@ test('a rebuild clears the cached system sections, because Environment names the
 })
 
 // --- CoordinationLaneControl ---------------------------------------------
+
+test('automatic eviction protects a kickoff before its enqueue write has finished', async (t) => {
+  const panes: SessionMeta[] = []
+  const harness = await createHarness({ role: 'thread', workspacePanes: panes })
+  t.after(() => harness.dispose())
+  panes.push((await harness.store.resolve(harness.sessionId))!)
+  let release!: () => void
+  const hold = new Promise<void>((resolve) => { release = resolve })
+  const append = harness.store.appendRecord.bind(harness.store)
+  let writing = false
+  t.mock.method(harness.store, 'appendRecord', async (id: string, record: SessionRecord) => {
+    if (record.type === 'message_queue' && record.operation === 'enqueue') {
+      writing = true
+      await hold
+    }
+    await append(id, record)
+  })
+  const kickoff = harness.host.enqueueFromCoordinator('the task')
+  await waitFor(() => writing || undefined, 'the kickoff write to begin')
+  try {
+    assert.deepEqual(await replyTo(harness, {
+      type: 'close-pane', id: 'evict', paneId: harness.sessionId, onlyIfIdle: true,
+    }, 'evict'), { ok: false })
+    assert.deepEqual(harness.calls.closedCallbacks, [])
+    assert.deepEqual(replayMessageQueue(await harness.store.loadRecords(harness.sessionId)), [])
+  } finally { release() }
+  await kickoff
+  await waitFor(() => harness.calls.submits.length > 0 || undefined, 'the kickoff to run')
+  await waitFor(() => harness.received.find((event) => event.type === 'queued-messages' && event.messages.length === 0), 'the accepted kickoff to leave the queue')
+  assert.deepEqual(harness.calls.submits, ['the task'])
+  assert.deepEqual(await replyTo(harness, {
+    type: 'close-pane', id: 'idle', paneId: harness.sessionId, onlyIfIdle: true,
+  }, 'idle'), { ok: true })
+  assert.deepEqual(harness.calls.closedCallbacks, [harness.sessionId])
+})
+
+test('automatic eviction rechecks running turns, switches and queued work; explicit close still works', async (t) => {
+  const panes: SessionMeta[] = []
+  const harness = await createHarness({ workspacePanes: panes })
+  t.after(() => harness.dispose())
+  panes.push((await harness.store.resolve(harness.sessionId))!)
+  const evict = (id: string) => replyTo(harness, { type: 'close-pane', id, paneId: harness.sessionId, onlyIfIdle: true }, id)
+  harness.setStreaming(true)
+  assert.deepEqual(await evict('running'), { ok: false })
+  harness.setStreaming(false)
+  harness.setSwitching(true)
+  assert.deepEqual(await evict('switching'), { ok: false })
+  harness.setSwitching(false)
+  harness.failNextSubmit('temporarily unavailable')
+  await harness.host.enqueueFromCoordinator('queued task')
+  await waitFor(() => harness.received.find((event) => event.type === 'session-event' && event.event.type === 'notice'), 'the queue to pause')
+  assert.equal(harness.host.state().streaming, false)
+  assert.deepEqual(await evict('queued'), { ok: false })
+  assert.deepEqual(harness.calls.closedCallbacks, [])
+  assert.deepEqual(await replyTo(harness, { type: 'close-pane', id: 'user-close', paneId: harness.sessionId }, 'user-close'), { ok: true })
+})
+
+test('automatic eviction preserves the coordinator while explicit close is allowed', async (t) => {
+  const panes: SessionMeta[] = []
+  const harness = await createHarness({ role: 'coordinator', workspacePanes: panes })
+  t.after(() => harness.dispose())
+  panes.push((await harness.store.resolve(harness.sessionId))!)
+  assert.deepEqual(await replyTo(harness, {
+    type: 'close-pane', id: 'evict', paneId: harness.sessionId, onlyIfIdle: true,
+  }, 'evict'), { ok: false })
+  assert.deepEqual(await replyTo(harness, { type: 'close-pane', id: 'close', paneId: harness.sessionId }, 'close'), { ok: true })
+})
 
 test('a coordinator message enqueued on an idle lane is pumped with its origin', async () => {
   const harness = await createHarness({ role: 'thread' })

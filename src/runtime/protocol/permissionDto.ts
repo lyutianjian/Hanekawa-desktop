@@ -35,6 +35,7 @@ export function toPermissionDto(
   const preview = buildPreview(request, options)
   return {
     toolName: request.tool.name,
+    ...(request.toolUseId === undefined ? {} : { toolUseId: request.toolUseId }),
     riskLevel: request.tool.riskLevel,
     input: request.input,
     reason: request.reason,

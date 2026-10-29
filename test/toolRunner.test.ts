@@ -1,9 +1,11 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { z } from 'zod/v3'
-import { PermissionGate } from '../src/harness/permissions.js'
+import { PermissionGate, type PermissionRequest } from '../src/harness/permissions.js'
 import { prepareRecordsForRequest } from '../src/harness/requestPrep.js'
 import { ToolRunner } from '../src/harness/toolRunner.js'
+import { applySessionEvent, createTranscriptState, groupTranscript } from '../src/desktop/renderer/model/transcript.js'
+import { turnActivity } from '../src/desktop/renderer/model/waiting.js'
 import { countTextTokens } from '../src/prompts/budget.js'
 import type { SessionRecord, Tool, ToolProgressEvent } from '../src/harness/types.js'
 import { makeImageAttachmentRef } from './helpers/imageFixtures.js'
@@ -68,7 +70,34 @@ test('tool runner executes safe tool without prompting', async () => {
   assert.equal(records.length, 3)
 })
 
+test('automatic approvals never show a user wait, even before the approval record arrives', async () => {
+  for (const mode of ['auto', 'bypass', 'default'] as const) {
+    const tool: Tool = {
+      name: 'autoTool', description: 'auto', inputSchema: z.object({}).strict(), riskLevel: 'confirm',
+      execute: async () => ({ ok: true, content: 'done' }),
+    }
+    let state = createTranscriptState()
+    const labels: string[] = []
+    const gate = new PermissionGate(async () => { assert.fail('the call should be approved without asking') },
+      mode === 'default' ? [{ toolName: tool.name, behavior: 'allow', source: 'config' }] : [], { mode })
+    const runner = new ToolRunner([tool], gate, {
+      onRecord: async (record) => {
+        state = applySessionEvent(state, { type: 'record', record }).state
+        const activity = turnActivity(groupTranscript(state.items), { isStreaming: true, startedAt: 0, turnId: 't1' })
+        labels.push(activity.row!.label)
+        assert.equal(activity.mark?.state, 'working', `${mode}: ${record.type}`)
+      },
+    })
+    const result = await runner.run({ id: 'automatic', name: tool.name, input: {} },
+      { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() }, undefined, 't1')
+    assert.equal(result.ok, true)
+    assert.equal(labels[0], '正在运行工具', 'the tool_use paint before approval is already a tool activity')
+    assert.ok(labels.every((label) => !label.includes('等待你确认')), mode)
+  }
+})
+
 test('tool runner denies dangerous tool when permission is false', async () => {
+  let request: PermissionRequest | undefined
   const tool: Tool = {
     name: 'Delete',
     description: 'delete',
@@ -78,11 +107,12 @@ test('tool runner denies dangerous tool when permission is false', async () => {
     riskLevel: 'dangerous',
     execute: async () => ({ ok: true, content: 'deleted' }),
   }
-  const runner = new ToolRunner([tool], new PermissionGate(async () => false), {
+  const runner = new ToolRunner([tool], new PermissionGate(async (next) => { request = next; return false }), {
     onRecord: async () => {},
   })
   const result = await runner.run({ id: 'call1', name: 'Delete', input: { filePath: 'a.txt' } }, { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() })
   assert.equal(result.ok, false)
+  assert.equal(request?.toolUseId, 'call1', 'a human prompt names exactly the blocked call')
   assert.match(result.content, /denied/)
 })
 

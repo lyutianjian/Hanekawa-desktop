@@ -26,6 +26,8 @@ export interface PaneBudgetEntry {
   readonly active: boolean
   /** A turn is in flight. Evicting it would kill work the user is waiting for. */
   readonly streaming: boolean
+  /** Initial state is still loading, or messages are waiting to start a turn. */
+  readonly pending: boolean
   /**
    * A blocking request is waiting for an answer.
    *
@@ -68,7 +70,7 @@ export interface PaneBudgetInput {
  * The lanes to release, oldest first, to bring the resident count down to
  * `limit`.
  *
- * A pane is *pinned* when it is active, streaming, holding an unanswered blocking
+ * A pane is *pinned* when it is active, streaming, loading or queued, holding an unanswered blocking
  * request, running a background process, owning browser tabs, being a
  * project's coordinator, or being the unsent new session — every state whose teardown loses something. Pinned
  * panes are never returned, and when everything left is pinned this deliberately returns **fewer** lanes than the limit demands: going
@@ -97,6 +99,7 @@ export function isPinned(entry: PaneBudgetEntry): boolean {
   return (
     entry.active ||
     entry.streaming ||
+    entry.pending ||
     entry.blocked ||
     entry.processes ||
     entry.tabs ||

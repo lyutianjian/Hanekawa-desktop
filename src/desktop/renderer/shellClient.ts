@@ -9,6 +9,8 @@ import type {
   WireShellSettingsChangeResult,
   WireShellRenameSessionResult,
   WireShellOpenInEditorResult,
+  WireShellReadSkillResult,
+  WireShellRevealSkillResult,
   WireMenuAction,
   WireShellSetWindowThemeResult,
   WireShellProbeEndpointResult,
@@ -173,11 +175,12 @@ export class ShellClient {
   }
 
   /** The settings screen's whole read model. Like `listSessions`, never cached here. */
-  async getSettings(projectRoot?: string): Promise<WireShellSettingsResult> {
+  async getSettings(projectRoot?: string, skillsScope?: 'personal'): Promise<WireShellSettingsResult> {
     return this.send({
       type: 'get-settings',
       id: crypto.randomUUID(),
       ...(projectRoot !== undefined ? { projectRoot } : {}),
+      ...(skillsScope ? { skillsScope } : {}),
     }) as Promise<WireShellSettingsResult>
   }
 
@@ -188,12 +191,14 @@ export class ShellClient {
   async changeSettings(
     projectRoot: string,
     change: SettingsChange,
+    skillsScope?: 'personal',
   ): Promise<WireShellSettingsChangeResult> {
     return this.send({
       type: 'settings-change',
       id: crypto.randomUUID(),
       projectRoot,
       change,
+      ...(skillsScope ? { skillsScope } : {}),
     }) as Promise<WireShellSettingsChangeResult>
   }
 
@@ -235,6 +240,21 @@ export class ShellClient {
     request: Omit<Extract<ShellCommand, { type: 'probe-endpoint' }>, 'type' | 'id'>,
   ): Promise<WireShellProbeEndpointResult> {
     return this.send({ type: 'probe-endpoint', id: crypto.randomUUID(), ...request }) as Promise<WireShellProbeEndpointResult>
+  }
+
+  /** One skill's `SKILL.md`, verbatim: 复制 Markdown uses it because the snapshot holds a preview. */
+  async readSkill(projectRoot: string, name: string, skillsScope?: 'personal'): Promise<WireShellReadSkillResult> {
+    return this.send({ type: 'read-skill', id: crypto.randomUUID(), projectRoot, name, ...(skillsScope ? { skillsScope } : {}) }) as Promise<WireShellReadSkillResult>
+  }
+
+  /** Shows the skill's folder in the OS file manager. */
+  async revealSkill(projectRoot: string, name: string, skillsScope?: 'personal'): Promise<WireShellRevealSkillResult> {
+    return this.send({ type: 'reveal-skill', id: crypto.randomUUID(), projectRoot, name, ...(skillsScope ? { skillsScope } : {}) }) as Promise<WireShellRevealSkillResult>
+  }
+
+  /** Opens the skill's `SKILL.md` in the editor; rejects when the editor cannot start. */
+  async openSkill(projectRoot: string, name: string, skillsScope?: 'personal'): Promise<WireShellOpenInEditorResult> {
+    return this.send({ type: 'open-skill', id: crypto.randomUUID(), projectRoot, name, ...(skillsScope ? { skillsScope } : {}) }) as Promise<WireShellOpenInEditorResult>
   }
 
   /**

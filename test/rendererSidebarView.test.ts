@@ -90,11 +90,19 @@ const sessionRows = (root: StubView): StubView[] =>
 /** The text of each drawn row, so a failed comparison prints strings rather than the stub graph. */
 const rowTexts = (root: StubView): string[] => sessionRows(root).map((row) => row.text)
 
-/** Under a folded {@link tieredState}: the session on screen and nothing else. */
+/**
+ * A folded workspace: every row still in the tree — the unfold needs the node —
+ * with the one on screen left standing and the rest folded into `inert` slots.
+ */
 const onlyActiveRow = (root: StubView): void => {
-  const texts = rowTexts(root)
-  assert.equal(texts.length, 1, `a folded workspace drew ${JSON.stringify(texts)}`)
-  assert.ok(texts[0]!.includes('正在显示'), `a folded workspace drew ${JSON.stringify(texts)}`)
+  const slots = descendants(root).filter((node) => node.classes.includes('session-slot'))
+  const open = slots.filter((slot) => !slot.classes.includes('folded'))
+  assert.equal(open.length, 1, `a folded workspace left ${open.length} rows unfolded`)
+  assert.ok(open[0]!.text.includes('正在显示'), `the unfolded row is ${open[0]!.text}`)
+  for (const slot of slots) {
+    if (open.includes(slot)) continue
+    assert.ok(slot.attributes.has('inert'), 'a folded row is still reachable with Tab')
+  }
 }
 
 /** One project with three sessions: the visible one, a background lane, history. */
@@ -250,7 +258,35 @@ test('every workspace gets a folding heading, single project included', (t) => {
   assert.deepEqual(intents, [{ kind: 'toggle-project', projectRoot: '/w/app' }])
 })
 
-test('a folded workspace draws its heading and only the session on screen', (t) => {
+test('a workspace holding more sessions than the rail lists offers a 展开 row', (t) => {
+  const { render, root, stub, intents } = mount(t)
+  const sessions = Array.from({ length: 7 }, (_, index) => ({
+    id: `s${index + 1}`,
+    title: `会话 ${index + 1}`,
+    updatedAt: new Date(Date.UTC(2026, 7, 20, 11 - index)).toISOString(),
+    messageCount: 1,
+  }))
+  const base = { projects: [{ projectRoot: '/w/app', projectName: 'app', sessions }] }
+
+  render(viewOf(base))
+  assert.equal(sessionRows(root()).length, 5, 'a capped workspace drew more than the limit')
+  const expand = find(root(), 'project-expand')
+  assert.ok(expand, 'no 展开 row under a capped workspace')
+  assert.ok(expand.text.includes('展开其余 2 个会话'), expand.text)
+
+  stub.click(expand.node)
+  assert.deepEqual(intents, [{ kind: 'toggle-project-expanded', projectRoot: '/w/app' }])
+
+  // Expanded, the row turns over rather than disappearing: it is also the way
+  // back to the short list.
+  render(viewOf({ ...base, expandedProjects: new Set(['/w/app']) }))
+  assert.equal(sessionRows(root()).length, 7)
+  const collapse = find(root(), 'project-expand')
+  assert.ok(collapse, 'the expanded workspace lost its 收起 row')
+  assert.ok(collapse.text.includes('收起'), collapse.text)
+})
+
+test('a folded workspace still says which of its sessions is on screen', (t) => {
   const { render, root } = mount(t)
   render(viewOf({ ...tieredState(), collapsedProjects: new Set(['/w/app']) }))
 
@@ -264,67 +300,64 @@ test('a folded workspace draws its heading and only the session on screen', (t) 
 })
 
 test('the group node survives the repaint that folds it', (t) => {
-  // The whole reason `sidebarView` keeps a node map: `render()` rebuilds the
-  // list wholesale, and a wrapper that is new every pass cannot transition —
-  // a freshly inserted element starts at its final style. The fold is
-  // `grid-template-rows: 1fr → 0fr`, so this identity *is* the animation.
+  // `render()` rebuilds the list wholesale, and a node that is new every pass
+  // cannot transition — a freshly inserted element starts at its final style.
+  // The fold is `grid-template-rows: 1fr → 0fr` on the row's own slot, so this
+  // identity *is* the animation.
   const { render, root } = mount(t)
   render(viewOf(tieredState()))
   const first = find(root(), 'project-group')?.node
-  const body = find(root(), 'project-body')?.node
-  assert.ok(first && body, 'the group draws a wrapper and an animated body')
+  const slot = find(root(), 'session-slot')?.node
+  assert.ok(first && slot, 'the group draws a wrapper and a foldable slot')
 
   render(viewOf({ ...tieredState(), collapsedProjects: new Set(['/w/app']) }))
   assert.equal(find(root(), 'project-group')?.node, first, 'the wrapper was rebuilt, so nothing animates')
-  assert.equal(find(root(), 'project-body')?.node, body, 'detaching the body cancels its transition')
+  assert.equal(find(root(), 'session-slot')?.node, slot, 'a re-inserted slot starts folded, so nothing unfolds')
   assert.ok(find(root(), 'project-group')?.classes.includes('collapsed'))
 })
 
-test('a folding group keeps its rows until the fold arrives', (t) => {
-  // Same discipline as the rail's four phases: rows taken out on the click would
-  // leave the fold animating an empty box. They go when the transition reports
-  // it finished — and then they are *gone*, not merely hidden, so no button
-  // behind a shut heading can be reached with Tab.
-  const { render, root, stub } = mount(t)
+test('a folded group folds each row where it stands', (t) => {
+  // The row on screen must not move. It used to be lifted out of the folding
+  // track and re-inserted *below* it, which showed as a jump down the group's
+  // height and a glide back up on every toggle — the flash seen while folding.
+  const { render, root } = mount(t)
   render(viewOf(tieredState()))
-  assert.equal(sessionRows(root()).length, 3)
+  const onScreen = sessionRows(root()).find((row) => row.text.includes('正在显示'))?.node
+  assert.ok(onScreen, 'no session on screen to fold around')
 
   render(viewOf({ ...tieredState(), collapsedProjects: new Set(['/w/app']) }))
-  assert.equal(sessionRows(root()).length, 3, 'the rows have to be there to fold')
-
-  const body = find(root(), 'project-body')
-  assert.ok(body)
-  // The rows inside transition too, and every one of those bubbles to the body.
-  stub.dispatch(body.node, 'transitionend', { propertyName: 'background-color' })
-  assert.equal(sessionRows(root()).length, 3, 'a bubbled transition settled the fold')
-  stub.dispatch(body.node, 'transitionend', { propertyName: 'grid-template-rows' })
+  assert.equal(sessionRows(root()).length, 3, 'the folded rows were unmounted, so they cannot unfold')
   onlyActiveRow(root())
+  assert.equal(
+    sessionRows(root()).find((row) => row.text.includes('正在显示'))?.node,
+    onScreen,
+    'the row on screen was rebuilt instead of folded',
+  )
 
-  // And back: the rows are rebuilt before the track has height to show them in.
+  // And back: nothing is inserted on the way out, so the unfold has a state to
+  // move from rather than a node that was born at its final height.
   render(viewOf(tieredState()))
   assert.equal(sessionRows(root()).length, 3)
+  assert.equal(
+    descendants(root()).filter((node) => node.classes.includes('folded')).length,
+    0,
+    'an opened workspace left a row folded',
+  )
 })
 
-test('a group fold that never animates still settles, and cannot leak a timer', (t) => {
-  // `transitionend` is not a guarantee — a hidden window runs none, reduced
-  // motion cuts them to 1ms — so the group arms the rail's fallback beside it.
-  t.mock.timers.enable({ apis: ['setTimeout'] })
+test('a row is not the node that folds', (t) => {
+  // A grid track cannot shrink past its item's floor, and a row's padding and
+  // margin are not part of what `min-height` can take away: folded straight onto
+  // the row, every fold stopped 18px short. The clipper in between has no floor,
+  // so the track reaches zero and the row is simply cut.
   const { render, root } = mount(t)
-  const open = () => viewOf(tieredState())
-  const shut = () => viewOf({ ...tieredState(), collapsedProjects: new Set(['/w/app']) })
+  render(viewOf(tieredState()))
 
-  render(open())
-  render(shut())
-  t.mock.timers.tick(SIDEBAR_COLLAPSE_FALLBACK_MS + 1)
-  onlyActiveRow(root())
-
-  // A fold reversed mid-flight: the timer that belonged to the interrupted move
-  // must not fire on the group that replaced it and empty a group the user just
-  // opened.
-  render(shut())
-  render(open())
-  t.mock.timers.tick(SIDEBAR_COLLAPSE_FALLBACK_MS * 4)
-  assert.equal(sessionRows(root()).length, 3, 'a superseded fold unmounted an open group')
+  const slots = descendants(root()).filter((node) => node.classes.includes('session-slot'))
+  assert.ok(slots.length > 0, 'no foldable slot was drawn')
+  for (const slot of slots) {
+    assert.deepEqual(slot.children[0]?.classes, ['session-clip'], `the slot holds ${slot.children[0]?.text}`)
+  }
 })
 
 test('a folding group paints no row as the cursor', (t) => {

@@ -5,6 +5,7 @@ import type { ImageAttachmentRef } from '../src/media/types.js'
 import {
   attachmentDraftsFull,
   attachmentDraftsIncomplete,
+  attachmentSendGate,
   attachmentStripView,
   beginAttachmentImport,
   imagePasteSources,
@@ -148,7 +149,12 @@ test('the strip labels every state, animates nothing, and renumbers on removal',
   assert.match(view.rows[2]?.detail ?? '', /^失败：图片无法解码：not decodable /)
   assert.match(view.rows[2]?.detail ?? '', /换一张图片。$/)
   assert.equal(view.readyCount, 1)
-  assert.match(view.sendBlockNote ?? '', /导入中或未成功/, 'pending or failed drafts block sending')
+  // A failed draft refuses the send by name; the still-importing one does not —
+  // the message is staged and its pictures join it when they land.
+  assert.equal(view.sendBlockNote, '有附件导入失败；重试或移除后才能发送。')
+
+  const inFlight = attachmentStripView(drafts.slice(0, 2), { supportsImageInput: true })
+  assert.equal(inFlight.sendBlockNote, undefined, 'importing is waited for, not refused')
 
   const after = removeAttachmentDraft(drafts, 'd1').drafts
   const renumbered = attachmentStripView(after, { supportsImageInput: true })
@@ -173,6 +179,38 @@ test('a plain-text draft set against a text-only model has nothing to explain', 
   const view = attachmentStripView([], { supportsImageInput: false })
   assert.equal(view.rows.length, 0)
   assert.equal(view.sendBlockNote, undefined)
+})
+
+test('the send gate separates "refused" from "wait for the pictures"', () => {
+  const ready: AttachmentDrafts = [{ kind: 'ready', draftId: 'd1', ref: ref('img-1') }]
+  const importing: AttachmentDrafts = [
+    ...ready,
+    { kind: 'importing', draftId: 'd2', name: 'w.png', source: pathSource('C:/pics/w.png') },
+  ]
+  const failed: AttachmentDrafts = [
+    ...importing,
+    { kind: 'failed', draftId: 'd3', name: 'bad.png', source: pathSource('C:/pics/bad.png'), reason: 'decode-failed', message: 'x' },
+  ]
+
+  assert.equal(attachmentSendGate([], { status: 'ready' }), undefined)
+  assert.deepEqual(attachmentSendGate(ready, { supportsImageInput: true }), undefined)
+
+  // The mid-flight answer: not a refusal, so the pane stages the message.
+  assert.deepEqual(attachmentSendGate(importing, { supportsImageInput: true }), { kind: 'importing' })
+
+  assert.equal(attachmentSendGate(failed, { supportsImageInput: true })?.kind, 'failed')
+
+  // A failed draft is the more actionable answer, and it wins over a model that
+  // could not take the pictures anyway.
+  const textOnly = { supportsImageInput: false }
+  assert.equal(attachmentSendGate(importing, textOnly)?.kind, 'model')
+  assert.equal(attachmentSendGate(failed, textOnly)?.kind, 'failed')
+
+  // Configuration outranks everything: nothing can be sent at all.
+  assert.equal(
+    attachmentSendGate(failed, { status: 'needs_configuration', supportsImageInput: false })?.kind,
+    'config',
+  )
 })
 
 // --- the paste source ------------------------------------------------------------

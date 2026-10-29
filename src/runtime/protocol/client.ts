@@ -379,12 +379,6 @@ export class SessionClient {
     return result.task
   }
 
-  /** Moves a still-blocking Bash call to the background; false once it has already settled. */
-  async backgroundToolCall(toolUseId: string): Promise<boolean> {
-    const result = await this.send({ type: 'background-tool-call', id: randomUUID(), toolUseId }) as { ok: boolean }
-    return result.ok
-  }
-
   async runTool(name: string, input: unknown): Promise<{ ok: boolean; content: string; errorCode?: string }> {
     return this.send({ type: 'run-tool', id: randomUUID(), name, input }) as Promise<{
       ok: boolean
@@ -555,13 +549,15 @@ export class SessionClient {
   }
 
   /** Closes a tab by pane id. `paneId` is the same value `WirePaneInfo.paneId` carries. */
-  async closePane(paneId: string): Promise<void> {
+  async closePane(paneId: string, options: { onlyIfIdle?: boolean } = {}): Promise<boolean> {
     const own = paneId === this.getSession()?.id
     try {
-      await this.send({ type: 'close-pane', id: randomUUID(), paneId })
+      const result = await this.send({ type: 'close-pane', id: randomUUID(), paneId, ...options }) as WireClosePaneResult
+      return result.ok
     } catch (error) {
       // Closing this lane's own pane tears its channel down before the reply can land.
       if (!own || !(this.hostGone || this.disposed)) throw error
+      return true
     }
   }
 

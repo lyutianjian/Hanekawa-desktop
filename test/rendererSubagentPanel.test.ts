@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { subagentEntries, subagentTone } from '../src/desktop/renderer/model/subagentPanel.js'
-import { createTranscriptState, withDetachedRuns, type TranscriptItem } from '../src/desktop/renderer/model/transcript.js'
+import { applySessionEvent, createTranscriptState, withDetachedRuns, type TranscriptItem } from '../src/desktop/renderer/model/transcript.js'
 
 function agent(id: string, overrides: Partial<TranscriptItem> = {}, tool: Partial<NonNullable<TranscriptItem['tool']>> = {}): TranscriptItem {
   return {
@@ -104,6 +104,31 @@ test('a background run counts as running while the registry says so, its start-n
   assert.deepEqual([running?.id, running?.status, running?.finished, running?.durationMs], ['a', 'running', false, undefined])
   assert.deepEqual([done?.id, done?.status], ['b', 'done'])
   assert.equal(withDetachedRuns(state, new Set()), state)
+  const resumed = { ...state, items: [agent('a', {}, { subagent: { subagentType: 'general', durationMs: 42_000 } })] }
+  assert.equal(subagentEntries(withDetachedRuns(resumed, new Set(['a'])).items)[0]?.finished, false, 'an earlier completed turn does not hide a resumed run\'s spinner')
+})
+
+test('a background agent uses its completion time and counts input, cache writes, cache reads and output', () => {
+  const records = [
+    { type: 'tool_use', id: 'call', tool: 'Agent', riskLevel: 'safe', input: { subagent_type: 'general', task: '检查目录' }, createdAt: '2026-10-25T00:00:00.000Z' },
+    { type: 'tool_result', id: 'result', tool: 'Agent', toolUseId: 'call', ok: true, content: 'Started in the background.', createdAt: '2026-10-25T00:00:00.010Z' },
+    {
+      type: 'subagent_transcript', id: 'finished', agentId: 'agent-1', parentToolUseId: 'call', subagentType: 'general', model: 'deepseek',
+      usage: { inputTokens: 900, cacheCreationInputTokens: 600, cacheReadInputTokens: 3_000, outputTokens: 500 },
+      createdAt: '2026-10-25T00:00:42.000Z',
+    },
+  ] as const
+  const replayed = createTranscriptState(records)
+  assert.equal(replayed.items[0]?.tool?.durationMs, 10, 'the parent call only waited for startup')
+  const [entry] = subagentEntries(replayed.items)
+  assert.equal(entry?.durationMs, 42_000, 'the detail counts through the agent finishing')
+  assert.equal(entry?.tokens, 5_000)
+  const measured = createTranscriptState([...records.slice(0, 2), { ...records[2], durationMs: 41_500 }])
+  assert.equal(subagentEntries(measured.items)[0]?.durationMs, 41_500, 'the measured run time takes precedence over the parent timestamps')
+
+  let live = createTranscriptState([])
+  for (const record of records) live = applySessionEvent(live, { type: 'record', record }).state
+  assert.deepEqual(subagentEntries(live.items), [entry], 'the live and reopened views use the same facts')
 })
 
 test('an Agent call the stop cut off is interrupted, not failed', () => {

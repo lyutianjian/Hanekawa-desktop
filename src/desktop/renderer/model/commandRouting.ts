@@ -1,13 +1,11 @@
-import { isCommandInput } from '../../../runtime/suggestions/commandSuggestions.js'
+import { isCommandInput, parseSlashCommand } from '../../../runtime/suggestions/commandSuggestions.js'
 import type { CommandView } from '../../../commands/types.js'
-import type { CommandEffect, CommandSurface } from '../../../runtime/protocol/wire.js'
+import type { CommandEffect, CommandSurface, WireCommandInfo } from '../../../runtime/protocol/wire.js'
 
 /**
  * Where a line of composer text goes, and what a slash command's effects mean.
  *
- * The shipped renderer sent everything to `client.submit`, so typing `/model`
- * put the literal string in front of the model — a typo cost a request. Routing
- * is the fix.
+ * Only registered slash names are commands; other input remains a message.
  *
  * The completion dropdown that makes the commands discoverable lives in
  * `completion.ts`, which owns both sources; it moved out of this file when file
@@ -22,14 +20,20 @@ export type InputClass =
   | { kind: 'command'; line: string }
   | { kind: 'prompt'; text: string }
 
-export function classifyInput(raw: string): InputClass {
+export function matchInputCommand(raw: string, commands: readonly WireCommandInfo[]) {
+  const parsed = parseSlashCommand(raw)
+  if (!parsed) return undefined
+  const command = commands.find((entry) => entry.name === parsed.name)
+    ?? commands.find((entry) => entry.aliases?.includes(parsed.name))
+    ?? (parsed.name === 'exit' ? { name: 'exit', description: '退出应用' } : undefined)
+  return command ? { ...parsed, command } : undefined
+}
+
+export function classifyInput(raw: string, commands: readonly WireCommandInfo[]): InputClass {
   const text = raw.trim()
   if (text.length === 0) return { kind: 'empty' }
-  // The host decides what a slash command means, including that an unknown one
-  // is still "handled" with an explanation. All the renderer decides is that a
-  // leading slash is never prose.
-  if (isCommandInput(text)) return { kind: 'command', line: text }
-  return { kind: 'prompt', text }
+  if (matchInputCommand(raw, commands)) return { kind: 'command', line: text }
+  return { kind: 'prompt', text: isCommandInput(raw.trimStart()) ? raw : text }
 }
 
 // --- effects ----------------------------------------------------------------

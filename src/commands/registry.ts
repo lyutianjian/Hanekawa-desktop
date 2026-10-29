@@ -56,4 +56,9 @@ export class CommandRegistry {
   has(name: string): boolean {
     return this.get(name) !== undefined
   }
+
+  isSkill(name: string): boolean {
+    const command = this.get(name)
+    return command !== undefined && this.skillNames.has(command.name)
+  }
 }

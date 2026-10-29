@@ -48,6 +48,7 @@ Avoid running \`find\`, \`grep\`, \`cat\`, \`head\`, \`tail\`, \`sed\`, \`awk\`,
 # Timeouts and background work
  - \`timeout\` is in milliseconds: default ${defaultTimeout}, no maximum.
 ${process.platform === 'darwin' ? ' - macOS has no `timeout` command; set the `timeout` parameter instead.\n' : ''} - A command still running after \`timeout\` is moved to the background (except \`sleep\`); you are notified when it finishes, so continue with other work.
+ - The user may send a message while a foreground command is still running. That command is moved to the background and keeps running; do not restart it, do not wait for it, and answer what the user asked.
  - Set \`run_in_background: true\` for servers and long jobs; no trailing \`&\` is needed.
  - A background command's output goes to a file named in the result; Read it to check progress. The finish notification includes the last lines. Stop a task with KillShell.
  - To be told about each line a long-running process prints (errors in a log, each CI step), use Monitor instead.

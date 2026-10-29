@@ -16,6 +16,7 @@ export interface BackgroundTaskRow {
   readonly model?: string
   readonly startedAt?: number
   readonly durationMs?: number
+  readonly tokens?: number
 }
 
 export type BackgroundTaskGroups = Readonly<Record<TaskGroup, readonly BackgroundTaskRow[]>>
@@ -48,6 +49,7 @@ export function backgroundTaskGroups(tasks: readonly BackgroundTaskSnapshot[], a
       ...(agent.model === undefined ? {} : { model: agent.model }),
       ...(startedAt === undefined ? {} : { startedAt }),
       ...(durationMs === undefined ? {} : { durationMs }),
+      ...(agent.tokens === undefined ? {} : { tokens: agent.tokens }),
     })
   }
   return {

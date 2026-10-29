@@ -16,9 +16,10 @@ import { CoordinationService } from '../src/runtime/coordination/service.js'
 import { CoordinationWakeEngine } from '../src/runtime/coordination/wakeEngine.js'
 import { AUTO_WAKE_LIMIT } from '../src/runtime/coordination/wakeDecision.js'
 import { createCoordinationTools } from '../src/tools/coordinationTools.js'
+import { DEFAULT_PANE_LIMIT, selectEvictions } from '../src/desktop/paneBudget.js'
 import type { SessionPane } from '../src/runtime/sessionWorkspace.js'
 import type { CoordinationCaller } from '../src/runtime/protocol/coordinationHost.js'
-import type { ModelRequest, ModelResponse, TurnOrigin } from '../src/harness/types.js'
+import type { ModelRequest, ModelResponse, SessionRecord, TurnOrigin } from '../src/harness/types.js'
 
 const BACKGROUND = 'The user wants this project tidied up. This background is long enough to satisfy the eighty character minimum.'
 
@@ -173,7 +174,7 @@ async function setup(t: TestContext, script: Script, options: { git?: boolean; s
       controller: pane.controller,
       runtimeSlot: pane.runtimeSlot,
       onPaneOpened: () => {},
-      onPaneClosed: () => {},
+      onPaneClosed: (id) => lanes.get(id)?.close(),
     })
     const client = new SessionClient(remote)
     await client.hello()
@@ -305,6 +306,100 @@ test('two StartThread calls (one in a worktree) wake the coordinator once per re
   const second = await wakeText()
   assert.ok(second.includes('B finished the research.') && second.includes('Your threads have finished.'))
   assert.equal((await h.coordStore.read()).coordinator?.notes.length, 0)
+})
+
+test('six concurrent StartThread calls survive pane eviction while their kickoff is being persisted', async (t) => {
+  const finish = gate()
+  const working = new Set<string>()
+  const h = await setup(t, async (call) => {
+    if (call.role === 'coordinator') {
+      if (call.last.includes('start six threads')) {
+        return {
+          ...text(''),
+          toolCalls: Array.from({ length: 6 }, (_, i) => ({
+            id: `start-${i}`, name: 'StartThread',
+            input: { title: `Thread ${i}`, brief: `BRIEF-${i}`, background: BACKGROUND, writesCode: false },
+          })),
+        }
+      }
+      return text('Coordinator done.')
+    }
+    working.add(call.sessionId)
+    await finish.promise
+    return text('Thread finished.')
+  })
+  const closing = new Set<string>()
+  const append = h.project.store.appendRecord.bind(h.project.store)
+  t.mock.method(h.project.store, 'appendRecord', async (id: string, record: SessionRecord) => {
+    await append(id, record)
+    if (record.type !== 'message_queue' || record.operation !== 'enqueue') return
+    // The disk write is complete, but its queue snapshot and streaming state
+    // have not reached the renderer when a topology update applies the cap.
+    const live = [...h.lanes.values()]
+    const entries = live.map((lane, index) => ({
+      lane: lane.sessionId,
+      active: lane.sessionId === h.coordinatorId,
+      streaming: lane.client.getSnapshot().isStreaming,
+      pending: !lane.client.getSession() || lane.client.getQueuedMessages().length > 0,
+      blocked: false, processes: false, tabs: false, draft: false,
+      coordinator: lane.sessionId === h.coordinatorId,
+      lastActiveTick: index,
+    }))
+    for (const sessionId of selectEvictions({ entries, limit: DEFAULT_PANE_LIMIT })) {
+      if (closing.has(sessionId)) continue
+      const lane = h.lanes.get(sessionId)
+      if (!lane) continue
+      closing.add(sessionId)
+      try { await lane.client.closePane(sessionId, { onlyIfIdle: true }) }
+      finally { closing.delete(sessionId) }
+    }
+  })
+
+  try {
+    await h.coordinator.client.submit('start six threads')
+    await until(() => working.size === 6, `only ${working.size} of six threads reached the model`)
+    assert.equal(h.lanes.size, 7, 'working threads can exceed the idle pane budget')
+    assert.equal((await h.coordStore.read()).threads.length, 6)
+  } finally {
+    finish.open()
+  }
+  await h.settle()
+  assert.ok((await h.coordStore.read()).threads.every((row) => row.status === 'idle' && row.lastReport === 'Thread finished.'))
+})
+
+test('six code threads start concurrently in distinct worktrees and report completion', async (t) => {
+  const finish = gate()
+  const working = new Set<string>()
+  const h = await setup(t, async (call) => {
+    if (call.role === 'coordinator') return text('Coordinator done.')
+    working.add(call.sessionId)
+    await finish.promise
+    return text('Code thread finished.')
+  }, { git: true })
+  try {
+    const started = await Promise.all(Array.from({ length: 6 }, (_, i) => h.start(`Code ${i}`, `BRIEF-${i}`, true)))
+    await until(() => working.size === 6)
+    const rows = (await h.coordStore.read()).threads
+    assert.equal(new Set(rows.map((row) => row.worktree?.cwd)).size, 6)
+    assert.equal(new Set(started.map((row) => row.branch)).size, 6)
+    assert.ok(rows.every((row) => row.worktree && existsSync(path.join(row.worktree.cwd, 'a.txt'))))
+  } finally { finish.open() }
+  await h.settle()
+  assert.ok((await h.coordStore.read()).threads.every((row) => row.status === 'idle' && row.lastReport === 'Code thread finished.'))
+})
+
+test('a lane closed during kickoff persistence fails the start and removes the unfinished thread', async (t) => {
+  const h = await setup(t, () => text('Unused.'))
+  const append = h.project.store.appendRecord.bind(h.project.store)
+  t.mock.method(h.project.store, 'appendRecord', async (id: string, record: SessionRecord) => {
+    await append(id, record)
+    if (record.type === 'message_queue' && record.operation === 'enqueue') h.lanes.get(id)?.close()
+  })
+  await assert.rejects(h.start('Closed', 'BRIEF-CLOSED'), /会话已关闭/)
+  assert.equal((await h.coordStore.read()).threads.length, 0)
+  assert.deepEqual((await h.project.store.list()).map((session) => session.id), [h.coordinatorId])
+  assert.deepEqual([...h.lanes.keys()], [h.coordinatorId])
+  await h.settle()
 })
 
 test('AskCoordinator wakes the coordinator at once while another thread is still running', async (t) => {

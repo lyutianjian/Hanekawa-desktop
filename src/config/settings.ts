@@ -85,23 +85,51 @@ export async function loadUserSettings(): Promise<MyAgentSettings> {
   return loadSettingsFile(join(getGlobalMyAgentDir(), 'settings.json'))
 }
 
-async function loadLegacyMcpSettings(cwd: string): Promise<MyAgentSettings> {
+/**
+ * One `mcpServers` file, or `undefined` when there is none to read.
+ *
+ * Both the shape and the failure handling come from the file this used to read
+ * alone: a corrupted JSON is a warning and no servers, never a refused startup.
+ */
+async function readMcpServersFile(filePath: string): Promise<Record<string, McpServerConfig> | undefined> {
   let content: string
-  const filePath = join(cwd, '.myagent', 'mcp.json')
   try {
     content = await readFile(filePath, 'utf-8')
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
     throw error
   }
 
   try {
     const config = JSON.parse(content) as LegacyMcpSettings
-    return config.mcpServers ? { mcpServers: config.mcpServers } : {}
+    return config.mcpServers
   } catch (error) {
     console.error(`[myagent] Warning: corrupted MCP settings file ${filePath}: ${error instanceof Error ? error.message : String(error)}`)
-    return {}
+    return undefined
   }
+}
+
+/**
+ * The two on-disk MCP files, as one layer.
+ *
+ * `.myagent/mcp.json` is Hanekawa's own file. `.mcp.json` at the repository root
+ * is Claude Code's, read so a project that already declares its servers there
+ * works unchanged — the same compat rule the skill folders follow. The foreign
+ * file is read *under* the owned one: a name both declare means the user meant
+ * Hanekawa's, and quietly preferring the other would look like an edit that did
+ * nothing.
+ *
+ * Servers from either file are untrusted until the startup prompt is accepted
+ * (`runtime/mcp.ts`), so a checked-in `.mcp.json` cannot start a process by
+ * being opened.
+ */
+async function loadLegacyMcpSettings(
+  cwd: string,
+  compat: Record<string, McpServerConfig> | undefined,
+): Promise<MyAgentSettings> {
+  const owned = await readMcpServersFile(join(cwd, '.myagent', 'mcp.json'))
+  const mcpServers = { ...compat, ...owned }
+  return Object.keys(mcpServers).length > 0 ? { mcpServers } : {}
 }
 
 function mergeSettings(...sources: MyAgentSettings[]): MyAgentSettings {
@@ -303,18 +331,34 @@ export interface SettingsLayers {
   project: MyAgentSettings
   legacyMcp: MyAgentSettings
   local: MyAgentSettings
+  /** Server names that came from the repository's `.mcp.json`, so the screen can say where they live. */
+  compatMcp: ReadonlySet<string>
+}
+
+/**
+ * Drops one layer's startup permission mode.
+ *
+ * The mode is a single global value — the composer's pill and the settings
+ * screen's row both write the user layer — so no project-scoped layer may pin
+ * it. A local file still holding one written by the old per-project control is
+ * dropped silently rather than warned about: it was a legitimate write until
+ * the control moved, and nothing on screen offers it any more.
+ */
+function withoutStartupPermissionMode(settings: MyAgentSettings): MyAgentSettings {
+  if (settings.permissions?.mode === undefined) return settings
+  const { mode: _mode, ...permissions } = settings.permissions
+  return { ...settings, permissions }
 }
 
 /**
  * A repository must not loosen its own guard: the checked-in layer cannot pick
- * the startup permission mode or pre-trust MCP servers. Both stay settable from
- * the user and local layers.
+ * the startup permission mode or pre-trust MCP servers. The mode belongs to the
+ * user layer; MCP trust stays settable from it and from the local layer.
  */
 function withoutProjectTrustGrants(settings: MyAgentSettings): MyAgentSettings {
   const ignored: string[] = []
   if (settings.permissions?.mode !== undefined) {
-    const { mode: _mode, ...permissions } = settings.permissions
-    settings = { ...settings, permissions }
+    settings = withoutStartupPermissionMode(settings)
     ignored.push('permissions.mode')
   }
   if (settings.mcp?.trustedServers !== undefined) {
@@ -323,7 +367,17 @@ function withoutProjectTrustGrants(settings: MyAgentSettings): MyAgentSettings {
     ignored.push('mcp.trustedServers')
   }
   if (ignored.length > 0) {
-    console.error(`[myagent] Warning: .myagent/settings.json cannot set ${ignored.join(' or ')}; ignored. Set it in ~/.myagent/settings.json or the local layer.`)
+    // Each ignored key has its own correct home: the startup mode exists only in
+    // the user layer, while MCP trust can also be granted per project.
+    const hints = [
+      ...(ignored.includes('permissions.mode')
+        ? ['permissions.mode belongs in ~/.myagent/settings.json']
+        : []),
+      ...(ignored.includes('mcp.trustedServers')
+        ? ['mcp.trustedServers belongs in ~/.myagent/settings.json or settings.local.json']
+        : []),
+    ]
+    console.error(`[myagent] Warning: .myagent/settings.json cannot set ${ignored.join(' or ')}; ignored. ${hints.join('; ')}.`)
   }
   return settings
 }
@@ -356,9 +410,12 @@ export async function loadSettingsLayers(cwd: string): Promise<SettingsLayers> {
         await loadSettingsFile(join(cwd, '.myagent', 'settings.json')),
         join(cwd, '.myagent', 'settings.json'),
       ))
-  const legacyMcp = await loadLegacyMcpSettings(cwd)
-  const local = withoutOwnedConfig(await loadSettingsFile(localSettingsPath(cwd)), localSettingsPath(cwd))
-  return { user, project, legacyMcp, local }
+  const compatMcpServers = await readMcpServersFile(join(cwd, '.mcp.json'))
+  const legacyMcp = await loadLegacyMcpSettings(cwd, compatMcpServers)
+  const local = withoutStartupPermissionMode(
+    withoutOwnedConfig(await loadSettingsFile(localSettingsPath(cwd)), localSettingsPath(cwd)),
+  )
+  return { user, project, legacyMcp, local, compatMcp: new Set(Object.keys(compatMcpServers ?? {})) }
 }
 
 export async function loadMergedSettings(cwd: string): Promise<MyAgentSettings> {
@@ -457,18 +514,18 @@ export async function setLocalPermissionEntries(
 }
 
 /**
- * The startup permission mode, in the local layer.
+ * The startup permission mode, globally.
  *
- * Startup only: `SessionScope` reads it once when it builds its
- * `PermissionGate`, and `reloadSettings()` refreshes the *rules* but never the
- * mode. Already-open sessions keep the mode they opened with.
+ * Last pick wins and it is not a project preference: the composer's pill and the
+ * settings screen's row write this same user-layer value, so a session opened in
+ * any project starts in the mode the user last chose. Startup only —
+ * `SessionScope` reads it once when it builds its `PermissionGate`, and an open
+ * session keeps the mode it opened with.
  */
-export async function setLocalStartupPermissionMode(
-  cwd: string,
-  mode: StartupPermissionMode,
-): Promise<void> {
-  const local = await loadLocalSettings(cwd)
-  await updateLocalSettings(cwd, { permissions: { ...local.permissions, mode } })
+export async function saveStartupPermissionMode(mode: StartupPermissionMode): Promise<void> {
+  await updateUserSettings((settings) => {
+    settings.permissions = { ...settings.permissions, mode }
+  })
 }
 
 /**
@@ -580,6 +637,31 @@ export async function setSkillEnabledLocally(
 /** The names {@link MyAgentSettings.skills} switches off, as a set. */
 export function disabledSkillNames(settings: MyAgentSettings): Set<string> {
   return new Set(settings.skills?.disabled ?? [])
+}
+
+/**
+ * Switches one skill off in the user layer.
+ *
+ * For a *personal* skill, which every project reads from `~/.agents/skills`:
+ * switching it off in one project's local layer would leave it on everywhere
+ * else. Carries this layer's own list over rather than the merged one — copying
+ * a project's decisions into the user layer would spread them to every other
+ * project.
+ *
+ * A layer that declares its own list still wins, which is the documented way to
+ * switch one back on for a single project.
+ */
+export async function disableSkillForUser(skillName: string): Promise<void> {
+  await setSkillEnabledForUser(skillName, false)
+}
+
+export async function setSkillEnabledForUser(skillName: string, enabled: boolean): Promise<void> {
+  await updateUserSettings((settings) => {
+    const disabled = disabledSkillNames(settings)
+    if (enabled) disabled.delete(skillName)
+    else disabled.add(skillName)
+    settings.skills = { ...settings.skills, disabled: [...disabled].sort() }
+  })
 }
 
 export async function trustMcpServerLocally(cwd: string, serverName: string): Promise<void> {

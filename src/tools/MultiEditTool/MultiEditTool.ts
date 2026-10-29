@@ -1,11 +1,11 @@
 import { z } from 'zod/v3'
 import type { Tool } from '../../harness/types.js'
 import { resolveToolPath } from '../../utils/paths.js'
-import { getReadFileContent, rememberReadFile, requireFreshRead, resolveTextFileMeta } from '../fileState.js'
-import { assertTargetUnchanged, resolveSafeTarget } from '../pathSafety.js'
+import { prepareFileEdit, rememberReadFile } from '../fileState.js'
+import { assertTargetUnchanged } from '../pathSafety.js'
 import { findStringMatches, multipleMatchFailure, noMatchFailure, replaceLiteralMatch, preserveQuoteStyle } from '../FileEditTool/FileEditTool.js'
 import { patchDetail } from '../editPatch.js'
-import { readTextFile, writeTextFile } from '../textFile.js'
+import { writeTextFile } from '../textFile.js'
 import { trackFileEdit } from '../trackFileEdit.js'
 import { DESCRIPTION } from './prompt.js'
 import { configFileView, restoreConfigApiKeys } from '../configFileView.js'
@@ -56,19 +56,10 @@ export const multiEditTool: Tool = {
         errorCode: 'invalid_input',
       }
     }
-    const stale = await requireFreshRead(absolute, filePath, context)
-    if (stale) {
-      return stale
-    }
-    // Resolve the real target before reading content to prevent TOCTOU: an
-    // attacker could swap the file with a symlink between read and write.
-    const safe = await resolveSafeTarget(absolute, filePath, { approvedTarget: context.approvedWriteTarget })
-    if ('error' in safe) {
-      return safe.error
-    }
-    const { target } = safe
-
-    const raw = getReadFileContent(absolute, context) ?? (await readTextFile(absolute)).content
+    const prepared = await prepareFileEdit(absolute, filePath, context)
+    if ('error' in prepared) return prepared.error
+    const { target, file, notice } = prepared
+    const raw = file.content
     const originalContent = configFileView(absolute, raw)
     // Validate all edits against the original content and find match positions
     const resolved: Array<{ oldString: string; newString: string; index: number; start: number; end: number }> = []
@@ -118,17 +109,16 @@ export const multiEditTool: Tool = {
     }
 
     nextContent = restoreConfigApiKeys(absolute, nextContent, raw)
-    const meta = await resolveTextFileMeta(absolute, context)
     await trackFileEdit(context, absolute)
     const changed = await assertTargetUnchanged(target, filePath)
     if (changed) {
       return changed
     }
-    await writeTextFile(target.canonical, nextContent, meta)
-    await rememberReadFile(absolute, nextContent, context, meta)
+    await writeTextFile(target.canonical, nextContent, file)
+    await rememberReadFile(absolute, nextContent, context, file)
     return {
       ok: true,
-      content: `Applied ${edits.length} edits to ${filePath}`,
+      content: `Applied ${edits.length} edits to ${filePath}` + notice,
       metadata: {
         display: {
           summary: `Applied ${edits.length} edit${edits.length === 1 ? '' : 's'} to ${filePath}`,

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { splitThreadBrief, threadPage } from '../src/desktop/renderer/model/threadDetail.js'
+import { threadPage } from '../src/desktop/renderer/model/threadDetail.js'
 import { replayActivity } from '../src/desktop/renderer/model/waiting.js'
 import { createTranscriptState, type TranscriptItem } from '../src/desktop/renderer/model/transcript.js'
 import type { WireCoordinationThreads, WireThreadInfo, WireThreadStatus } from '../src/desktop/shellProtocol.js'
@@ -45,18 +45,6 @@ test('poll, notice and stop follow the thread status', () => {
 test('a stop in flight is carried to the page', () => {
   const page = threadPage(selection, state([thread('running')]), new Set(['t1']))
   assert.equal(page.kind === 'detail' && page.stopPending, true)
-})
-
-test('the first user message is the brief and leaves the conversation; later ones stay', () => {
-  const items: TranscriptItem[] = [
-    { id: 'u1', kind: 'user', text: 'Background:\nbuild it' },
-    { id: 'a1', kind: 'assistant', text: 'ok' },
-    { id: 'u2', kind: 'user', text: 'more' },
-  ]
-  const split = splitThreadBrief({ ...createTranscriptState([]), items })
-  assert.equal(split.brief, 'Background:\nbuild it')
-  assert.deepEqual(split.state.items.map((item) => item.id), ['a1', 'u2'])
-  assert.equal(splitThreadBrief(createTranscriptState([])).brief, undefined)
 })
 
 test('a replayed turn counts from its first record; a settled one is idle', () => {

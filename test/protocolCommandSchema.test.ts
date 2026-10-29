@@ -48,7 +48,6 @@ const SAMPLES = {
   'list-background-tasks': { type: 'list-background-tasks', id: '1' },
   'peek-task-output': { type: 'peek-task-output', id: '1', taskId: 't' },
   'kill-task': { type: 'kill-task', id: '1', taskId: 't' },
-  'background-tool-call': { type: 'background-tool-call', id: '1', toolUseId: 'call_1' },
   'open-pane': { type: 'open-pane', id: '1' },
   'close-pane': { type: 'close-pane', id: '1', paneId: 'p' },
   'list-panes': { type: 'list-panes', id: '1' },
@@ -100,6 +99,14 @@ test('an unknown type is rejected, with the id recovered', () => {
   assert.equal(parsed.ok, false)
   assert.equal(parsed.id, 'x')
   assert.equal(parsed.requestId, undefined)
+})
+
+test('close-pane accepts the conditional eviction flag and validates its type', () => {
+  const command = { type: 'close-pane', id: 'c', paneId: 'p', onlyIfIdle: true }
+  const parsed = parseHostCommand(command)
+  assert.ok(parsed.ok)
+  assert.deepEqual(parsed.command, command)
+  assert.equal(parseHostCommand({ ...command, onlyIfIdle: 'true' }).ok, false)
 })
 
 test('an unknown key is rejected and named', () => {

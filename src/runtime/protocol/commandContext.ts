@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto'
+import { VALID_EFFORT_LEVELS, type EffortLevel } from '../../config/effort.js'
+import { saveEffortLevel } from '../../config/settings.js'
 import type {
   CommandContext,
   CommandModelInfo,
@@ -9,6 +11,7 @@ import type { SessionRecord } from '../../harness/types.js'
 import type { SessionMeta } from '../../sessions/service.js'
 import { switchModel, type ModelSwitchDeps } from '../modelSwitch.js'
 import { applyPermissionModeTransition } from '../permissionMode.js'
+import { sessionRoleOf } from '../sessionRole.js'
 import { openPlanFileInEditor, readCurrentPlanFile } from '../planFile.js'
 import { buildRunOverrides } from '../runOverrides.js'
 import type { RuntimeSlot } from '../runtimeSlot.js'
@@ -165,10 +168,23 @@ export function createHostCommandContext(deps: HostCommandContextDeps): CommandC
 
     getModel: currentModel,
     // The full `/model` semantics, including the config write-back that the
-    // `set-model` command deliberately omits.
-    setModel: (input): SetModelResult => switchModel(modelSwitchDeps(), input),
+    // `set-model` command deliberately omits. A coordination lane's pick is its
+    // own, so there it is the live switch alone — the same rule as `setEffort`.
+    setModel: (input): SetModelResult =>
+      switchModel(modelSwitchDeps(), input, !sessionRoleOf(deps.getSession())),
     getEffort: () => runtimeSlot.getEffort(),
-    setEffort: (level) => { runtimeSlot.setEffort(level) },
+    setEffort: (level) => {
+      const applied = runtimeSlot.setEffort(level)
+      // A user's pick, remembered globally for the sessions that follow. Not from
+      // a coordination lane: its effort is its own, and a pick there would
+      // retarget every project's next main session. A raw numeric budget is not
+      // a level, so there is nothing to remember.
+      if (!sessionRoleOf(deps.getSession()) && (VALID_EFFORT_LEVELS as readonly string[]).includes(applied)) {
+        // Fire-and-forget like `/model`'s write-back: the level is already in
+        // force, and a failed write must not read as a failed command.
+        return saveEffortLevel(applied as EffortLevel).catch(() => {})
+      }
+    },
     reloadAgentDefinitions: () => project.reloadAgentDefinitions(),
     reloadSkills: () => project.reloadSkills(),
 

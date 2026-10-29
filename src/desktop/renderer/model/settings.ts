@@ -197,8 +197,9 @@ export interface SettingsState {
   /** First-run setup: once the snapshot shows no endpoint, the wizard opens by itself. */
   readonly setupWizard?: boolean
   readonly projectRoot?: string
+  readonly skillsScope?: 'personal'
   readonly snapshot?: WireSettingsSnapshot
-  readonly projects: ReadonlyArray<{ projectRoot: string; projectName: string }>
+  readonly projects: ReadonlyArray<{ projectRoot: string; projectName: string; isGlobal?: boolean }>
   readonly draft?: SettingsDraft
   /** The user changed something in the open form, so dismissing it asks first. */
   readonly draftEdited?: boolean
@@ -209,7 +210,7 @@ export interface SettingsState {
    * until that batch answers: closed on success, kept with the error on failure.
    */
   readonly draftSubmit?: number
-  readonly confirmingRemove?: { readonly kind: 'endpoint' | 'mcp-server'; readonly name: string }
+  readonly confirmingRemove?: RemoveTarget
   readonly error?: string
   /** The rows the error is about, so the view can draw it under them. */
   readonly errorRows?: readonly string[]
@@ -230,12 +231,42 @@ export interface SettingsState {
   readonly openMenu?: string
   /** The 自定义指令 editor's unsaved text; absent means it shows what is on disk. */
   readonly instructionsDraft?: string
+  /**
+   * Which tab of 技能和 MCP is showing. Remembered while the screen stays open
+   * and reset to 技能 by the next opening, so it is never persisted.
+   */
+  readonly extensionsTab: ExtensionsTab
+  /**
+   * The skill whose detail dialog is showing, by name; absent means the list. Held
+   * by name rather than by row so a snapshot that lands under it (a switch, a
+   * reload) redraws the page instead of closing it, and a skill that is gone
+   * simply falls back to the list.
+   */
+  readonly skillDetail?: string
+  readonly skillPreview?: { readonly name: string; readonly content?: string; readonly error?: string }
+}
+
+/** The two tabs of the 技能和 MCP page, in the order they are drawn. */
+export type ExtensionsTab = 'skills' | 'mcp'
+
+export const EXTENSIONS_TABS: readonly ExtensionsTab[] = ['skills', 'mcp']
+
+const EXTENSIONS_TAB_LABELS: Record<ExtensionsTab, string> = {
+  skills: '技能',
+  mcp: 'MCP',
+}
+
+/** What a pending 「删除 / 卸载」 confirmation is about. */
+export interface RemoveTarget {
+  readonly kind: 'endpoint' | 'mcp-server' | 'skill'
+  readonly name: string
 }
 
 export function createSettingsState(): SettingsState {
   return {
     open: false,
     category: 'provider',
+    extensionsTab: 'skills',
     busy: false,
     pending: [],
     pendingSeq: 0,
@@ -360,7 +391,7 @@ export interface SettingsButton {
   readonly title: string
   readonly intent: SettingsIntent
   readonly danger?: boolean
-  readonly icon?: 'trash' | 'plus' | 'folder'
+  readonly icon?: 'trash' | 'plus' | 'folder' | 'folder-open' | 'rotate-cw' | 'external' | 'copy'
   /**
    * The wire change this button starts, for the action buttons in a card footer.
    *
@@ -375,6 +406,15 @@ export interface SettingsButton {
 export interface SettingsRow {
   readonly id: string
   readonly label: string
+  /** A leading mark, for rows that are a thing on disk rather than a setting. */
+  readonly icon?: 'package'
+  /** The thing's own scope, said in one word to the right of its name. */
+  readonly badge?: string
+  /**
+   * Makes the row's name a button that sends this intent: the way into a thing's
+   * own page. The row's control keeps working beside it.
+   */
+  readonly open?: SettingsIntent
   readonly detail?: string
   /** The detail's hover text, for the technical footnote the detail leaves out. */
   readonly detailHint?: string
@@ -409,6 +449,13 @@ export interface SettingsCard {
   readonly rows: readonly SettingsRow[]
   /** Shown in place of rows when there are none. */
   readonly empty?: string
+  /**
+   * Actions about the whole card rather than one row, drawn beside its title.
+   *
+   * On the heading line because they act on the list under it: a footer reads as
+   * "and now this row", and lands below a long list where the eye has left.
+   */
+  readonly headerButtons?: readonly SettingsButton[]
   readonly footerButtons?: readonly SettingsButton[]
 }
 
@@ -560,7 +607,13 @@ export interface SettingsViewModel {
   readonly busy: boolean
   readonly projectChoices: ReadonlyArray<{ value: string; label: string }>
   readonly projectValue: string
-  readonly confirming?: { readonly message: string; readonly anchor: SettingsAnchor }
+  readonly skillProjectPicker?: { readonly value: string; readonly choices: ReadonlyArray<{ value: string; label: string }> }
+  readonly confirming?: {
+    readonly message: string
+    readonly anchor: SettingsAnchor
+    /** The confirming button's word, when 「删除」 is not it (a skill is 「卸载」). */
+    readonly actionLabel?: string
+  }
   /** Echoed back so the DOM can tell "the model cleared it" from "the user typed". */
   readonly query: string
   /** Set only when a non-empty query filtered the page down to nothing. */
@@ -569,6 +622,29 @@ export interface SettingsViewModel {
   readonly openMenu?: string
   /** A full-page text editor in place of cards: the 自定义指令 page. */
   readonly editor?: SettingsEditor
+  /** The tab strip above the cards; only the 技能和 MCP page has one. */
+  readonly tabs?: readonly SettingsTab[]
+  readonly skillDetail?: SettingsSkillDetail
+}
+
+export interface SettingsSkillDetail {
+  readonly card: SettingsCard
+  readonly enabled: boolean
+  readonly badge: string
+  readonly content: string
+  readonly contentNote?: string
+}
+
+export interface SettingsTab {
+  readonly id: ExtensionsTab
+  readonly label: string
+  /**
+   * The number beside the label: the total, or 「命中数 / 总数」 while a search
+   * is filtering. A string, so the view never formats a count itself.
+   */
+  readonly count: string
+  readonly selected: boolean
+  readonly intent: SettingsIntent
 }
 
 export interface SettingsEditor {
@@ -789,6 +865,8 @@ function projectOne(snapshot: WireSettingsSnapshot, change: SettingsChange): Wir
           skill.name === change.name ? { ...skill, enabled: change.enabled } : skill,
         ),
       }
+    case 'remove-skill':
+      return { ...snapshot, skills: snapshot.skills.filter((skill) => skill.name !== change.name) }
     case 'set-mcp-trust':
       return {
         ...snapshot,
@@ -947,6 +1025,7 @@ export function pendingRowIds(pending: readonly PendingMutation[]): Set<string> 
         break
       case 'set-skill-enabled':
         ids.add(`skill:${change.name}`)
+        ids.add(`skill-detail:${change.name}`)
         break
       case 'set-mcp-trust':
       case 'set-mcp-server':
@@ -1004,6 +1083,15 @@ export function settingsView(state: SettingsState): SettingsViewModel {
       ? state.projects.map((project) => ({ value: project.projectRoot, label: project.projectName }))
       : [],
     projectValue: state.projectRoot ?? '',
+    ...(state.category === 'extensions' && state.extensionsTab === 'skills'
+      ? { skillProjectPicker: {
+          value: state.skillsScope === 'personal' ? '' : state.projectRoot ?? '',
+          choices: [
+            { value: '', label: '个人' },
+            ...state.projects.filter((project) => !project.isGlobal).map((project) => ({ value: project.projectRoot, label: project.projectName })),
+          ],
+        } }
+      : {}),
     ...(state.openMenu !== undefined ? { openMenu: state.openMenu } : {}),
     ...(state.error !== undefined ? { error: state.error } : {}),
     ...(state.errorRows !== undefined ? { errorRows: state.errorRows } : {}),
@@ -1012,6 +1100,7 @@ export function settingsView(state: SettingsState): SettingsViewModel {
           confirming: {
             message: removeConfirmMessage(state.confirmingRemove, state.snapshot),
             anchor: confirmAnchor(state.confirmingRemove),
+            ...(state.confirmingRemove.kind === 'skill' ? { actionLabel: '卸载' } : {}),
           },
         }
       : {}),
@@ -1039,7 +1128,7 @@ export function settingsView(state: SettingsState): SettingsViewModel {
   const projected = projectSnapshot(state.snapshot, state.pending)
   const cards = markSaved(
     markPending(
-      cardsFor(state.category, projected),
+      cardsFor(state.category, projected, state.skillDetail),
       pendingRowIds(state.pending),
       pendingKinds(state.pending),
     ),
@@ -1076,7 +1165,9 @@ export function settingsView(state: SettingsState): SettingsViewModel {
     ...(state.category === 'provider'
       ? { subtitle: SAVED_GLOBAL, subtitleHint: projected.saveTarget }
       : {}),
-    ...filterCards(cards, state.query),
+    ...(state.category === 'extensions'
+      ? extensionsBody(cards, projected, state)
+      : filterCards(cards, state.query)),
     ...(state.draft
       ? {
           form: {
@@ -1085,6 +1176,66 @@ export function settingsView(state: SettingsState): SettingsViewModel {
             submitting: state.draftSubmit !== undefined,
           },
         }
+      : {}),
+  }
+}
+
+const SKILL_DETAIL_CARD = 'skill-detail'
+
+/** The card each tab shows. Exhaustive: a third tab cannot compile without one. */
+const EXTENSIONS_TAB_CARD: Record<ExtensionsTab, string> = {
+  skills: 'skills',
+  mcp: 'mcp',
+}
+
+/**
+ * The 技能和 MCP page's body: a tab strip and, under it, one card.
+ *
+ * Without a query only the selected tab's card is drawn. With one, both cards
+ * are filtered and every one with a hit is drawn: the page shares the sidebar's
+ * search, so a keyword that only an MCP server answers must show that server
+ * instead of a skills tab that looks empty. The counts then read 「命中 / 总数」.
+ * Clearing the query falls back to the remembered tab — the tab is never
+ * rewritten by a search.
+ */
+function extensionsBody(
+  allCards: readonly SettingsCard[],
+  projected: WireSettingsSnapshot,
+  state: SettingsState,
+): Pick<SettingsViewModel, 'cards' | 'tabs' | 'skillDetail' | 'searchEmpty'> {
+  const searching = state.query.trim() !== ''
+  // The detail rides above the list and never changes its search or scroll.
+  const detail = allCards.find((card) => card.id === SKILL_DETAIL_CARD)
+  const cards = allCards.filter((card) => card.id !== SKILL_DETAIL_CARD)
+  const totals: Record<ExtensionsTab, number> = {
+    skills: projected.skills.length,
+    mcp: projected.mcpServers.length,
+  }
+  const filtered = filterCards(cards, state.query)
+  const hits = (tab: ExtensionsTab): number =>
+    filtered.cards.find((card) => card.id === EXTENSIONS_TAB_CARD[tab])?.rows.length ?? 0
+  const tabs = EXTENSIONS_TABS.map((id) => ({
+    id,
+    label: EXTENSIONS_TAB_LABELS[id],
+    count: searching ? `${hits(id)} / ${totals[id]}` : String(totals[id]),
+    selected: state.extensionsTab === id,
+    intent: { kind: 'select-extensions-tab', tab: id } as const,
+  }))
+  const skill = projected.skills.find((candidate) => candidate.name === state.skillDetail)
+  const preview = state.skillPreview?.name === skill?.name ? state.skillPreview?.content : undefined
+  return {
+    ...(searching ? filtered : { cards: cards.filter((card) => card.id === EXTENSIONS_TAB_CARD[state.extensionsTab]) }),
+    tabs,
+    ...(detail && skill && state.extensionsTab === 'skills'
+      ? { skillDetail: {
+          card: detail,
+          enabled: skill.enabled,
+          badge: skillBadge(skill),
+          content: preview ?? skill.content,
+          ...(skill.contentTruncated && preview === undefined
+            ? { contentNote: state.skillPreview?.error ?? '正在读取完整 SKILL.md…' }
+            : {}),
+        } }
       : {}),
   }
 }
@@ -1114,6 +1265,15 @@ function markPending(
           ),
         }
       : {}),
+    ...(card.headerButtons
+      ? {
+          headerButtons: card.headerButtons.map((button) =>
+            button.changeKind !== undefined && kinds.has(button.changeKind)
+              ? { ...button, pending: true }
+              : button,
+          ),
+        }
+      : {}),
   }))
 }
 
@@ -1131,12 +1291,16 @@ function markSaved(cards: SettingsCard[], saved: SettingsState['savedRows']): Se
 type HostCategory = Exclude<SettingsCategory, 'appearance'>
 
 /** Exhaustive by construction: a new host category cannot compile without cards. */
-function cardsFor(category: HostCategory, snapshot: WireSettingsSnapshot): SettingsCard[] {
+function cardsFor(
+  category: HostCategory,
+  snapshot: WireSettingsSnapshot,
+  skillDetail?: string,
+): SettingsCard[] {
   switch (category) {
     case 'provider':
       return providerCards(snapshot)
     case 'extensions':
-      return extensionsCards(snapshot)
+      return extensionsCards(snapshot, skillDetail)
     case 'permissions':
       return permissionCards(snapshot)
     case 'general':
@@ -1191,10 +1355,15 @@ function appearanceCards(pref: ThemePreference): SettingsCard[] {
  * afterwards. Read off the snapshot, which already carries each model's endpoint
  * — no wire field was added for this.
  */
-function removeConfirmMessage(
-  target: { kind: 'endpoint' | 'mcp-server'; name: string },
-  snapshot: WireSettingsSnapshot,
-): string {
+function removeConfirmMessage(target: RemoveTarget, snapshot: WireSettingsSnapshot): string {
+  if (target.kind === 'skill') {
+    const skill = snapshot.skills.find((candidate) => candidate.name === target.name)
+    // The folder is named because it is what goes: 「卸载」 on its own reads as
+    // switching off, which is the toggle's job and recoverable.
+    return skill
+      ? `卸载技能 ${target.name}？会删除文件夹 ${skill.dir}，无法恢复。`
+      : `卸载技能 ${target.name}？`
+  }
   if (target.kind === 'mcp-server') return `删除 MCP 服务器 ${target.name}？`
   const cascade = snapshot.models
     .filter((model) => model.endpoint === target.name)
@@ -1203,7 +1372,8 @@ function removeConfirmMessage(
   return `删除服务商 ${target.name}？将同时删除模型 ${cascade.join('、')}。`
 }
 
-function confirmAnchor(target: { kind: 'endpoint' | 'mcp-server'; name: string }): SettingsAnchor {
+function confirmAnchor(target: RemoveTarget): SettingsAnchor {
+  if (target.kind === 'skill') return { cardId: 'skill-detail', rowId: `skill-detail:${target.name}` }
   if (target.kind === 'mcp-server') return { cardId: 'mcp', rowId: `mcp:${target.name}` }
   return { cardId: 'providers', rowId: `endpoint:${target.name}` }
 }
@@ -1421,8 +1591,9 @@ function permissionCards(snapshot: WireSettingsSnapshot): SettingsCard[] {
   const modeCard: SettingsCard = {
     id: 'permission-mode',
     title: '默认权限模式',
-    note: permissions.modeIsLocal ? SAVED_LOCAL : `当前值来自上层设置；改动${SAVED_LOCAL}`,
-    noteHint: permissions.localPath,
+    // Global, and not this project's file: the composer pill writes the same
+    // value, so pointing the hint at `settings.local.json` would be a lie.
+    note: '所有项目通用；保存到全局设置里。',
     rows: [
       {
         id: 'permissions:mode',
@@ -1430,7 +1601,7 @@ function permissionCards(snapshot: WireSettingsSnapshot): SettingsCard[] {
         // Not a hedge: the gate reads this when a scope is built, so an open
         // session keeps the mode it opened with — including one the user has
         // since toggled by hand, which this must not fight over.
-        detail: '对已经打开的会话无效，下一个新会话生效。',
+        detail: '对所有项目的新会话生效，已经打开的会话不受影响。',
         control: {
           kind: 'select',
           value: permissions.mode,
@@ -1644,8 +1815,16 @@ function cacheCard(snapshot: WireSettingsSnapshot): SettingsCard {
 
 // --- skills and MCP -----------------------------------------------------------
 
-function extensionsCards(snapshot: WireSettingsSnapshot): SettingsCard[] {
-  return [skillsCard(snapshot), mcpCard(snapshot)]
+/**
+ * Both tab cards, plus the open skill's detail card when there is one. The
+ * detail card rides along so `markPending` / `markSaved` reach it like any
+ * other; {@link extensionsBody} is what chooses which of them is drawn.
+ */
+function extensionsCards(snapshot: WireSettingsSnapshot, skillDetail?: string): SettingsCard[] {
+  const cards = [skillsCard(snapshot), mcpCard(snapshot)]
+  const skill = skillDetail === undefined ? undefined : snapshot.skills.find((candidate) => candidate.name === skillDetail)
+  if (skill) cards.push(skillDetailCard(skill))
+  return cards
 }
 
 /**
@@ -1659,13 +1838,23 @@ function skillsCard(snapshot: WireSettingsSnapshot): SettingsCard {
   return {
     id: 'skills',
     title: '技能',
-    note: `内容来自本项目的技能文件夹，这里只读；开关${SAVED_LOCAL}`,
-    noteHint: `技能：${snapshot.skillsDir}\n开关：本项目的 settings.local.json（在 ~/.myagent/projects/ 下）`,
+    note: snapshot.skillsScope === 'personal'
+      ? '管理个人技能，开关作为所有项目的默认设置；项目单独设置优先。'
+      : `管理可用技能，点击查看说明。开关${SAVED_LOCAL}`,
+    noteHint: snapshot.skillsScope === 'personal'
+      ? `个人技能：${snapshot.sharedSkillsDir}\n也会读取其他工具的个人技能文件夹（只读，不能在这里卸载）：${COMPAT_SKILL_FOLDER_LABELS.filter((label) => label.startsWith('~/')).join('、')}\n开关：~/.myagent/settings.json；项目自有的 skills.disabled 列表优先。`
+      : `项目技能：${snapshot.skillsDir}\n个人技能：${snapshot.sharedSkillsDir}\n也会读取其他工具的技能文件夹（只读，不能在这里卸载）：${COMPAT_SKILL_FOLDER_LABELS.join('、')}\n开关：本项目的 settings.local.json（在 ~/.myagent/projects/ 下）`,
     empty: '还没有技能。可以从别处导入一个技能文件夹。',
     rows: snapshot.skills.map((skill) => ({
       id: `skill:${skill.name}`,
-      label: `/${skill.name}`,
-      detail: skillDetail(skill),
+      label: skill.name,
+      icon: 'package' as const,
+      badge: skillBadge(skill),
+      open: { kind: 'open-skill-detail', name: skill.name } as const,
+      // One line, ellipsised: a row is a name and a gist, and the rest of the
+      // definition is one hover away rather than five clauses deep.
+      detail: skill.description,
+      detailHint: skillHint(skill),
       control: {
         kind: 'toggle' as const,
         value: skill.enabled,
@@ -1676,19 +1865,159 @@ function skillsCard(snapshot: WireSettingsSnapshot): SettingsCard {
         }),
       },
     })),
-    footerButtons: [
+    headerButtons: [
+      ...(snapshot.skillsScope === 'personal' ? [] : [{
+        label: '导入',
+        title: '选择一个含 SKILL.md 的文件夹，复制进这个项目的 .myagent/skills/。带脚本或 hooks 的会先询问，带 hooks 的导入后默认关闭',
+        icon: 'folder' as const,
+        intent: { kind: 'import-skill', target: 'project' } as const,
+        changeKind: 'import-skill' as const,
+      }]),
       {
-        label: '导入技能',
-        title: '选择一个含 SKILL.md 的文件夹，复制进这个项目的 .myagent/skills/',
+        label: '导入到个人',
+        title: '复制进 ~/.agents/skills/，每个项目都能用。带脚本或 hooks 的会先询问，带 hooks 的导入后默认关闭',
         icon: 'folder',
-        intent: { kind: 'import-skill' },
+        intent: { kind: 'import-skill', target: 'personal' },
         changeKind: 'import-skill',
       },
       {
-        label: '重新加载技能',
-        title: '重新读取 .myagent/skills/，并让已开的会话用上新定义',
+        label: '重新加载',
+        title: '重新读取技能文件夹，并让已开的会话用上新定义',
+        icon: 'rotate-cw',
         intent: { kind: 'reload-skills' },
         changeKind: 'reload-skills',
+      },
+    ],
+  }
+}
+
+const SKILL_SCOPE_LABELS: Record<WireSkillInfo['scope'], string> = {
+  project: '项目',
+  personal: '个人',
+}
+
+/** The foreign folders the host also reads, as the hover text names them. Mirrors `COMPAT_SKILL_FOLDERS`. */
+const COMPAT_SKILL_FOLDER_LABELS: readonly string[] = [
+  '.claude/skills',
+  '.agents/skills',
+  '~/.claude/skills',
+  '~/.codex/skills',
+  '~/.gemini/skills',
+]
+
+const SKILL_RISK_LABELS: Record<WireSkillInfo['risk'], string> = {
+  low: '低',
+  medium: '中',
+  high: '高',
+}
+
+/** What the badge beside a skill's name says: its scope, and where it is from or what it can do, only when that is not the default. */
+function skillBadge(skill: WireSkillInfo): string {
+  const parts: string[] = [SKILL_SCOPE_LABELS[skill.scope]]
+  if (skill.origin === 'compat') parts.push(skill.rootLabel)
+  if (skill.risk === 'high') parts.push('可自动执行')
+  else if (skill.risk === 'medium') parts.push('带脚本')
+  return parts.join(' · ')
+}
+
+/**
+ * One skill's own page: where it lives, what it can do, its body, and — only for
+ * a skill in a folder Hanekawa manages — 卸载.
+ *
+ * Built from the snapshot's `WireSkillInfo`, so it needs no command of its own
+ * and a switch on it is the same `set-skill-enabled` the list uses.
+ */
+function skillDetailCard(skill: WireSkillInfo): SettingsCard {
+  const text = (id: string, label: string, value: string, detail?: string, hint?: string): SettingsRow => ({
+    id: `skill-detail:${skill.name}:${id}`,
+    label,
+    control: { kind: 'text', value },
+    ...(detail !== undefined ? { detail } : {}),
+    ...(hint !== undefined ? { detailHint: hint } : {}),
+  })
+  const rows: SettingsRow[] = [
+    {
+      // The row the uninstall confirmation hangs under, and the one a pending switch dims.
+      id: `skill-detail:${skill.name}`,
+      label: '启用',
+      detail: skill.enabled ? undefined : '已关闭：不进提示词，斜杠命令也不注册',
+      control: {
+        kind: 'toggle',
+        value: skill.enabled,
+        intentOnChange: (enabled: boolean): SettingsIntent => ({
+          kind: 'set-skill-enabled',
+          name: skill.name,
+          enabled,
+        }),
+      },
+    },
+    text(
+      'source',
+      '来源',
+      skill.origin === 'compat' ? `其他工具 · ${skill.rootLabel}` : `${SKILL_SCOPE_LABELS[skill.scope]} · ${skill.rootLabel}`,
+      skill.dir,
+      skill.origin === 'compat'
+        ? 'Hanekawa 只读取这个文件夹，不会改动或删除它。要移除请在原工具里处理，或在这里关掉。'
+        : undefined,
+    ),
+    text(
+      'inclusion',
+      '加载方式',
+      SKILL_INCLUSION_LABELS[skill.inclusion],
+      skill.paths?.length ? `匹配 ${skill.paths.join('、')}` : undefined,
+    ),
+    text('tools', '可用工具', skill.allowedTools ? skill.allowedTools.join('、') : '全部'),
+  ]
+  if (skill.model) rows.push(text('model', '模型', skill.model))
+  if (skill.effort) rows.push(text('effort', '思考强度', skill.effort))
+  if (skill.attachments) rows.push(text('attachments', '附件', `${skill.attachments} 个`))
+  rows.push(
+    text(
+      'risk',
+      '风险',
+      SKILL_RISK_LABELS[skill.risk],
+      skill.riskNotes.length > 0 ? skill.riskNotes.join(' ') : '只有文本，不会自己运行任何东西。',
+      skill.riskNotes.join('\n') || undefined,
+    ),
+  )
+  const headerButtons: SettingsButton[] = []
+  if (skill.removable) {
+    headerButtons.push({
+      label: '卸载',
+      title: `删除文件夹 ${skill.dir}`,
+      icon: 'trash',
+      danger: true,
+      intent: { kind: 'request-remove', target: { kind: 'skill', name: skill.name } },
+      changeKind: 'remove-skill',
+    })
+  }
+  return {
+    id: 'skill-detail',
+    title: skill.name,
+    note: skill.description,
+    noteHint: skill.dir,
+    rows,
+    headerButtons,
+    // In the footer rather than beside 返回: they act on the file the body above
+    // is showing, and a personal skill may live outside this project.
+    footerButtons: [
+      {
+        label: '打开',
+        title: `用编辑器打开 ${skill.file}`,
+        icon: 'external',
+        intent: { kind: 'open-skill-file', name: skill.name },
+      },
+      {
+        label: '在 Finder 中显示',
+        title: `在文件管理器中显示 ${skill.dir}`,
+        icon: 'folder-open',
+        intent: { kind: 'reveal-skill', name: skill.name },
+      },
+      {
+        label: '复制 Markdown',
+        title: '复制 SKILL.md 的完整内容',
+        icon: 'copy',
+        intent: { kind: 'copy-skill-markdown', name: skill.name },
       },
     ],
   }
@@ -1700,7 +2029,8 @@ const SKILL_INCLUSION_LABELS: Record<WireSkillInfo['inclusion'], string> = {
   fileMatch: '按文件匹配',
 }
 
-function skillDetail(skill: WireSkillInfo): string {
+/** The row's hover text: the whole description, then what the one line cannot hold. */
+function skillHint(skill: WireSkillInfo): string {
   const parts = [skill.description, SKILL_INCLUSION_LABELS[skill.inclusion]]
   if (skill.paths?.length) parts.push(`匹配 ${skill.paths.join('、')}`)
   // Absent means every tool, the same asymmetry `agentDetail` spells out.
@@ -1708,9 +2038,11 @@ function skillDetail(skill: WireSkillInfo): string {
   if (skill.model) parts.push(`模型：${skill.model}`)
   if (skill.effort) parts.push(`思考强度：${skill.effort}`)
   if (skill.hasHooks) parts.push('带 hooks')
+  if (skill.risk !== 'low') parts.push(...skill.riskNotes)
+  if (skill.origin === 'compat') parts.push(`来自 ${skill.rootLabel}（只读）`)
   if (skill.attachments) parts.push(`${skill.attachments} 个附件`)
   if (!skill.enabled) parts.push('已关闭：不进提示词，斜杠命令也不注册')
-  return parts.join(' · ')
+  return parts.join('\n')
 }
 
 function mcpCard(snapshot: WireSettingsSnapshot): SettingsCard {
@@ -1768,9 +2100,9 @@ function mcpCard(snapshot: WireSettingsSnapshot): SettingsCard {
             },
       }
     }),
-    footerButtons: [
+    headerButtons: [
       {
-        label: '添加 MCP 服务器',
+        label: '添加服务器',
         title: '添加自定义 MCP 服务器',
         icon: 'plus',
         intent: { kind: 'new-mcp-server' },
@@ -1778,6 +2110,7 @@ function mcpCard(snapshot: WireSettingsSnapshot): SettingsCard {
       {
         label: '重新连接',
         title: '关掉并重新连接所有 MCP 服务器',
+        icon: 'rotate-cw',
         intent: { kind: 'reconnect-mcp' },
         changeKind: 'reconnect-mcp',
       },
@@ -1791,6 +2124,9 @@ function mcpDetail(server: WireMcpServerInfo): string {
   // Says what "删除" means on this row: it drops the override, and the inherited
   // server takes over rather than the row going away.
   if (server.shadowsInherited) parts.push('覆盖了上层配置')
+  // The repository's own file, read as is: the screen cannot edit it, so it says
+  // where the server would have to be changed instead.
+  if (server.fromCompat) parts.push('来自仓库的 .mcp.json')
   if (!server.trusted) parts.push('未信任：打开开关后会尝试连接')
   else if (server.status === 'connected') parts.push(`已连接 · ${server.toolCount ?? 0} 个工具`)
   else parts.push('未连接')
@@ -1844,19 +2180,19 @@ function parseContextValue(
   raw: string,
 ): number | { error: string } {
   // Thousands separators are how the field is drawn, so they must read back;
-  // a trailing `k` is how people say token counts.
+  // trailing `k`/`m` suffixes abbreviate token counts.
   const trimmed = raw.trim().replace(/[,，_\s]/g, '').replace(/%$/, '')
   const label = CONTEXT_LABELS[field]
   if (!trimmed) return { error: `${label}不能为空。` }
-  const kilo = /k$/i.test(trimmed)
-  const parsed = Number(kilo ? trimmed.slice(0, -1) : trimmed)
+  const unit = /[km]$/i.exec(trimmed)?.[0].toLowerCase()
+  const parsed = Number(unit ? trimmed.slice(0, -1) : trimmed)
   if (!Number.isFinite(parsed)) return { error: `${label}必须是数字。` }
   if (CONTEXT_RATIO_FIELDS.includes(field)) {
     // Drawn as a percentage, stored as a ratio.
-    if (kilo || parsed <= 0 || parsed > 100) return { error: `${label}必须是 0 到 100 之间的百分比。` }
+    if (unit || parsed <= 0 || parsed > 100) return { error: `${label}必须是 0 到 100 之间的百分比。` }
     return parsed / 100
   }
-  const value = kilo ? Math.round(parsed * 1000) : parsed
+  const value = unit ? Math.round(parsed * (unit === 'k' ? 1_000 : 1_000_000)) : parsed
   if (!Number.isSafeInteger(value) || value < 1) return { error: `${label}必须是正整数。` }
   return value
 }
@@ -2106,8 +2442,11 @@ export function draftToChange(
 function parseCount(raw: string): number | undefined | 'invalid' {
   const trimmed = raw.trim()
   if (!trimmed) return undefined
-  if (!/^\d+$/.test(trimmed)) return 'invalid'
-  const value = Number(trimmed)
+  const unit = /^(\d+(?:\.\d+)?)([km])$/i.exec(trimmed)
+  if (!unit && !/^\d+$/.test(trimmed)) return 'invalid'
+  const value = unit
+    ? Math.round(Number(unit[1]) * (unit[2]!.toLowerCase() === 'k' ? 1_000 : 1_000_000))
+    : Number(trimmed)
   return Number.isSafeInteger(value) && value > 0 ? value : 'invalid'
 }
 
@@ -2493,6 +2832,7 @@ export function settingsKeyToIntent(chord: SettingsChord, state: SettingsState):
     if (state.openMenu !== undefined) return { kind: 'close-menu' }
     if (state.draft) return state.discardArmed ? { kind: 'keep-editing' } : { kind: 'cancel-draft' }
     if (state.confirmingRemove) return { kind: 'cancel-remove' }
+    if (state.skillDetail !== undefined) return { kind: 'close-skill-detail' }
     if (state.query !== '') return { kind: 'clear-search' }
     return { kind: 'close' }
   }
@@ -2507,7 +2847,18 @@ export type SettingsIntent =
   | { kind: 'open'; category?: SettingsCategory; setup?: boolean }
   | { kind: 'close' }
   | { kind: 'select-category'; category: SettingsCategory }
+  /** A view switch only: it sends nothing and never reloads the snapshot. */
+  | { kind: 'select-extensions-tab'; tab: ExtensionsTab }
+  /** Opens the skill dialog; a truncated body is read in full on demand. */
+  | { kind: 'open-skill-detail'; name: string }
+  | { kind: 'close-skill-detail' }
+  | { kind: 'skill-preview-result'; projectRoot: string; name: string; skillsScope?: 'personal'; result: { raw: string } | { error: string } }
+  /** The detail page's three file actions. Each answers with a `skillAction` the caller runs. */
+  | { kind: 'open-skill-file'; name: string }
+  | { kind: 'reveal-skill'; name: string }
+  | { kind: 'copy-skill-markdown'; name: string }
   | { kind: 'select-project'; projectRoot: string }
+  | { kind: 'select-skill-project'; projectRoot?: string }
   | { kind: 'new-endpoint' }
   /** 获取模型列表: the connection test, whose listing opens the picker. */
   | { kind: 'test-endpoint' }
@@ -2547,7 +2898,7 @@ export type SettingsIntent =
   | { kind: 'cancel-draft' }
   | { kind: 'discard-draft' }
   | { kind: 'keep-editing' }
-  | { kind: 'request-remove'; target: { kind: 'endpoint' | 'mcp-server'; name: string } }
+  | { kind: 'request-remove'; target: RemoveTarget }
   | { kind: 'confirm-remove' }
   | { kind: 'cancel-remove' }
   | { kind: 'set-default-model'; key: string }
@@ -2564,8 +2915,8 @@ export type SettingsIntent =
   | { kind: 'set-context-value'; field: WireContextManagementField; value: string }
   | { kind: 'set-skill-enabled'; name: string; enabled: boolean }
   | { kind: 'reload-skills' }
-  /** No path: the main process puts up the folder picker. */
-  | { kind: 'import-skill' }
+  /** No path: the main process puts up the folder picker. `target` picks which skills folder it copies into. */
+  | { kind: 'import-skill'; target?: 'project' | 'personal' }
   | { kind: 'set-mcp-trust'; name: string; trusted: boolean }
   | { kind: 'reconnect-mcp' }
   | { kind: 'set-theme'; preference: ThemePreference }
@@ -2600,6 +2951,19 @@ export interface SettingsOutcome {
    * config. `app.ts` persists it to `localStorage` and applies it to the document.
    */
   readonly themePreference?: ThemePreference
+  /**
+   * A file action on a skill — open, reveal, copy — which changes no setting and
+   * is performed by the caller. Kept out of `changes` because none of them is a
+   * `SettingsChange`, and the failure belongs to the caller either way.
+   */
+  readonly skillAction?: SkillFileAction
+}
+
+/** File actions, including the full body read for a long skill's preview. */
+export interface SkillFileAction {
+  readonly kind: 'open' | 'reveal' | 'copy' | 'preview'
+  readonly name: string
+  readonly skillsScope?: 'personal'
 }
 
 /**
@@ -2663,17 +3027,56 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       // pull that is already in flight for the same config.
       if (state.open) {
         if (category === state.category) return { state }
-        return { state: { ...cleared, category, ...NO_DRAFT } }
+        return { state: { ...cleared, category, ...NO_DRAFT, skillDetail: undefined } }
       }
       return {
-        state: { ...cleared, open: true, category, ...NO_DRAFT, query: '', setupWizard: intent.setup },
+        // A fresh opening starts on 技能; the tab is remembered only while open.
+        state: {
+          ...cleared,
+          open: true,
+          category,
+          ...NO_DRAFT,
+          query: '',
+          setupWizard: intent.setup,
+          extensionsTab: 'skills',
+          skillDetail: undefined,
+        },
         load: true,
       }
     }
     case 'close':
-      return { state: { ...cleared, open: false, ...NO_DRAFT } }
+      return { state: { ...cleared, open: false, ...NO_DRAFT, skillDetail: undefined } }
     case 'select-category':
-      return { state: { ...cleared, category: intent.category, ...NO_DRAFT } }
+      return { state: { ...cleared, category: intent.category, ...NO_DRAFT, skillDetail: undefined } }
+    case 'select-extensions-tab':
+      // No `load`: both cards are drawn from the snapshot already in hand. A tab
+      // is a view switch, and so leaves a skill's detail page behind.
+      return { state: { ...cleared, extensionsTab: intent.tab, ...NO_DRAFT, skillDetail: undefined } }
+    case 'open-skill-detail':
+      return {
+        state: { ...cleared, skillDetail: intent.name, skillPreview: undefined, extensionsTab: 'skills', ...NO_DRAFT },
+        ...(state.snapshot?.skills.find((skill) => skill.name === intent.name)?.contentTruncated
+          ? { skillAction: { kind: 'preview', name: intent.name, ...(state.skillsScope ? { skillsScope: state.skillsScope } : {}) } as const }
+          : {}),
+      }
+    case 'close-skill-detail':
+      return { state: { ...cleared, skillDetail: undefined, skillPreview: undefined } }
+    case 'skill-preview-result':
+      if (!state.open || state.projectRoot !== intent.projectRoot || state.skillsScope !== intent.skillsScope || state.skillDetail !== intent.name) return { state }
+      return { state: { ...state, skillPreview: {
+        name: intent.name,
+        ...('raw' in intent.result
+          ? { content: intent.result.raw.replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '') }
+          : { error: `全文读取失败：${intent.result.error}。可用「打开」查看技能文件。` }),
+      } } }
+    // No state transition at all: these three are a file action the caller runs,
+    // so repainting or clearing an error would only lose the page they came from.
+    case 'open-skill-file':
+      return { state, skillAction: { kind: 'open', name: intent.name, ...(state.skillsScope ? { skillsScope: state.skillsScope } : {}) } }
+    case 'reveal-skill':
+      return { state, skillAction: { kind: 'reveal', name: intent.name, ...(state.skillsScope ? { skillsScope: state.skillsScope } : {}) } }
+    case 'copy-skill-markdown':
+      return { state, skillAction: { kind: 'copy', name: intent.name, ...(state.skillsScope ? { skillsScope: state.skillsScope } : {}) } }
     // Typing is not a transition that invalidates what is on screen: it must not
     // dismiss an armed delete or a failure message, so neither uses `cleared`.
     // The dropdown does close — the row holding it can be filtered away.
@@ -2711,7 +3114,15 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
     case 'select-project':
       if (intent.projectRoot === state.projectRoot) return { state }
       return {
-        state: { ...cleared, projectRoot: intent.projectRoot, ...NO_DRAFT, snapshot: undefined },
+        state: { ...cleared, projectRoot: intent.projectRoot, skillsScope: undefined, ...NO_DRAFT, skillDetail: undefined, snapshot: undefined },
+        load: true,
+      }
+    case 'select-skill-project':
+      return {
+        state: { ...cleared, ...NO_DRAFT, projectRoot: intent.projectRoot ?? state.projectRoot,
+          skillsScope: intent.projectRoot === undefined ? 'personal' : undefined,
+          skillDetail: undefined, skillPreview: undefined, snapshot: undefined, busy: true,
+        },
         load: true,
       }
 
@@ -3036,11 +3447,15 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       const target = state.confirmingRemove
       if (!target) return { state }
       return {
-        state: { ...cleared, busy: true },
+        // A removed skill takes its detail page with it; leaving the page up would
+        // show a skill that is gone, and a failure is reported on the list.
+        state: { ...cleared, busy: true, ...(target.kind === 'skill' ? { skillDetail: undefined } : {}) },
         changes: [
           target.kind === 'endpoint'
             ? { scope: 'provider', kind: 'remove-endpoint', name: target.name }
-            : { scope: 'extensions', kind: 'remove-mcp-server', name: target.name },
+            : target.kind === 'skill'
+              ? { scope: 'extensions', kind: 'remove-skill', name: target.name }
+              : { scope: 'extensions', kind: 'remove-mcp-server', name: target.name },
         ],
       }
     }
@@ -3180,7 +3595,13 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       // a successful no-op rather than an error.
       return {
         state: { ...cleared, busy: true },
-        changes: [{ scope: 'extensions', kind: 'import-skill' }],
+        changes: [
+          {
+            scope: 'extensions',
+            kind: 'import-skill',
+            ...(intent.target !== undefined ? { target: intent.target } : {}),
+          },
+        ],
       }
     case 'set-mcp-trust':
       return {
@@ -3268,8 +3689,8 @@ function withModelRow(
 
 /** Structural: a test passes a plain object, not a `ShellClient`. */
 export interface SettingsClient {
-  getSettings(projectRoot?: string): Promise<WireShellSettingsResult>
-  changeSettings(projectRoot: string, change: SettingsChange): Promise<WireShellSettingsChangeResult>
+  getSettings(projectRoot?: string, skillsScope?: 'personal'): Promise<WireShellSettingsResult>
+  changeSettings(projectRoot: string, change: SettingsChange, skillsScope?: 'personal'): Promise<WireShellSettingsChangeResult>
 }
 
 export async function loadSettings(
@@ -3278,9 +3699,9 @@ export async function loadSettings(
   current: () => SettingsState = () => state,
 ): Promise<SettingsState> {
   try {
-    const result = await client.getSettings(state.projectRoot)
+    const result = await client.getSettings(state.projectRoot, state.skillsScope)
     const latest = current()
-    if (latest.projectRoot !== state.projectRoot) return latest
+    if (latest.projectRoot !== state.projectRoot || latest.skillsScope !== state.skillsScope) return latest
     const setup = latest.setupWizard === true && result.settings.endpoints.length === 0 && !latest.draft
     return {
       ...latest,
@@ -3289,12 +3710,13 @@ export async function loadSettings(
       snapshot: result.settings,
       projects: result.projects,
       projectRoot: result.settings.projectRoot,
+      skillsScope: result.settings.skillsScope,
       setupWizard: undefined,
       ...(setup ? { draft: NEW_ENDPOINT_DRAFT } : {}),
     }
   } catch (error) {
     const latest = current()
-    if (latest.projectRoot !== state.projectRoot) return latest
+    if (latest.projectRoot !== state.projectRoot || latest.skillsScope !== state.skillsScope) return latest
     return { ...latest, busy: false, error: messageOf(error) }
   }
 }
@@ -3329,7 +3751,7 @@ export async function runSettingsChanges(
   let next = state
   const finish = (failure?: { error: string; change: SettingsChange }): SettingsState => {
     const latest = current()
-    if (latest.projectRoot !== projectRoot) return latest
+    if (latest.projectRoot !== projectRoot || latest.skillsScope !== state.skillsScope) return latest
     // Only the snapshot and this batch's pending entries belong to the reply.
     // Navigation, menus, focus intent and closing may have changed meanwhile.
     const retired = retire(latest)
@@ -3348,7 +3770,7 @@ export async function runSettingsChanges(
   }
   for (const { change } of batch) {
     try {
-      const result = await client.changeSettings(projectRoot, change)
+      const result = await client.changeSettings(projectRoot, change, state.skillsScope)
       next = { ...next, snapshot: result.settings, error: undefined }
     } catch (error) {
       return finish({ error: messageOf(error), change })
@@ -3366,6 +3788,8 @@ function errorRowsOf(change: SettingsChange): string[] {
       return [`model:${change.key}`]
     case 'remove-mcp-server':
       return [`mcp:${change.name}`]
+    case 'remove-skill':
+      return [`skill:${change.name}`]
     default:
       return [...pendingRowIds([{ id: 0, change }])]
   }

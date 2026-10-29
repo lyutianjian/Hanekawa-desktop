@@ -7,6 +7,7 @@ import {
   formatWorkedDuration,
   groupTranscript,
   presentationTranscript,
+  withPendingApprovals,
   toolCallSummary,
   toolStatusLabel,
 } from '../src/desktop/renderer/model/transcript.js'
@@ -1019,7 +1020,9 @@ test('the four tool states are derived, and each one has words as well as a colo
   const statusOf = (records: SessionRecord[]) =>
     toolStep(groupTranscript(createTranscriptState([head, ...records], captionedRead()).items), 1).status
 
-  assert.equal(statusOf([call]), 'awaiting-approval', 'recorded, but the gate has not answered')
+  assert.equal(statusOf([call]), 'running', 'a record alone never means the user is being asked')
+  const waiting = withPendingApprovals(createTranscriptState([head, call], captionedRead()), [{ toolUseId: 'tu1' }])
+  assert.equal(toolStep(groupTranscript(waiting.items), 1).status, 'awaiting-approval')
   assert.equal(statusOf([call, approval]), 'running')
   assert.equal(statusOf([call, approval, toolResult('tu1', 't1', 'now')]), 'done')
   assert.equal(statusOf([call, approval, toolResult('tu1', 't1', 'now', false)]), 'failed')
@@ -1032,9 +1035,7 @@ test('the four tool states are derived, and each one has words as well as a colo
   )
 })
 
-test('an approval answers the earliest waiting call of its tool, live and on replay', () => {
-  // The approval record names no call, so a finished Read's approval must not be
-  // what clears a second, still-waiting Read.
+test('only real pending requests mark the matching calls; approval records alone never pause them', () => {
   const records: SessionRecord[] = [
     stamped(message('u1', 'user', 'go'), 't1', '2026-01-01T00:00:00.000Z'),
     toolUse('tu1', 't1', '2026-01-01T00:00:01.000Z'),
@@ -1047,14 +1048,36 @@ test('an approval answers the earliest waiting call of its tool, live and on rep
   ]
 
   const replayed = groupTranscript(createTranscriptState(records, captionedRead()).items)
-  assert.deepEqual(stepStatuses(replayed, 1), ['done', 'awaiting-approval'])
+  assert.deepEqual(stepStatuses(replayed, 1), ['done', 'running'])
 
   const live = fold(records.map((record): SessionEvent => ({ type: 'record', record }))).state
   assert.deepEqual(
     stepStatuses(groupTranscript(live.items), 1),
-    ['done', 'awaiting-approval'],
+    ['done', 'running'],
     'live and replay agree, which is the property T3 established',
   )
+  const waiting = withPendingApprovals(live, [{ toolUseId: 'tu2' }])
+  assert.deepEqual(stepStatuses(groupTranscript(waiting.items), 1), ['done', 'awaiting-approval'])
+  assert.deepEqual(stepStatuses(groupTranscript(withPendingApprovals(waiting, []).items), 1), ['done', 'running'])
+  assert.equal(withPendingApprovals(live, []), live, 'an unchanged projection keeps the canonical state')
+  assert.deepEqual(stepStatuses(groupTranscript(withPendingApprovals(live, [{ toolUseId: 'tu1' }]).items), 1), ['done', 'running'], 'a settled call cannot be paused')
+})
+
+test('parallel calls of the same tool wait only on their own requests, including a sub-agent prompt', () => {
+  const state = createTranscriptState([
+    stamped(message('u1', 'user', 'go'), 't1', 'now'),
+    toolUse('tu1', 't1', 'now'),
+    toolUse('tu2', 't1', 'now'),
+    toolUse('tu3', 't1', 'now'),
+  ], captionedRead())
+  const projected = withPendingApprovals(state, [{ toolUseId: 'tu2' }, { toolUseId: 'tu3' }])
+  assert.deepEqual(stepStatuses(groupTranscript(projected.items), 1), ['running', 'awaiting-approval', 'awaiting-approval'])
+  assert.deepEqual(stepStatuses(groupTranscript(state.items), 1), ['running', 'running', 'running'], 'pending UI state never rewrites records')
+  const agent = { ...state, items: [{ ...state.items[1]!, id: 'parent', toolName: 'Agent', tool: {
+    ...state.items[1]!.tool!, live: { agentId: 'agent-1', tool: 'Read', summary: 'a.ts', toolCount: 1 },
+  } }] }
+  assert.equal(withPendingApprovals(agent, [{ toolUseId: 'child', agent: { id: 'agent-1', type: 'explore', description: 'look' } }]).items[0]?.tool?.awaitingApproval, true)
+  assert.equal(withPendingApprovals(agent, [{ toolUseId: 'parent', agent: { id: 'agent-2', type: 'explore', description: 'look' } }]), agent, 'another agent cannot pause this call')
 })
 
 test('without a DTO the step falls back to the old key-guessing line', () => {
@@ -1149,6 +1172,7 @@ test('a sub-agent run merges into the call it belongs to, live and on replay', (
   assert.equal(step.tool.task, '找到 display 的所有用法', 'the prompt rides the call it came in on')
   assert.deepEqual(step.tool.subagent, {
     subagentType: 'explore', agentId: 'ag-1', model: 'opus', toolUseCount: 12, summary: '22 个工具返回了 display.summary。',
+    usage: { inputTokens: 34_000, cacheReadInputTokens: 0, outputTokens: 200 }, durationMs: 40_000,
   })
   assert.equal(step.tool.headerSuffix, 'opus')
   assert.equal(step.tool.content, '22 个工具返回了 display.summary，其中 6 个带 detail。')

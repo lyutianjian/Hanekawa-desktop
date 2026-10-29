@@ -41,24 +41,24 @@ test('commands and agents share rows; each opens its own detail and only running
     onSelectAgent: (id) => selected.push(id),
   })
   f.render([live, agent, done])
-  assert.deepEqual(f.rows('running').map((row) => find(row, 'task-text')?.text), ['npm run dev', '核对工具权限'])
-  assert.equal(find(f.rows('running')[1], 'task-model')?.text, 'deepseek')
+  assert.deepEqual(f.rows('running').map((row) => find(row, 'bt-text')?.text), ['npm run dev', '核对工具权限'])
+  assert.equal(find(f.rows('running')[1], 'bt-model')?.text, 'deepseek')
   assert.equal(f.rows('running')[1]?.text.includes('子代理'), false)
-  assert.equal(find(f.rows('finished')[0], 'task-time')?.text, '1 分 15 秒')
-  assert.equal(find(f.rows('finished')[0], 'task-stop'), undefined)
-  f.stub.click(find(f.rows('running')[0], 'task-stop')!.node)
-  f.stub.click(find(f.rows('running')[1], 'task-stop')!.node)
+  assert.equal(find(f.rows('finished')[0], 'bt-time')?.text, '1 分 15 秒')
+  assert.equal(find(f.rows('finished')[0], 'bt-stop'), undefined)
+  f.stub.click(find(f.rows('running')[0], 'bt-stop')!.node)
+  f.stub.click(find(f.rows('running')[1], 'bt-stop')!.node)
   assert.deepEqual(stopped, ['shell:t1', 'agent:a1'])
-  f.stub.click(find(f.rows('running')[1], 'task-head')!.node)
+  f.stub.click(find(f.rows('running')[1], 'bt-head')!.node)
   assert.deepEqual(selected, ['a1'])
   assert.equal(asked.length, 0, 'viewing an agent never asks for shell output')
 
-  f.stub.click(find(f.rows('finished')[0], 'task-head')!.node)
+  f.stub.click(find(f.rows('finished')[0], 'bt-head')!.node)
   await settle()
   assert.ok(asked.includes('t2'))
   assert.equal(find(f.rows('finished')[0], 'command-output')?.text, 'ok 12 tests')
-  assert.equal(find(f.rows('finished')[0], 'task-head')?.attributes.get('aria-expanded'), 'true')
-  assert.equal(find(f.rows('finished')[0], 'task-output-status')?.text, '已完成 · exit 0')
+  assert.equal(find(f.rows('finished')[0], 'bt-head')?.attributes.get('aria-expanded'), 'true')
+  assert.equal(find(f.rows('finished')[0], 'bt-output-status')?.text, '已完成 · exit 0')
   const before = find(f.rows('finished')[0], 'command-output')!.node
   f.render([live, agent, done])
   assert.equal(find(f.rows('finished')[0], 'command-output')?.node, before)
@@ -68,7 +68,7 @@ test('a failed output read says so and offers a retry', async (t) => {
   let fail = true
   const f = fixture(t, { loadOutput: async () => { if (fail) throw new Error('host gone'); return 'ok' } })
   f.render([done])
-  f.stub.click(find(f.rows('finished')[0], 'task-head')!.node)
+  f.stub.click(find(f.rows('finished')[0], 'bt-head')!.node)
   await settle()
   const failure = find(f.rows('finished')[0], 'load-error')
   assert.equal(failure?.text.includes('无法读取输出：host gone'), true)
@@ -79,13 +79,27 @@ test('a failed output read says so and offers a retry', async (t) => {
   assert.equal(find(f.rows('finished')[0], 'command-output')?.text, 'ok')
 })
 
+test('agent previews show model and tokens without a live or settled clock', (t) => {
+  t.mock.timers.enable({ apis: ['setInterval', 'Date'] })
+  const f = fixture(t)
+  const finished = { ...agent, id: 'a2', tone: 'muted' as const, running: false, status: '完成', tokens: 12_300, durationMs: 75_000 }
+  f.render([agent, finished])
+  assert.equal(find(f.rows('running')[0], 'bt-time'), undefined)
+  assert.equal(find(f.rows('running')[0], 'bt-tokens'), undefined, 'missing usage is not reported as zero')
+  assert.equal(find(f.rows('finished')[0], 'bt-tokens')?.text, '12k token')
+  assert.equal(find(f.rows('finished')[0], 'bt-time'), undefined)
+  t.mock.timers.tick(5_000)
+  assert.equal(find(f.rows('running')[0], 'bt-time'), undefined)
+  assert.equal(find(f.rows('finished')[0], 'bt-tokens')?.text, '12k token')
+})
+
 test('folded or hidden groups stop polling; a finished command keeps its output disclosure when moved', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval', 'Date'] })
   let reads = 0
   const f = fixture(t, { loadOutput: async () => `read ${++reads}` })
   f.render([live, agent, done], ['running'])
   assert.equal(f.rows('finished').length, 0)
-  f.stub.click(find(f.rows('running')[0], 'task-head')!.node)
+  f.stub.click(find(f.rows('running')[0], 'bt-head')!.node)
   await settle()
   f.render([live, agent, done], [])
   const folded = reads
@@ -103,13 +117,13 @@ test('folded or hidden groups stop polling; a finished command keeps its output 
 
   const finished: BackgroundTaskRow = { ...live, running: false, tone: 'muted', status: '已完成 · exit 0', durationMs: 10_000 }
   f.render([finished, agent, done], ['running'])
-  assert.deepEqual(f.rows('running').map((row) => find(row, 'task-text')?.text), ['核对工具权限'])
+  assert.deepEqual(f.rows('running').map((row) => find(row, 'bt-text')?.text), ['核对工具权限'])
   assert.equal(f.rows('finished').length, 0, 'finishing a task never opens the finished group')
   f.render([finished, agent, done])
   await settle()
-  assert.equal(find(f.rows('finished')[0], 'task-head')?.attributes.get('aria-expanded'), 'true')
-  assert.equal(find(f.rows('finished')[0], 'task-stop'), undefined)
-  assert.equal(find(f.rows('finished')[0], 'task-time')?.text, '10 秒')
+  assert.equal(find(f.rows('finished')[0], 'bt-head')?.attributes.get('aria-expanded'), 'true')
+  assert.equal(find(f.rows('finished')[0], 'bt-stop'), undefined)
+  assert.equal(find(f.rows('finished')[0], 'bt-time')?.text, '10 秒')
 })
 
 test('a session switch clears command disclosures and ignores an old output read with the same task id', async (t) => {
@@ -120,10 +134,10 @@ test('a session switch clears command disclosures and ignores an old output read
     return calls === 1 ? new Promise<string>((resolve) => { resolveOld = resolve }) : 'new output'
   } })
   f.render([done])
-  f.stub.click(find(f.rows('finished')[0], 'task-head')!.node)
+  f.stub.click(find(f.rows('finished')[0], 'bt-head')!.node)
   f.render([done], ['finished'], 's2')
   assert.equal(find(f.rows('finished')[0], 'command-output'), undefined)
-  f.stub.click(find(f.rows('finished')[0], 'task-head')!.node)
+  f.stub.click(find(f.rows('finished')[0], 'bt-head')!.node)
   await settle()
   resolveOld('old output')
   await settle()

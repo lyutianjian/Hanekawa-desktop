@@ -313,6 +313,7 @@ export interface SubagentTranscriptRecord {
   // records live in the sidechain transcript file when transcriptPath is set.
   records?: SessionRecord[]
   usage: TokenUsage
+  durationMs?: number
   createdAt: string
   turnId?: string
 }

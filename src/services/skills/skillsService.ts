@@ -1,7 +1,7 @@
 import { readdir, readFile } from 'node:fs/promises'
 import path from 'node:path'
-import { getSharedSkillsDir, getSkillsDir } from '../../utils/paths.js'
 import { parseYamlFrontmatter } from '../../utils/frontmatter.js'
+import { skillRoots, type SkillRoot, type SkillRootKind } from './skillRoots.js'
 import { disabledSkillNames, loadMergedSettings } from '../../config/settings.js'
 import type { EffortLevel } from '../../config/effort.js'
 import type { HookCommand, Hooks } from '../../harness/hooks.js'
@@ -10,6 +10,13 @@ export interface SkillDefinition {
   name: string
   description: string
   content: string
+  /**
+   * Which folder it was read from, and so who owns it. Optional like
+   * `inclusion`: `listAll` always sets both, and a definition built in memory
+   * need not.
+   */
+  source?: SkillRootKind
+  root?: SkillRoot
   skillDir?: string
   paths?: string[]
   inclusion?: SkillInclusion
@@ -45,12 +52,14 @@ export class SkillsService {
   }
 
   /** Every skill on disk, switched off ones included. For the settings screen. */
-  async listAll(): Promise<SkillDefinition[]> {
+  async listAll(scope?: 'personal'): Promise<SkillDefinition[]> {
     const skills: SkillDefinition[] = []
     const seen = new Set<string>()
-    // Project skills first: they shadow a shared skill of the same name.
-    for (const dir of [getSkillsDir(this.cwd), getSharedSkillsDir()]) {
-      for (const skill of await this.readDir(dir)) {
+    // Managed folders first, then the foreign ones: an earlier folder shadows a
+    // later one of the same name, so a skill Hanekawa owns is never replaced by
+    // another tool's copy.
+    for (const root of skillRoots(this.cwd, scope)) {
+      for (const skill of await this.readDir(root)) {
         if (seen.has(skill.name)) continue
         seen.add(skill.name)
         skills.push(skill)
@@ -59,13 +68,23 @@ export class SkillsService {
     return skills
   }
 
-  private async readDir(skillsDir: string): Promise<SkillDefinition[]> {
+  private async readDir(root: SkillRoot): Promise<SkillDefinition[]> {
+    const skillsDir = root.dir
     let entries: string[]
 
     try {
       entries = await readdir(skillsDir)
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      // A foreign tool's folder is usually just absent; a file where a folder
+      // should be is as good as absent too.
+      const code = (error as NodeJS.ErrnoException).code
+      if (code === 'ENOENT' || code === 'ENOTDIR') {
+        return []
+      }
+      // Managed folders keep failing loudly. A foreign one we cannot read
+      // (permissions) must not take the managed skills down with it.
+      if (!root.managed) {
+        console.warn(`Failed to read skills folder ${skillsDir}:`, (error as Error).message)
         return []
       }
       throw error
@@ -76,7 +95,7 @@ export class SkillsService {
       const skillPath = path.join(skillsDir, entry, 'SKILL.md')
       try {
         const raw = await readFile(skillPath, 'utf8')
-        skills.push(this.parse(raw, path.dirname(skillPath)))
+        skills.push(this.parse(raw, path.dirname(skillPath), root))
       } catch (error) {
         // ENOTDIR: a stray file such as macOS's .DS_Store sitting beside the skill folders
         const code = (error as NodeJS.ErrnoException).code
@@ -98,7 +117,7 @@ export class SkillsService {
     return skill
   }
 
-  private parse(raw: string, skillDir: string): SkillDefinition {
+  private parse(raw: string, skillDir: string, root: SkillRoot): SkillDefinition {
     const match = raw.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n([\s\S]*)$/)
     if (!match) {
       throw new Error('Skill file must include YAML frontmatter (---\\n...\\n---)')
@@ -134,6 +153,8 @@ export class SkillsService {
       name: frontmatter.name,
       description: frontmatter.description,
       content: match[2].trim(),
+      source: root.kind,
+      root,
       skillDir,
       ...(paths ? { paths } : {}),
       inclusion,

@@ -207,7 +207,6 @@ export type HostCommand =
   | { type: 'list-background-tasks'; id: string }
   | { type: 'peek-task-output'; id: string; taskId: string; maxBytes?: number }
   | { type: 'kill-task'; id: string; taskId: string; reason?: string }
-  | { type: 'background-tool-call'; id: string; toolUseId: string }
   // --- lifecycle ------------------------------------------------------------
   // --- panes (multi-tab) ---------------------------------------------------
   /**
@@ -216,7 +215,7 @@ export type HostCommand =
    * Otherwise a fresh draft session is adopted.
    */
   | { type: 'open-pane'; id: string; sessionId?: string; title?: string }
-  | { type: 'close-pane'; id: string; paneId: string }
+  | { type: 'close-pane'; id: string; paneId: string; onlyIfIdle?: boolean }
   | { type: 'list-panes'; id: string }
   /**
    * Bring an already-open pane's window to the front.
@@ -368,6 +367,8 @@ export type WireRuntimeSnapshot = WireReadyRuntimeSnapshot | WireUnconfiguredRun
  */
 export interface PermissionRequestDto {
   toolName: string
+  /** The exact call awaiting a human answer, rather than every unapproved record. */
+  toolUseId?: string
   riskLevel: RiskLevel
   input: unknown
   reason: string
@@ -730,6 +731,8 @@ export interface WireCommandInfo {
   description: string
   aliases?: string[]
   argumentHint?: string
+  /** Registered from a skill, rather than a built-in command. */
+  isSkill?: boolean
 }
 
 export interface WireCommandsResult {
@@ -832,7 +835,7 @@ export interface WireOpenPaneResult {
 }
 
 export interface WireClosePaneResult {
-  ok: true
+  ok: boolean
 }
 
 export interface WireListPanesResult {

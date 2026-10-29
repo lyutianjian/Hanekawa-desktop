@@ -5,6 +5,7 @@ import {
   submitButtonView,
 } from '../model/composer.js'
 import type { AttachmentStripView } from '../model/composerAttachments.js'
+import { matchInputCommand } from '../model/commandRouting.js'
 import type { AttachedPath } from '../../../media/attachedPaths.js'
 import {
   CONTEXT_RATIO_VARIABLE,
@@ -15,7 +16,7 @@ import type { RuntimeMenuKey, RuntimeMenuView } from '../model/runtimeMenu.js'
 import { submenuIntentDelay, type PointerPoint } from '../model/menuIntent.js'
 import type { SurfaceAction, SurfaceRow } from '../model/surfaces.js'
 import type { PermissionMode } from '../../../harness/permissions.js'
-import type { WireContextBreakdownResult, WireRuntimeSnapshot } from '../../../runtime/protocol/wire.js'
+import type { WireCommandInfo, WireContextBreakdownResult, WireRuntimeSnapshot } from '../../../runtime/protocol/wire.js'
 import { contextPopoverView } from '../model/contextBreakdown.js'
 import { el, reconcile, replace, show } from './dom.js'
 import { createPresence, finishPresenceWithin, type Presence } from './presence.js'
@@ -52,11 +53,11 @@ import { pathTileNode } from './pathTile.js'
  * back to config — `setModel` only points the live runtime somewhere else and
  * silently drops the persistence.
  *
- * The permission pill beside `+` is the exception, and deliberately so: the mode
- * *is* the live gate's state, there is nothing to persist, and the settings
- * screen's `permissions.mode` is only the startup mode. So it calls
- * `set-permission-mode` directly and its menu is built here rather than opened
- * as a surface — four fixed options do not need a picker panel.
+ * The permission pill beside `+` is the exception, and deliberately so: its mode
+ * applies to the live gate, which `set-permission-mode` does directly — the host
+ * remembers it as the global startup mode for the sessions that follow. Its menu
+ * is built here rather than opened as a surface: four fixed options do not need
+ * a picker panel.
  */
 
 export interface ComposerView {
@@ -67,7 +68,8 @@ export interface ComposerView {
    * edited in the middle of a line would rewrite the wrong span.
    */
   cursorPos(): number
-  setValue(text: string, cursorPos?: number): void
+  setValue(text: string, cursorPos?: number, commands?: readonly WireCommandInfo[]): void
+  setCommands(commands: readonly WireCommandInfo[]): void
   clear(): void
   focus(): void
   /**
@@ -138,6 +140,7 @@ export interface ComposerView {
 export const MAX_COMPOSER_HEIGHT_PX = 200
 
 export function createComposerView(els: {
+  editor: HTMLElement
   input: HTMLTextAreaElement
   submit: HTMLButtonElement
   stop: HTMLButtonElement
@@ -187,12 +190,51 @@ export function createComposerView(els: {
   /** The context indicator's breakdown, from the active pane's host. */
   onLoadContextBreakdown: () => Promise<WireContextBreakdownResult>
 }): ComposerView {
+  let commands: readonly WireCommandInfo[] = []
+  const highlight = el('div', 'composer-highlight')
+  highlight.setAttribute('aria-hidden', 'true')
+  const highlightText = el('div', 'composer-highlight-text')
+  highlight.appendChild(highlightText)
+  const slashMeasure = el('span', 'composer-slash-measure', '/')
+  els.editor.appendChild(highlight)
+  els.editor.appendChild(slashMeasure)
+
+  function syncHighlightScroll(): void {
+    highlightText.style.setProperty('--composer-scroll-y', `${-els.input.scrollTop}px`)
+    highlight.classList.toggle('scrolled', els.input.scrollTop > 0)
+    highlight.style.setProperty('--composer-scrollbar-width', `${els.input.offsetWidth - els.input.clientWidth}px`)
+  }
+
+  function renderInput(): void {
+    const text = els.input.value
+    const match = matchInputCommand(text, commands)
+    els.input.classList.toggle('decorated', match !== undefined)
+    show(highlight, match !== undefined)
+    els.input.style.setProperty('--composer-input-indent', '0px')
+    if (!match) return
+    const token = el('span', 'composer-command')
+    if (match.command.isSkill) {
+      const mark = el('span', 'composer-skill-icon', icon('package'))
+      token.appendChild(mark)
+      token.appendChild(document.createTextNode(match.command.name))
+      replace(highlightText, text.slice(0, match.start), token, text.slice(match.end))
+      // Only the first line shifts: the icon replaces the slash, while the
+      // textarea keeps the original text and native selection/clipboard.
+      els.input.style.setProperty('--composer-input-indent', `${mark.getBoundingClientRect().width - slashMeasure.getBoundingClientRect().width}px`)
+    } else {
+      token.textContent = text.slice(match.start, match.end)
+      replace(highlightText, text.slice(0, match.start), token, text.slice(match.end))
+    }
+    syncHighlightScroll()
+  }
+
   const autosize = () => {
     // Kept in step with `#composer` / `#input`'s `max-height` in `styles.css`;
     // this one is load-bearing, because `scrollHeight` has to be clamped by
     // something the stylesheet cannot know.
     els.input.style.height = 'auto'
     els.input.style.height = `${Math.min(els.input.scrollHeight, MAX_COMPOSER_HEIGHT_PX)}px`
+    syncHighlightScroll()
   }
 
   // The last snapshot this view painted, so opening the menu can redraw the pill
@@ -279,6 +321,7 @@ export function createComposerView(els: {
       const next = insertMentionToken(els.input.value, els.input.selectionStart ?? els.input.value.length)
       els.input.value = next.text
       els.input.setSelectionRange(next.cursorPos, next.cursorPos)
+      renderInput()
       autosize()
       els.input.focus()
       actions.onAttach()
@@ -899,12 +942,26 @@ export function createComposerView(els: {
     if (contextOpen && moved) void loadContextBreakdown()
   }
 
-  els.input.addEventListener('input', () => applySubmitState())
+  els.input.addEventListener('input', () => {
+    renderInput()
+    applySubmitState()
+  })
+  els.input.addEventListener('compositionend', () => renderInput())
+  els.input.addEventListener('keydown', (event) => {
+    if (event.key !== 'Backspace' || event.isComposing) return
+    const match = matchInputCommand(els.input.value, commands)
+    const cursor = els.input.selectionStart
+    if (!match?.command.isSkill || cursor !== els.input.selectionEnd || cursor <= match.start) return
+    if (cursor > match.end && els.input.value.slice(match.end, cursor).trim() !== '') return
+    // Let the browser delete the selected token, retaining its undo history.
+    els.input.setSelectionRange(match.start, Math.max(match.end, cursor))
+  })
   // A draft past the height cap scrolls, and its top line then sits half under
   // the capsule's edge. The stylesheet fades that edge, but only while there is
   // something above it — at rest the first line must stay fully inked.
   els.input.addEventListener('scroll', () => {
     els.input.classList.toggle('scrolled', els.input.scrollTop > 0)
+    syncHighlightScroll()
   })
   // Paste: an image in the clipboard becomes an attachment rather than text.
   // Only files make that call — a plain-text paste, even of a path, stays the
@@ -924,15 +981,23 @@ export function createComposerView(els: {
   renderContextGauge()
   renderPermission()
   applySubmitState()
+  renderInput()
 
   return {
     value: () => els.input.value,
     // `selectionStart` is null only for input types that have no selection;
     // a textarea always reports one, and the end of the text is the safe read.
     cursorPos: () => els.input.selectionStart ?? els.input.value.length,
-    setValue(text, cursorPos) {
+    setCommands(next) {
+      commands = next
+      renderInput()
+      autosize()
+    },
+    setValue(text, cursorPos, nextCommands) {
+      if (nextCommands !== undefined) commands = nextCommands
       els.input.value = text
       if (cursorPos !== undefined) els.input.setSelectionRange(cursorPos, cursorPos)
+      renderInput()
       autosize()
       // A programmatic edit fires no `input` event, so the button state has to be
       // recomputed by hand — otherwise a restored draft leaves it reading "idle".
@@ -940,6 +1005,7 @@ export function createComposerView(els: {
     },
     clear() {
       els.input.value = ''
+      renderInput()
       autosize()
       applySubmitState()
     },

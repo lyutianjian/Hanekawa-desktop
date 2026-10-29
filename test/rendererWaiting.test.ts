@@ -72,10 +72,11 @@ test('what the status reads, by priority', () => {
     ['a running call, in words', '跑测试', turn([THINKING, RUNNING_BASH])],
     ['an undescribed command says only that a command runs', '正在运行命令', turn([bare])],
     ['and only that when it waits on approval', '等待你确认 · 运行命令', turn([{ ...bare, tool: { ...bare.tool!, awaitingApproval: true } }])],
-    ['parallel calls show the first one, not a count', '读取 a.ts', turn([read('r1', 'a.ts'), read('r2', 'b.ts'), read('r3', 'c.ts')])],
-    ['a mix keeps to the call order', '跑测试', turn([RUNNING_BASH, read('r1', 'a.ts')])],
+    ['parallel calls show the most recently started one', '读取 c.ts', turn([read('r1', 'a.ts'), read('r2', 'b.ts'), read('r3', 'c.ts')])],
+    ['a mix follows the latest running call', '读取 a.ts', turn([RUNNING_BASH, read('r1', 'a.ts')])],
     ['a tool with no phrase of its own says only that a tool runs', '正在运行工具', turn([mcp])],
     ['an approval outranks running calls', '等待你确认 · 写入 a.ts', turn([asking, RUNNING_BASH])],
+    ['a real prompt with no matching record still waits for the user', '等待你确认', turn([RUNNING_BASH]), { awaitingApproval: true }],
     ['a question outranks an approval', '正在提问 · 数据库', turn([asking]), { asking: '数据库' }],
     ['a compaction outranks a question', '正在压缩上下文', turn([RUNNING_BASH]), { asking: '数据库', phase: { kind: 'compacting' } }],
     ['a retry names its ordinal', '服务过载 · 第 2 次重试', turn([RUNNING_BASH]), { phase: { kind: 'retrying', attempt: 2, reason: 'overload' } }],
@@ -88,10 +89,12 @@ test('what the status reads, by priority', () => {
   }
 })
 
-test('a batch advances one call at a time, in the order they were issued', () => {
+test('a batch follows its newest running call, then falls back to work still running', () => {
   const two = turn([RUNNING_BASH, read('r1', 'a.ts')])
-  assert.equal(activity(two).row?.label, '跑测试', 'the first still-running call holds the line')
-  assert.equal(activity(turn([DONE_BASH, read('r1', 'a.ts')])).row?.label, '读取 a.ts', 'the next one takes over once it settles')
+  assert.equal(activity(two).row?.label, '读取 a.ts')
+  assert.deepEqual(activity(two).mark, { body: 'read', state: 'working' }, 'the words and the mark describe the same call')
+  assert.equal(activity(turn([RUNNING_BASH, { ...read('r1', 'a.ts'), pending: false }])).row?.label, '跑测试')
+  assert.equal(activity(turn([DONE_BASH, read('r1', 'a.ts')])).row?.label, '读取 a.ts')
 })
 
 test('the status is there only while the turn is running, and an old run is not this turn’s', () => {
@@ -216,21 +219,21 @@ test('the streaming call is remembered until its message lands', () => {
 })
 
 test('the label gate: a burst shows only its last word, once it has held', () => {
-  const step = (gate: LabelGate | undefined, want: string, now: number) => settleLabel(gate, want, 1, now)
+  const step = (gate: LabelGate | undefined, want: string, now: number) => settleLabel(gate, want, 1, now, 'tool')
   let r = step(undefined, 'A', 0)
   assert.equal(r.label, 'A')
   // Past the minimum stay, a new word still waits out the debounce.
-  r = step(r.gate, 'B', 1_000)
-  assert.deepEqual([r.label, r.recheckAt], ['A', 1_150])
+  r = step(r.gate, 'B', 650)
+  assert.deepEqual([r.label, r.recheckAt], ['A', 800])
   // A change of mind restarts the debounce; B never showed.
-  r = step(r.gate, 'C', 1_100)
-  assert.deepEqual([r.label, r.recheckAt], ['A', 1_250])
-  r = step(r.gate, 'C', 1_250)
+  r = step(r.gate, 'C', 700)
+  assert.deepEqual([r.label, r.recheckAt], ['A', 850])
+  r = step(r.gate, 'C', 850)
   assert.deepEqual([r.label, r.recheckAt], ['C', undefined])
 })
 
-test('the label gate: a word stays 650ms, and asking for it back cancels the switch', () => {
-  const step = (gate: LabelGate | undefined, want: string, now: number) => settleLabel(gate, want, 1, now)
+test('the label gate: a tool stays 650ms, and asking for it back cancels the switch', () => {
+  const step = (gate: LabelGate | undefined, want: string, now: number) => settleLabel(gate, want, 1, now, 'tool')
   let r = step(undefined, 'A', 0)
   r = step(r.gate, 'B', 200)
   assert.deepEqual([r.label, r.recheckAt], ['A', 650])
@@ -240,14 +243,71 @@ test('the label gate: a word stays 650ms, and asking for it back cancels the swi
   assert.equal(r.label, 'B')
   // B came back to A inside the delay: nothing pending, nothing to recheck.
   r = step(r.gate, 'C', 700)
-  r = step(r.gate, 'B', 760)
+  r = step(r.gate, 'B', 710)
   assert.deepEqual([r.label, r.recheckAt, r.gate.pending], ['B', undefined, undefined])
 })
 
 test('the label gate: a new epoch switches at once', () => {
-  let r = settleLabel(undefined, 'A', 1, 0)
-  r = settleLabel(r.gate, 'B', 2, 10)
+  let r = settleLabel(undefined, 'A', 1, 0, 'tool')
+  r = settleLabel(r.gate, 'B', 2, 10, 'tool')
   assert.deepEqual([r.label, r.recheckAt, r.gate.epoch], ['B', undefined, 2])
+})
+
+test('short tools stay readable, while a long tool gives a gap 650ms to settle', () => {
+  const tool = activity(turn([RUNNING_BASH])).row!
+  const gap = activity(turn([DONE_BASH])).row!
+  const step = (gate: LabelGate | undefined, row: typeof tool, now: number) => settleLabel(gate, row.label, row.startedAt, now, row.timing)
+  let r = step(undefined, tool, 0)
+  r = step(r.gate, gap, 200)
+  assert.deepEqual([r.label, r.recheckAt], ['跑测试', 850], 'the two delays overlap instead of adding up')
+  r = step(r.gate, gap, 849)
+  assert.equal(r.label, '跑测试')
+  r = step(r.gate, gap, 850)
+  assert.equal(r.label, '处理中')
+
+  r = step(undefined, tool, 0)
+  r = step(r.gate, gap, 2_000)
+  assert.deepEqual([r.label, r.recheckAt], ['跑测试', 2_650])
+  r = step(r.gate, gap, 2_649)
+  assert.equal(r.label, '跑测试')
+  r = step(r.gate, gap, 2_650)
+  assert.equal(r.label, '处理中')
+})
+
+test('the next tool replaces a brief gap without showing processing or inheriting its delay', () => {
+  let r = settleLabel(undefined, 'A', 1, 0, 'tool')
+  r = settleLabel(r.gate, '处理中', 1, 2_000, 'gap')
+  r = settleLabel(r.gate, 'B', 1, 2_500, 'tool')
+  assert.deepEqual([r.label, r.recheckAt], ['A', 2_650])
+  r = settleLabel(r.gate, 'B', 1, 2_650, 'tool')
+  assert.equal(r.label, 'B')
+
+  r = settleLabel(undefined, '处理中', 1, 0, 'gap')
+  r = settleLabel(r.gate, 'A', 1, 100, 'tool')
+  assert.equal(r.recheckAt, 250, 'processing has no minimum stay of its own')
+})
+
+test('thinking, output, user waits, retries and failures bypass a held tool description', () => {
+  const cases = [
+    activity(turn([THINKING])),
+    activity([USER, DRAFT('好的')], true, undefined),
+    activity(turn([asking])),
+    activity(turn([RUNNING_BASH]), true, TURN, { asking: '数据库' }),
+    activity(turn([RUNNING_BASH]), true, TURN, { phase: { kind: 'compacting' } }),
+    activity(turn([RUNNING_BASH]), true, TURN, { phase: { kind: 'retrying', attempt: 2, reason: 'overload' } }),
+    activity(turn([{ ...DONE_BASH, failed: true }])),
+    activity(turn([DONE_BASH, { id: 'stop', kind: 'notice', text: 'Interrupted.', turnId: TURN, interrupt: true }])),
+  ]
+  for (const { row } of cases) {
+    assert.ok(row)
+    assert.equal(row.timing, 'immediate', row.label)
+    let r = settleLabel(undefined, '跑测试', STARTED_AT, 0, 'tool')
+    r = settleLabel(r.gate, '下一条命令', STARTED_AT, 20, 'tool')
+    r = settleLabel(r.gate, row.label, STARTED_AT, 30, row.timing)
+    assert.deepEqual([r.label, r.recheckAt, r.gate.pending], [row.label, undefined, undefined])
+    r = settleLabel(r.gate, '下一条命令', STARTED_AT, 40, 'tool')
+    assert.equal(r.recheckAt, 190, 'leaving an immediate state does not hold its old words')
+  }
 })
 
 test('a running sub-agent names the status, though it is no run’s step', () => {
@@ -268,7 +328,9 @@ test('where the status is said: the turn’s tool group, or its own line', () =>
     ['a thought in progress', 'line', turn([THINKING])],
     ['a finished thought', 'line', turn([{ ...THINKING, pending: false }])],
     ['a running call', group, turn([THINKING, RUNNING_BASH])],
+    ['a detail panel running call', 'line', turn([RUNNING_BASH]), { statusAtEnd: true }],
     ['between two tools', group, turn([DONE_BASH])],
+    ['a detail panel between tools', 'line', turn([DONE_BASH]), { statusAtEnd: true }],
     ['the next call of the group being written', group, turn([DONE_BASH]), draft],
     ['an approval in the group', { run: `run:${asking.id}` }, turn([asking])],
     ['text after the group', 'line', turn([DONE_BASH, said])],

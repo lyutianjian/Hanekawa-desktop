@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises'
+import { isUtf8 } from 'node:buffer'
 import { randomUUID } from 'node:crypto'
 
 export type LineEndings = 'CRLF' | 'LF'
@@ -65,6 +66,15 @@ export async function readTextFile(absolute: string): Promise<TextFileRead> {
   } finally {
     await fh.close()
   }
+}
+
+/** String edits must not silently decode and rewrite binary or unsupported text. */
+export async function readEditableTextFile(absolute: string): Promise<TextFileRead | undefined> {
+  const raw = await fs.readFile(absolute)
+  const utf16 = raw.length >= 2 && raw[0] === 0xff && raw[1] === 0xfe
+  if (utf16 ? raw.length % 2 !== 0 : !isUtf8(raw)) return undefined
+  const file = decodeTextBuffer(raw)
+  return file.content.includes('\0') ? undefined : file
 }
 
 type FileHandleLike = {

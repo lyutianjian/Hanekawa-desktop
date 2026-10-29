@@ -8,6 +8,7 @@
 import { splitAgentReply } from './agentReply.js'
 import type { ThreadTone } from './coordinationStatus.js'
 import { toolStepStatus, type ToolStepDetail, type ToolStepStatus, type TranscriptItem } from './transcript.js'
+import { totalTokens } from './usage.js'
 
 export const AGENT_TOOL = 'Agent'
 
@@ -33,6 +34,7 @@ export interface SubagentEntry {
   /** Epoch ms, for a running clock. */
   readonly startedAt?: number
   readonly durationMs?: number
+  readonly tokens?: number
   readonly task?: string
   readonly reply?: string
   readonly notes: readonly string[]
@@ -73,19 +75,21 @@ function toEntry(item: TranscriptItem): SubagentEntry {
   const startedAt = tool.startedAt === undefined ? Number.NaN : Date.parse(tool.startedAt)
   const response = fullerReply(reply?.text, tool.subagent?.summary)
   const agentId = tool.subagent?.agentId ?? tool.live?.agentId ?? (tool.content === undefined ? undefined : AGENT_ID.exec(tool.content)?.[1])
+  const durationMs = tool.subagent?.durationMs ?? tool.durationMs
   return {
     id: item.id,
     name: tool.displayName,
     description: agentDescription(tool),
     status,
-    finished: status === 'failed' || status === 'interrupted' || tool.subagent !== undefined,
+    finished: status === 'failed' || status === 'interrupted' || (status === 'done' && tool.subagent !== undefined),
     notes: reply?.notes ?? [],
     ...(agentId === undefined ? {} : { agentId }),
     ...(tool.agentType === undefined ? {} : { agentType: tool.agentType }),
     ...(tool.subagent?.model === undefined ? {} : { model: tool.subagent.model }),
     ...(Number.isFinite(startedAt) ? { startedAt } : {}),
     // A detached run's call settled at its start; that span is not the run's.
-    ...(tool.durationMs === undefined || status === 'running' ? {} : { durationMs: tool.durationMs }),
+    ...(durationMs === undefined || status === 'running' ? {} : { durationMs }),
+    ...(tool.subagent?.usage === undefined ? {} : { tokens: totalTokens(tool.subagent.usage) }),
     ...(tool.task === undefined ? {} : { task: tool.task }),
     ...(response === undefined ? {} : { reply: response }),
   }

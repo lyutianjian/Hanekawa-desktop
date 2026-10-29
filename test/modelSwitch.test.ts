@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { activateModelKey, switchModel, type ModelSwitchDeps } from '../src/runtime/modelSwitch.js'
+import { mergeRouting, type Routing } from '../src/config/routing.js'
 import type { ConfigService } from '../src/config/service.js'
 import type { SessionRecord } from '../src/harness/types.js'
 import type { SessionMeta } from '../src/sessions/service.js'
@@ -22,6 +23,7 @@ interface Calls {
   replaced: string[]
   reappliedEffort: number
   defaultModels: string[]
+  routings: Routing[]
   saves: number
 }
 
@@ -32,6 +34,8 @@ function createDeps(overrides: {
   /** Capability of the runtime `createRuntime` hands back, per model key. */
   supportsImageInput?: (modelKey: string) => boolean
   records?: SessionRecord[]
+  /** The routing as config holds it; absent means every role inherits. */
+  routing?: Routing
 } = {}): { deps: ModelSwitchDeps; calls: Calls } {
   const calls: Calls = {
     created: [],
@@ -39,6 +43,7 @@ function createDeps(overrides: {
     replaced: [],
     reappliedEffort: 0,
     defaultModels: [],
+    routings: [],
     saves: 0,
   }
 
@@ -59,11 +64,14 @@ function createDeps(overrides: {
     reapplyEffort: () => { calls.reappliedEffort += 1; return 'high' },
   } as unknown as RuntimeSlot
 
+  let routing = mergeRouting(overrides.routing)
   const config = {
     resolveModelInput: overrides.resolveModelInput
       ? (input: string) => overrides.resolveModelInput!(input)
       : (input: string) => (input === 'nope' ? undefined : input),
     setDefaultModel: (name: string) => { calls.defaultModels.push(name) },
+    getRouting: () => routing,
+    setRouting: (next: Routing) => { routing = next; calls.routings.push(next) },
     save: async () => { calls.saves += 1 },
   } as unknown as ConfigService
 
@@ -161,6 +169,41 @@ test('switchModel does not persist a model for a switch that failed', () => {
 
   assert.equal(switchModel(deps, 'other').ok, false)
   assert.deepEqual(calls.defaultModels, [], 'persisting here would leave config pointing at a model that failed')
+  assert.equal(calls.saves, 0)
+})
+
+test('switchModel releases a main routing that would outrank the pick', () => {
+  const { deps, calls } = createDeps({ routing: { main: 'current' } })
+
+  assert.ok(switchModel(deps, 'other').ok)
+
+  // `routing.main` outranks `defaultModel`, so a pick that left it pointing at
+  // another model would change the live session and nothing else — the settings
+  // screen's 「默认模型」 control releases the role for the same reason.
+  assert.deepEqual(calls.routings.map((routing) => routing.main), ['inherit'])
+  assert.deepEqual(calls.defaultModels, ['other'])
+})
+
+test('switchModel leaves a main routing that already follows the default alone', () => {
+  const inherited = createDeps({ routing: { main: 'inherit' } })
+  assert.ok(switchModel(inherited.deps, 'other').ok)
+  assert.deepEqual(inherited.calls.routings, [], 'nothing to release')
+
+  const picked = createDeps({ routing: { main: 'other' } })
+  assert.ok(switchModel(picked.deps, 'other').ok)
+  assert.deepEqual(picked.calls.routings, [], 'the role already names this model')
+})
+
+test('switchModel with persist off is the live switch alone', () => {
+  const { deps, calls } = createDeps({ routing: { main: 'current' } })
+
+  assert.ok(switchModel(deps, 'other', false).ok)
+
+  // A coordination lane's model is its own `modelOverride`; remembered globally
+  // it would retarget every project's next main session.
+  assert.deepEqual(calls.replaced, ['other'], 'the live runtime did move')
+  assert.deepEqual(calls.defaultModels, [])
+  assert.deepEqual(calls.routings, [])
   assert.equal(calls.saves, 0)
 })
 

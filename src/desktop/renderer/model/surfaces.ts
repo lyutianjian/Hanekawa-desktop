@@ -160,11 +160,6 @@ export function effortPickerView(input: {
   }
 }
 
-/** Running shell processes — what the composer's chip counts. Agents have their own panel. */
-export function runningProcessCount(tasks: readonly BackgroundTaskSnapshot[]): number {
-  return tasks.filter((task) => task.kind === 'shell' && task.status === 'running').length
-}
-
 /** Every running background task, agents included — what the status line's button counts. */
 export function runningTaskCount(tasks: readonly BackgroundTaskSnapshot[]): number {
   return tasks.filter((task) => task.status === 'running').length

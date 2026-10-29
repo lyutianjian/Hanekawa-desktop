@@ -16,6 +16,7 @@ import type { ImageAttachmentRef } from '../src/media/types.js'
 import { ANCHOR_REST_PX } from '../src/desktop/renderer/model/transcriptAnchor.js'
 import type { WaitingInput } from '../src/desktop/renderer/model/waiting.js'
 import type { TaskCard } from '../src/desktop/renderer/model/tasks.js'
+import type { WireCommandInfo } from '../src/runtime/protocol/wire.js'
 import type { ToolErrorCode } from '../src/harness/types.js'
 
 /**
@@ -282,6 +283,8 @@ interface Rendered {
   readonly openedSubagents: readonly string[]
   /** The plan text each plan-receipt click handed the pane. */
   readonly openedPlans: ReadonlyArray<string | undefined>
+  /** The slash registry the bubble decorates by — the pane's, read live. */
+  setCommands(next: readonly WireCommandInfo[]): void
   render(state: TranscriptState, disclosure?: DisclosureState, activity?: WaitingInput, selectedSubagent?: string, header?: HTMLElement): void
   stopClock(): void
   dispose(): void
@@ -303,12 +306,17 @@ function mount(t: { after(fn: () => void): void }): Rendered {
   const openedSubagents: string[] = []
   const openedPlans: Array<string | undefined> = []
   let backgroundOpens = 0
+  // Replaced rather than mutated, exactly as the pane's own `commands` is on a
+  // reload: the bubble's signature reads its identity, so the replacement is
+  // what makes an already-painted bubble repaint.
+  let commands: readonly WireCommandInfo[] = []
   const view = createTranscriptView(container, host, {
     onToggle: (id, expanded) => toggled.push([id, expanded]),
     onOpenPlan: (content) => openedPlans.push(content),
     onOpenPath: (path, line) => opened.push([path, line]),
     onViewImage: (image) => viewedImages.push([image.id, image.name]),
     imageThumbUrl: (imageId) => thumbs.get(imageId),
+    commands: () => commands,
     onCopy: async (text) => { copied.push(text); return true },
     onRewind: (id) => rewound.push(id),
     onOpenSubagent: (id) => openedSubagents.push(id),
@@ -335,6 +343,7 @@ function mount(t: { after(fn: () => void): void }): Rendered {
     container,
     host,
     backgroundOpens: () => backgroundOpens,
+    setCommands: (next) => { commands = next },
     toggled,
     opened,
     viewedImages,
@@ -732,7 +741,7 @@ test('the line of the run the turn is in is the status: mark, words, clock — a
   const head = run.children[0]!
   assert.deepEqual(head.classes, ['run-line', 'live'])
   assert.deepEqual(head.children.map((child) => child.classes.join(' ')), ['line-mark', 'line-text', 'line-meta line-elapsed', 'icon'])
-  assert.deepEqual(statusText(head), { label: '读取 a.ts', meta: ['6 秒'] }, 'one call at a time, in order')
+  assert.deepEqual(statusText(head), { label: '读取 b.ts', meta: ['6 秒'] }, 'the most recent running call')
   for (const index of [0, 1, 2]) assert.equal(head.children[index]!.attributes.get('aria-hidden'), 'true')
   // Named for what the run has done, not for words that change ten times a turn.
   assert.equal(head.attributes.get('aria-label'), '正在进行 · 读取 2 个文件')
@@ -1751,6 +1760,65 @@ test('a bubble with no mention is still a single text node', (t) => {
   assert.deepEqual(bubble?.nodes, ['mail me at foo@bar.com'])
 })
 
+// --- the command a message opened with --------------------------------------
+
+/** The bubble's inner text host, where the command token and the mentions land. */
+const bubbleText = (item: StubView | undefined): StubView | undefined =>
+  item?.children.find((child) => child.classes.includes('user-bubble'))?.children[0]
+
+test('a skill keeps the composer\'s own drawing in the bubble it was sent from', (t) => {
+  const { render, items, setCommands } = mount(t)
+  setCommands([{ name: 'slides', description: 'Build a deck', isSkill: true }])
+  render(transcript([{ id: 'm1', kind: 'user', text: '/slides 三页' }]))
+
+  const text = bubbleText(items()[0])
+  assert.deepEqual(text?.nodes?.map((node) => (typeof node === 'string' ? node : node.className)), ['user-command skill', ' 三页'])
+  const token = text?.children[0]
+  assert.equal(token?.tagName, 'SPAN', 'read-only: the command already ran')
+  // The mark takes the slash's place, then the name — the composer's own order.
+  assert.equal(token?.children[0]?.className, 'user-command-mark')
+  assert.equal(token?.children[0]?.children[0]?.tagName, 'svg')
+  assert.deepEqual(token?.nodes[1], 'slides', 'the slash is gone, the name is text')
+})
+
+test('a built-in command is the accent token it was while being typed', (t) => {
+  const { render, items, setCommands } = mount(t)
+  setCommands([{ name: 'compact', description: 'Compact the conversation' }])
+  render(transcript([{ id: 'm1', kind: 'user', text: '/compact' }]))
+
+  const token = bubbleText(items()[0])?.children[0]
+  assert.equal(token?.className, 'user-command', 'not the skill variant')
+  assert.deepEqual(token?.nodes, ['/compact'], 'no mark: the slash is the label')
+  assert.equal(token?.children.length, 0)
+})
+
+test('an unregistered slash stays plain text, as the composer left it', (t) => {
+  const { render, items } = mount(t)
+  render(transcript([{ id: 'm1', kind: 'user', text: '/usr/bin/env node' }]))
+
+  assert.deepEqual(bubbleText(items()[0])?.nodes, ['/usr/bin/env node'])
+})
+
+test('a bubble drawn before the registry arrived repaints once it does', (t) => {
+  // A resumed session paints its history before `listCommands()` answers, and a
+  // skill's mark is the registry's answer. The list's identity is in the bubble's
+  // signature, so the arrival is exactly one refill — and a repaint that changes
+  // nothing afterwards still rebuilds nothing.
+  const { render, items, setCommands } = mount(t)
+  render(transcript([{ id: 'm1', kind: 'user', text: '/review this' }]))
+  const plain = bubbleText(items()[0])
+  assert.deepEqual(plain?.nodes, ['/review this'])
+
+  setCommands([{ name: 'review', description: 'Review the diff', isSkill: true }])
+  render(transcript([{ id: 'm1', kind: 'user', text: '/review this' }]))
+  const drawn = bubbleText(items()[0])
+  assert.deepEqual(drawn?.nodes?.map((node) => (typeof node === 'string' ? node : node.className)), ['user-command skill', ' this'])
+
+  const kept = drawn?.node
+  render(transcript([{ id: 'm1', kind: 'user', text: '/review this' }]))
+  assert.equal(bubbleText(items()[0])?.node, kept, 'an unchanged registry rebuilds nothing')
+})
+
 test('dropped paths draw as tiles above the bubble, out of its text', (t) => {
   const { render, items } = mount(t)
   const block = '<attached-paths>\nfile: /a/tsconfig.base.json\nfolder: /a/pi-main\n</attached-paths>'
@@ -2027,7 +2095,7 @@ test('the run’s line carries the status while it works, and its pieces survive
   paint(pairItems({ pending: true }))
   assert.deepEqual(view.items().map((entry) => entry.classes[0]), ['item', 'run'])
   const head = runOf(view).children[0]!
-  assert.equal(statusText(head).label, '读取 a.ts', 'the first of the parallel calls')
+  assert.equal(statusText(head).label, '读取 b.ts', 'the most recent parallel call')
   const pieces = head.children
 
   // The tools settle and the turn keeps running: the words fall back to
@@ -2036,7 +2104,7 @@ test('the run’s line carries the status while it works, and its pieces survive
   const still = runOf(view).children[0]!
   assert.equal(still.node, head.node)
   for (const index of [0, 1, 2]) assert.equal(still.children[index]!.node, pieces[index]!.node)
-  assert.equal(statusText(still).label, '读取 a.ts', 'a new label waits out its delay')
+  assert.equal(statusText(still).label, '读取 b.ts', 'a new label waits out its delay')
 
   // Only the end of the turn takes the status away, and the line is the summary.
   view.render(transcript(pairItems(), { turnId: undefined }), NO_DISCLOSURE, {
@@ -2163,6 +2231,52 @@ test('the status words change only after the gate lets them, on the clock', asyn
   await new Promise((resolve) => setTimeout(resolve, 800))
   assert.equal(statusText(head()).label, '读取 a.ts', 'and lands on the clock, with no further paint')
 })
+
+for (const startedAt of [1_700_000_000_000, undefined]) {
+  test(`status descriptions bridge short tools and gaps on the clock, startedAt=${startedAt}`, (t) => {
+    t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1_700_000_000_000 })
+    const view = mount(t)
+    const user: TranscriptItem = { id: 'u1', kind: 'user', text: 'go', turnId: 't1' }
+    const a: TranscriptItem = { id: 'a', kind: 'tool', text: '', toolName: 'Read', turnId: 't1', pending: true,
+      tool: { displayName: 'Read', useSummary: 'a.ts' } }
+    const b: TranscriptItem = { ...a, id: 'b', tool: { displayName: 'Read', useSummary: 'b.ts' } }
+    const done = (item: TranscriptItem): TranscriptItem => ({ ...item, pending: false })
+    const paint = (items: TranscriptItem[]): void => view.render(transcript([user, ...items], { turnId: 't1' }), NO_DISCLOSURE,
+      { isStreaming: true, turnId: 't1', startedAt, outputTokens: 1_234 })
+    const label = (): string => statusText(runOf(view).children[0]!).label
+
+    paint([a])
+    const head = runOf(view).children[0]!.node
+    t.mock.timers.tick(200)
+    paint([done(a)])
+    assert.equal(label(), '读取 a.ts', 'execution finishes without clearing the description')
+    t.mock.timers.tick(300)
+    paint([done(a), b])
+    t.mock.timers.tick(100)
+    assert.equal(label(), '读取 a.ts')
+    t.mock.timers.tick(100)
+    assert.equal(label(), '读取 b.ts', 'the next tool takes over on the first clock tick past 650ms without a processing flash')
+    assert.equal(runOf(view).children[0]!.node, head)
+
+    t.mock.timers.tick(2_000)
+    paint([done(a), done(b)])
+    t.mock.timers.tick(600)
+    assert.equal(label(), '读取 b.ts', 'even a long tool buffers its following gap')
+    t.mock.timers.tick(100)
+    assert.equal(label(), '处理中', 'the clock settles a 650ms gap without another render')
+    assert.deepEqual(statusText(runOf(view).children[0]!).meta, startedAt === undefined ? [] : ['3 秒', '·', '1.2k token'])
+
+    paint([done(a), b])
+    t.mock.timers.tick(200)
+    assert.equal(label(), '读取 b.ts', 'processing does not impose a minimum stay')
+    paint([done(a), done(b), { id: 'reply', kind: 'assistant', text: '好了', turnId: 't1', pending: true }])
+    assert.equal(statusText(view.items().at(-1)!).label, '正在输出', 'output interrupts the description immediately')
+    view.render(transcript([user, done(a), done(b)]), NO_DISCLOSURE, IDLE_ACTIVITY)
+    t.mock.timers.tick(2_000)
+    assert.equal(view.items().some((item) => item.classes.includes('waiting')), false, 'ending the turn clears pending labels')
+    assert.equal(runOf(view).children[0]!.classes.includes('live'), false)
+  })
+}
 
 test('a kept thought row reports the disclosure it is showing, both ways', (t) => {
   // The regression the kept head introduced: its click closure is built once, so

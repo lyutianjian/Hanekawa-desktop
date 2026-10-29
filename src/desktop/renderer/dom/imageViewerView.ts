@@ -39,7 +39,9 @@ export interface ImageViewerView {
   close(): void
   /**
    * The viewport the picture has to fit into, for `fitZoom`. Measured here
-   * because only this side has the node; `undefined` before the first open.
+   * because only this side has the node. A shut layer has no layout at all,
+   * so measuring mounts it — which is what lets the pane choose the opening
+   * zoom before the first paint.
    */
   stageSize(): { width: number; height: number } | undefined
 }
@@ -99,8 +101,25 @@ export function createImageViewerView(
     image.style.setProperty(VIEWER_PAN_Y_VARIABLE, `${panY}px`)
   }
 
+  function ensurePresence(): Presence {
+    if (presence === undefined) {
+      presence = createModalPresence(container, stage, () => {
+        // Fully closed: drop the bytes. A screen-sized data URL is the largest
+        // string this renderer ever holds, and keeping it alive behind a hidden
+        // layer is the one thing this view can do wrong on its own.
+        image.removeAttribute('src')
+        current = undefined
+      })
+    }
+    return presence
+  }
+
   function show(state: ImageViewerState): void {
     const switching = current?.imageId !== state.imageId
+    // What counts as opening: the state is not up yet, or it is on its way out.
+    // The layer's own phase cannot answer — `stageSize` may already have
+    // mounted it for the measurement `show`'s state was built from.
+    const opening = current === undefined || presence?.phase === 'closing'
     if (switching) {
       panX = 0
       panY = 0
@@ -123,6 +142,11 @@ export function createImageViewerView(
     } else {
       image.removeAttribute('src')
     }
+    // The picture's own box, whichever tier of pixels is painted into it: the
+    // thumbnail and the screen-sized copy then swap without the picture
+    // changing size under the zoom.
+    image.setAttribute('width', String(state.width))
+    image.setAttribute('height', String(state.height))
     image.classList.toggle('pending', state.status === 'loading')
     applyGeometry(state)
 
@@ -138,17 +162,7 @@ export function createImageViewerView(
     zoomOutButton.disabled = !canZoomOut(state.zoom)
     zoomInButton.disabled = !canZoomIn(state.zoom)
 
-    if (presence === undefined) {
-      presence = createModalPresence(container, stage, () => {
-        // Fully closed: drop the bytes. A screen-sized data URL is the largest
-        // string this renderer ever holds, and keeping it alive behind a hidden
-        // layer is the one thing this view can do wrong on its own.
-        image.removeAttribute('src')
-        current = undefined
-      })
-    }
-    const opening = presence.phase === 'closed' || presence.phase === 'closing'
-    presence.set(true)
+    ensurePresence().set(true)
     // Last thing in the paint: `focus()` fires `focusout` synchronously, and a
     // handler answering that with a repaint would re-enter this paint.
     if (opening) closeButton.focus()
@@ -222,6 +236,9 @@ export function createImageViewerView(
     show,
     close,
     stageSize() {
+      // Nothing is painted between this and the `show` the answer feeds: the
+      // pane measures, then paints, inside one task.
+      ensurePresence().set(true)
       const width = stage.clientWidth
       const height = stage.clientHeight
       if (width <= 0 || height <= 0) return undefined

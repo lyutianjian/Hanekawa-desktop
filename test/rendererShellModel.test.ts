@@ -10,6 +10,7 @@ import {
 } from '../src/desktop/renderer/model/keymap.js'
 import {
   classifyInput,
+  matchInputCommand,
   commandEffectToIntent,
   commandViewRows,
 } from '../src/desktop/renderer/model/commandRouting.js'
@@ -23,7 +24,6 @@ import {
   SUPPORTED_SURFACES,
   activateSurfaceRow,
   activateSurfaceRowById,
-  runningProcessCount,
   effortPickerView,
   initialSurfaceSelection,
   isSupportedSurface,
@@ -266,11 +266,26 @@ test('a picker and the dropdown can never contend, and the dropdown wins if they
   assert.equal(resolveKey({ key: 'Escape' }, both), 'close-completions')
 })
 
-test('a leading slash is a command, never prose', () => {
-  assert.deepEqual(classifyInput('/model sonnet'), { kind: 'command', line: '/model sonnet' })
-  assert.deepEqual(classifyInput('  /help  '), { kind: 'command', line: '/help' })
-  assert.deepEqual(classifyInput('what is /model'), { kind: 'prompt', text: 'what is /model' })
-  assert.deepEqual(classifyInput('   '), { kind: 'empty' })
+test('only exact command names and aliases route as commands', () => {
+  assert.deepEqual(classifyInput('/model sonnet', COMMANDS), { kind: 'command', line: '/model sonnet' })
+  assert.deepEqual(classifyInput('  /clear  ', COMMANDS), { kind: 'command', line: '/clear' })
+  assert.deepEqual(classifyInput('/m\tsonnet', COMMANDS), { kind: 'command', line: '/m\tsonnet' })
+  assert.deepEqual(classifyInput('/exit', COMMANDS), { kind: 'command', line: '/exit' })
+  assert.deepEqual(classifyInput('what is /model', COMMANDS), { kind: 'prompt', text: 'what is /model' })
+  assert.deepEqual(classifyInput('   ', COMMANDS), { kind: 'empty' })
+  for (const raw of ['/', '/mo', '/Model', '/nosuchthing', '  /tmp/file\n请检查  ']) {
+    assert.deepEqual(classifyInput(raw, COMMANDS), { kind: 'prompt', text: raw })
+  }
+})
+
+test('skill matching exposes the same token range used for routing and display', () => {
+  const skill: WireCommandInfo = { name: 'template-creator', description: 'Create templates', isSkill: true }
+  const commands = [...COMMANDS, skill]
+  const raw = '  /template-creator\n创建模板'
+  assert.deepEqual(matchInputCommand(raw, commands), { name: skill.name, args: '创建模板', start: 2, end: 19, command: skill })
+  assert.deepEqual(classifyInput(raw, commands), { kind: 'command', line: raw.trim() })
+  assert.equal(matchInputCommand('/template-creat', commands), undefined)
+  assert.equal(matchInputCommand(raw, COMMANDS), undefined, 'a removed skill is ordinary input')
 })
 
 const COMMANDS: WireCommandInfo[] = [
@@ -469,11 +484,6 @@ test('resuming opens the pane that owns the session; a task row peeks its output
   })
   assert.deepEqual(activateSurfaceRowById(sessions, 'a'), { kind: 'open-pane', sessionId: 'a' })
 
-  const running = [
-    { id: 't1', sessionId: 's', kind: 'shell', status: 'running', command: 'npm test', startedAt: 0, outputBytes: 10 },
-    { id: 't3', sessionId: 's', kind: 'shell', status: 'killed', command: 'sleep 9', startedAt: 0, finishedAt: 1, outputBytes: 0 },
-  ] as const
-  assert.equal(runningProcessCount(running), 1)
 })
 
 test('moving through a picker skips the rows that cannot be picked', () => {

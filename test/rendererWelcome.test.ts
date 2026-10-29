@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import {
-  WELCOME_GLOBAL_LOCATION,
   WELCOME_PROJECT_FALLBACK,
   WELCOME_TITLE,
   coordinatorSurvey,
@@ -55,7 +54,6 @@ function projects(overrides: Partial<ProjectPickerState> = {}): ProjectPickerSta
 
 test('the constants are the agreed values', () => {
   assert.equal(WELCOME_TITLE, '接下来做什么？')
-  assert.equal(WELCOME_GLOBAL_LOCATION, '~/Documents/myagent')
   assert.equal(WELCOME_PROJECT_FALLBACK, '当前项目')
   assert.equal(welcomeView(stateWith()).title, WELCOME_TITLE)
 })
@@ -111,10 +109,10 @@ test('the project pill names the project, and falls back before hello answers', 
   assert.equal(welcomeView(stateWith({ projectName: undefined })).pills[0]?.label, WELCOME_PROJECT_FALLBACK)
 })
 
-test('the global workspace names where generated files land', () => {
+test('the global workspace does not show a project directory pill', () => {
   const view = welcomeView(stateWith({ global: true }))
-  assert.equal(view.pills[0]?.label, '~/Documents/myagent')
-  assert.equal(view.pills[0]?.kind, 'project')
+  assert.equal(view.visible, true)
+  assert.deepEqual(view.pills, [])
 })
 
 // --- pills -------------------------------------------------------------------
@@ -161,12 +159,10 @@ test('the project popover cannot outlive the screen it hangs off', () => {
   assert.equal(welcomeView(stateWith({ projectPicker: open })).projectPicker.open, true)
 })
 
-test('the global workspace still leads into the added projects', () => {
-  // 最近 is not a project, but the projects are still where a session started
-  // from here would belong — so the pill naming `~/Documents/myagent` is a control.
-  const view = welcomeView(stateWith({ global: true, projectPicker: projects({ current: undefined }) }))
-  assert.equal(view.pills[0]?.label, WELCOME_GLOBAL_LOCATION)
-  assert.equal(view.pills[0]?.interactive, true)
+test('the global workspace keeps the project picker closed even with added projects', () => {
+  const view = welcomeView(stateWith({ global: true, projectPicker: projects({ current: undefined, open: true }) }))
+  assert.deepEqual(view.pills, [])
+  assert.equal(view.projectPicker.open, false)
 })
 
 test('the branch popover cannot outlive the screen it hangs off', () => {

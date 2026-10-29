@@ -93,7 +93,7 @@ async function createHarness(): Promise<Harness> {
     // mutation as a `message_queue` record, which is exactly why the queue lives
     // host-side rather than in the renderer.
     store: { appendRecord: async () => undefined },
-    backgroundTasks: { subscribe: () => () => undefined, getSnapshot: () => [], hasParentNotifications: () => false },
+    backgroundTasks: { subscribe: () => () => undefined, getSnapshot: () => [], hasParentNotifications: () => false, promoteForeground: () => 0 },
     // Real: the attachment commands run the actual S05 service over this temp
     // project, so imports land on disk and ids resolve through registration.
     attachments: new ImageAttachmentService(cwd),
@@ -239,11 +239,12 @@ test('a file write reaches the renderer as a DTO carrying a real diff preview', 
     },
   })
 
-  const approved = await harness.scope.bridges.prompt.prompt(writeRequest())
+  const approved = await harness.scope.bridges.prompt.prompt(writeRequest({ toolUseId: 'write-call-1' }))
 
   assert.equal(approved, true)
-  const dto = seen as { toolName: string; preview?: { kind: string; oldText: string; newText: string } }
+  const dto = seen as { toolName: string; toolUseId?: string; preview?: { kind: string; oldText: string; newText: string } }
   assert.equal(dto.toolName, 'Write')
+  assert.equal(dto.toolUseId, 'write-call-1', 'the exact waiting call survives the host/client round trip')
   assert.equal(dto.preview?.kind, 'diff', 'the host builds the preview; the renderer cannot')
   assert.equal(dto.preview?.oldText, 'alpha\nbeta\ngamma\n')
 

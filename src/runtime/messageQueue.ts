@@ -141,6 +141,7 @@ export class MessageQueue implements SteerSource {
   private readonly persist: PersistQueueRecord
   private snapshot: readonly QueuedMessage[] = EMPTY_SNAPSHOT
   private operationChain: Promise<void> = Promise.resolve()
+  private pendingOperations = 0
   private readonly listeners = new Set<() => void>()
   private readonly validateInput: ValidateQueuedInput | undefined
 
@@ -157,6 +158,9 @@ export class MessageQueue implements SteerSource {
   }
 
   getSnapshot = (): readonly QueuedMessage[] => this.snapshot
+
+  /** Includes writes that have not reached the snapshot yet. */
+  isBusy = (): boolean => this.pendingOperations > 0
 
   /** The running turn's view of the queue: it takes messages as steering. */
   pending = this.getSnapshot
@@ -349,7 +353,9 @@ export class MessageQueue implements SteerSource {
   }
 
   private serialize<T>(operation: () => Promise<T>): Promise<T> {
+    this.pendingOperations++
     const result = this.operationChain.then(operation, operation)
+      .finally(() => { this.pendingOperations-- })
     this.operationChain = result.then(() => undefined, () => undefined)
     return result
   }

@@ -250,19 +250,19 @@ test('isDevServerCommand matches the usual dev servers and leaves other commands
   }
 })
 
-test('a running Bash call moved to the background by the user notifies the parent when it exits', async () => {
+test('a running Bash call released by a mid-turn message notifies the parent when it exits', async () => {
   const registry = new BackgroundTaskRegistry()
   const bash = createBashTool(registry)
-  const ctx = { ...context(), sessionId: 'manual-bg', currentToolUseId: 'call-1' }
+  const ctx = { ...context(), sessionId: 'manual-bg' }
   try {
     const executable = process.platform === 'win32' ? 'node' : JSON.stringify(process.execPath)
     const running = bash.execute({ command: `${executable} -e "setTimeout(() => {}, 300)"` }, ctx)
     await new Promise((resolve) => setTimeout(resolve, 50))
-    assert.equal(registry.backgroundForeground('manual-bg', 'call-1'), true)
+    assert.equal(registry.promoteForeground('manual-bg'), 1)
     const result = await running
     assert.equal(result.ok, true)
-    assert.match(result.content, /The user moved this command to the background/)
-    assert.equal(registry.backgroundForeground('manual-bg', 'call-1'), false)
+    assert.match(result.content, /The user sent a message while this command was running/)
+    assert.equal(registry.promoteForeground('manual-bg'), 0)
 
     const taskId = result.content.match(/Task ID: (bash_\d+)/)?.[1]
     for (let i = 0; i < 100 && !registry.hasParentNotifications('manual-bg'); i++) {

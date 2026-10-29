@@ -34,7 +34,7 @@ test('elapsed time reads in seconds, minutes, then hours', () => {
 test('shells and agents mix by time, without duplicating registered agents or treating failures as successes', () => {
   const agents: SubagentEntry[] = [
     { id: 'agent-live', name: '子代理', description: '核对权限', status: 'running', finished: false, notes: [], startedAt: 2_000 },
-    { id: 'agent-done', name: '子代理', description: '阅读工具', status: 'done', finished: true, notes: [], startedAt: 100, durationMs: 100 },
+    { id: 'agent-done', name: '子代理', description: '阅读工具', status: 'done', finished: true, notes: [], startedAt: 100, durationMs: 100, tokens: 5_000 },
     { id: 'agent-wait', name: '子代理', description: '等待许可', status: 'awaiting-approval', finished: false, notes: [], startedAt: 1_500 },
     { id: 'agent-stopped', name: '子代理', description: '扫描目录', status: 'interrupted', finished: true, notes: [], startedAt: 2_000, durationMs: 1_500 },
   ]
@@ -51,4 +51,5 @@ test('shells and agents mix by time, without duplicating registered agents or tr
   assert.equal(groups.finished[0]?.status, '失败 · exit 1')
   assert.equal(groups.finished[1]?.status, '已中断')
   assert.equal(groups.finished[2]?.durationMs, 2_000)
+  assert.equal(groups.finished[2]?.tokens, 5_000)
 })

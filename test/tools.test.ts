@@ -271,13 +271,20 @@ test('bash subshell sleep timeout auto-backgrounds promptly', async () => {
   }
 })
 
-test('editFile refuses editing before readFile', async () => {
+test('editFile uses text found by Grep without an extra Read', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
   try {
-    await writeFile(path.join(dir, 'a.txt'), 'hello\n', 'utf8')
-    const result = await editFileTool.execute({ filePath: 'a.txt', oldString: 'hello', newString: 'hi' }, context(dir))
-    assert.equal(result.ok, false)
-    assert.match(result.content, /must be read first/)
+    const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
+    await writeFile(path.join(dir, 'a.txt'), 'hello\nkeep me\n', 'utf8')
+    const found = await grepTool.execute({ pattern: 'hello', path: 'a.txt', outputMode: 'content' }, ctx)
+    assert.equal(found.ok, true, found.content)
+    assert.match(found.content, /hello/)
+    assert.equal(ctx.readFiles.size, 0)
+
+    const result = await editFileTool.execute({ filePath: 'a.txt', oldString: 'hello', newString: 'hi' }, ctx)
+    assert.equal(result.ok, true, result.content)
+    assert.equal(await readFile(path.join(dir, 'a.txt'), 'utf8'), 'hi\nkeep me\n')
+    assert.equal(ctx.readFileState.get(path.join(dir, 'a.txt'))?.content, 'hi\nkeep me\n')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -356,8 +363,6 @@ test('editFile reports nearby context when oldString matches multiple times', as
       'target',
       'four',
     ].join('\n'), 'utf8')
-    await readFileTool.execute({ filePath: 'a.txt' }, ctx)
-
     const result = await editFileTool.execute({ filePath: 'a.txt', oldString: 'target', newString: 'done' }, ctx)
 
     assert.equal(result.ok, false)
@@ -389,13 +394,12 @@ test('editFile truncates oldString match context after five matches', async () =
   }
 })
 
-test('multiEdit applies multiple replacements atomically', async () => {
+test('multiEdit applies multiple replacements atomically without Read', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'a.txt')
     await writeFile(file, 'alpha\nbeta\ngamma\n', 'utf8')
-    await readFileTool.execute({ filePath: 'a.txt' }, ctx)
 
     const result = await multiEditTool.execute({
       filePath: 'a.txt',
@@ -456,7 +460,6 @@ test('multiEdit does not write when any replacement is ambiguous', async () => {
     const ctx = context(dir)
     const file = path.join(dir, 'a.txt')
     await writeFile(file, 'alpha\nbeta\nbeta\n', 'utf8')
-    await readFileTool.execute({ filePath: 'a.txt' }, ctx)
 
     const result = await multiEditTool.execute({
       filePath: 'a.txt',
@@ -512,12 +515,16 @@ test('readFile evicts read tracking and read state together', async () => {
     assert.equal(ctx.readFileState.has(firstFile), false)
     assert.equal(ctx.readFiles.has(firstFile), false)
     assert.equal(ctx.readFileState.size, 100)
+
+    const edited = await editFileTool.execute({ filePath: 'first.txt', oldString: 'first', newString: 'FIRST' }, ctx)
+    assert.equal(edited.ok, true, edited.content)
+    assert.equal(await readFile(firstFile, 'utf8'), 'FIRST\n')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
 })
 
-test('editFile reports missing read state separately from unread files', async () => {
+test('writeFile reports missing read state separately from unread files', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
@@ -525,7 +532,7 @@ test('editFile reports missing read state separately from unread files', async (
     await writeFile(file, 'hello\n', 'utf8')
     ctx.readFiles.add(file)
 
-    const result = await editFileTool.execute({ filePath: 'a.txt', oldString: 'hello', newString: 'hi' }, ctx)
+    const result = await writeFileTool.execute({ filePath: 'a.txt', content: 'hi\n' }, ctx)
 
     assert.equal(result.ok, false)
     assert.equal(result.errorCode, 'precondition_failed')
@@ -554,7 +561,7 @@ test('readFile refreshes recency timestamp on repeated reads', async () => {
   }
 })
 
-test('editFile refuses files replaced after read even when size matches', async () => {
+test('editFile matches the current content of a file replaced after Read', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
@@ -565,11 +572,10 @@ test('editFile refuses files replaced after read even when size matches', async 
     await writeFile(replacement, 'bravo\n', 'utf8')
     await rename(replacement, file)
 
-    const stale = await editFileTool.execute({ filePath: 'a.txt', oldString: 'bravo', newString: 'charl' }, ctx)
-    assert.equal(stale.ok, false)
-    assert.equal(stale.errorCode, 'stale_file')
-    assert.match(stale.content, /changed since it was last read/)
-    assert.equal((stale.errorDetails as { current?: { size?: number } }).current?.size, 6)
+    const edited = await editFileTool.execute({ filePath: 'a.txt', oldString: 'bravo', newString: 'charl' }, ctx)
+    assert.equal(edited.ok, true, edited.content)
+    assert.match(edited.content, /other changes were preserved/)
+    assert.equal(await readFile(file, 'utf8'), 'charl\n')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -611,9 +617,9 @@ test('rememberShownFiles counts only files shown whole and unchanged as read', a
     ].join('\n\n'), ctx)
 
     assert.equal(ctx.readFileState.get(whole)?.shownInContext, true, 'compaction must not restore a file the reminder already shows')
-    const edited = await editFileTool.execute({ filePath: whole, oldString: '- one', newString: '- two' }, ctx)
+    const edited = await writeFileTool.execute({ filePath: whole, content: '# Rules\n\n- two\n' }, ctx)
     assert.equal(edited.ok, true, edited.content)
-    const refused = await editFileTool.execute({ filePath: cut, oldString: '- a', newString: '- c' }, ctx)
+    const refused = await writeFileTool.execute({ filePath: cut, content: '- c\n' }, ctx)
     assert.equal(refused.ok, false)
     assert.match(refused.content, /must be read first/)
   } finally {
@@ -644,35 +650,75 @@ test('editFile points a missed oldString at the most similar lines', async () =>
   }
 })
 
-test('editFile refuses stale files until they are read again', async () => {
+test('editFile preserves changes outside the matched text without another Read', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'a.txt')
-    await writeFile(file, 'hello\n', 'utf8')
+    await writeFile(file, 'hello\nold tail\n', 'utf8')
     await readFileTool.execute({ filePath: 'a.txt' }, ctx)
-    await writeFile(file, 'hello world\n', 'utf8')
+    await writeFile(file, 'hello\nnew tail\n', 'utf8')
 
-    const stale = await editFileTool.execute({ filePath: 'a.txt', oldString: 'world', newString: 'there' }, ctx)
-    assert.equal(stale.ok, false)
-    assert.equal(stale.errorCode, 'stale_file')
-    assert.match(stale.content, /changed since it was last read/)
-
-    await readFileTool.execute({ filePath: 'a.txt' }, ctx)
-    const result = await editFileTool.execute({ filePath: 'a.txt', oldString: 'world', newString: 'there' }, ctx)
-    assert.equal(result.ok, true)
+    const result = await editFileTool.execute({ filePath: 'a.txt', oldString: 'hello', newString: 'hi' }, ctx)
+    assert.equal(result.ok, true, result.content)
+    assert.match(result.content, /other changes were preserved/)
     assert.equal(result.metadata?.display?.summary, 'Edited a.txt')
     assert.equal(
       result.metadata?.display?.detail,
       [
         `--- a/${path.join(await realpath(dir), 'a.txt')}`,
         `+++ b/${path.join(await realpath(dir), 'a.txt')}`,
-        '@@ -1,1 +1,1 @@',
-        '-hello world',
-        '+hello there',
+        '@@ -1,2 +1,2 @@',
+        '-hello',
+        '+hi',
+        ' new tail',
       ].join('\n'),
     )
-    assert.equal(await readFile(file, 'utf8'), 'hello there\n')
+    assert.equal(await readFile(file, 'utf8'), 'hi\nnew tail\n')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('string edits refuse changed targets and leave the current file untouched', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  try {
+    for (const tool of [editFileTool, multiEditTool]) {
+      const ctx = context(dir)
+      const file = path.join(dir, 'a.txt')
+      await writeFile(file, 'hello\n', 'utf8')
+      await readFileTool.execute({ filePath: 'a.txt' }, ctx)
+      await writeFile(file, 'goodbye\n', 'utf8')
+
+      const replacement = { oldString: 'hello', newString: 'hi' }
+      const result = await tool.execute(tool.name === 'Edit'
+        ? { filePath: 'a.txt', ...replacement }
+        : { filePath: 'a.txt', edits: [replacement] }, ctx)
+      assert.equal(result.ok, false, tool.name)
+      assert.match(result.content, /String to replace not found in file/)
+      assert.equal(await readFile(file, 'utf8'), 'goodbye\n')
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('multiEdit preserves unrelated changes since the previous Read', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  try {
+    const ctx = context(dir)
+    const file = path.join(dir, 'a.txt')
+    await writeFile(file, 'alpha\nbeta\nold tail\n', 'utf8')
+    await readFileTool.execute({ filePath: 'a.txt' }, ctx)
+    await writeFile(file, 'alpha\nbeta\nnew tail\n', 'utf8')
+
+    const result = await multiEditTool.execute({ filePath: 'a.txt', edits: [
+      { oldString: 'alpha', newString: 'ALPHA' },
+      { oldString: 'beta', newString: 'BETA' },
+    ] }, ctx)
+    assert.equal(result.ok, true, result.content)
+    assert.match(result.content, /other changes were preserved/)
+    assert.equal(await readFile(file, 'utf8'), 'ALPHA\nBETA\nnew tail\n')
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

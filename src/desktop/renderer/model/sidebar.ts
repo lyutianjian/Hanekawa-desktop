@@ -204,6 +204,15 @@ export function sidebarContentMounted(phase: SidebarCollapsePhase): boolean {
   return phase !== 'collapsed'
 }
 
+/**
+ * How many sessions one workspace lists before the rest fold behind a 展开 row.
+ *
+ * A workspace with a long history would otherwise fill the rail on its own and
+ * push every other project off screen. The cut keeps the newest, so what stays
+ * is what the user was just working on.
+ */
+export const SIDEBAR_GROUP_ROW_LIMIT = 5
+
 /** One workspace's sessions, under its own heading. */
 export interface SidebarGroup {
   readonly projectRoot: string
@@ -239,8 +248,16 @@ export interface SidebarGroup {
    * row is a cursor the user cannot see.
    */
   readonly collapsed: boolean
-  /** The group's sessions, newest first. Populated even while collapsed. */
+  /**
+   * The group's sessions as an open group draws them, newest first: all of them,
+   * or the newest {@link SIDEBAR_GROUP_ROW_LIMIT} plus every session that is
+   * open. Populated even while collapsed.
+   */
   readonly rows: readonly SidebarRow[]
+  /** Sessions the limit keeps off the list; zero while every one of them is drawn. */
+  readonly hidden: number
+  /** The limit is lifted: the group shows every session it holds. */
+  readonly expanded: boolean
 }
 
 /** The rows a group shows: all of them, or only the session on screen while folded shut. */
@@ -418,6 +435,15 @@ export interface SidebarState {
    * look like its sessions were gone.
    */
   readonly collapsedProjects: ReadonlySet<string>
+  /**
+   * The workspaces showing every session rather than the newest few.
+   *
+   * Renderer-local and not persisted, for the reason `collapsedProjects` is not:
+   * it is a view the user is standing in, and a rail that came back with every
+   * project's whole history unfolded after a restart would undo the limit for
+   * the rest of the session.
+   */
+  readonly expandedProjects: ReadonlySet<string>
   /** Whether the footer's `?` panel is open. */
   readonly helpOpen: boolean
   /**
@@ -457,6 +483,7 @@ export function createSidebarState(overrides: Partial<SidebarState> = {}): Sideb
     canCreate: true,
     searchQuery: '',
     collapsedProjects: new Set(),
+    expandedProjects: new Set(),
     helpOpen: false,
     recentOnly: false,
     projectsOpen: false,
@@ -642,6 +669,8 @@ export function sidebarView(state: SidebarState): SidebarView {
         // be unanswerable, so both read on the same filtered set the view draws.
         menuOpen: state.projectMenu === projectRoot,
         confirmingRemove: state.pendingRemoveProject === projectRoot,
+        expanded: state.expandedProjects.has(projectRoot),
+        searching,
       }),
     )
 
@@ -785,6 +814,20 @@ function rowFor(
 }
 
 /**
+ * The newest few of a group's sessions, plus every session that is open.
+ *
+ * An open session is never cut away. The rail is the only way back to it, and a
+ * pane whose row vanished because five newer sessions exist would be unreachable
+ * by mouse and by `Ctrl+1`–`9` alike. The one on screen is open by definition,
+ * so the active mark survives the cut with it.
+ */
+function cappedRows(rows: readonly SidebarRow[]): readonly SidebarRow[] {
+  if (rows.length <= SIDEBAR_GROUP_ROW_LIMIT) return rows
+  const kept = new Set(rows.slice(0, SIDEBAR_GROUP_ROW_LIMIT))
+  return rows.filter((row) => kept.has(row) || row.lane !== undefined)
+}
+
+/**
  * One workspace's group: its rows, newest first.
  *
  * Sorted here rather than trusted, because two sources feed the list —
@@ -803,8 +846,14 @@ function groupOf(
     active: boolean
     menuOpen: boolean
     confirmingRemove: boolean
+    expanded: boolean
+    searching: boolean
   },
 ): SidebarGroup {
+  const sorted = [...rows].sort((left, right) => touchedAt(right.updatedAt) - touchedAt(left.updatedAt))
+  // A search lifts the limit as well as the fold: it is the way back to an old
+  // session, and a match behind the cut would read as "no such session".
+  const shown = options.expanded || options.searching ? sorted : cappedRows(sorted)
   return {
     projectRoot,
     projectName,
@@ -813,7 +862,9 @@ function groupOf(
     menuOpen: options.menuOpen,
     confirmingRemove: options.confirmingRemove,
     collapsed: options.collapsed,
-    rows: [...rows].sort((left, right) => touchedAt(right.updatedAt) - touchedAt(left.updatedAt)),
+    rows: shown,
+    hidden: sorted.length - shown.length,
+    expanded: options.expanded,
   }
 }
 
@@ -846,6 +897,8 @@ export type SidebarIntent =
   | { kind: 'search'; query: string }
   /** Fold one workspace's group shut, or open it again. */
   | { kind: 'toggle-project'; projectRoot: string }
+  /** Show every session a workspace holds, or fold it back to the newest few. */
+  | { kind: 'toggle-project-expanded'; projectRoot: string }
   /** Open a heading's context menu, or close whatever is open (`undefined`). */
   | { kind: 'open-project-menu'; projectRoot: string | undefined }
   /** Ask the heading "remove from the sidebar?" — the menu item's answer. */
@@ -1088,7 +1141,11 @@ export function sidebarRenderSignature(view: SidebarView): string {
     // brand-new session gets, and it arrives without any row changing.
     parts.push(
       `g:${group.projectRoot}${group.projectName}${group.collapsed ? '1' : '0'}${group.isGlobal ? 'g' : '-'}`
-        + `${group.menuOpen ? 'm' : '-'}${group.confirmingRemove ? 'r' : '-'}${group.rows.length}${group.active ? 'a' : '-'}`,
+        + `${group.menuOpen ? 'm' : '-'}${group.confirmingRemove ? 'r' : '-'}${group.rows.length}${group.active ? 'a' : '-'}`
+        // The cut's own two fields: a session arriving at the top of a group that
+        // already lists the limit changes neither the heading nor a drawn row,
+        // and the expander beneath them has to appear without one.
+        + `${group.expanded ? 'x' : '-'}${group.hidden}`,
     )
     for (const row of visibleGroupRows(group)) {
       parts.push(

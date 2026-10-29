@@ -305,6 +305,18 @@ test('closing its own pane resolves even though the close takes the channel with
   harness.client.dispose()
 })
 
+test('conditional pane eviction returns the host decision', async () => {
+  const harness = createHarness()
+  const closing = harness.client.closePane('s1', { onlyIfIdle: true })
+  await settle()
+  const command = harness.sent.at(-1)
+  assert.ok(command?.type === 'close-pane')
+  assert.equal(command.onlyIfIdle, true)
+  harness.post({ type: 'reply', id: command.id, result: { ok: false } })
+  assert.equal(await closing, false)
+  harness.client.dispose()
+})
+
 test('the two rewind commands unwrap to the records the host wrote', async () => {
   const harness = createHarness()
 

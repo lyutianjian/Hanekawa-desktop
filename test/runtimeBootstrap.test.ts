@@ -12,7 +12,7 @@ import type { ModelRequest, SessionRecord, Tool } from '../src/harness/types.js'
 import type { McpServerConfig } from '../src/services/mcp/index.js'
 import { createSessionPane, SessionWorkspace } from '../src/runtime/sessionWorkspace.js'
 import { refreshRuntimeSlot } from '../src/runtime/providerRuntime.js'
-import { localSettingsPath } from '../src/config/settings.js'
+import { localSettingsPath, saveEffortLevel } from '../src/config/settings.js'
 import { resolveContextWindow, withPricing } from '../src/runtime/createRuntime.js'
 import { writeUserInstructions } from '../src/services/context/projectContext.js'
 import type { AgentLoopOptions } from '../src/harness/loop.js'
@@ -595,6 +595,23 @@ test('initialModelKey follows a default model changed after startup', async () =
   host.config.removeModel('main')
   assert.equal(host.initialModelKey, undefined)
 
+  await host.shutdown('test over')
+})
+
+test('a new session starts on the effort last picked, not the one this process booted with', async () => {
+  const { cwd, store, session } = await createProject()
+  const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
+  assert.equal(host.initialEffort, 'high')
+
+  // What `/effort` writes from anywhere — the user layer is the only place a
+  // last-pick-wins preference lands. No reload, no restart: opening the next
+  // session is what re-reads the file.
+  await saveEffortLevel('low')
+
+  const fresh = await host.openScope(await store.create('second session'))
+  const pane = createSessionPane(host, fresh)
+  assert.equal(pane.runtimeSlot.getEffort(), 'low')
+  pane.close()
   await host.shutdown('test over')
 })
 

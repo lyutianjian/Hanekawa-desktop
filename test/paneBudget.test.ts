@@ -20,6 +20,7 @@ function entry(lane: string, overrides: Partial<PaneBudgetEntry> = {}): PaneBudg
     lane,
     active: false,
     streaming: false,
+    pending: false,
     blocked: false,
     processes: false,
     tabs: false,
@@ -127,6 +128,7 @@ test('isPinned is the one place the exemption is spelled', () => {
   assert.equal(isPinned(entry('1')), false)
   assert.equal(isPinned(entry('1', { active: true })), true)
   assert.equal(isPinned(entry('1', { streaming: true })), true)
+  assert.equal(isPinned(entry('1', { pending: true })), true)
   assert.equal(isPinned(entry('1', { blocked: true })), true)
   assert.equal(isPinned(entry('1', { processes: true })), true)
   assert.equal(isPinned(entry('1', { tabs: true })), true)
@@ -144,6 +146,16 @@ test('an idle, inactive, oldest coordinator is never evicted', () => {
   ]
   assert.deepEqual(selectEvictions({ entries, limit: 2 }), ['2', '3', '4'])
   assert.deepEqual(selectEvictions({ entries, limit: 0 }), ['2', '3', '4'])
+})
+
+test('threads loading or waiting for their first turn survive a batch larger than the pane budget', () => {
+  const entries = [
+    entry('1', { coordinator: true }),
+    ...Array.from({ length: 6 }, (_, i) => entry(String(i + 2), { pending: true })),
+  ]
+  assert.deepEqual(selectEvictions({ entries, limit: DEFAULT_PANE_LIMIT }), [])
+  entries[4] = entry('5')
+  assert.deepEqual(selectEvictions({ entries, limit: DEFAULT_PANE_LIMIT }), ['5'])
 })
 
 test('an idle thread is still evictable', () => {

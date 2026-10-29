@@ -85,11 +85,22 @@ export function activateModelKey(deps: ModelSwitchDeps, modelKey: string): SetMo
 /**
  * `activateModelKey` plus the write-back that makes the choice stick.
  *
+ * The pick is a global preference: the next session in *any* project starts on
+ * it. Two writes buy that. `defaultModel` is where a new session looks by
+ * default, and a `routing.main` naming some other model outranks it — so the
+ * role is released back to `inherit` when it would keep winning, which is
+ * exactly what the settings screen's 「默认模型」 control does. Without it,
+ * picking a model here would change the live session and nothing else.
+ *
  * The config save is fire-and-forget on purpose: the switch has already taken
  * effect in the live slot, and failing to persist a preference must not read as
  * a failed switch.
+ *
+ * `persist` is false for a coordination lane, whose model is its own
+ * `modelOverride`: remembering that pick would retarget every project's next
+ * main session.
  */
-export function switchModel(deps: ModelSwitchDeps, input: string): SetModelResult {
+export function switchModel(deps: ModelSwitchDeps, input: string, persist = true): SetModelResult {
   const modelKey = deps.config.resolveModelInput(input)
   if (!modelKey) {
     return {
@@ -101,8 +112,12 @@ export function switchModel(deps: ModelSwitchDeps, input: string): SetModelResul
     }
   }
   const result = activateModelKey(deps, modelKey)
-  if (result.ok) {
+  if (result.ok && persist) {
     deps.config.setDefaultModel(modelKey)
+    const routing = deps.config.getRouting()
+    if (routing.main !== undefined && routing.main !== 'inherit' && routing.main !== modelKey) {
+      deps.config.setRouting({ ...routing, main: 'inherit' })
+    }
     void deps.config.save().catch(() => {})
   }
   return result

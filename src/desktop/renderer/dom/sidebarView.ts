@@ -13,7 +13,6 @@ import {
   newSessionIntent,
   sidebarContentMounted,
   sidebarRenderSignature,
-  visibleGroupRows,
   type SidebarCoordinationGroup,
   type SidebarGroup,
   type SidebarIntent,
@@ -33,7 +32,7 @@ import { createPresence, finishPresenceWithin, type Presence } from './presence.
 import { motionDelay, motionPolicy } from './motion.js'
 import { graphemes, revealDurationMs } from '../model/titleReveal.js'
 import { pinGraphemes, revealText } from './titleReveal.js'
-import { button, textField } from './controls.js'
+import { button, nameButton, textField } from './controls.js'
 import { dismissable } from './dismiss.js'
 import { focusByKey, followPointer, heldFocusKey, rovingFocus } from './focus.js'
 import { icon } from './icons.js'
@@ -259,18 +258,18 @@ export function createSidebarView(
    * The reason this map exists at all: `render()` rebuilds the list wholesale,
    * and a node that is new every pass cannot transition — a freshly inserted
    * element starts at its final style. The group's fold is `grid-template-rows:
-   * 1fr → 0fr`, so the element it runs on has to outlive the repaint that
-   * changes it, which is the same rule the stylesheet's motion block states
-   * (`CLAUDE.md`: transitions only on nodes that survive their state change).
+   * 1fr → 0fr`, so the element it runs on has to outlive the repaint that changes
+   * it: a transition only ever moves a node that survived the change.
    *
    * An entrance `@keyframes` was the alternative and is not available here:
    * `sidebarRenderSignature` signs the badges, so a streaming answer repaints
    * this list continuously and the animation would replay on every flush.
    *
-   * `head` and `body` are the two halves that make the reuse cheap — the heading
+   * `head` and `rows` are the two halves that make the reuse cheap — the heading
    * row is rebuilt when what it shows changes (it carries the menu trigger, the
-   * confirmation and their listeners), while `body`/`rows` are never detached,
-   * because detaching is exactly what cancels a running transition.
+   * confirmation and their listeners), while `rows` and the slots inside it are
+   * never detached, because detaching is exactly what cancels a running
+   * transition.
    */
   interface GroupNodes {
     readonly wrapper: HTMLElement
@@ -297,46 +296,29 @@ export function createSidebarView(
     readonly menuPresence: Presence
     /** The open state the menu was last drawn in, so its item is built once. */
     menuShown: boolean
-    /** The animated track. `rows` is its single, shrinkable child. */
-    readonly body: HTMLElement
     readonly rows: HTMLElement
-    /** Below the track: a folded group's session on screen, which stays visible. */
-    readonly kept: HTMLElement
-    /** The fold state this group was last drawn in. */
-    shut: boolean
-    /** The fold finished moving, so the rows are gone from the DOM. */
-    settled: boolean
-    timer?: ReturnType<typeof setTimeout>
+    /**
+     * One `.session-slot` per drawn child, by key.
+     *
+     * The fold runs on these rather than on the list: a folded group still shows
+     * the session on screen, and one track cannot fold some of its rows and not
+     * the others. Keeping them is what lets a row fold *in place* — moved into a
+     * second container it would jump, and rebuilt it would appear already folded,
+     * which is a snap rather than an animation.
+     */
+    readonly slots: Map<string, HTMLElement>
+    /** The slots this paint drew, so the ones that lost their child can go. */
+    readonly liveSlots: Set<string>
+    /**
+     * The 展开/收起 row, kept across repaints like the menu and for the same
+     * reason: this list repaints per streamed message, and a button rebuilt
+     * under a press loses the click that started on it.
+     */
+    readonly expand: HTMLButtonElement
+    /** The face the expander was last built with; its label changes with the cut. */
+    expandFace?: string
   }
   const groupNodes = new Map<string, GroupNodes>()
-
-  /**
-   * The fold arrived. Unmounting waits for this rather than for the click, for
-   * the reason the rail's phase is four states and not a boolean: rows taken out
-   * on the click would leave the fold animating an empty box.
-   */
-  const settleGroup = (entry: GroupNodes): void => {
-    if (entry.timer !== undefined) {
-      clearTimeout(entry.timer)
-      entry.timer = undefined
-    }
-    if (!entry.shut || entry.settled) return
-    entry.settled = true
-    replace(entry.rows)
-  }
-
-  /** Arms the fallback for one group's move, cancelling the one it supersedes. */
-  const startGroupMove = (entry: GroupNodes): void => {
-    if (entry.timer !== undefined) clearTimeout(entry.timer)
-    // The rail's constant, reused deliberately: it is an upper bound (the group
-    // folds at `--motion-disclosure`, the rail at `--motion-layout`) and it is the one
-    // already pinned against the tokens. A `transitionend` that does arrive
-    // disarms it long before it fires.
-    entry.timer = setTimeout(() => {
-      entry.timer = undefined
-      settleGroup(entry)
-    }, motionDelay(SIDEBAR_COLLAPSE_FALLBACK_MS))
-  }
 
   const ensureGroupNodes = (group: SidebarGroup): GroupNodes => {
     const existing = groupNodes.get(group.projectRoot)
@@ -346,10 +328,12 @@ export function createSidebarView(
     const menu = el('div', 'project-menu')
     menu.setAttribute('role', 'menu')
     menu.hidden = true
-    const body = el('div', 'project-body')
     const rows = el('div', 'project-rows')
-    body.appendChild(rows)
-    const kept = el('div', 'project-rows')
+    // The entry is keyed by project root, so the root this button toggles cannot
+    // drift from the group it is drawn under.
+    const expand = button('project-expand', '', '', () =>
+      onIntent({ kind: 'toggle-project-expanded', projectRoot: group.projectRoot }))
+    expand.dataset.focusKey = `x:${group.projectRoot}`
     wrapper.appendChild(head)
     // Anchored to `head` by the stylesheet and out of the flow, so opening it
     // does not move the rows beneath.
@@ -357,31 +341,49 @@ export function createSidebarView(
     menu.addEventListener('keydown', (event) =>
       rovingFocus(event, Array.from(menu.children) as HTMLElement[], true, () => {}))
     followPointer(menu, '.project-menu-item')
-    wrapper.appendChild(body)
-    wrapper.appendChild(kept)
-    // A group first drawn shut has nothing to animate out and no rows to keep:
-    // it starts settled, so the first paint is a heading and nothing else.
+    wrapper.appendChild(rows)
     const entry: GroupNodes = {
       wrapper,
       head,
       menu,
       menuPresence: createPresence(menu, { direction: 'drop', onClosed: () => replace(menu) }),
       menuShown: false,
-      body,
       rows,
-      kept,
-      shut: group.collapsed,
-      settled: group.collapsed,
+      slots: new Map(),
+      liveSlots: new Set(),
+      expand,
     }
-    body.addEventListener('transitionend', (event) => {
-      // The rows inside transition too (hover colours, the active bar), and
-      // every one of those bubbles through here.
-      if (event.target !== body) return
-      if (event.propertyName !== 'grid-template-rows') return
-      settleGroup(entry)
-    })
     groupNodes.set(group.projectRoot, entry)
     return entry
+  }
+
+  /**
+   * One child of the rows list, inside the slot whose height folds.
+   *
+   * Every child goes through here — a session row, the 展开 row, the empty text —
+   * because they all have to fold, and because the slot is the node that has to
+   * survive the repaint for the fold to be a transition at all. `inert` is what
+   * keeps a folded row out of the tab order; unmounting it was the old answer,
+   * and it is the reason a folded row could not unfold.
+   *
+   * The child sits in a `.session-clip` rather than directly in the slot: the
+   * track can only reach zero if its item has nothing to keep, and a row's own
+   * padding and margin are nothing `min-height` can take away.
+   */
+  const slotInto = (entry: GroupNodes, key: string, child: HTMLElement, folded: boolean): HTMLElement => {
+    let slot = entry.slots.get(key)
+    if (slot === undefined) {
+      slot = el('div', 'session-slot')
+      replace(slot, el('div', 'session-clip'))
+      entry.slots.set(key, slot)
+    }
+    entry.liveSlots.add(key)
+    const clip = slot.firstElementChild as HTMLElement
+    if (clip.firstChild !== child) replace(clip, child)
+    slot.classList.toggle('folded', folded)
+    if (folded) slot.setAttribute('inert', '')
+    else slot.removeAttribute('inert')
+    return slot
   }
 
   // The same three withdrawals the `focusout` below makes, on the press that
@@ -442,7 +444,6 @@ export function createSidebarView(
 
   const buildRow = (
     row: SidebarRow,
-    index: number,
     selected: boolean,
     trailing?: HTMLElement,
     /** What the row's delete removes, when that is not simply "this session". */
@@ -459,7 +460,6 @@ export function createSidebarView(
     const node = el('div', classes.join(' '))
     if (row.opening || row.badge === 'running') node.setAttribute('aria-busy', 'true')
     node.dataset.sessionId = row.sessionId
-    node.dataset.index = String(index)
     node.id = sessionRowId(row.sessionId)
     node.setAttribute('role', 'option')
     node.setAttribute('aria-selected', String(row.active))
@@ -620,14 +620,13 @@ export function createSidebarView(
 
   const rowNode = (
     row: SidebarRow,
-    index: number,
     selected: boolean,
     trailing?: HTMLElement,
     deleteTarget?: string,
   ): HTMLElement => {
     const signature = [
       row.projectRoot, row.sessionId, row.lane ?? '', row.badge, row.active, row.confirmingDelete, row.opening,
-      row.title, row.messageCount, row.roleMarker ?? '', index, selected, deleteTarget ?? '', trailing?.textContent ?? '',
+      row.title, row.messageCount, row.roleMarker ?? '', selected, deleteTarget ?? '', trailing?.textContent ?? '',
     ].join('\u0000')
     rowsDrawn.add(row.sessionId)
     const kept = keptRows.get(row.sessionId)
@@ -645,7 +644,7 @@ export function createSidebarView(
       if (motionPolicy().settleImmediately) reveals.delete(row.sessionId)
       else reveals.set(row.sessionId, performance.now())
     }
-    const built = buildRow(row, index, selected, trailing, deleteTarget)
+    const built = buildRow(row, selected, trailing, deleteTarget)
     keptRows.set(row.sessionId, { signature, title: row.title, titlePending: row.titlePending, ...built })
     if (selected) cursorRow = built.node
     animatedRows.push(built.node)
@@ -664,7 +663,6 @@ export function createSidebarView(
       const index = indexOf(entry.coordinator)
       return rowNode(
         { ...entry.coordinator, title: entry.projectName },
-        index,
         index >= 0 && index === selectedIndex,
         trailing,
         `项目「${entry.projectName}」的协调会话及其全部线程`,
@@ -674,6 +672,30 @@ export function createSidebarView(
       onIntent({ kind: 'open-coordinator', projectRoot: entry.projectRoot }))
     if (trailing) open.appendChild(trailing)
     return el('div', 'session-row', open)
+  }
+
+  /**
+   * The row under a capped workspace's sessions: 展开其余 N 个会话, or 收起.
+   *
+   * A row of its own rather than a control on the heading, because the two folds
+   * answer different questions — the heading hides the whole project, this shows
+   * the older half of it — and one control for both would make the pointer tell
+   * them apart by position alone.
+   */
+  const expandRow = (entry: GroupNodes, group: SidebarGroup): HTMLElement => {
+    const face = `${group.expanded ? 'up' : 'down'}${group.hidden}`
+    if (entry.expandFace !== face) {
+      entry.expandFace = face
+      const label = group.expanded ? '收起' : `展开其余 ${group.hidden} 个会话`
+      replace(entry.expand, el('span', 'btn-label', label), icon(group.expanded ? 'chevron-up' : 'chevron-down'))
+      nameButton(
+        entry.expand,
+        label,
+        group.expanded ? `收起 ${group.projectName} 的旧会话` : `展开 ${group.projectName} 的全部会话`,
+      )
+      entry.expand.setAttribute('aria-expanded', String(group.expanded))
+    }
+    return entry.expand
   }
 
   /**
@@ -703,11 +725,6 @@ export function createSidebarView(
     canCreate: boolean,
   ): HTMLElement => {
     const entry = ensureGroupNodes(group)
-    if (group.collapsed !== entry.shut) {
-      entry.shut = group.collapsed
-      entry.settled = false
-      startGroupMove(entry)
-    }
     // Rebuilt only when what it shows moves, like the session rows: a streaming
     // turn repaints the rail per message, and a heading replaced under the pointer
     // loses the press that started on it. The menu does not appear here — it is a
@@ -824,32 +841,34 @@ export function createSidebarView(
       entry.focusMenu = false
     }
 
-    // The class the fold transitions on, toggled on the surviving wrapper.
+    // The class the fold reads. Every row folds on its own; the one on screen is
+    // left standing, so a shut group still says which session it is holding.
     entry.wrapper.classList.toggle('collapsed', group.collapsed)
 
-    const rowNodes = (rows: readonly SidebarRow[]): HTMLElement[] => rows.map((row) => {
+    entry.liveSlots.clear()
+    // A folded group's rows are already out of `view.rows`, so `indexOf` answers
+    // -1 for them — which must not read as the "no cursor" index and paint every
+    // folded row as the cursor.
+    const isCursor = (row: SidebarRow): boolean => {
       const index = indexOf(row)
-      return rowNode(row, index, index >= 0 && index === selectedIndex)
-    })
-    // The session on screen leaves the track while it folds, so no row is drawn twice.
-    reconcile(entry.kept, group.collapsed ? rowNodes(visibleGroupRows(group)) : [])
-
-    if (entry.shut && entry.settled) {
-      // Rest: the fold is over and the rows are not merely hidden but gone, so
-      // no button behind a shut heading can be reached with Tab.
-      replace(entry.rows)
-      return entry.wrapper
+      return index >= 0 && index === selectedIndex
     }
-    // Still moving (or open): the rows have to be in the DOM for the track to
-    // have a height to travel to. A collapsing group's rows are already out of
-    // `view.rows`, so `indexOf` answers -1 for them — which must not read as the
-    // "no cursor" index and paint every one of them selected.
-    const children = rowNodes(group.collapsed ? group.rows.filter((row) => !row.active) : group.rows)
+    const children = group.rows.map((row) => slotInto(
+      entry,
+      `s:${row.sessionId}`,
+      rowNode(row, isCursor(row)),
+      group.collapsed && !row.active,
+    ))
     // A project kept for its own sake rather than for its sessions has to say
     // so; an empty group with nothing under the heading reads as a load that
     // has not finished.
-    if (group.rows.length === 0) children.push(el('div', 'project-empty', '还没有会话'))
+    if (group.rows.length === 0) {
+      children.push(slotInto(entry, 'empty', el('div', 'project-empty', '还没有会话'), group.collapsed))
+    } else if (group.hidden > 0 || group.expanded) {
+      children.push(slotInto(entry, 'expand', expandRow(entry, group), group.collapsed))
+    }
     reconcile(entry.rows, children)
+    for (const key of entry.slots.keys()) if (!entry.liveSlots.has(key)) entry.slots.delete(key)
     return entry.wrapper
   }
 
@@ -901,7 +920,6 @@ export function createSidebarView(
     finishMotion() {
       const moving = settleTimer !== undefined
       clearSettleTimer()
-      for (const entry of groupNodes.values()) settleGroup(entry)
       finishPresenceWithin(container)
       if (moving) onIntent({ kind: 'collapse-settled' })
     },
@@ -1044,13 +1062,11 @@ export function createSidebarView(
       reconcile(list, listChildren())
 
       // Workspaces that are no longer listed. Their nodes are detached by the
-      // `replace` above, but a pending fallback timer would still fire on them —
-      // and the map is what keeps a group's fold state across repaints, so it is
-      // also what would keep a removed project's state forever.
+      // `replace` above, and the map is what keeps a group's nodes across
+      // repaints — so it is also what would keep a removed project's forever.
       const listed = new Set(view.groups.map((group) => group.projectRoot))
       for (const [projectRoot, entry] of groupNodes) {
         if (listed.has(projectRoot)) continue
-        if (entry.timer !== undefined) clearTimeout(entry.timer)
         entry.menuPresence.dispose()
         groupNodes.delete(projectRoot)
       }

@@ -254,7 +254,7 @@ function formatBackgroundStartMessage(
   const header = {
     explicit: 'Shell started in background.',
     timeout: `Command was still running after ${blockedMs}ms and was moved to the background.`,
-    user: 'The user moved this command to the background.',
+    user: 'The user sent a message while this command was running, so it was moved to the background.',
   }[kind]
   return [
     header,
@@ -561,13 +561,10 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
           })
         })
       }, timeout)
-      if (context.currentToolUseId) {
-        unregisterForeground = backgroundTasks.registerForeground(
-          context.sessionId,
-          context.currentToolUseId,
-          () => promoteToBackground('user'),
-        )
-      }
+      unregisterForeground = backgroundTasks.registerForeground(
+        context.sessionId,
+        () => promoteToBackground('user'),
+      )
 
       if (context.abortSignal) {
         if (context.abortSignal.aborted) {

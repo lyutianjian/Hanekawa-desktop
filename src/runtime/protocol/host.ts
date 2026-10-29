@@ -3,9 +3,9 @@ import { readFile } from 'node:fs/promises'
 import path from 'node:path'
 import type { CommandContext, CommandDefinition } from '../../commands/types.js'
 import { VALID_EFFORT_LEVELS, type EffortLevel } from '../../config/effort.js'
-import { saveEffortLevel } from '../../config/settings.js'
+import { saveEffortLevel, saveStartupPermissionMode, type StartupPermissionMode } from '../../config/settings.js'
 import { resolveImageCapability } from '../../config/providers.js'
-import type { PermissionRequest } from '../../harness/permissions.js'
+import type { PermissionMode, PermissionRequest } from '../../harness/permissions.js'
 import type { RuntimeDiagnostic } from '../../harness/diagnostics.js'
 import type { MessageQueueRecord, SessionRecord } from '../../harness/types.js'
 import { getSubagentTranscriptPath, SidechainRecordStream } from '../../harness/sidechainRecordStream.js'
@@ -40,6 +40,7 @@ import { isSystemReminderBlock } from '../../harness/systemReminder.js'
 import { SessionRecordLedger } from '../recordLedger.js'
 import { buildRewindSummaryRewrite } from '../rewindSummary.js'
 import { generateFileSuggestions } from '../suggestions/fileSuggestions.js'
+import { parseSlashCommand } from '../suggestions/commandSuggestions.js'
 import { getToolActivityDescription, getToolDisplay } from '../../tools/display.js'
 import type { RuntimeSlot } from '../runtimeSlot.js'
 import type { SessionController, SessionEvent } from '../sessionController.js'
@@ -108,18 +109,24 @@ function isEffortLevel(value: string): value is EffortLevel {
   return (VALID_EFFORT_LEVELS as readonly string[]).includes(value)
 }
 
+/** The three modes a session can start in; `plan` and `readonly` are live states, not preferences. */
+function isStartupPermissionMode(value: PermissionMode): value is StartupPermissionMode {
+  return value === 'default' || value === 'auto' || value === 'bypass'
+}
+
 function assertNever(value: never): never {
   throw new Error(`Unhandled host command: ${JSON.stringify(value)}`)
 }
 
 /**
- * Four fields, copied one at a time. A spread would put `run` and `isEnabled` on
+ * Metadata copied one field at a time. A spread would put `run` and `isEnabled` on
  * the wire; see `WireCommandInfo`.
  */
-function toWireCommandInfo(command: CommandDefinition): WireCommandInfo {
+function toWireCommandInfo(command: CommandDefinition, isSkill: boolean): WireCommandInfo {
   const info: WireCommandInfo = { name: command.name, description: command.description }
   if (command.aliases !== undefined) info.aliases = [...command.aliases]
   if (command.argumentHint !== undefined) info.argumentHint = command.argumentHint
+  if (isSkill) info.isSkill = true
   return info
 }
 
@@ -955,7 +962,8 @@ export class SessionHost implements CoordinationLaneControl {
 
       case 'list-commands':
         // Already filtered for `isHidden`/`isEnabled` by the registry.
-        return { commands: this.project.commands.list().map(toWireCommandInfo) } satisfies WireCommandsResult
+        return { commands: this.project.commands.list().map((command) =>
+          toWireCommandInfo(command, this.project.commands.isSkill(command.name))) } satisfies WireCommandsResult
 
       case 'file-suggestions': {
         // Built field by field rather than forwarded: `createFileSuggestion` is
@@ -1096,6 +1104,17 @@ export class SessionHost implements CoordinationLaneControl {
           this.runtimeSlot.current?.planModeManager,
           command.mode,
         )
+        // Remembered globally for the sessions that follow: the pill and the
+        // settings screen's startup row are one preference. `plan` is a workflow
+        // state rather than a startup mode, and a coordination lane's mode is its
+        // own — persisted only when it is one of the three a session may start in.
+        if (!this.isCoordinationSession() && isStartupPermissionMode(applied)) {
+          try {
+            await saveStartupPermissionMode(applied)
+          } catch {
+            // Non-critical, and the live gate already took the change.
+          }
+        }
         this.postRuntimeSnapshot()
         return { mode: applied }
       }
@@ -1154,9 +1173,6 @@ export class SessionHost implements CoordinationLaneControl {
         return { ...(task ? { task } : {}) } satisfies WireTaskResult
       }
 
-      case 'background-tool-call':
-        return { ok: this.project.backgroundTasks.backgroundForeground(this.session.id, command.toolUseId) }
-
       case 'shutdown':
         await this.project.shutdown(command.reason)
         return { ok: true }
@@ -1193,6 +1209,10 @@ export class SessionHost implements CoordinationLaneControl {
           images.length > 0 ? { text: command.content, images } : { text: command.content },
           command.priority,
         )
+        // A turn blocked on a foreground tool cannot reach the step boundary
+        // this message would join. Releasing those calls lets it get there,
+        // and the loop steers the message in — no new prompt, no new turn.
+        this.project.backgroundTasks.promoteForeground(this.session.id)
         return { message } satisfies WireEnqueueResult
       }
 
@@ -1281,17 +1301,13 @@ export class SessionHost implements CoordinationLaneControl {
   /**
    * `useCommands.dispatch`, minus React.
    *
-   * The tolerance is copied deliberately: an unknown command and a command that
-   * threw both come back as `handled` with a `write-line` explaining why, because
-   * that is what the TUI does and a slash command failing is not a protocol
-   * failure. Only input that is not a slash command at all is unhandled.
+   * Unknown slash names remain ordinary messages. A registered command that
+   * throws is handled, with its error delivered as a command effect.
    */
   private async runSlashCommand(input: string): Promise<WireRunCommandResult> {
-    if (!input.startsWith('/')) return { handled: false }
-
-    const spaceIndex = input.indexOf(' ')
-    const name = spaceIndex >= 0 ? input.slice(1, spaceIndex) : input.slice(1)
-    const args = spaceIndex >= 0 ? input.slice(spaceIndex + 1).trim() : ''
+    const parsed = parseSlashCommand(input)
+    if (!parsed) return { handled: false }
+    const { name, args } = parsed
 
     // The shell owns its own teardown; it calls `shutdown` when it is ready.
     if (name === 'exit') return { handled: true, exit: true }
@@ -1305,14 +1321,7 @@ export class SessionHost implements CoordinationLaneControl {
       })
       return { handled: true }
     }
-    if (!command) {
-      this.emitCommandEffect({
-        kind: 'write-line',
-        text: `未知命令：/${name}。输入 /help 查看可用命令。`,
-        tone: 'error',
-      })
-      return { handled: true }
-    }
+    if (!command) return { handled: false }
 
     try {
       await command.run(args, this.commandContext())
@@ -1353,8 +1362,10 @@ export class SessionHost implements CoordinationLaneControl {
   // --- CoordinationLaneControl ------------------------------------------
 
   async enqueueFromCoordinator(text: string): Promise<void> {
+    if (this.disposed) throw new Error('会话已关闭，任务说明未送达。')
     // The queue subscription announces it and asks the pump; an idle lane sends it now.
     await this.messages.enqueue({ text }, 'next', { origin: 'coordinator' })
+    if (this.disposed) throw new Error('会话已关闭，任务说明未送达。')
   }
 
   /** Not gated on `hello`: a lane opened without a window still wakes. */
@@ -1705,6 +1716,19 @@ export class SessionHost implements CoordinationLaneControl {
   private handleClosePane(command: Extract<HostCommand, { type: 'close-pane' }>): WireClosePaneResult {
     const pane = this.workspace.list().find((candidate) => candidate.getSession().id === command.paneId)
     if (!pane) throw new Error(`Pane not found: ${command.paneId}`)
+    // Renderer snapshots can lag behind a kickoff enqueue or a turn starting.
+    if (command.onlyIfIdle && (
+      command.paneId !== this.session.id ||
+      this.controller.busyKind() !== undefined ||
+      this.pumping ||
+      this.queuePauseDepth > 0 ||
+      this.messages.isBusy() ||
+      this.messages.getSnapshot().length > 0 ||
+      this.pendingWake.length > 0 ||
+      this.pendingKinds.size > 0 ||
+      this.scope.role === 'coordinator' ||
+      this.project.backgroundTasks.getSnapshot(this.session.id).some((task) => task.status === 'running')
+    )) return { ok: false }
     this.workspace.close(pane)
     this.onPaneClosed(command.paneId)
     this.broadcastPaneList()

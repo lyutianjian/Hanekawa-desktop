@@ -136,3 +136,28 @@ test('a single-task TaskCreate call becomes a one-item batch, and a batch passes
   assert.equal(normalizeToolInput('TaskCreate', batch), batch)
   assert.deepEqual(normalizeToolInput('TaskCreate', { todos: batch.tasks }), batch)
 })
+
+test('WebSearch accepts the prior shapes: a bare query, provider-style names, and Codex command objects', () => {
+  assert.deepEqual(normalizeToolInput('WebSearch', { query: 'rust async' }), { queries: ['rust async'] })
+  assert.deepEqual(
+    normalizeToolInput('WebSearch', { query: 'rust async', allowed_domains: ['rust-lang.org'], blocked_domains: ['spam.test'] }),
+    { queries: ['rust async'], domains: ['rust-lang.org'], blockedDomains: ['spam.test'] },
+  )
+  assert.deepEqual(
+    normalizeToolInput('WebSearch', { search_query: [{ q: 'tokio release', recency: '30', domains: 'tokio.rs' }] }),
+    { queries: [{ q: 'tokio release', recencyDays: 30, domains: ['tokio.rs'] }] },
+  )
+  // The canonical shape passes through unchanged.
+  const canonical = { queries: [{ q: 'a', recencyDays: 7 }], domains: ['a.test'], maxResults: 3 }
+  assert.deepEqual(normalizeToolInput('WebSearch', canonical), canonical)
+})
+
+test('WebFetch drops the summarizing `prompt` it cannot honour and keeps the rest', () => {
+  assert.deepEqual(normalizeToolInput('WebFetch', { url: 'https://example.com', prompt: 'Summarize the page' }), {
+    url: 'https://example.com',
+  })
+  assert.deepEqual(
+    normalizeToolInput('WebFetch', { url: 'https://example.com', offset: '120', pattern: ['a', 'b'] }),
+    { url: 'https://example.com', offset: 120, pattern: ['a', 'b'] },
+  )
+})

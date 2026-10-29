@@ -8,7 +8,7 @@ import {
   validateSettings,
   type MyAgentSettings,
 } from '../config/settings.js'
-import { clampEffort } from '../config/effort.js'
+import { clampEffort, type EffortLevel, type EffortValue } from '../config/effort.js'
 import { permissionRulesFromSettings } from '../harness/permissions.js'
 import type { RuntimeDiagnostic } from '../harness/diagnostics.js'
 import { getAllTools } from '../tools/index.js'
@@ -122,7 +122,10 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
   // Mutable so `reloadSettings()` can replace it; `createRuntime` reads it
   // through a getter, so the next runtime built picks up the new contents.
   let settings = await loadMergedSettings(cwd)
-  const configuredEffortLevel = settings.effortLevel ?? 'high'
+  // Read live, like `initialModelKey` below: the effort level is a global
+  // last-pick-wins preference, and a session opened after a pick has to start on
+  // the level that pick left behind rather than the one this process booted with.
+  const configuredEffortLevel = (): EffortLevel => settings.effortLevel ?? 'high'
   // Report legacy repository config without importing an untrusted source.
   const migrationFindings = await migrateProjectConfig(cwd)
   const config = new ConfigService(cwd)
@@ -147,8 +150,6 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
   const resolveDefaultModelKey = (): string | undefined =>
     config.resolveModelKeyFor({ kind: 'main' }, { currentModelKey: config.get().defaultModel })
 
-  const startupModelKey = resolveDefaultModelKey()
-  const modelConfig = startupModelKey ? config.getModel(startupModelKey) : undefined
   const modelDiagnostics = [
     ...migrationFindings.map((message) => ({
       code: 'project_config_ignored',
@@ -163,7 +164,15 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
     ...checkLegacyModelTiers(config),
     ...checkOptionalModelReferences(config),
   ]
-  const clampedInitialEffort = clampEffort(configuredEffortLevel, modelConfig?.supportedEfforts)
+  /**
+   * The startup effort, clamped to the model a new session will actually open
+   * on. Both halves are read live: the level is a global last-pick-wins
+   * preference, and the default model can be switched from any session.
+   */
+  const initialEffort = (): EffortValue => {
+    const modelKey = resolveDefaultModelKey()
+    return clampEffort(configuredEffortLevel(), modelKey ? config.getModel(modelKey)?.supportedEfforts : undefined)
+  }
 
   // The shell's own tools go last so a name it injects wins over nothing —
   // there is no built-in to shadow, and a collision would be a bug in the
@@ -311,7 +320,11 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
     backgroundTasks,
     contextManagement,
     isGitRepo,
-    initialEffort: clampedInitialEffort,
+    // A getter, not a value: `createSessionScope` reads it once per new session,
+    // and those have to see the level on disk now, not at launch.
+    get initialEffort() {
+      return initialEffort()
+    },
     createActiveModelRuntime,
     imageAttachments: attachments,
     attachmentFacts: createAttachmentFactsResolver(attachments, cwd),
@@ -322,6 +335,21 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
   // `shutdown` has to release all of them.
   const scopes = new Set<SessionScope>()
   const openScope = async (target: SessionMeta): Promise<SessionScope> => {
+    // A new session starts from the settings as they are on disk now, not from
+    // the snapshot this project booted with. The default model, the effort level
+    // and the startup permission mode are global last-pick-wins preferences, so
+    // a pick made in another project has to reach this project's next session
+    // without an app restart. Open sessions are untouched either way: a scope
+    // captured these when it was built.
+    try {
+      await reloadSettings()
+    } catch (error) {
+      // Fail open. A settings layer someone is mid-edit on must not make New
+      // Session unreachable; the last good settings stay in force, and the
+      // screen that edits those files reports the same error where it can be
+      // fixed.
+      console.error(`[myagent] Warning: settings could not be reloaded for a new session: ${error instanceof Error ? error.message : String(error)}`)
+    }
     const created = await createSessionScope(scopeDeps, target)
     // Wrapped rather than handed a deregister callback: the scope has no reason
     // to know it is being tracked, and this keeps the set private to bootstrap.
@@ -356,8 +384,13 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
     get initialModelKey(): string | undefined {
       return resolveDefaultModelKey()
     },
-    initialEffort: typeof clampedInitialEffort === 'string' ? clampedInitialEffort : undefined,
-    configuredEffortLevel,
+    get initialEffort(): EffortLevel | undefined {
+      const value = initialEffort()
+      return typeof value === 'string' ? value : undefined
+    },
+    get configuredEffortLevel(): EffortLevel {
+      return configuredEffortLevel()
+    },
     createActiveModelRuntime,
     openScope,
     getSettings: () => settings,

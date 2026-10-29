@@ -143,6 +143,8 @@ export interface SessionControllerDeps {
   getSession: () => AgentSession
   /** Seam for tests; production backs up real files under `~/.myagent`. */
   createFileHistoryService?: (cwd: string, sessionId: string) => FileHistoryService
+  /** Seam for tests: how long the placeholder bar stands while the naming call is out. */
+  titlePlaceholderMs?: number
 }
 
 /** The machine code of an error or of what caused it: `insufficient_quota`, `ECONNREFUSED`. */
@@ -172,6 +174,13 @@ export interface SubagentActivity {
 const STREAMED_PUBLISH_STEP_TOKENS = 1_000
 
 /**
+ * How long the sidebar's placeholder bar stands for a name the model has not
+ * written yet. The first-message fallback is a name too, so past this it wins:
+ * a naming call that never answers must not leave the row nameless for good.
+ */
+const TITLE_PLACEHOLDER_MS = 15_000
+
+/**
  * The headless half of a chat session: turn lifecycle, token accounting,
  * file history, tool-progress correlation and interrupt rollback.
  *
@@ -189,6 +198,7 @@ export class SessionController {
   private session: SessionMeta
   /** The session whose model-written title is still being generated. */
   private titlePendingFor: string | undefined
+  private readonly titlePlaceholderMs: number
   private abortController: AbortController | null = null
   /** Most recent tool_use id per tool name, for matching the approval record that follows. */
   private readonly lastToolUseIdByTool = new Map<string, string>()
@@ -262,6 +272,7 @@ export class SessionController {
     this.newFileHistoryService = deps.createFileHistoryService
       ?? ((cwd, sessionId) => new FileHistoryService(cwd, sessionId))
     this.session = deps.session
+    this.titlePlaceholderMs = deps.titlePlaceholderMs ?? TITLE_PLACEHOLDER_MS
     this.ledger = new SessionRecordLedger(deps.existingRecords)
     this.taskSnapshot = findLatestTaskSnapshot(deps.existingRecords)
     this.snapshot = this.buildSnapshot()
@@ -1061,12 +1072,25 @@ export class SessionController {
   }
 
   /**
+   * Drops the placeholder bar, so the row shows the name it has — the
+   * first-message fallback — from this moment on.
+   */
+  private settleTitlePending(sessionId: string): void {
+    if (this.titlePendingFor !== sessionId) return
+    this.titlePendingFor = undefined
+    if (!this.disposed && this.session.id === sessionId) this.emit({ type: 'session-meta', session: this.session })
+  }
+
+  /**
    * Replaces the first-message fallback with a model-written name, in the
    * background. Only lands if the title is still the fallback — a rename the
    * user made meanwhile, or a session switch, wins. Failure keeps the fallback.
    */
   private async generateTitle(text: string, fallback: string): Promise<void> {
     const sessionId = this.session.id
+    // The bar gives up on its own, whether or not the call ever answers: an
+    // absent title must not be what holds the row nameless.
+    const placeholder = setTimeout(() => this.settleTitlePending(sessionId), this.titlePlaceholderMs)
     try {
       const generated = await generateSessionTitle({
         runtime: this.getSession().loop.getSideModel(),
@@ -1084,10 +1108,8 @@ export class SessionController {
     } catch {
       // Best-effort: the fallback title stays.
     } finally {
-      if (this.titlePendingFor === sessionId) {
-        this.titlePendingFor = undefined
-        if (!this.disposed && this.session.id === sessionId) this.emit({ type: 'session-meta', session: this.session })
-      }
+      clearTimeout(placeholder)
+      this.settleTitlePending(sessionId)
     }
   }
 

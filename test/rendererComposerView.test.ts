@@ -78,6 +78,7 @@ function runtime(overrides: Partial<WireReadyRuntimeSnapshot> = {}): WireReadyRu
 interface Rendered {
   readonly stub: DomStub
   readonly composer: ComposerView
+  readonly editor: HTMLElement
   /** The HTML group that puts the gauge beside, not inside, the runtime chip. */
   readonly runtimeShell: HTMLElement
   /** The bar the `+` lives in; its menu is drawn into it. */
@@ -143,6 +144,8 @@ function render(t: { after(fn: () => void): void }): Rendered {
     permissionShell: stub.createContainer(),
     attachStrip: stub.createContainer(),
   }
+  const editor = stub.createContainer()
+  editor.appendChild(els.input)
   els.permissionShell.appendChild(els.chipPermission)
   const attachShell = stub.createContainer()
   attachShell.appendChild(els.attach)
@@ -164,6 +167,7 @@ function render(t: { after(fn: () => void): void }): Rendered {
   const breakdownRequests: number[] = []
   const composer = createComposerView(
     {
+      editor,
       input: els.input as HTMLTextAreaElement,
       submit: els.submit as HTMLButtonElement,
       stop: els.stop as HTMLButtonElement,
@@ -208,6 +212,7 @@ function render(t: { after(fn: () => void): void }): Rendered {
   return {
     stub,
     composer,
+    editor,
     breakdownRequests,
     runtimeShell,
     attachShell,
@@ -232,6 +237,75 @@ function render(t: { after(fn: () => void): void }): Rendered {
       (flyout()?.children ?? []).filter((child) => child.classes.includes('chip-flyout-item')),
   }
 }
+
+test('matched commands and skills decorate the input while preserving its editable value', (t) => {
+  const r = render(t)
+  r.composer.setCommands([
+    { name: 'model', aliases: ['m'], description: 'Switch model' },
+    { name: 'template-creator', description: 'Create templates', isSkill: true },
+  ])
+  const highlight = () => r.stub.inspect(r.editor).children.find((child) => child.classes.includes('composer-highlight'))!
+  const token = () => highlight().children[0]!.children.find((child) => child.classes.includes('composer-command'))!
+
+  r.composer.setValue('/m sonnet', 9)
+  assert.equal(token().text, '/m')
+  assert.equal(highlight().text, '/m sonnet')
+  assert.equal(r.composer.value(), '/m sonnet')
+  assert.equal(r.composer.cursorPos(), 9)
+
+  r.composer.setValue('/template-creator 创建模板', 22)
+  assert.equal(token().text, 'template-creator')
+  assert.ok(token().children[0]!.classes.includes('composer-skill-icon'))
+  assert.equal(token().children[0]!.children[0]!.tagName, 'svg')
+  assert.equal(highlight().text, 'template-creator 创建模板')
+  assert.equal(r.composer.value(), '/template-creator 创建模板')
+  assert.equal(r.composer.cursorPos(), 22)
+  r.stub.click(r.els.attach)
+  r.stub.click(r.attachMenuItems()[1]!.node)
+  assert.equal(highlight().text, 'template-creator 创建模板 @', 'programmatic mention insertion refreshes the decoration')
+
+  input(r).value = '/unknown 保留原文'
+  r.stub.dispatch(r.els.input, 'input')
+  assert.equal(highlight().hidden, true)
+  assert.equal(r.view('input').classes.includes('decorated'), false)
+
+  r.composer.setValue('/template-creator 参数')
+  r.composer.setCommands([])
+  assert.equal(highlight().hidden, true, 'switching projects or removing a skill clears its decoration')
+  assert.equal(r.composer.value(), '/template-creator 参数')
+  r.composer.clear()
+  assert.equal(r.composer.value(), '')
+})
+
+test('restoring a draft and its commands measures the input height once', (t) => {
+  const r = render(t)
+  r.composer.setValue('/model sonnet', 13, [{ name: 'model', description: 'Switch model' }])
+  let heightReads = 0
+  let contentHeight = 360
+  Object.defineProperty(r.els.input, 'scrollHeight', {
+    get() { heightReads++; return contentHeight },
+  })
+  const draft = `/review ${'保留长草稿\n'.repeat(20)}`
+  r.composer.setValue(draft, 7, [{ name: 'review', description: 'Review code', isSkill: true }])
+
+  assert.equal(heightReads, 1)
+  assert.equal(r.els.input.style.height, '200px')
+  assert.equal(r.composer.value(), draft)
+  assert.equal(r.composer.cursorPos(), 7)
+  assert.deepEqual(r.view('submit').classes, ['ready'])
+  const highlight = () => r.stub.inspect(r.editor).children.find((child) => child.classes.includes('composer-highlight'))!
+  const token = highlight().children[0]!.children.find((child) => child.classes.includes('composer-command'))!
+  assert.equal(token.text, 'review')
+  assert.ok(token.children[0]!.classes.includes('composer-skill-icon'))
+
+  contentHeight = 40
+  r.composer.setValue('/review 参数', 7, [])
+  assert.equal(heightReads, 2, 'the next draft also measures once')
+  assert.equal(r.els.input.style.height, '40px')
+  assert.equal(r.composer.value(), '/review 参数')
+  assert.equal(highlight().hidden, true, 'the next session can clear the command registry')
+  assert.equal(r.view('input').classes.includes('decorated'), false)
+})
 
 const MODELS: WireModelsResult = {
   models: [],

@@ -193,9 +193,9 @@ export interface PermissionPillView {
 
 /**
  * Switching modes goes through `set-permission-mode`, not through a slash
- * command: unlike `/model` and `/effort` there is nothing to persist — the mode
- * is a property of the live gate, and `permissions.mode` in settings is only the
- * *startup* mode (`sessionScope.ts` snapshots it when the scope is built).
+ * command: the host applies it to the live gate and, for an ordinary session,
+ * remembers it as the global startup mode, so the next session in any project
+ * opens in it. `plan` is a workflow state and is not remembered.
  */
 export function permissionPillView(input: {
   runtime: WireRuntimeSnapshot | undefined

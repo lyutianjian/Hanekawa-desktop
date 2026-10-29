@@ -205,9 +205,6 @@ const COMMAND_SCHEMAS = {
       maxBytes: z.number().optional(),
     })
     .strict(),
-  'background-tool-call': z
-    .object({ type: z.literal('background-tool-call'), id: commandId, toolUseId: z.string() })
-    .strict(),
   'kill-task': z
     .object({
       type: z.literal('kill-task'),
@@ -225,7 +222,7 @@ const COMMAND_SCHEMAS = {
     })
     .strict(),
   'close-pane': z
-    .object({ type: z.literal('close-pane'), id: commandId, paneId: z.string() })
+    .object({ type: z.literal('close-pane'), id: commandId, paneId: z.string(), onlyIfIdle: z.boolean().optional() })
     .strict(),
   'list-panes': z.object({ type: z.literal('list-panes'), id: commandId }).strict(),
   'focus-pane': z

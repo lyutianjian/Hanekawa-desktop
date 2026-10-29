@@ -67,6 +67,15 @@ export function isCommandInput(input: string): boolean {
   return input.startsWith('/')
 }
 
+export function parseSlashCommand(input: string): { name: string; args: string; start: number; end: number } | undefined {
+  const text = input.trimStart()
+  const match = /^\/([^\s]+)/.exec(text)
+  if (!match) return undefined
+  const start = input.length - text.length
+  const end = start + match[0].length
+  return { name: match[1]!, args: input.slice(end).trim(), start, end }
+}
+
 export function hasCommandArgs(input: string): boolean {
   if (!isCommandInput(input)) return false
   const spaceIndex = input.indexOf(' ')

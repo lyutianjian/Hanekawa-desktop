@@ -8,8 +8,16 @@ import { CommandRegistry } from '../src/commands/index.js'
 import { buildSkillCommandPrompt, buildSkillPrompt, registerSkillCommands } from '../src/commands/skills.js'
 import { SkillsService, withSkillDir } from '../src/services/skills/skillsService.js'
 import { importSkill } from '../src/services/skills/importSkill.js'
+import { removeSkill } from '../src/services/skills/removeSkill.js'
 import { createSkillTool } from '../src/tools/SkillTool/SkillTool.js'
-import { localSettingsPath } from '../src/config/settings.js'
+import { loadMergedSettings, loadUserSettings, localSettingsPath, updateLocalSettings } from '../src/config/settings.js'
+import { getSharedSkillsDir } from '../src/utils/paths.js'
+import { skillRoots } from '../src/services/skills/skillRoots.js'
+
+test('personal discovery at the home workspace retains personal compatibility roots', () => {
+  const roots = skillRoots(os.homedir(), 'personal')
+  assert.deepEqual(roots.map((root) => root.label), ['~/.agents/skills', '~/.claude/skills', '~/.codex/skills', '~/.gemini/skills'])
+})
 
 test('SkillsService.list() returns empty array when directory does not exist', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
@@ -911,5 +919,107 @@ test('importSkill refuses a frontmatter name that escapes the skills directory',
   } finally {
     await rm(cwd, { recursive: true, force: true })
     await rm(source, { recursive: true, force: true })
+  }
+})
+
+test('importSkill can copy into the personal folder, which every project reads', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
+  const source = await sourceSkill('shared-import')
+  try {
+    const { name, disabled } = await importSkill(cwd, source, { target: 'personal' })
+    assert.equal(name, 'shared-import')
+    assert.equal(disabled, false)
+
+    // The copy is the user's, not the project's: the repo gets no `.myagent/`.
+    const imported = (await new SkillsService(cwd).listAll()).find((skill) => skill.name === 'shared-import')
+    assert.ok(imported, 'the shared folder is read alongside the project one')
+    assert.equal(imported.source, 'shared')
+    assert.equal(imported.root?.label, '~/.agents/skills')
+    await assert.rejects(
+      () => readFile(path.join(cwd, '.myagent', 'skills', 'shared-import', 'SKILL.md'), 'utf8'),
+      /ENOENT/,
+    )
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+    await rm(source, { recursive: true, force: true })
+    await rm(path.join(getSharedSkillsDir(), 'shared-import'), { recursive: true, force: true })
+  }
+})
+
+test('a high-risk personal import lands switched off for every project', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
+  const source = await sourceSkill('hooked-personal')
+  try {
+    await writeFile(
+      path.join(source, 'SKILL.md'),
+      '---\nname: hooked-personal\ndescription: Hooked\nhooks:\n  sessionStart:\n    - command: echo hi\n---\n\nBody.\n',
+      'utf8',
+    )
+    const risks: string[] = []
+    const { disabled } = await importSkill(cwd, source, {
+      target: 'personal',
+      confirm: async (prompt) => {
+        risks.push(prompt.risk)
+        return true
+      },
+    })
+    assert.deepEqual(risks, ['high'])
+    assert.equal(disabled, true)
+
+    // The user layer is the one place a personal skill's state belongs: a local
+    // entry would leave it switched on in every other project.
+    const user = await loadUserSettings()
+    assert.deepEqual(user.skills?.disabled, ['hooked-personal'])
+    assert.deepEqual(await readLocalLayer(cwd), {})
+    // Off in this project too, through the merge rather than a second write.
+    assert.deepEqual((await loadMergedSettings(cwd)).skills?.disabled, ['hooked-personal'])
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+    await rm(source, { recursive: true, force: true })
+    await rm(path.join(getSharedSkillsDir(), 'hooked-personal'), { recursive: true, force: true })
+  }
+})
+
+// --- removeSkill --------------------------------------------------------------
+
+/** The project's local settings layer, or `{}` when this test wrote none. */
+async function readLocalLayer(cwd: string): Promise<Record<string, unknown>> {
+  try {
+    return JSON.parse(await readFile(localSettingsPath(cwd), 'utf8')) as Record<string, unknown>
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    throw error
+  }
+}
+
+test('removeSkill deletes a managed folder and clears its local switch', async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
+  try {
+    const skillDir = path.join(cwd, '.myagent', 'skills', 'gone')
+    await mkdir(skillDir, { recursive: true })
+    await writeFile(path.join(skillDir, 'SKILL.md'), '---\nname: gone\ndescription: Gone\n---\n\nBody.\n', 'utf8')
+    await updateLocalSettings(cwd, { skills: { disabled: ['gone'] } })
+
+    await removeSkill(cwd, 'gone')
+
+    await assert.rejects(() => readFile(path.join(skillDir, 'SKILL.md'), 'utf8'), /ENOENT/)
+    assert.deepEqual((await readLocalLayer(cwd)).skills, { disabled: [] })
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
+  }
+})
+
+test("removeSkill refuses another tool's folder and leaves it alone", async () => {
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
+  try {
+    const compatDir = path.join(cwd, '.claude', 'skills', 'theirs')
+    await mkdir(compatDir, { recursive: true })
+    await writeFile(path.join(compatDir, 'SKILL.md'), '---\nname: theirs\ndescription: Theirs\n---\n\nBody.\n', 'utf8')
+
+    await assert.rejects(() => removeSkill(cwd, 'theirs'), /不会改动它/)
+    // Still there: a refusal is not a partial delete.
+    assert.ok((await readFile(path.join(compatDir, 'SKILL.md'), 'utf8')).includes('Body.'))
+  } finally {
+    await rm(cwd, { recursive: true, force: true })
   }
 })

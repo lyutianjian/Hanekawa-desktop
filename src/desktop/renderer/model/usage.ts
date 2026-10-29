@@ -138,6 +138,10 @@ function prompt(usage: TokenUsage): number {
   return usage.inputTokens + writes(usage) + usage.cacheReadInputTokens
 }
 
+export function totalTokens(usage: TokenUsage): number {
+  return prompt(usage) + usage.outputTokens
+}
+
 /**
  * Cache reads over the whole prompt, or undefined when nothing was sent.
  *
@@ -164,7 +168,7 @@ export function statusUsageView(
 ): StatusUsageView {
   if (!total) return EMPTY
   const { inputTokens, cacheReadInputTokens, outputTokens } = total
-  const allTokens = prompt(total) + outputTokens
+  const allTokens = totalTokens(total)
   if (allTokens === 0) return EMPTY
 
   const metrics: UsageMetric[] = [

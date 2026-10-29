@@ -45,7 +45,6 @@ import type { PlanCardView } from './dom/planCardView.js'
 import type { QuestionCardView } from './dom/questionCardView.js'
 import type { RewindPanel } from './dom/rewindView.js'
 import type { SurfacePanel } from './dom/surfaceView.js'
-import type { ProcessStripView } from './dom/processStripView.js'
 import { append, el, show } from './dom/dom.js'
 import { copyText } from './dom/clipboard.js'
 import { finishPresenceWithin } from './dom/presence.js'
@@ -99,8 +98,12 @@ import {
   groupTranscript,
   presentationTranscript,
   withDetachedRuns,
+  withPendingSends,
+  withPendingApprovals,
   withQueuedMessages,
   withFailureActions,
+  type PendingSendEntry,
+  type PendingSendImage,
   type ToolDisplayLookup,
   type TranscriptState,
 } from './model/transcript.js'
@@ -152,7 +155,6 @@ import {
   moveSurfaceSelection as stepSurfaceSelection,
   resumePickerView,
   runningAgentCalls,
-  runningProcessCount,
   runningTaskCount,
   type SupportedSurface,
   type SurfaceAction,
@@ -172,6 +174,7 @@ import {
 } from './model/rewindPanel.js'
 import {
   attachmentDraftsFull,
+  attachmentSendGate,
   attachmentStripView,
   beginAttachmentImport,
   draftImageSources,
@@ -251,7 +254,6 @@ export interface PaneSessionDeps {
   rewindPanel: RewindPanel
   surface: SurfacePanel
   suggestions: SuggestionsView
-  processStrip: ProcessStripView
   status: StatusView
   composer: ComposerView
   /**
@@ -340,6 +342,40 @@ export interface DraftInput {
   readonly images: readonly AttachmentImportSource[]
 }
 
+/** One import's settled result, kept by draft id so a staged send can read it after the draft left the strip. */
+type AttachmentImportOutcome =
+  | { ok: true; ref: ImageAttachmentRef; animated?: boolean }
+  | { ok: false; reason: string; message: string }
+
+/**
+ * A message the composer has taken but the host does not have yet, because its
+ * pictures are still importing.
+ *
+ * It is a bubble from the moment the user presses Enter — the message leaving is
+ * the feedback — and it is handed over as soon as every picture settles. The
+ * bubble is dropped then, and the host's `turn-start` puts the same words and
+ * pictures back as the real message. A failed import surrenders this entry:
+ * the bubble goes, the text and the drafts come back to the composer.
+ */
+interface StagedSend {
+  readonly id: string
+  /**
+   * The session the composer belonged to when Enter was pressed. A `/clear` or
+   * `/resume` rebinds the pane while the pictures are still importing, and this
+   * message's refs and words belong to the conversation that is gone.
+   */
+  readonly sessionId: string | undefined
+  /** Exactly what the composer held, restored verbatim if the send falls through. */
+  readonly composerText: string
+  /** What reaches the host: the text with its dropped-path blocks appended. */
+  readonly text: string
+  /** The drafts as taken; a failed import leaves its entry `failed` here for the restore. */
+  drafts: AttachmentDrafts
+  readonly paths: readonly AttachedPath[]
+  readonly images: readonly PendingSendImage[]
+  readonly createdAt: string
+}
+
 export interface PaneSession {
   readonly lane: string
   readonly client: SessionClient
@@ -356,7 +392,7 @@ export interface PaneSession {
   /** Repaints so relative stamps (「刚刚」, 「N 分钟前」) move on; the minute tick's. */
   refreshTimes(): void
   dispose(): void
-  /** The `hello()` startup sequence: records, notices, queue, commands, panes. */
+  /** The shared `hello()` startup sequence; safe to await again before activation. */
   start(): Promise<void>
   shellState(): ShellState
   note(text: string, level?: 'system' | 'error'): void
@@ -473,6 +509,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   // switch: `show()` flips `hidden`, the scroll position stays where the user
   // left it, and no item is ever rebuilt because of a switch.
   const paneEl = el('div', 'pane')
+  show(paneEl, false)
   // Before the transcript, so the startup notices a fresh draft carries read as a
   // footnote under the Hero rather than pushing it off the top of the canvas.
   const welcomeEl = el('div', 'welcome')
@@ -502,9 +539,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     ...(deps.onOpenProviderSettings ? { onOpenProviderSettings: deps.onOpenProviderSettings } : {}),
     onRetryTurn: (id) => { void retryTurn(id) },
     onCompactConversation: () => { void runSurfaceAction({ kind: 'run-command', line: '/compact' }) },
-    onBackgroundTool: (id) => {
-      void client.backgroundToolCall(id).catch((error) => fail(`转后台失败：${describe(error)}`))
-    },
     // A receipt can name a plan the pane no longer holds (a reopened session), so
     // the plan it was decided on becomes the one the tab shows.
     onOpenPlan: (planContent) => {
@@ -524,6 +558,10 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // The thumbnail the pane holds for that id, or nothing yet. The fetch is
     // `loadTranscriptThumbnails` below; this is only the lookup.
     imageThumbUrl: (imageId) => previewDataUrl(previewCache, imageId),
+    // The registry this lane completes from, read live: a sent message's `/name`
+    // is drawn in its bubble by the same rule the composer drew it by, and the
+    // list arrives after the transcript's first paint.
+    commands: () => commands,
     // The clipboard lives here rather than in the view: `navigator` is a host
     // object, and `dom/transcriptView.ts` is the half of this that runs against a
     // hand-written DOM stub in tests. A failure is the button's own cross; a
@@ -638,7 +676,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   const resolvers = new Map<string, (response: unknown) => void>()
   let permissionIndex = 0
   let askState: AskState | undefined
-  let askingHeader: string | undefined
+  let overlayStatusKey: string | undefined
   let exitPlan: ExitPlanState | undefined
   let proposedPlan: ExitDialogInput | undefined
   let planShownFor: string | undefined
@@ -657,6 +695,18 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   let draftPaths: readonly AttachedPath[] = []
   /** Monotonic draft ids, so an import settling late can never collide with a newer draft. */
   let draftSeq = 0
+  /** Monotonic staged-send ids; they only have to be unique inside this pane. */
+  let stagedSeq = 0
+  /** Messages already shown as bubbles but still waiting on their pictures, oldest first. */
+  let stagedSends: StagedSend[] = []
+  /** The imports still running, by draft id: a staged send awaits its own before it goes out. */
+  const importJobs = new Map<string, Promise<void>>()
+  /** How each finished import settled, readable after the draft left the strip. */
+  const importOutcomes = new Map<string, AttachmentImportOutcome>()
+  /** Local `blob:` previews, each revoked once the send that held it settles. */
+  const objectUrls = new Set<string>()
+  /** Set while a submit waits for its `turn-start`, so the next staged send queues behind it. */
+  let turnStartWaiter: { resolve: () => void; reject: (error: unknown) => void } | undefined
   let markStarted!: () => void
   /** Settles once `hello` has bound the session that imports are filed under. */
   const started = new Promise<void>((resolve) => {
@@ -859,8 +909,13 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     else transcriptEl.removeAttribute('aria-busy')
     const queuedShown = withQueuedMessages(withDetachedRuns(transcript, runningAgentCalls(client.getBackgroundTasks())), queued)
     // No 「重试」 while a turn runs or a retry is on its way: a second press would send it twice.
-    const shown = isStreaming || retrying ? queuedShown : withFailureActions(queuedShown)
-    const presented = presentationTranscript(shown)
+    // Staged sends sit after everything the host knows about: they are newer.
+    const shown = withPendingSends(
+      isStreaming || retrying ? queuedShown : withFailureActions(queuedShown),
+      stagedViews(),
+    )
+    const approvals = permissionRequests(queue).map((request) => request.payload)
+    const presented = presentationTranscript(withPendingApprovals(shown, approvals))
     disclosure = pruneDisclosure(groupTranscript(presented.items), disclosure)
     // A pane can find itself mid-turn without having seen `turn-start` — it was
     // resumed, or the turn began while this pane was in the background — and a
@@ -911,6 +966,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       ...(turnOutputTokens === undefined ? {} : { outputTokens: turnOutputTokens }),
       outputTokenTurnId: transcript.lastTurnId,
       ...(asking === undefined ? {} : { asking }),
+      ...(approvals.length === 0 ? {} : { awaitingApproval: true }),
       ...(taskCount === 0 ? {} : { backgroundTasks: taskCount }),
       ...(transcript.phase ? { phase: transcript.phase } : {}),
       ...(transcript.draftCall ? { draftCall: transcript.draftCall } : {}),
@@ -937,6 +993,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     for (const item of shown.items) {
       if (item.kind !== 'user') continue
       for (const image of item.images ?? []) ids.push(image.id)
+      for (const image of item.pendingImages ?? []) {
+        if ('ref' in image) ids.push(image.ref.id)
+      }
     }
     let arrived = false
     for (const id of ids) {
@@ -1038,7 +1097,6 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       contextGaugeView(client.getContextUsedTokens(), runtime),
       deps.isCoordinator?.() ?? false,
     )
-    deps.processStrip.render(runningProcessCount(client.getBackgroundTasks()))
     // The strip's send-gate half follows the same snapshot: a model switch to
     // or away from image capability changes what the button should explain.
     renderAttachmentGate()
@@ -1101,22 +1159,42 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
   async function importSources(sources: readonly AttachmentImportSource[]): Promise<void> {
     if (sources.length === 0) return
+    // Registered first, imports after — the same rule `importImagesFromFiles`
+    // follows for a paste: a path'd drop of several pictures is one input, and
+    // an Enter must not find only the first of them in the strip.
     // Never skipped: an over-quota paste is turned into the reason the user
     // can act on, not a silent partial import.
+    const jobs: Array<{ draftId: string; source: AttachmentImportSource }> = []
     for (const source of sources) {
-      if (attachmentDraftsFull(draftImages)) {
-        fail('已达到单次输入最多 10 张图片的上限；请先移除一些再继续。')
-        return
-      }
-      await runImport(beginImport(source), source)
+      const draftId = beginImport(source)
+      if (draftId === undefined) break
+      jobs.push({ draftId, source })
     }
+    for (const job of jobs) await startImport(job.draftId, job.source)
   }
 
-  function beginImport(source: AttachmentImportSource): string {
+  /**
+   * Registers a draft and paints it. The entry exists before its bytes do, which
+   * is the point: a paste followed by an immediate Enter must find the picture
+   * in the strip, or the text goes out alone.
+   */
+  function beginImport(source: AttachmentImportSource): string | undefined {
+    if (attachmentDraftsFull(draftImages)) {
+      fail('已达到单次输入最多 10 张图片的上限；请先移除一些再继续。')
+      return undefined
+    }
     const draftId = `draft-${lane}-${++draftSeq}`
     draftImages = beginAttachmentImport(draftImages, source, draftId)
     renderAttachments()
     return draftId
+  }
+
+  /** Runs the import and keeps its promise, so a staged send can wait for it. */
+  function startImport(draftId: string, source: AttachmentImportSource): Promise<void> {
+    const job = runImport(draftId, source)
+    importJobs.set(draftId, job)
+    void job.then(() => importJobs.delete(draftId))
+    return job
   }
 
   async function runImport(draftId: string, source: AttachmentImportSource): Promise<void> {
@@ -1127,15 +1205,17 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     const sessionId = client.getSession()?.id
     // A rejected request settles the draft as failed like any other refusal;
     // left unsettled it would read 「导入中…」 for good, with no way to retry.
-    const settled = await client.importAttachment(source).catch((error: unknown) => ({
+    const settled = await readForImport(source).catch((error: unknown) => ({
       ok: false as const,
       reason: imageBlockReasonOf(error) ?? 'import-failed',
-      message: describe(error),
+      message: source.kind === 'file' ? `无法读取图片 ${source.name}：${describe(error)}` : describe(error),
     }))
     if (sessionId === undefined || sessionId !== client.getSession()?.id) return
-    const outcome = settled.ok
-      ? { ok: true as const, ref: settled.attachment.ref, ...(settled.attachment.animated ? { animated: true } : {}) }
-      : { ok: false as const, reason: settled.reason, message: settled.message }
+    const outcome: AttachmentImportOutcome = settled.ok
+      ? { ok: true, ref: settled.attachment.ref, ...(settled.attachment.animated ? { animated: true } : {}) }
+      : { ok: false, reason: settled.reason, message: settled.message }
+    // Read by a staged send whose draft has already left the strip.
+    importOutcomes.set(draftId, outcome)
     const next = settleAttachmentImport(draftImages, draftId, outcome)
     if (next) {
       draftImages = next
@@ -1143,18 +1223,49 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     }
   }
 
+  /** A pasted file is read here; a path is read by the host itself. */
+  async function readForImport(source: AttachmentImportSource) {
+    if (source.kind !== 'file') return client.importAttachment(source)
+    return client.importAttachment({ kind: 'bytes', name: source.name, bytes: await source.read() })
+  }
+
   async function importImagesFromFiles(files: readonly File[]): Promise<void> {
-    const sources: AttachmentImportSource[] = []
+    // Registered synchronously, before any bytes are read: the strip shows the
+    // picture on the paste's own turn, and an Enter in the same breath waits for
+    // it instead of sending the text alone.
+    const jobs: Array<{ draftId: string; source: AttachmentImportSource }> = []
     for (const file of files) {
       if (!file.type.startsWith('image/')) continue
-      try {
-        sources.push({ kind: 'bytes', name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) })
-      } catch (error) {
-        // Nothing to retry from: the bytes were never read.
-        fail(`无法读取图片 ${file.name}：${describe(error)}`)
-      }
+      const source = fileSource(file)
+      const draftId = beginImport(source)
+      if (draftId === undefined) break
+      jobs.push({ draftId, source })
     }
-    await importSources(sources)
+    for (const job of jobs) await startImport(job.draftId, job.source)
+  }
+
+  /** A pasted or dropped file, as a source the draft can hold before its bytes are read. */
+  function fileSource(file: File): AttachmentImportSource {
+    const previewUrl = previewObjectUrl(file)
+    return {
+      kind: 'file',
+      name: file.name,
+      read: async () => new Uint8Array(await file.arrayBuffer()),
+      ...(previewUrl !== undefined ? { previewUrl } : {}),
+    }
+  }
+
+  /** A local preview for a picture that has no stored id yet; revoked when its send settles. */
+  function previewObjectUrl(file: File): string | undefined {
+    if (typeof URL.createObjectURL !== 'function') return undefined
+    const url = URL.createObjectURL(file)
+    objectUrls.add(url)
+    return url
+  }
+
+  function releaseObjectUrl(url: string | undefined): void {
+    if (url === undefined || !objectUrls.delete(url)) return
+    URL.revokeObjectURL(url)
   }
 
   async function importImagesFromPaths(paths: readonly string[]): Promise<void> {
@@ -1185,8 +1296,12 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   }
 
   async function removeDraftImage(draftId: string): Promise<void> {
+    const removed = draftImages.find((draft) => draft.draftId === draftId)
     const { drafts, releasedImageId } = removeAttachmentDraft(draftImages, draftId)
     draftImages = drafts
+    importJobs.delete(draftId)
+    importOutcomes.delete(draftId)
+    if (removed?.source?.kind === 'file') releaseObjectUrl(removed.source.previewUrl)
     renderAttachments()
     if (releasedImageId === undefined) return
     try {
@@ -1204,7 +1319,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     const entry = retrying.find((draft) => draft.draftId === draftId)
     draftImages = retrying
     renderAttachments()
-    if (entry?.kind === 'importing') void runImport(draftId, entry.source)
+    if (entry?.kind === 'importing') void startImport(draftId, entry.source)
   }
 
   async function openDraftImage(draftId: string): Promise<void> {
@@ -1243,6 +1358,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       imageId: ref.id,
       name: ref.name,
       dimensions,
+      width: ref.width,
+      height: ref.height,
       ...(thumbUrl !== undefined ? { thumbUrl } : {}),
       zoom: openingZoom(ref),
     })
@@ -1266,9 +1383,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   }
 
   /**
-   * The zoom an image opens at: fitted to the stage, never enlarged. The stage
-   * has no size before the first open, in which case 1 is the honest answer —
-   * and the next paint measures it properly.
+   * The zoom an image opens at: fitted to the stage, never enlarged. Measuring
+   * is what mounts the shut layer — a hidden box has no layout — so the fit is
+   * the real one even on the first open in the window.
    */
   function openingZoom(ref: ImageAttachmentRef): number {
     const stage = deps.imageViewer.stageSize()
@@ -1401,8 +1518,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
   function renderOverlay(): void {
     const header = askState ? askViewModel(askState)?.header : undefined
-    if (header !== askingHeader) {
-      askingHeader = header
+    const key = [header, queue.activeId, ...queue.entries.map((request) => request.requestId)].join('\n')
+    if (key !== overlayStatusKey) {
+      overlayStatusKey = key
       renderTranscript()
     }
     const current = activeRequest(queue)
@@ -1629,7 +1747,12 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // The waiting row's clock, set before the paint that may draw it. The turn's
     // own boundaries rather than `isStreaming`'s edges: the snapshot flag is
     // polled, and 「已等待」 must start at the moment the user pressed Enter.
-    if (event.type === 'turn-start') turnStartedAt = Date.now()
+    if (event.type === 'turn-start') {
+      turnStartedAt = Date.now()
+      // The submit behind a staged send has its answer: the bubble it drew has
+      // been replaced by the host's own message.
+      settleTurnStart()
+    }
     if (event.type === 'turn-end') turnStartedAt = undefined
     const outcome = applySessionEvent(transcript, event, toolDisplays, Date.now())
     transcript = outcome.state
@@ -1747,6 +1870,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       // ownership rules; S11 only makes sure no ref dangles here).
       draftImages = Object.freeze([])
       draftPaths = []
+      // A staged send names the session it was written for; after a rebind its
+      // images and its message belong to a conversation that is no longer here.
+      cancelStagedSends()
       if (rewind) closeRewindPanel()
       // A rebind is not a streaming tick: the header and the status line are
       // about a different session from this point, so they are drawn now.
@@ -1936,7 +2062,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
   async function send(): Promise<void> {
     const text = deps.composer.value()
-    const classified = classifyInput(text)
+    const classified = classifyInput(text, commands)
     if (classified.kind !== 'command' && client.getRuntimeSnapshot()?.status === 'needs_configuration') {
       note('请先配置可用模型，当前草稿已保留。', 'system')
       deps.onOpenProviderSettings?.()
@@ -1946,11 +2072,21 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // composer's content the way the textarea is, and `classifyInput`'s
     // emptiness is only about text.
     if (classified.kind === 'empty' && draftImages.length === 0 && draftPaths.length === 0) return
-    if (classified.kind !== 'command' && attachmentsView().sendBlockNote !== undefined) {
-      // Pending or failed attachments, or images against a text-only model:
-      // the rest of the input is not sent as though it were complete, and
+    const gate = classified.kind === 'command'
+      ? undefined
+      : attachmentSendGate(draftImages, client.getRuntimeSnapshot())
+    if (gate !== undefined && gate.kind !== 'importing') {
+      // Failed attachments, images against a text-only model, or no model at
+      // all: the rest of the input is not sent as though it were complete, and
       // nothing is cleared.
-      fail(attachmentsView().sendBlockNote!)
+      fail(gate.note)
+      return
+    }
+    // Pictures still arriving no longer hold the message back: it is staged, so
+    // the bubble appears now and the send goes out when the images land. A send
+    // that follows a staged one is staged too, or the two could cross.
+    if (classified.kind !== 'command' && (gate?.kind === 'importing' || stagedSends.length > 0)) {
+      stageSend(text, classified.kind === 'prompt' ? classified.text : '')
       return
     }
     const imageIds = readyAttachmentRefs(draftImages).map((ref) => ref.id)
@@ -1969,22 +2105,27 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
     try {
       if (classified.kind === 'command') {
-        // A slash command runs host-side; an unknown one still comes back
-        // handled, with the explanation arriving as a `write-line` beforehand.
         // Commands keep the draft attachments, exactly as the TUI does:
         // `/model` mid-compose must not eat the images waiting beside it.
         const result = await client.runCommand(classified.line)
         if (result.exit) deps.onExit()
         // The command set can change under us (`/skills reload`), so re-read it.
         void refreshCommands()
-        return
+        if (result.handled) return
+        const fallbackGate = attachmentSendGate(sentDrafts, client.getRuntimeSnapshot())
+        if (fallbackGate && fallbackGate.kind !== 'importing') throw new Error(fallbackGate.note)
+        if (fallbackGate?.kind === 'importing' || stagedSends.length > 0) {
+          stageSend(sentText, sentText)
+          return
+        }
+        clearDraftImages()
       }
       // Before the round trip, not after it: the message is on its way, and the
       // panel's「已接管」badge should clear as the composer does rather than a
       // network hop later.
       deps.onUserMessage?.()
       await client.submit(
-        appendAttachedPaths(classified.kind === 'prompt' ? classified.text : '', sentPaths),
+        appendAttachedPaths(classified.kind === 'prompt' ? classified.text : text, sentPaths),
         imageIds.length > 0 ? { imageIds } : {},
       )
     } catch (error) {
@@ -2000,6 +2141,202 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     } finally {
       deps.composer.focus()
     }
+  }
+
+  /**
+   * Takes the composer's input and paints it as a bubble instead of sending it:
+   * its pictures are still importing. `flushStagedSends` hands it over once they
+   * land, and `restoreStaged` gives it back if one of them cannot.
+   */
+  function stageSend(composerText: string, text: string): void {
+    const drafts = draftImages
+    const paths = draftPaths
+    const entry: StagedSend = {
+      id: `${lane}-${++stagedSeq}`,
+      sessionId: client.getSession()?.id,
+      composerText,
+      text: appendAttachedPaths(text, paths),
+      drafts,
+      paths,
+      images: drafts.map(stagedImage),
+      createdAt: new Date().toISOString(),
+    }
+    stagedSends = [...stagedSends, entry]
+    deps.composer.clear()
+    clearDraftImages()
+    closeCompletions()
+    renderTranscript()
+    void flushStagedSends()
+  }
+
+  /** One draft as the staged bubble draws it: a stored ref, or a file's local preview while it is read. */
+  function stagedImage(draft: AttachmentDraft): PendingSendImage {
+    if (draft.kind === 'ready') return { kind: 'ready', ref: draft.ref }
+    const previewUrl = draft.source.kind === 'file' ? draft.source.previewUrl : undefined
+    return { kind: 'loading', name: draft.name, ...(previewUrl !== undefined ? { previewUrl } : {}) }
+  }
+
+  /** The staged sends as the transcript draws them, oldest first. */
+  function stagedViews(): PendingSendEntry[] {
+    return stagedSends.map((entry) => ({
+      id: entry.id,
+      text: entry.text,
+      images: entry.images,
+      createdAt: entry.createdAt,
+    }))
+  }
+
+  /**
+   * Hands staged sends over in the order they were taken.
+   *
+   * One at a time, and each waits for its submit's `turn-start` rather than for
+   * the turn to end — so a second staged message queues mid-turn exactly as a
+   * second Enter would have.
+   */
+  let flushingStaged = false
+  async function flushStagedSends(): Promise<void> {
+    if (flushingStaged) return
+    flushingStaged = true
+    try {
+      while (stagedSends.length > 0) {
+        const entry = stagedSends[0]!
+        await waitForImportJobs(entry.drafts)
+        // A rebind or a cancel can drop the queue while the imports ran.
+        if (stagedSends[0]?.id !== entry.id) continue
+        const resolution = resolveStaged(entry)
+        stagedSends = stagedSends.slice(1)
+        renderTranscript()
+        if (!resolution.ok) {
+          restoreStaged(entry)
+          fail(resolution.message)
+          // Its previews are not released here: the drafts are back in the strip
+          // and keep their sources, and a retry that is staged again paints the
+          // same local picture.
+          continue
+        }
+        await handStaged(entry, resolution.imageIds)
+        releaseStagedUrls(entry)
+      }
+    } finally {
+      flushingStaged = false
+    }
+  }
+
+  async function waitForImportJobs(drafts: AttachmentDrafts): Promise<void> {
+    const jobs = drafts.flatMap((draft) => draft.kind === 'importing' ? [importJobs.get(draft.draftId)] : [])
+    await Promise.all(jobs.filter((job): job is Promise<void> => job !== undefined))
+  }
+
+  /**
+   * What the staged message would be sent with.
+   *
+   * A draft it took may have settled after leaving the strip, so the outcome is
+   * read by id; an import that never settled (a rebind dropped it) is a failure
+   * rather than a message that silently loses a picture.
+   */
+  function resolveStaged(entry: StagedSend):
+    | { ok: true; imageIds: string[] }
+    | { ok: false; message: string } {
+    let drafts = entry.drafts
+    const imageIds: string[] = []
+    for (const draft of entry.drafts) {
+      if (draft.kind === 'ready') {
+        imageIds.push(draft.ref.id)
+        continue
+      }
+      const outcome: AttachmentImportOutcome = (draft.kind === 'importing' ? importOutcomes.get(draft.draftId) : undefined)
+        ?? { ok: false, reason: 'import-failed', message: '导入被中断，请重试。' }
+      drafts = settleAttachmentImport(drafts, draft.draftId, outcome) ?? drafts
+      if (!outcome.ok) {
+        entry.drafts = drafts
+        return { ok: false, message: formatImageFailure(outcome.reason, outcome.message) }
+      }
+      imageIds.push(outcome.ref.id)
+    }
+    entry.drafts = drafts
+    return { ok: true, imageIds }
+  }
+
+  /** A staged send that fell through: the words, the paths and the drafts back where they were. */
+  function restoreStaged(entry: StagedSend): void {
+    // The conversation it was written for is gone: its refs cannot be submitted
+    // here, so there is nothing to hand back to.
+    if (entry.sessionId !== client.getSession()?.id) return
+    if (deps.composer.value() === '') deps.composer.setValue(entry.composerText, entry.composerText.length)
+    const known = new Set(draftImages.map((draft) => draft.draftId))
+    const restored = entry.drafts.filter((draft) => !known.has(draft.draftId))
+    if (restored.length > 0) {
+      draftImages = [...draftImages, ...restored]
+      renderAttachments()
+    }
+    addDraftPaths(entry.paths)
+    renderTranscript()
+  }
+
+  /** The local previews a settled send no longer needs. */
+  function releaseStagedUrls(entry: StagedSend): void {
+    for (const draft of entry.drafts) {
+      if (draft.source?.kind === 'file') releaseObjectUrl(draft.source.previewUrl)
+    }
+  }
+
+  /** Hands one staged message over: a queue entry mid-turn, a new turn otherwise. */
+  async function handStaged(entry: StagedSend, imageIds: readonly string[]): Promise<void> {
+    const options = imageIds.length > 0 ? { imageIds: [...imageIds] } : {}
+    if (client.getSnapshot().isStreaming) {
+      try {
+        await client.enqueueMessage(entry.text, options)
+      } catch (error) {
+        restoreStaged(entry)
+        fail(`排队失败：${describe(error)}`)
+      }
+      return
+    }
+    deps.onUserMessage?.()
+    await submitStaged(entry, options)
+  }
+
+  /**
+   * Submits a staged send and returns at the host's `turn-start`, not at the
+   * turn's end — that is what lets the next staged message queue behind it. A
+   * rejection before the turn starts hands the message back to the composer; a
+   * turn that starts and then fails is the transcript's own business.
+   */
+  async function submitStaged(entry: StagedSend, options: { imageIds?: string[] }): Promise<void> {
+    const started = awaitTurnStart()
+    void client.submit(entry.text, options).then(() => settleTurnStart(), (error: unknown) => settleTurnStart(error))
+    try {
+      await started
+    } catch (error) {
+      restoreStaged(entry)
+      fail(`发送失败：${describe(error)}`)
+    } finally {
+      deps.composer.focus()
+    }
+  }
+
+  function awaitTurnStart(): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      turnStartWaiter = { resolve, reject }
+    })
+  }
+
+  /** Answers the submit waiting for a turn boundary; a later answer is a no-op. */
+  function settleTurnStart(error?: unknown): void {
+    const waiter = turnStartWaiter
+    turnStartWaiter = undefined
+    if (waiter === undefined) return
+    if (error === undefined) waiter.resolve()
+    else waiter.reject(error)
+  }
+
+  /** Drops every staged send unsent: the conversation they were written for is gone. */
+  function cancelStagedSends(): void {
+    if (stagedSends.length === 0) return
+    const dropped = stagedSends
+    stagedSends = []
+    for (const entry of dropped) releaseStagedUrls(entry)
+    renderTranscript()
   }
 
   /**
@@ -2027,19 +2364,26 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    * not prompts. The composer is cleared optimistically, then restored on
    * failure, text and attachments together.
    *
-   * The gate is `send()`'s: a queued message is a message, so pending or failed
-   * imports and images in front of a text-only model stop it here rather than
-   * being queued into a refusal the user cannot fix later.
+   * The gate is `send()`'s: a queued message is a message, so failed imports and
+   * images in front of a text-only model stop it here rather than being queued
+   * into a refusal the user cannot fix later. Pictures still arriving do not:
+   * they stage the message, exactly as they do for a submitted one.
    */
   async function queueMessage(): Promise<void> {
-    const classified = classifyInput(deps.composer.value())
+    const raw = deps.composer.value()
+    const classified = classifyInput(raw, commands)
     if (classified.kind === 'empty' && draftImages.length === 0 && draftPaths.length === 0) return
     if (classified.kind === 'command') {
       await send()
       return
     }
-    if (attachmentsView().sendBlockNote !== undefined) {
-      fail(attachmentsView().sendBlockNote!)
+    const gate = attachmentSendGate(draftImages, client.getRuntimeSnapshot())
+    if (gate !== undefined && gate.kind !== 'importing') {
+      fail(gate.note)
+      return
+    }
+    if (gate?.kind === 'importing' || stagedSends.length > 0) {
+      stageSend(raw, classified.kind === 'prompt' ? classified.text : '')
       return
     }
 
@@ -2077,6 +2421,14 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   async function refreshCommands(): Promise<void> {
     try {
       commands = localizeCommands(await client.listCommands())
+      if (active) {
+        deps.composer.setCommands(commands)
+        refreshCompletions()
+        // The bubbles already on screen decorate their leading `/name` through
+        // this list (a skill swaps the slash for a mark), so the answer that
+        // just arrived is a repaint — signed, and the array's identity changed.
+        renderTranscript()
+      }
     } catch {
       // Completion is a convenience; losing it must not break the composer.
     }
@@ -2108,9 +2460,9 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     restoreDraftText(input.text)
     addDraftPaths(input.paths)
     for (const source of input.images) {
-      if (attachmentDraftsFull(draftImages)) break
       const draftId = beginImport(source)
-      void started.then(() => runImport(draftId, source))
+      if (draftId === undefined) break
+      void started.then(() => startImport(draftId, source))
     }
   }
 
@@ -2120,8 +2472,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     show(paneEl, true)
     // The draft was banked when this pane went to the background; the composer
     // is the source of truth again from here until the next deactivation.
-    deps.composer.setValue(draftText, draftText.length)
-    deps.composer.autosize()
+    deps.composer.setValue(draftText, draftText.length, commands)
     transcriptView.syncMotion(document.hidden)
     renderTranscript()
     renderAttachments()
@@ -2224,6 +2575,11 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // A background pane must not run it: those panels belong to the active one.
     if (active) deactivate()
     abandonRequests()
+    // A staged send's local previews belong to a message that will never be
+    // handed over now; nothing else would revoke them.
+    stagedSends = []
+    for (const url of objectUrls) URL.revokeObjectURL(url)
+    objectUrls.clear()
     welcome.dispose()
     transcriptView.dispose()
     streamRepaint.cancel()
@@ -2233,6 +2589,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   }
 
   // --- the hello sequence ----------------------------------------------------------
+
+  let startup: Promise<void> | undefined
 
   async function start(): Promise<void> {
     const hello = await client.hello()
@@ -2366,10 +2724,11 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    * The composer's permission pill.
    *
    * Straight to `set-permission-mode` rather than through a slash command,
-   * unlike the model and effort chips: there is nothing to persist here (the
-   * mode belongs to the live gate) and the host posts a fresh runtime snapshot
-   * on the way out, so the pill repaints from the same path everything else does
-   * instead of holding an optimistic guess.
+   * unlike the model and effort chips: the mode applies to the live gate, and
+   * the host remembers it as the global startup mode for the sessions that
+   * follow. It posts a fresh runtime snapshot on the way out, so the pill
+   * repaints from the same path everything else does instead of holding an
+   * optimistic guess.
    */
   async function setPermissionMode(mode: PermissionMode): Promise<void> {
     try {
@@ -2417,7 +2776,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
       if (!document.hidden) renderTranscript()
     },
     dispose,
-    start,
+    start: () => startup ??= start(),
     shellState,
     note,
     hasConversation,

@@ -60,6 +60,28 @@ describe('messageQueue', () => {
     })
     await assert.rejects(() => failing.enqueue({ text: 'hello' }), /disk full/)
     assert.equal(failing.getSnapshot().length, 0)
+    assert.equal(failing.isBusy(), false)
+  })
+
+  it('stays busy through pending writes even before the snapshot contains a message', async () => {
+    const gates = Array.from({ length: 2 }, () => {
+      let open!: () => void
+      const promise = new Promise<void>((resolve) => { open = resolve })
+      return { promise, open }
+    })
+    let writes = 0
+    const held = new MessageQueue('session-a', [], async () => { await gates[writes++]!.promise })
+    const first = held.enqueue({ text: 'first' })
+    const second = held.enqueue({ text: 'second' })
+    assert.equal(held.isBusy(), true)
+    assert.deepEqual(held.getSnapshot(), [])
+    gates[0]!.open()
+    await first
+    assert.equal(held.isBusy(), true, 'the second write is still pending')
+    gates[1]!.open()
+    await second
+    assert.equal(held.isBusy(), false)
+    assert.deepEqual(held.getSnapshot().map((message) => message.content), ['first', 'second'])
   })
 
   it('replays enqueue, dequeue, clear, duplicate, and unknown events safely', () => {

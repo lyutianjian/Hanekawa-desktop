@@ -37,6 +37,78 @@ test('applyLineEndings does not double a carriage return already present', () =>
   assert.equal(applyLineEndings('a\r\nb', 'LF'), 'a\r\nb')
 })
 
+test('string edits preserve encoding, BOM, line endings and mode without Read', async () => {
+  await withTempDir(async (dir) => {
+    const formats = [
+      { name: 'utf8', encoding: 'utf8', bom: '', endings: '\n' },
+      { name: 'utf8-bom', encoding: 'utf8', bom: '\uFEFF', endings: '\r\n' },
+      { name: 'utf16le', encoding: 'utf16le', bom: '\uFEFF', endings: '\r\n' },
+    ] as const
+    for (const tool of [editFileTool, multiEditTool]) {
+      for (const format of formats) {
+        const filePath = `${tool.name}-${format.name}.txt`
+        const file = path.join(dir, filePath)
+        const encode = (text: string) => Buffer.from(format.bom + text.replaceAll('\n', format.endings), format.encoding)
+        await writeFile(file, encode('hello\nkeep \uFFFD\n'))
+        await chmod(file, 0o600)
+        const replacement = { oldString: 'hello', newString: 'hi' }
+        const result = await tool.execute(tool.name === 'Edit'
+          ? { filePath, ...replacement }
+          : { filePath, edits: [replacement] }, context(dir))
+        assert.equal(result.ok, true, `${tool.name}: ${format.name}: ${result.content}`)
+        assert.deepEqual(await readFile(file), encode('hi\nkeep \uFFFD\n'))
+        if (process.platform !== 'win32') assert.equal((await stat(file)).mode & 0o777, 0o600)
+      }
+    }
+  })
+})
+
+test('string edits use the current encoding when the format changed after Read', async () => {
+  await withTempDir(async (dir) => {
+    for (const tool of [editFileTool, multiEditTool]) {
+      const file = path.join(dir, 'a.txt')
+      const ctx = context(dir)
+      await writeFile(file, 'hello\n', 'utf8')
+      await readFileTool.execute({ filePath: 'a.txt' }, ctx)
+      await writeFile(file, Buffer.from('\uFEFFhello\r\n', 'utf16le'))
+      const replacement = { oldString: 'hello', newString: 'hi' }
+      const result = await tool.execute(tool.name === 'Edit'
+        ? { filePath: 'a.txt', ...replacement }
+        : { filePath: 'a.txt', edits: [replacement] }, ctx)
+      assert.equal(result.ok, true, result.content)
+      assert.deepEqual(await readFile(file), Buffer.from('\uFEFFhi\r\n', 'utf16le'))
+    }
+  })
+})
+
+test('string edits reject binary and unsupported encodings without changing their bytes', async () => {
+  await withTempDir(async (dir) => {
+    const cases = [
+      Buffer.from('hello\0tail', 'utf8'),
+      Buffer.concat([Buffer.from('hello'), Buffer.from([0x80])]),
+      Buffer.from([0xfe, 0xff, 0, 104, 0, 101, 0, 108, 0, 108, 0, 111]),
+      Buffer.from('hello', 'utf16le'),
+      Buffer.concat([Buffer.from('\uFEFFhello', 'utf16le'), Buffer.from([0x61])]),
+    ]
+    for (const tool of [editFileTool, multiEditTool]) {
+      for (const bytes of cases) {
+        const file = path.join(dir, 'a.txt')
+        await writeFile(file, bytes)
+        const ctx = context(dir)
+        const replacement = { oldString: 'hello', newString: 'hi' }
+        const result = await tool.execute(tool.name === 'Edit'
+          ? { filePath: 'a.txt', ...replacement }
+          : { filePath: 'a.txt', edits: [replacement] }, ctx)
+        assert.equal(result.ok, false, tool.name)
+        assert.equal(result.errorCode, 'invalid_input')
+        assert.match(result.content, /unsupported text encoding or binary content/)
+        assert.deepEqual(await readFile(file), bytes)
+        assert.equal(ctx.readFiles.size, 0)
+      }
+    }
+  })
+})
+
 test('Read normalizes CRLF so an LF oldString still edits the file', async () => {
   await withTempDir(async (dir) => {
     const file = path.join(dir, 'clash.yaml')

@@ -28,6 +28,7 @@
     "src/desktop/paneBudget.ts",
     "src/desktop/preload.ts",
     "src/types/picomatch.d.ts",
+    "src/types/domino.d.ts",
     "src/runtime/protocol/channel.ts",
     "src/runtime/protocol/client.ts",
     "src/runtime/protocol/laneChannel.ts",

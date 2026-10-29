@@ -31,8 +31,6 @@ import {
 export type WelcomePillKind = 'project' | 'branch'
 
 export const WELCOME_TITLE = '接下来做什么？'
-/** Where files created by global sessions land. */
-export const WELCOME_GLOBAL_LOCATION = '~/Documents/myagent'
 /** Shown until `hello` answers; the name is unknown for a frame or two. */
 export const WELCOME_PROJECT_FALLBACK = '当前项目'
 
@@ -178,27 +176,13 @@ export function createWelcomeState(overrides: Partial<WelcomeState> = {}): Welco
 }
 
 export function welcomeView(state: WelcomeState): WelcomeView {
-  // A control exactly when the popover has somewhere to go. True in the global
-  // workspace too: 最近 is not a project, but the added projects are still where
-  // a session started from here would belong, so the pill leads into them.
-  const canSwitchProjects = canSwitchProject(state.projectPicker)
-  const pills: WelcomePill[] = [
-    state.global
-      ? // The global workspace has no name worth drawing — where its records
-        // land is the useful fact.
-        {
-          kind: 'project',
-          label: WELCOME_GLOBAL_LOCATION,
-          icon: 'folder',
-          interactive: canSwitchProjects,
-        }
-      : {
-          kind: 'project',
-          label: state.projectName ?? WELCOME_PROJECT_FALLBACK,
-          icon: 'folder',
-          interactive: canSwitchProjects,
-        },
-  ]
+  const canSwitchProjects = !state.global && canSwitchProject(state.projectPicker)
+  const pills: WelcomePill[] = state.global ? [] : [{
+    kind: 'project',
+    label: state.projectName ?? WELCOME_PROJECT_FALLBACK,
+    icon: 'folder',
+    interactive: canSwitchProjects,
+  }]
   // Absent rather than hidden: a pill with nothing to say is not drawn, so the
   // view has no `hidden` state for `dom/` to interpret.
   if (state.branch !== undefined) {

@@ -69,6 +69,10 @@ async function createHarness(options: {
   usableContextWindow?: number
   /** What the side model answers when asked to name the session. */
   titleReply?: string
+  /** The naming call never answers — what a provider that hung looks like from here. */
+  titleHangs?: boolean
+  /** How long the placeholder bar stands before the fallback name takes over. */
+  titlePlaceholderMs?: number
   /** The model key the loop is on; differs from the runtime's after a fallback. */
   activeModelKey?: string
   /** Lets a test hold the turn in its prepare stage. */
@@ -92,7 +96,12 @@ async function createHarness(options: {
     retry: options.retry ?? (async () => okResult()),
     getSideModel: () => ({
       model: 'side-model',
-      provider: { name: 'stub', createMessage: async () => ({ content: options.titleReply ?? '' }) },
+      provider: {
+        name: 'stub',
+        createMessage: options.titleHangs
+          ? () => new Promise<never>(() => {})
+          : async () => ({ content: options.titleReply ?? '' }),
+      },
     }),
     getActiveModel: () => ({
       model: 'test-model',
@@ -134,6 +143,7 @@ async function createHarness(options: {
       providerName: 'stub',
     } as unknown as AgentSession),
     createFileHistoryService: () => fileHistoryService,
+    ...(options.titlePlaceholderMs !== undefined ? { titlePlaceholderMs: options.titlePlaceholderMs } : {}),
   })
 
   controller.onEvent((event) => events.push(event))
@@ -1392,6 +1402,31 @@ test('the fallback title is pending until generation settles, landed or not', as
   harness.proxy.onRecord(record)
   assert.equal(harness.controller.isTitlePending(), true)
   await waitUntil(() => !harness.controller.isTitlePending(), 'the pending title to settle')
+  assert.equal(harness.controller.getSessionMeta().title, '帮我把登录页的按钮改成蓝色')
+  assert.deepEqual(pendingAtMeta, [true, false], 'the fallback is announced as pending, then the settle')
+})
+
+test('a naming call that never answers stops holding the placeholder bar', async () => {
+  const record: SessionRecord = {
+    id: randomUUID(),
+    type: 'message',
+    role: 'user',
+    content: '帮我把登录页的按钮改成蓝色',
+    createdAt: new Date().toISOString(),
+  }
+  // Switched away and back used to be the only way out: a fresh controller has
+  // no pending flag, so the row showed the fallback — while the pane that made
+  // the call kept drawing the bar for the rest of its life.
+  const harness = await createHarness({ untitled: true, titleHangs: true, titlePlaceholderMs: 5 })
+  const pendingAtMeta: boolean[] = []
+  harness.controller.onEvent((event) => {
+    if (event.type === 'session-meta') pendingAtMeta.push(harness.controller.isTitlePending())
+  })
+  await harness.store.appendRecord(harness.session.id, record)
+  harness.proxy.onRecord(record)
+  assert.equal(harness.controller.isTitlePending(), true, 'the row waits for the model\'s name')
+
+  await waitUntil(() => !harness.controller.isTitlePending(), 'the placeholder bar to give up')
   assert.equal(harness.controller.getSessionMeta().title, '帮我把登录页的按钮改成蓝色')
   assert.deepEqual(pendingAtMeta, [true, false], 'the fallback is announced as pending, then the settle')
 })

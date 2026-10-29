@@ -616,13 +616,14 @@ class SubagentSession implements AgentContinuation {
         ? { ...this.worktree, changeSummary: await summarizeSubagentWorktree(options, this.worktree) }
         : undefined
       const stopHookOutput = formatSubagentHookOutput(await runHook('subagentStop', { response: result.content }), 'subagentStop')
+      const durationMs = Date.now() - startedAtMs
       return {
         result,
         stopHookOutput,
         verdict,
         criticalFiles,
         worktree,
-        durationMs: Date.now() - startedAtMs,
+        durationMs,
         transcriptRecord: {
           id: randomUUID(),
           type: 'subagent_transcript',
@@ -641,6 +642,7 @@ class SubagentSession implements AgentContinuation {
           ...worktreeRecordFields(worktree),
           records: [],
           usage: result.usage,
+          durationMs,
           createdAt: new Date().toISOString(),
           turnId: parentContext.currentTurnId,
         },

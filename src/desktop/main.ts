@@ -73,6 +73,7 @@ import { SessionStore, type SessionMeta } from '../sessions/service.js'
 import { logDiagnostics } from '../harness/diagnostics.js'
 import { IMAGE_FILE_EXTENSIONS } from '../tools/imageFile.js'
 import type { McpServerConfig } from '../services/mcp/index.js'
+import type { SkillImportPrompt } from '../services/skills/importSkill.js'
 import { bootstrap, RuntimeStartupError } from '../runtime/index.js'
 import {
   ProjectDirectory,
@@ -1060,6 +1061,12 @@ async function ensureShell(): Promise<Shell> {
       void openProjectInteractive()
     },
     onPickDirectory: (options) => promptForDirectory(options),
+    onConfirmSkillImport: (prompt) => promptSkillImport(prompt),
+    // 在 Finder 中显示 for a skill's folder: the host resolved the folder
+    // through the skills service, so the renderer never names a path here.
+    onRevealPath: (target) => {
+      electronShell.showItemInFolder(target)
+    },
     // 「选择图片」 (S11): the Electron boundary's half of the composer's
     // attachment entrance. Multi-select, images only — every format the import
     // pipeline can classify, so an unsupported one (BMP, say) is *rejected by
@@ -1339,6 +1346,35 @@ async function promptTrustMcpServer(
   // Parented when a window exists (a project opened after the first): a sheet
   // on macOS, a modal owned by the window on Windows. The first project's
   // servers are asked before any window is built, so that one floats.
+  const parent = liveWindow()
+  const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+  return response === 0
+}
+
+/**
+ * Import confirmation for a skill that can do more than supply text.
+ *
+ * The same native modal as the MCP prompt above and for the same reason: an
+ * import runs inside a settings change on the host, where there is no renderer
+ * dialog to put up. `willBeDisabled` is the high-risk case — the copy lands
+ * switched off, so the button says so rather than reading as a plain 导入.
+ */
+async function promptSkillImport(prompt: SkillImportPrompt): Promise<boolean> {
+  const findings = prompt.inspection.findings.map((finding) => `• ${finding.message}`).join('\n')
+  const options: MessageBoxOptions = {
+    type: 'warning',
+    buttons: [prompt.willBeDisabled ? '导入并保持关闭' : '导入', '取消'],
+    // Both default to Cancel: a dismissed dialog must not import anything.
+    defaultId: 1,
+    cancelId: 1,
+    title: '导入技能',
+    message: `技能「${prompt.name}」${prompt.risk === 'high' ? '可以自动执行命令。' : '带有可执行内容。'}`,
+    detail: [
+      findings || undefined,
+      `来源：${prompt.source}`,
+      prompt.willBeDisabled ? '导入后默认关闭，在详情页读过内容再打开。' : undefined,
+    ].filter(Boolean).join('\n\n'),
+  }
   const parent = liveWindow()
   const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
   return response === 0

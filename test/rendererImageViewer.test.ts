@@ -73,7 +73,7 @@ test('the percentage is rounded, and the factor is clamped', () => {
 })
 
 function input() {
-  return { imageId: 'img-1', name: 'shot.png', dimensions: '1920×1080', zoom: 0.5 }
+  return { imageId: 'img-1', name: 'shot.png', dimensions: '1920×1080', width: 1920, height: 1080, zoom: 0.5 }
 }
 
 test('the viewer opens on the thumbnail and settles onto the screen-sized copy', () => {

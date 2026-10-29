@@ -93,6 +93,7 @@ import {
   type PendingMutation,
   type SettingsIntent,
   type SettingsProbeRequest,
+  type SkillFileAction,
 } from './model/settings.js'
 import type { SettingsChange, WireShellProbeEndpointResult } from '../shellProtocol.js'
 import {
@@ -121,7 +122,6 @@ import { createQuestionCardView } from './dom/questionCardView.js'
 import { createRewindView } from './dom/rewindView.js'
 import { createNoSessionView } from './dom/noSessionView.js'
 import { createSurfacePanel } from './dom/surfaceView.js'
-import { createProcessStripView } from './dom/processStripView.js'
 import { createComposerView } from './dom/composerView.js'
 import { createImageViewerView } from './dom/imageViewerView.js'
 import { createStatusView } from './dom/statusView.js'
@@ -175,6 +175,7 @@ import { threadPage, type ThreadSelection } from './model/threadDetail.js'
 import { createThreadPanelView } from './dom/threadPanelView.js'
 import { createThreadDetailView } from './dom/threadDetailView.js'
 import { createMergeBarView } from './dom/mergeBarView.js'
+import { copyText } from './dom/clipboard.js'
 import { createToastHost } from './dom/toastView.js'
 import { showStartupFailure } from './dom/startupFailureView.js'
 import { errorPlace, errorText, type ErrorPlace, type ErrorSite } from './model/errorReport.js'
@@ -288,11 +289,11 @@ const surface = createSurfacePanel(required('surface'), (action) => {
 const suggestions = createSuggestionsView(required('suggestions'), (index) => {
   void activePane()?.acceptCompletionAt(index)
 }, required('input'))
-const processStrip = createProcessStripView(required('process-strip'), () => showSideTab('running'))
 const status = createStatusView({
   usage: required('status-usage'),
 })
 const composer = createComposerView({
+  editor: required('composer-editor'),
   input: required<HTMLTextAreaElement>('input'),
   submit: required<HTMLButtonElement>('submit'),
   stop: required<HTMLButtonElement>('stop'),
@@ -309,9 +310,9 @@ const composer = createComposerView({
   // persists. See `dom/composerView.ts`'s header for why not `setModel`.
   onOpenRuntimeMenu: () => void activePane()?.openRuntimeMenu(),
   onRuntimeAction: (action) => void activePane()?.runSurfaceAction(action),
-  // The pill is the exception: the mode is the live gate's state, so it goes
-  // straight to `set-permission-mode` and repaints off the snapshot that comes
-  // back.
+  // The pill is the exception: the mode applies to the live gate, so it goes
+  // straight to `set-permission-mode` (which also remembers it globally) and
+  // repaints off the snapshot that comes back.
   onSelectPermissionMode: (mode) => void activePane()?.setPermissionMode(mode),
   onAttach: () => activePane()?.onComposerInput(),
   // The S11 attachment entrances. Every one routes to the *active* pane, the
@@ -404,7 +405,6 @@ function attachPaneSession(lane: string): void {
     rewindPanel,
     surface,
     suggestions,
-    processStrip,
     status,
     composer,
     imageViewer,
@@ -543,7 +543,6 @@ function activateLane(lane: string): void {
   activePane()?.deactivate()
   activeLane = lane
   lastActiveTick.set(lane, ++tick)
-  paneSessions.get(lane)!.activate()
   pruneSidePanel()
   applyPaneBudget()
   renderSidebar()
@@ -559,7 +558,7 @@ function activateLane(lane: string): void {
   // The merge bar belongs to the lane's project and role: hide what the last
   // lane showed now, and pull this one's after the debounce.
   renderMergeBar()
-  activePane()?.refreshWelcome()
+  paneSessions.get(lane)!.activate()
   scheduleMergePull()
   openModelSetupIfNeeded()
 }
@@ -629,10 +628,11 @@ function applyPaneBudget(): void {
   const tabs = shellClient.getBrowserTabs()
   const laneInfos = shellClient.getLanes()
   const draft = currentDraft()?.lane
-  const entries: PaneBudgetEntry[] = [...paneSessions.keys()].map((lane) => ({
+  const entries: PaneBudgetEntry[] = [...paneSessions].map(([lane, session]) => ({
     lane,
     active: lane === activeLane,
     streaming: statuses.get(lane)?.streaming ?? false,
+    pending: !session.client.getSession() || session.client.getQueuedMessages().length > 0,
     blocked: statuses.get(lane)?.blocked ?? false,
     processes: statuses.get(lane)?.processes ?? false,
     tabs: tabsForLane(tabs, lane).length > 0,
@@ -649,7 +649,9 @@ function applyPaneBudget(): void {
     evicting.add(lane)
     // Through the lane's own client, exactly like a close from the sidebar: it
     // reaches whichever `SessionWorkspace` owns the pane.
-    void session.client.closePane(paneId).catch(() => {
+    void session.client.closePane(paneId, { onlyIfIdle: true }).then((closed) => {
+      if (!closed) evicting.delete(lane)
+    }).catch(() => {
       // The pane may already be gone; the `lanes` diff is the source of truth.
       evicting.delete(lane)
     })
@@ -738,6 +740,8 @@ const removingProjects = new Set<string>()
 let searchQuery = ''
 /** The workspaces folded shut in the sidebar. View state; nothing persists it. */
 let collapsedProjects: ReadonlySet<string> = new Set()
+/** The workspaces showing their whole session list rather than the newest few. */
+let expandedProjects: ReadonlySet<string> = new Set()
 let helpOpen = false
 /** The「最近」filter: only the sessions that belong to no project. Not persisted. */
 let recentOnly = false
@@ -768,6 +772,7 @@ function currentSidebarState(): SidebarState {
     canCreate: !(activePane()?.shellState().hasOverlay ?? false),
     searchQuery,
     collapsedProjects,
+    expandedProjects,
     helpOpen,
     recentOnly,
     projectsOpen,
@@ -929,13 +934,18 @@ function runSidebarIntent(intent: SidebarIntent): void {
       const clickedFrom = activeLane
       void shellClient
         .openSession({ ...(target !== undefined ? { projectRoot: target } : {}), activate: false })
-        .then((opened) => {
+        .then(async (opened) => {
+          const next = paneSessions.get(opened.lane)
+          if (!next) return
+          // Keep the current pane visible until the replacement can paint its
+          // project and branch without an intermediate fallback label.
+          await next.start()
           // Read at the reply, not the click: the round trip is long enough to
           // keep typing, or to send — and a sent draft is a conversation now,
           // not something to move or close.
           const from = plan.carryFrom === undefined ? undefined : paneSessions.get(plan.carryFrom)
           const carry = from !== undefined && !from.hasConversation() ? from : undefined
-          if (carry) paneSessions.get(opened.lane)?.restoreDraft(carry.draftInput())
+          if (carry) next.restoreDraft(carry.draftInput())
           // A session the user opened in the meantime stays on screen; the new
           // draft waits for the next「新会话」, ranked as the most recent.
           if (activeLane === clickedFrom) activateLane(opened.lane)
@@ -975,6 +985,10 @@ function runSidebarIntent(intent: SidebarIntent): void {
       return
     case 'toggle-project':
       collapsedProjects = toggleProject(collapsedProjects, intent.projectRoot)
+      renderSidebar()
+      return
+    case 'toggle-project-expanded':
+      expandedProjects = toggleProject(expandedProjects, intent.projectRoot)
       renderSidebar()
       return
     case 'open-project-menu': {
@@ -1622,6 +1636,7 @@ function runSettingsIntent(intent: SettingsIntent): void {
   }
   if (outcome.load) void loadSettingsNow()
   if (outcome.probe) void runProbeNow(outcome.probe)
+  if (outcome.skillAction) void runSkillAction(outcome.skillAction)
   // The pending batch, not the raw changes: the rows are already drawn as though
   // they landed, and `runSettingsChanges` retires them by id as the replies come.
   if (outcome.pending) void runSettingsChangesNow(outcome.pending)
@@ -1645,13 +1660,54 @@ async function loadSettingsNow(): Promise<void> {
   renderSettings()
 }
 
+const SKILL_ACTION_LABELS: Readonly<Record<SkillFileAction['kind'], string>> = {
+  open: '打开技能文件',
+  reveal: '在文件夹中显示技能',
+  copy: '复制技能内容',
+  preview: '读取技能内容',
+}
+
+/**
+ * A skill dialog's file actions. The copy reads the whole `SKILL.md` first —
+ * the snapshot carries only a preview — and says so in a toast, because a copy
+ * that worked looks exactly like a button that did nothing.
+ */
+async function runSkillAction(action: SkillFileAction): Promise<void> {
+  const projectRoot = settingsState.projectRoot
+  if (projectRoot === undefined) return
+  try {
+    if (action.kind === 'preview') {
+      const { raw } = await shellClient.readSkill(projectRoot, action.name, action.skillsScope)
+      runSettingsIntent({ kind: 'skill-preview-result', projectRoot, name: action.name, skillsScope: action.skillsScope, result: { raw } })
+      return
+    }
+    if (action.kind === 'copy') {
+      const { raw } = await shellClient.readSkill(projectRoot, action.name, action.skillsScope)
+      if (!(await copyText(raw))) throw new Error('系统剪贴板不可用。')
+      toastHost.push('info', `已复制 ${action.name} 的 SKILL.md`)
+      return
+    }
+    if (action.kind === 'open') await shellClient.openSkill(projectRoot, action.name, action.skillsScope)
+    else await shellClient.revealSkill(projectRoot, action.name, action.skillsScope)
+  } catch (error) {
+    if (action.kind === 'preview') {
+      runSettingsIntent({ kind: 'skill-preview-result', projectRoot, name: action.name, skillsScope: action.skillsScope, result: { error: error instanceof Error ? error.message : String(error) } })
+      return
+    }
+    reportError({ action: SKILL_ACTION_LABELS[action.kind] }, error)
+  }
+}
+
 /** Changes that add or remove skill slash commands, so the panes' cached completion list is stale. */
 function changesCommandSet(changes: readonly SettingsChange[]): boolean {
   return changes.some(
     (change) =>
       change.kind === 'set-skill-enabled'
       || change.kind === 'reload-skills'
-      || change.kind === 'import-skill',
+      || change.kind === 'import-skill'
+      // A skill that was uninstalled takes its slash command with it, the same
+      // edge an import adds one.
+      || change.kind === 'remove-skill',
   )
 }
 

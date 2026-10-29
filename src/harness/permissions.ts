@@ -22,6 +22,8 @@ export type PermissionMode = 'default' | 'plan' | 'auto' | 'bypass' | 'readonly'
 export interface PermissionRequest {
   tool: Tool
   input: unknown
+  /** The call this prompt actually blocks; absent for callers outside ToolRunner. */
+  toolUseId?: string
   reason: string
   source: PermissionDecisionSource
   matchedRule?: PermissionRule
@@ -85,6 +87,7 @@ export interface PermissionSettings {
 
 const WRITE_FAMILY = new Set(['Edit', 'Write', 'MultiEdit', 'Delete', 'NotebookEdit'])
 const READ_FAMILY = new Set(['Read', 'Grep', 'Glob'])
+const STRING_EDIT_TOOLS = new Set(['Edit', 'MultiEdit'])
 const FILE_TOOLS = new Set([...WRITE_FAMILY, ...READ_FAMILY, 'NotebookRead'])
 const PLAN_FILE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit'])
 const MEMORY_FILE_TOOLS = new Set(['Read', 'Write', 'Edit', 'MultiEdit', 'Delete'])
@@ -354,8 +357,8 @@ export class PermissionGate {
   }
 
   /** Spec §3.3: a fixed order over the classifier's verdict, the rules and the mode. */
-  async approveDetailed(tool: Tool, input: unknown): Promise<PermissionDecision> {
-    const decision = await this.decide(tool, input)
+  async approveDetailed(tool: Tool, input: unknown, toolUseId?: string): Promise<PermissionDecision> {
+    const decision = await this.decide(tool, input, toolUseId)
     if (decision.approved || decision.source !== 'deny rule') this.lastDenial = undefined
     return decision
   }
@@ -364,14 +367,14 @@ export class PermissionGate {
     return classifyToolCall(tool, input, this.riskContextFor()).level
   }
 
-  private async decide(tool: Tool, input: unknown): Promise<PermissionDecision> {
+  private async decide(tool: Tool, input: unknown, toolUseId?: string): Promise<PermissionDecision> {
     const risk = classifyToolCall(tool, input, this.riskContextFor())
-    const decision = await this.decideWithRisk(tool, input, risk)
+    const decision = await this.decideWithRisk(tool, input, risk, toolUseId)
     // Bound from this classification, not re-resolved after any approval await.
     return risk.writeTarget === undefined ? decision : { ...decision, writeTarget: risk.writeTarget }
   }
 
-  private async decideWithRisk(tool: Tool, input: unknown, risk: RiskAssessment): Promise<PermissionDecision> {
+  private async decideWithRisk(tool: Tool, input: unknown, risk: RiskAssessment, toolUseId?: string): Promise<PermissionDecision> {
     const mode = this.mode
     const level = risk.level
 
@@ -388,7 +391,7 @@ export class PermissionGate {
       if (mode === 'readonly') {
         return deny('ask rule', `The user asked to confirm ${permissionRuleToEntry(askedByRule)} before it runs, and read-only mode cannot ask. ${this.lockMode ? 'Ask the user to run it themselves.' : 'Ask the user to run it themselves or to switch permission mode.'}`)
       }
-      return this.ask(tool, input, risk, 'ask rule', askedByRule)
+      return this.ask(tool, input, risk, 'ask rule', askedByRule, toolUseId)
     }
 
     // 2. Plan mode writes nothing but this session's plan file.
@@ -411,11 +414,11 @@ export class PermissionGate {
       if (mode === 'readonly') {
         return deny('ask rule', `The user asked to confirm ${permissionRuleToEntry(askedBy)} before it runs, and read-only mode cannot ask. ${this.lockMode ? 'Ask the user to run it themselves.' : 'Ask the user to run it themselves or to switch permission mode.'}`)
       }
-      return this.ask(tool, input, risk, 'ask rule', askedBy)
+      return this.ask(tool, input, risk, 'ask rule', askedBy, toolUseId)
     }
 
     // 5. Outside bypass, critical always reaches the user, and never as "always allow".
-    if (level === 'critical' && mode !== 'bypass') return this.ask(tool, input, risk, 'mode')
+    if (level === 'critical' && mode !== 'bypass') return this.ask(tool, input, risk, 'mode', undefined, toolUseId)
 
     if (mode === 'readonly') {
       // A read-only call that starts something writable (an Agent of a writing type) still is not one.
@@ -433,15 +436,15 @@ export class PermissionGate {
     if (level === 'readonly') return allow('mode')
     switch (mode) {
       case 'auto':
-        return level === 'normal' ? allow('mode') : this.ask(tool, input, risk, 'mode')
+        return level === 'normal' ? allow('mode') : this.ask(tool, input, risk, 'mode', undefined, toolUseId)
       case 'bypass':
         return allow('mode', level === 'risky' || level === 'critical'
           ? `This call ran in bypass mode although it was flagged as ${level === 'critical' ? 'plainly dangerous' : 'risky'}: ${reasonList(risk)} Check that this is the effect the user wanted.`
           : undefined)
       case 'plan':
-        return isOnlyOutsideRead(risk) ? allow('mode') : this.ask(tool, input, risk, 'mode')
+        return isOnlyOutsideRead(risk) ? allow('mode') : this.ask(tool, input, risk, 'mode', undefined, toolUseId)
       default:
-        return this.ask(tool, input, risk, 'mode')
+        return this.ask(tool, input, risk, 'mode', undefined, toolUseId)
     }
   }
 
@@ -461,12 +464,14 @@ export class PermissionGate {
     risk: RiskAssessment,
     source: PermissionDecisionSource,
     matchedRule?: PermissionRule,
+    toolUseId?: string,
   ): Promise<PermissionDecision> {
     const memory = this.memoryRuleFor(tool, input, risk)
     let alwaysAllow = false
     const approved = await this.prompt({
       tool,
       input,
+      ...(toolUseId === undefined ? {} : { toolUseId }),
       reason: this.promptReason(tool, risk, source, matchedRule),
       source,
       ...(matchedRule ? { matchedRule } : {}),
@@ -768,7 +773,9 @@ export class PermissionGate {
   }
 
   private matchesRule(rule: PermissionRule, toolName: string, input: unknown, risk?: RiskAssessment): boolean {
-    if (!ruleAppliesToTool(rule.toolName, toolName)) return false
+    // String edits read internally. Read restrictions apply; Read allow rules never authorize writes.
+    const internalRead = rule.toolName === 'Read' && rule.behavior !== 'allow' && STRING_EDIT_TOOLS.has(toolName)
+    if (!ruleAppliesToTool(rule.toolName, toolName) && !internalRead) return false
     const pattern = rule.contentPattern
     if (!pattern) return true
 

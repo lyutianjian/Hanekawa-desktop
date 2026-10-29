@@ -373,7 +373,9 @@ test('the image viewer keeps Tab inside itself and can take focus on its own fac
   const layer = stub.createContainer('lightbox')
   const closed: number[] = []
   const viewer = createImageViewerView(layer, { onZoom: () => {}, onClose: () => { closed.push(1) } })
-  viewer.show(openImageViewer({ imageId: 'img-1', name: 'a.png', dimensions: '1×1', zoom: 1, thumbUrl: 'data:,' }))
+  viewer.show(openImageViewer({
+    imageId: 'img-1', name: 'a.png', dimensions: '1×1', width: 1, height: 1, zoom: 1, thumbUrl: 'data:,',
+  }))
 
   assert.equal(layer.tabIndex, -1, 'a press on the picture leaves focus on the layer, not on <body>')
 

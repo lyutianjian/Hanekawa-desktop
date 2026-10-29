@@ -2109,6 +2109,97 @@ test('agent loop excludes compact summarizer usage from status usage', async () 
   assert.ok(records.some((record) => record.type === 'compact_boundary'))
 })
 
+test('a provider count that still fits keeps the history whole and skips compaction', async () => {
+  const records: SessionRecord[] = [{
+    id: 'start',
+    type: 'message',
+    role: 'user',
+    content: 'start',
+    createdAt: '2026-05-24T00:00:00.000Z',
+  }]
+  // Reasoning replay is where the local estimate over-charges: 60k characters
+  // it counts at ~20k tokens while the provider bills a few thousand of them.
+  // The provider's own count decides whether the request still fits, so the
+  // history it already accepted is not trimmed away below the threshold.
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage() {
+      return {
+        content: 'ok',
+        toolCalls: [],
+        thinkingBlocks: [{ type: 'thinking' as const, thinking: 'x'.repeat(60_000) }],
+        usage: { inputTokens: 5000, cacheReadInputTokens: 0, outputTokens: 300 },
+      }
+    },
+  }
+  const runner = new ToolRunner([], new PermissionGate(async () => true), {
+    onRecord: async (record) => { records.push(record) },
+  })
+  const loop = new AgentLoop({
+    provider,
+    model: 'fake-model',
+    tools: [],
+    contextBuilder: cheapContextBuilder(),
+    toolRunner: runner,
+    toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
+    contextWindow: 20_000,
+    contextManagement: {
+      contextWindow: 20_000,
+      summaryOutputTokens: 0,
+      autoCompactReserveRatio: 0.2,
+    },
+    recordStream: recordStreamFor(records),
+  })
+
+  await loop.run({ text: 'first' })
+  await loop.run({ text: 'second' })
+
+  assert.ok(!records.some((record) => record.type === 'compact_boundary'))
+})
+
+test('a provider count past the threshold still compacts', async () => {
+  const records: SessionRecord[] = [{
+    id: 'start',
+    type: 'message',
+    role: 'user',
+    content: 'start',
+    createdAt: '2026-05-24T00:00:00.000Z',
+  }]
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage() {
+      return {
+        content: 'ok',
+        toolCalls: [],
+        usage: { inputTokens: 17_000, cacheReadInputTokens: 0, outputTokens: 300 },
+      }
+    },
+  }
+  const runner = new ToolRunner([], new PermissionGate(async () => true), {
+    onRecord: async (record) => { records.push(record) },
+  })
+  const loop = new AgentLoop({
+    provider,
+    model: 'fake-model',
+    tools: [],
+    contextBuilder: cheapContextBuilder(),
+    toolRunner: runner,
+    toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
+    contextWindow: 20_000,
+    contextManagement: {
+      contextWindow: 20_000,
+      summaryOutputTokens: 0,
+      autoCompactReserveRatio: 0.2,
+    },
+    recordStream: recordStreamFor(records),
+  })
+
+  await loop.run({ text: 'first' })
+  await loop.run({ text: 'second' })
+
+  assert.ok(records.some((record) => record.type === 'compact_boundary'))
+})
+
 test('agent loop consumes pending post-compact restore after a successful build', async () => {
   const records: SessionRecord[] = [{
     type: 'compact_boundary',

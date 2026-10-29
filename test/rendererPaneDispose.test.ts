@@ -5,7 +5,8 @@ import { setImmediate as tick } from 'node:timers/promises'
 import { installDomStub } from './helpers/domStub.js'
 import { createPaneSession, type PaneSessionDeps } from '../src/desktop/renderer/paneSession.js'
 import type { RuntimeChannel } from '../src/runtime/protocol/channel.js'
-import type { PermissionRequestDto } from '../src/runtime/protocol/wire.js'
+import type { SessionRecord } from '../src/harness/types.js'
+import type { PermissionRequestDto, WireCommandInfo, WireHelloResult } from '../src/runtime/protocol/wire.js'
 import type { ComposerView } from '../src/desktop/renderer/dom/composerView.js'
 import type { StatusView } from '../src/desktop/renderer/dom/statusView.js'
 import type { PermissionRequestView } from '../src/desktop/renderer/dom/permissionRequestView.js'
@@ -14,7 +15,6 @@ import type { SurfacePanel } from '../src/desktop/renderer/dom/surfaceView.js'
 import type { SuggestionsView } from '../src/desktop/renderer/dom/suggestionsView.js'
 import type { PlanCardView } from '../src/desktop/renderer/dom/planCardView.js'
 import type { QuestionCardView } from '../src/desktop/renderer/dom/questionCardView.js'
-import type { ProcessStripView } from '../src/desktop/renderer/dom/processStripView.js'
 import type { ImageViewerView } from '../src/desktop/renderer/dom/imageViewerView.js'
 
 /**
@@ -64,6 +64,64 @@ function fakeChannel(): {
     deliver: (message) => handler?.(message),
   }
 }
+
+test('slash routing preserves unknown messages, queues them mid-turn and keeps matched commands host-side', async (t) => {
+  const stub = installDomStub()
+  const views = stubViews()
+  const remote = fakeChannel()
+  let draft = ''
+  views.composer.value = () => draft
+  views.composer.setValue = (text) => { draft = text }
+  views.composer.clear = () => { draft = '' }
+  const pane = createPaneSession(depsOf('slash-lane', remote.channel, stub.createContainer(), views))
+  t.after(() => { pane.dispose(); stub.uninstall() })
+  pane.activate()
+  const reply = (type: string, result: unknown) => {
+    const command = remote.posted.filter((entry) => entry.type === type).at(-1)
+    assert.ok(command, `${type} was posted`)
+    remote.deliver({ type: 'reply', id: command.id, result })
+    return command
+  }
+  pane.refreshCommands()
+  reply('list-commands', { commands: [
+    { name: 'model', description: 'Choose model' },
+    { name: 'template-creator', description: 'Create templates', isSkill: true },
+  ] })
+  await tick()
+
+  const raw = '  /tmp/example\n请检查  '
+  draft = raw
+  const send = pane.send()
+  assert.equal(reply('submit', {}).input, raw)
+  await send
+  assert.equal(remote.posted.some((entry) => entry.type === 'run-command'), false)
+  assert.equal(draft, '')
+
+  draft = raw
+  const queue = pane.queueMessage()
+  assert.equal(reply('enqueue-message', { message: { id: 'q1', content: raw, priority: 'next', createdAt: 'now' } }).content, raw)
+  await queue
+
+  const paths = [{ path: '/tmp/reference.txt', kind: 'file' as const }]
+  pane.addDraftPaths(paths)
+  for (const raw of ['/model main', '/template-creator 参数']) {
+    draft = raw
+    const command = pane.queueMessage()
+    assert.equal(reply('run-command', { handled: true }).input, raw)
+    await command
+    assert.deepEqual(pane.draftInput().paths, paths, 'matched commands preserve draft attachments')
+  }
+
+  // A skill removed after the list was read still returns the whole draft to
+  // the ordinary submit path when the host reports it unhandled.
+  draft = '/template-creator 参数'
+  const stale = pane.send()
+  reply('run-command', { handled: false })
+  await tick()
+  assert.equal(reply('submit', {}).input, '/template-creator 参数\n\n<attached-paths>\nfile: /tmp/reference.txt\n</attached-paths>')
+  await stale
+  assert.deepEqual(pane.draftInput().paths, [])
+})
 
 /** Every singleton view the active pane drives, recording what it is asked to do. */
 function stubViews(): {
@@ -115,6 +173,7 @@ function stubViews(): {
     value: () => '',
     cursorPos: () => 0,
     setValue: () => {},
+    setCommands: () => {},
     clear: () => calls.composer.push('clear'),
     focus: () => calls.composer.push('focus'),
     setStreaming: () => {},
@@ -163,7 +222,6 @@ function depsOf(
     rewindPanel: views.rewindPanel,
     surface: views.surface,
     suggestions: views.suggestions,
-    processStrip: { render: () => {} } satisfies ProcessStripView,
     status: views.status,
     composer: views.composer,
     imageViewer: views.imageViewer,
@@ -186,6 +244,115 @@ function permissionRequest(requestId: string): Record<string, unknown> {
   }
   return { type: 'ui-request', request: { kind: 'permission', requestId, payload } }
 }
+
+test('the status waits only while a real permission card is pending, never during automatic approval', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval', 'setTimeout'], now: 1_700_000_000_000 })
+  const stub = installDomStub()
+  const remote = fakeChannel()
+  const pane = createPaneSession(depsOf('status-lane', remote.channel, stub.createContainer(), stubViews()))
+  t.after(() => { pane.dispose(); stub.uninstall() })
+  pane.activate()
+  remote.deliver({ type: 'snapshot', snapshot: { ...pane.client.getSnapshot(), isStreaming: true }, subagentProgress: [] })
+  const record = (record: SessionRecord): void => remote.deliver({ type: 'session-event', event: { type: 'record', record } })
+  const label = (): string => pane.paneEl.querySelector('.run')?.querySelector('.line-text')?.textContent ?? ''
+  record({ type: 'message', id: 'user', role: 'user', content: 'go', turnId: 't1', createdAt: new Date().toISOString() })
+  record({ type: 'tool_use', id: 'automatic', tool: 'Bash', input: { command: 'npm test', description: '跑测试' }, turnId: 't1', createdAt: new Date().toISOString() })
+  t.mock.timers.tick(40)
+  assert.doesNotMatch(label(), /等待你确认/, 'the first tool paint, before any approval record')
+  record({ type: 'tool_approval', id: 'approved', tool: 'Bash', input: {}, approved: true, riskLevel: 'confirm', turnId: 't1', createdAt: new Date().toISOString() })
+  await tick()
+  t.mock.timers.tick(200)
+  assert.equal(label(), '跑测试')
+  assert.equal(pane.shellState().hasOverlay, false)
+
+  record({ type: 'tool_use', id: 'manual', tool: 'Bash', input: { command: 'npm run build', description: '构建' }, turnId: 't1', createdAt: new Date().toISOString() })
+  await tick()
+  remote.deliver({ type: 'ui-request', request: { kind: 'permission', requestId: 'request-manual', payload: {
+    toolName: 'Bash', toolUseId: 'manual', input: { command: 'npm run build' }, riskLevel: 'confirm',
+    reason: 'shell command', source: 'mode', denialStreak: 0, canAlwaysAllow: false, destructiveWarnings: [],
+  } } })
+  assert.equal(label(), '等待你确认 · 构建', 'only the actual request names the waiting call')
+  assert.equal(pane.shellState().hasOverlay, true)
+  pane.handleOverlayAction({ kind: 'slot', index: 0 })
+  await tick()
+  t.mock.timers.tick(200)
+  assert.equal(label(), '构建', 'answering removes the user wait before its approval record is sent')
+  assert.equal(pane.shellState().hasOverlay, false)
+})
+
+test('a newly attached background pane stays out of the canvas layout until activated', (t) => {
+  const stub = installDomStub()
+  const mount = stub.createContainer('transcript-area')
+  const views = stubViews()
+  const current = createPaneSession(depsOf('current', fakeChannel().channel, mount, views))
+  current.activate()
+  const next = createPaneSession(depsOf('next', fakeChannel().channel, mount, views))
+  t.after(() => { current.dispose(); next.dispose(); stub.uninstall() })
+
+  assert.equal(current.paneEl.hidden, false)
+  assert.equal(next.isActive(), false)
+  assert.equal(next.paneEl.hidden, true)
+  assert.equal(stub.inspect(mount).children.filter((node) => !node.hidden).length, 1)
+  current.deactivate()
+  next.activate()
+  assert.equal(stub.inspect(mount).children.filter((node) => !node.hidden).length, 1)
+})
+
+test('startup can be awaited again before revealing the initialized project and carried draft', async (t) => {
+  const stub = installDomStub()
+  const views = stubViews()
+  const remote = fakeChannel()
+  const pane = createPaneSession(depsOf('next', remote.channel, stub.createContainer(), views))
+  t.after(() => { pane.dispose(); stub.uninstall() })
+  let text = ''
+  let commands: readonly WireCommandInfo[] = []
+  views.composer.value = () => text
+  views.composer.setValue = (value, _cursorPos, nextCommands) => {
+    text = value
+    if (nextCommands !== undefined) commands = nextCommands
+  }
+  views.composer.setCommands = (value) => { commands = value }
+  const starting = pane.start()
+  assert.equal(pane.start(), starting, 'attachment and the new-session action await the same startup')
+  assert.equal(remote.posted.filter((entry) => entry.type === 'hello').length, 1)
+  const reply = (type: string, result: unknown) => {
+    const command = remote.posted.find((entry) => entry.type === type)
+    assert.ok(command, `${type} was posted`)
+    remote.deliver({ type: 'reply', id: command.id, result })
+  }
+  reply('hello', {
+    sessionId: 'next-session',
+    session: { id: 'next-session', shortId: 'next', createdAt: 'now', updatedAt: 'now', messageCount: 0 },
+    cwd: '/next',
+    projectRoot: '/next',
+    projectName: 'ssh密钥（重要！）',
+    projectIsGlobal: false,
+    gitBranch: 'main',
+    records: [],
+    notices: [],
+    hasRecoverableInterruption: false,
+    queuedMessages: [],
+    configuredEffortLevel: 'high',
+  } satisfies WireHelloResult)
+  await tick()
+  assert.equal(pane.paneEl.hidden, true, 'initialization does not reveal the pane')
+  reply('list-commands', { commands: [{ name: 'review', description: 'Review code', isSkill: true }] })
+  await tick()
+  reply('list-panes', { panes: [] })
+  await starting
+
+  const draft = { text: '保留正在输入的内容', paths: [{ path: '/reference.txt', kind: 'file' as const }], images: [] }
+  pane.restoreDraft(draft)
+  assert.equal(commands.length, 0, 'a background pane does not replace the active command registry')
+  pane.activate()
+  assert.equal(pane.ownProjectRoot, '/next')
+  assert.deepEqual(pane.draftInput(), draft)
+  assert.deepEqual(commands.map((command) => command.name), ['review'])
+  const welcome = stub.inspect(pane.paneEl).children.find((node) => node.classes.includes('welcome'))
+  assert.ok(welcome?.text.includes('ssh密钥（重要！）'))
+  assert.ok(welcome?.text.includes('main'))
+  assert.equal(welcome?.text.includes('当前项目'), false, 'the first visible paint has the real project name')
+})
 
 test('closing the active pane takes the shell singletons down with it', async (t) => {
   const stub = installDomStub()

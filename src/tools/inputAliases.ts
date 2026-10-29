@@ -168,6 +168,29 @@ const SPECS: Record<string, AliasSpec> = {
   Browser: { ...BROWSER_SPEC, nested: { key: 'steps', spec: BROWSER_SPEC } },
   // The prior creates one task per call, with the task's fields at the top level.
   TaskCreate: { rename: { todos: 'tasks', items: 'tasks' }, wrap: 'tasks' },
+  // Both prior shapes name the same search: Claude Code's
+  // `{query, allowed_domains, blocked_domains}` and Codex's
+  // `{search_query: [{q, recency, domains}]}`. `queries` takes one query, one
+  // string per query, or the per-query objects, so `arrays` only has to lift a
+  // bare string into a list and `nested` only has to rename inside an object.
+  WebSearch: {
+    rename: {
+      query: 'queries',
+      search_query: 'queries',
+      allowed_domains: 'domains',
+      blocked_domains: 'blockedDomains',
+      recency: 'recencyDays',
+    },
+    numbers: ['maxResults', 'recencyDays'],
+    arrays: ['queries', 'domains', 'blockedDomains'],
+    nested: {
+      key: 'queries',
+      spec: { rename: { recency: 'recencyDays', allowed_domains: 'domains' }, numbers: ['recencyDays'], arrays: ['domains'] },
+    },
+  },
+  // Claude Code's WebFetch takes a `prompt` for a second model to answer; this
+  // tool returns the page itself, so the key has no meaning here.
+  WebFetch: { rename: { pattern_search: 'pattern' }, drop: ['prompt'], numbers: ['offset'] },
 }
 
 const NUMERIC_LITERAL = /^-?\d+(\.\d+)?$/

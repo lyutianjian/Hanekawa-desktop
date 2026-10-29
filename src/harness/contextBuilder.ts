@@ -29,6 +29,17 @@ const picomatch = require('picomatch') as {
 
 export const INSTRUCTIONS_MESSAGE_ID = 'meta:instructions'
 
+/**
+ * A request the provider has already measured: its own count for what it
+ * received, and the local estimate of that same request at the time.
+ */
+export interface ContextUsageBaseline {
+  /** The provider's count, plus the response it produced. */
+  readonly tokens: number
+  /** What {@link BuiltContext.inputTokens} said about that same request. */
+  readonly localEstimate: number
+}
+
 export interface BuildContextInput {
   imageTokenStrategy?: ImageTokenStrategy
   records: SessionRecord[]
@@ -55,6 +66,13 @@ export interface BuildContextInput {
   transientUserContext?: string[]
   enabledSections?: SectionKey[]
   dynamicToolSearchEnabled?: boolean
+  /**
+   * What the provider said the request it accepted last was worth, together
+   * with the local estimate that number was paired with at the time. The plan
+   * moves the real count by how much the local estimate has changed since
+   * instead of re-estimating a history the provider has already measured.
+   */
+  usageBaseline?: ContextUsageBaseline
 }
 
 export interface EnvironmentInfo {
@@ -278,16 +296,19 @@ export class ContextBuilder {
     const countedSystem = instructions ? `${system}\n\n${instructions.message.content}` : system
     const toolSchemas = toolSchemaCosts(input.tools)
     const overhead = requestOverhead({ system: countedSystem, tools: toolSchemas })
+    const inputTokens = overhead.total
+      + allContextItems.reduce((sum, item) => sum + countContextItemTokens(item, input.imageTokenStrategy), 0)
     const built = this.composer.composeContextItems(allContextItems, {
       system: countedSystem,
       contextManagement: input.contextManagement ?? this.defaultContextManagement,
       includeHistory: true,
       tools: toolSchemas,
       imageTokenStrategy: input.imageTokenStrategy,
+      knownRequestTokens: this.knownRequestTokensFor(input.usageBaseline, inputTokens),
     })
 
     return {
-      inputTokens: overhead.total + allContextItems.reduce((sum, item) => sum + countContextItemTokens(item, input.imageTokenStrategy), 0),
+      inputTokens,
       system,
       systemBlocks,
       messages: instructions ? [instructions.message, ...built.messages] : built.messages,
@@ -295,6 +316,20 @@ export class ContextBuilder {
       selection: built.selection,
       overhead,
     }
+  }
+
+  /**
+   * The provider's count for the request it accepted last, moved by however
+   * much the local estimate has changed since. Both sides carry the same
+   * over-count — reasoning replay above all — so subtracting two local
+   * estimates leaves only what was actually added.
+   */
+  private knownRequestTokensFor(
+    baseline: ContextUsageBaseline | undefined,
+    inputTokens: number,
+  ): number | undefined {
+    if (!baseline) return undefined
+    return Math.max(0, baseline.tokens + (inputTokens - baseline.localEstimate))
   }
 
   private buildInstructionsContext(

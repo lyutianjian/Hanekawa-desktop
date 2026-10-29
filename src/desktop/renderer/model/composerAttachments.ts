@@ -19,6 +19,12 @@ import { formatImageFailure, imageErrorCopy } from '../../../media/imageErrors.j
 export type AttachmentImportSource =
   | { kind: 'bytes'; name: string; bytes: Uint8Array }
   | { kind: 'path'; path: string; name?: string }
+  /**
+   * A file the renderer has not read yet. Registering it before `read()` runs is
+   * what puts a pasted image in the draft list on the paste's own turn, so a
+   * send in the same breath sees it instead of sending the text alone.
+   */
+  | { kind: 'file'; name: string; read: () => Promise<Uint8Array>; previewUrl?: string }
 
 /**
  * One draft entry. `failed` keeps its source so 重试 can run the same import
@@ -55,8 +61,8 @@ export interface AttachmentImportOutcome {
 export const MAX_DRAFT_IMAGES = 10
 
 function draftName(source: AttachmentImportSource): string {
-  if (source.kind === 'bytes') return source.name
-  return source.name ?? source.path.split(/[\\/]/).pop() ?? source.path
+  if (source.kind === 'path') return source.name ?? source.path.split(/[\\/]/).pop() ?? source.path
+  return source.name
 }
 
 export function beginAttachmentImport(
@@ -131,6 +137,17 @@ export function draftImageSources(drafts: AttachmentDrafts): AttachmentImportSou
 /** True while any draft is still importing or has failed — the input is not complete yet. */
 export function attachmentDraftsIncomplete(drafts: AttachmentDrafts): boolean {
   return drafts.some((draft) => draft.kind !== 'ready')
+}
+
+/** The same list as the send gate's own words; `undefined` when a send may go. */
+export type AttachmentSendGate =
+  | { readonly kind: 'config' | 'failed' | 'model'; readonly note: string }
+  /** Nothing to refuse — but the images are still arriving, so a send must wait for them. */
+  | { readonly kind: 'importing' }
+
+export interface AttachmentRuntimeCaps {
+  status?: 'ready' | 'needs_configuration'
+  supportsImageInput?: boolean
 }
 
 export function attachmentDraftsFull(drafts: AttachmentDrafts): boolean {
@@ -213,7 +230,30 @@ export interface AttachmentStripView {
  */
 const NOT_CAPABLE_COPY = imageErrorCopy('model-not-capable')!
 const NOT_CAPABLE_NOTE = `${NOT_CAPABLE_COPY.label}。可点击输入栏的模型芯片切换模型。${NOT_CAPABLE_COPY.action}`
-const INCOMPLETE_NOTE = '还有附件在导入中或未成功；处理后才能发送。'
+const FAILED_NOTE = '有附件导入失败；重试或移除后才能发送。'
+const CONFIG_NOTE = '请先配置可用模型。点击“配置模型”打开设置，草稿会保留。'
+
+/**
+ * Whether a send may go out now, wait for its images, or not go at all.
+ *
+ * Split out because the pane needs the middle answer: an `importing` draft is
+ * no longer a refusal — the message is staged and the images join it when they
+ * land. Every other answer is shown as the send button's own note, so a press
+ * that would be refused explains itself before the round trip.
+ */
+export function attachmentSendGate(
+  drafts: AttachmentDrafts,
+  runtime: AttachmentRuntimeCaps | undefined,
+): AttachmentSendGate | undefined {
+  if (runtime?.status === 'needs_configuration') return { kind: 'config', note: CONFIG_NOTE }
+  if (drafts.some((draft) => draft.kind === 'failed')) return { kind: 'failed', note: FAILED_NOTE }
+  const carries = drafts.some((draft) => draft.kind === 'ready' || draft.kind === 'importing')
+  if (carries && runtime !== undefined && runtime.supportsImageInput !== true) {
+    return { kind: 'model', note: NOT_CAPABLE_NOTE }
+  }
+  if (drafts.some((draft) => draft.kind === 'importing')) return { kind: 'importing' }
+  return undefined
+}
 
 /**
  * The strip plus the send gate. The runtime arrives as the snapshot's
@@ -227,7 +267,7 @@ const INCOMPLETE_NOTE = '还有附件在导入中或未成功；处理后才能�
  */
 export function attachmentStripView(
   drafts: AttachmentDrafts,
-  runtime: { status?: 'ready' | 'needs_configuration'; supportsImageInput?: boolean } | undefined,
+  runtime: AttachmentRuntimeCaps | undefined,
   previews: (imageId: string) => string | undefined = () => undefined,
 ): AttachmentStripView {
   const rows: AttachmentRowView[] = drafts.map((draft, index) => {
@@ -264,12 +304,10 @@ export function attachmentStripView(
   })
 
   const readyCount = rows.filter((row) => row.state === 'ready').length
-  let sendBlockNote: string | undefined
-  if (runtime?.status === 'needs_configuration') sendBlockNote = '请先配置可用模型。点击“配置模型”打开设置，草稿会保留。'
-  else if (attachmentDraftsIncomplete(drafts)) sendBlockNote = INCOMPLETE_NOTE
-  else if (readyCount > 0 && runtime !== undefined && runtime.supportsImageInput !== true) {
-    sendBlockNote = NOT_CAPABLE_NOTE
-  }
+  // `importing` is not a block any more: the message waits for it instead of
+  // being refused, so the button keeps saying 发送 while the images arrive.
+  const gate = attachmentSendGate(drafts, runtime)
+  const sendBlockNote = gate !== undefined && gate.kind !== 'importing' ? gate.note : undefined
 
   return { rows, readyCount, ...(sendBlockNote ? { sendBlockNote } : {}) }
 }

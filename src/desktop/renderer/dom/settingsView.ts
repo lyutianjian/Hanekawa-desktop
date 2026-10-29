@@ -4,6 +4,7 @@ import { icon, type IconName } from './icons.js'
 import { onPressOutside } from './dismiss.js'
 import { trapTab } from './focus.js'
 import { createModalPresence, finishPresenceWithin } from './presence.js'
+import { markdownChildren } from './markdownView.js'
 import { SETTINGS_SAVED_TEXT } from '../model/settings.js'
 import type {
   SettingsAnchor,
@@ -21,6 +22,8 @@ import type {
   SettingsNavItem,
   SettingsProbeView,
   SettingsRow,
+  SettingsSkillDetail,
+  SettingsTab,
   SettingsViewModel,
 } from '../model/settings.js'
 
@@ -168,7 +171,7 @@ export function createSettingsView(
   // The backdrop, and only the backdrop: a press that starts inside the dialog
   // and bubbles here is not a dismissal.
   dialogLayer.addEventListener('pointerdown', (event) => {
-    if (event.target === dialogLayer) onIntent({ kind: 'cancel-draft' })
+    if (event.target === dialogLayer) onIntent({ kind: lastSkillName !== undefined ? 'close-skill-detail' : 'cancel-draft' })
   })
   dialog.addEventListener('keydown', (event) => trapTab(dialog, event))
 
@@ -197,6 +200,8 @@ export function createSettingsView(
   // the name of the control that opened it — the node itself may be rebuilt
   // while the dialog is up, so focus goes back to whatever answers to that name.
   let lastFormKey: string | undefined
+  let lastSkillName: string | undefined
+  const markdownSources = new WeakMap<HTMLElement, string>()
   let lastRowIds = new Set<string>()
   let lastConfirmDiscard = false
   let opener: string | undefined
@@ -541,8 +546,8 @@ export function createSettingsView(
       detail = node(`${key}:detail`, 'div', 'settings-model-detail')
       const numbers = node(`${key}:numbers`, 'div', 'settings-model-numbers')
       reconcile(numbers, [
-        labelled('context', '上下文长度', field('contextWindow', row.contextWindow, '上下文长度', '默认')),
-        labelled('output', '最大输出 Token', field('maxOutputTokens', row.maxOutputTokens, '最大输出 Token', '默认')),
+        labelled('context', '上下文长度', field('contextWindow', row.contextWindow, '上下文长度', '默认（支持 k/M）')),
+        labelled('output', '最大输出 Token', field('maxOutputTokens', row.maxOutputTokens, '最大输出 Token', '默认（支持 k/M）')),
       ])
       let levels: HTMLElement | null = null
       if (row.thinking) {
@@ -616,6 +621,39 @@ export function createSettingsView(
     return item
   }
 
+  /**
+   * The 技能 / MCP tab strip. Kept buttons: the one just pressed is still the
+   * focused node after the paint its own click causes, so arrow-less keyboard
+   * use (Tab, Enter) does not lose its place on every switch.
+   */
+  const tabIntents = new Map<string, SettingsIntent>()
+  function tabsNode(tabs: readonly SettingsTab[]): HTMLElement {
+    const strip = node('tabs:strip', 'div', 'settings-tabs')
+    strip.setAttribute('role', 'tablist')
+    strip.setAttribute('aria-label', '技能和 MCP')
+    reconcile(
+      strip,
+      tabs.map((tab) => {
+        const key = `tab:${tab.id}`
+        tabIntents.set(key, tab.intent)
+        const made = node(key, 'button', tab.selected ? 'settings-tab selected' : 'settings-tab', (created) => {
+          created.type = 'button'
+          created.setAttribute('role', 'tab')
+          created.addEventListener('click', () => {
+            const intent = tabIntents.get(key)
+            if (intent) onIntent(intent)
+          })
+        })
+        made.setAttribute('aria-selected', String(tab.selected))
+        const label = `${tab.label}（${tab.count}）`
+        made.setAttribute('aria-label', label)
+        reconcile(made, [el('span', 'settings-tab-label', tab.label), el('span', 'settings-tab-count', tab.count)])
+        return made
+      }),
+    )
+    return strip
+  }
+
   function keptToggle(key: string, options: ToggleOptions): HTMLButtonElement {
     claimed.add(key)
     toggles.set(key, options)
@@ -651,6 +689,69 @@ export function createSettingsView(
     return page
   }
 
+  function skillDialogNodes(detail: SettingsSkillDetail, view: SettingsViewModel): Array<Node | null> {
+    const { card } = detail
+    const key = `skill-dialog:${card.title}`
+    const head = node(`${key}:head`, 'div', 'settings-skill-head')
+    const top = node(`${key}:top`, 'div', 'settings-skill-top')
+    const actions = node(`${key}:controls`, 'div', 'settings-skill-controls')
+    const toggle = card.rows[0]!
+    const controls: Node[] = []
+    if (toggle.control.kind === 'toggle') {
+      const { intentOnChange } = toggle.control
+      controls.push(keptToggle(`toggle:${toggle.id}`, {
+        value: toggle.control.value,
+        ariaLabel: `启用 ${card.title}`,
+        enabled: !toggle.pending,
+        onChange: (enabled) => onIntent(intentOnChange(enabled)),
+      }))
+    }
+    controls.push(keptButton(`${key}:close`, 'settings-dialog-close', '', { kind: 'close-skill-detail' }, { title: '关闭（Esc）', icon: 'close' }))
+    reconcile(actions, controls)
+    reconcile(top, [el('span', 'settings-row-icon settings-skill-icon', icon('package')), actions])
+    reconcile(head, [
+      top,
+      el('div', 'settings-skill-title-line',
+        titled(el('div', 'settings-dialog-title', card.title)),
+        el('span', detail.enabled ? 'settings-skill-status on' : 'settings-skill-status', detail.enabled ? '已启用' : '已禁用'),
+        el('span', 'settings-skill-kind', 'Skill'),
+      ),
+      el('div', 'settings-skill-description', card.note ?? ''),
+      hinted(el('div', 'settings-skill-source', detail.badge), card.noteHint),
+    ])
+    const content = node(`${key}:body`, 'div', 'settings-dialog-body settings-skill-body')
+    const markdown = node(`${key}:markdown`, 'div', 'md settings-skill-markdown')
+    if (markdownSources.get(markdown) !== detail.content) {
+      replace(markdown, ...markdownChildren(detail.content || '（正文为空）'))
+      markdownSources.set(markdown, detail.content)
+    }
+    const info = node(`${key}:info`, 'details', 'settings-skill-info')
+    reconcile(info, [
+      el('summary', 'settings-skill-info-title', '技能信息'),
+      ...card.rows.slice(1).map((row) => rowNode(card.id, row, {
+        openMenu: undefined, justOpened: undefined, focusAfterPaint: () => {}, node, keptInput, keptToggle, onIntent,
+      })),
+    ])
+    reconcile(content, [markdown, detail.contentNote ? el('div', 'settings-skill-content-note', detail.contentNote) : null, info])
+    const footer = node(`${key}:foot`, 'div', 'settings-dialog-foot settings-skill-foot')
+    const fileActions = node(`${key}:files`, 'div', 'settings-skill-file-actions')
+    const actionButton = (spec: SettingsButton): HTMLElement => keptButton(
+      `${key}:action:${spec.intent.kind}`, `settings-btn${spec.danger ? ' danger' : ''}`, spec.label, spec.intent,
+      { title: spec.title, icon: spec.icon, enabled: !spec.pending },
+    )
+    reconcile(fileActions, (card.footerButtons ?? []).map(actionButton))
+    reconcile(footer, [...(card.headerButtons ?? []).map(actionButton), fileActions])
+    const confirming = view.confirming?.anchor.cardId === card.id ? view.confirming : undefined
+    if (view.error) dialog.setAttribute('aria-describedby', DIALOG_ERROR_ID)
+    else dialog.removeAttribute('aria-describedby')
+    return [
+      head, content,
+      view.error ? alerting(el('div', 'settings-error', view.error), DIALOG_ERROR_ID) : null,
+      confirming ? confirmNode(confirming.message, onIntent, confirming.actionLabel) : null,
+      footer,
+    ]
+  }
+
   return {
     render(view: SettingsViewModel): void {
       presence.set(view.open)
@@ -663,6 +764,7 @@ export function createSettingsView(
           dialogPresence.set(false, true)
           for (const region of [nav, body, close]) region.removeAttribute('inert')
           lastFormKey = undefined
+          lastSkillName = undefined
           lastConfirmDiscard = false
           opener = undefined
         }
@@ -719,8 +821,9 @@ export function createSettingsView(
       // click appears where the click was. One whose card the search filtered
       // away falls back to the column, which beats not drawing it.
       const confirmHomeless =
-        view.confirming !== undefined && !view.cards.some((card) => card.id === view.confirming!.anchor.cardId)
-      const { form } = view
+        view.confirming !== undefined && ![...view.cards, ...(view.skillDetail ? [view.skillDetail.card] : [])].some((card) => card.id === view.confirming!.anchor.cardId)
+      const { form, skillDetail } = view
+      const modalOpen = form !== undefined || skillDetail !== undefined
       const menus: FormMenuContext = {
         justOpened,
         focusAfterPaint: (element) => {
@@ -730,12 +833,30 @@ export function createSettingsView(
       // An error goes where the user is looking: into the open form, under the
       // row it is about, or — with neither on screen — pinned to the bottom of
       // the scroller, in view however far the page is scrolled.
-      const errorRow = view.error && !form
+      const errorRow = view.error && !modalOpen
         ? view.errorRows?.find((id) => view.cards.some((card) => card.rows.some((row) => row.id === id)))
         : undefined
       reconcile(column, [
-        headerNode(view, onIntent),
-        confirmHomeless && view.confirming ? confirmNode(view.confirming.message, onIntent) : null,
+        headerNode(view, onIntent, view.skillProjectPicker ? (() => {
+          const picker = view.skillProjectPicker!
+          const scope = pillSelect({
+            value: picker.value,
+            ariaLabel: '选择技能范围',
+            enabled: !view.busy,
+            choices: picker.choices,
+            open: view.openMenu === 'skill-project',
+            ...(justOpened === 'skill-project' ? { onFirstItem: menus.focusAfterPaint } : {}),
+            onCloseFocus: menus.focusAfterPaint,
+            onToggle: () => onIntent({ kind: 'toggle-menu', menu: 'skill-project' }),
+            onChange: (projectRoot) => onIntent({ kind: 'select-skill-project', ...(projectRoot ? { projectRoot } : {}) }),
+          }, node('skill-project', 'div', 'settings-menu-shell settings-project-scope'))
+          const clear = keptButton('skill-project:clear', 'settings-project-clear', '', { kind: 'select-skill-project' }, { title: '取消项目选择，查看个人技能', icon: 'close', enabled: !view.busy })
+          clear.hidden = picker.value === ''
+          if (clear.parentElement !== scope) scope.appendChild(clear)
+          return scope
+        })() : undefined),
+        view.tabs ? tabsNode(view.tabs) : null,
+        confirmHomeless && view.confirming ? confirmNode(view.confirming.message, onIntent, view.confirming.actionLabel) : null,
         view.searchEmpty ? el('div', 'settings-empty', view.searchEmpty) : null,
         view.editor ? editorNode(view.editor) : null,
         ...view.cards.map((card) =>
@@ -754,23 +875,25 @@ export function createSettingsView(
             onIntent,
           }),
         ),
-        view.error && !form && !errorRow ? alerting(el('div', 'settings-error banner', view.error)) : null,
+        view.error && !modalOpen && !errorRow ? alerting(el('div', 'settings-error banner', view.error)) : null,
       ])
 
       // The dialog keeps its last content while it closes; only an open form repaints it.
-      const formKey = form ? formKeyOf(form) : undefined
+      const formKey = form ? formKeyOf(form) : skillDetail ? `skill-dialog:${skillDetail.card.title}` : undefined
       if (form) reconcile(dialog, dialogNodes(form, view.error, menus))
+      else if (skillDetail) reconcile(dialog, skillDialogNodes(skillDetail, view))
       dialog.classList.toggle('wide', form?.kind === 'provider')
+      if (modalOpen) dialog.classList.toggle('settings-dialog--skill', skillDetail !== undefined)
       for (const region of [nav, body, close]) {
-        if (form) region.setAttribute('inert', '')
+        if (modalOpen) region.setAttribute('inert', '')
         else region.removeAttribute('inert')
       }
-      dialogPresence.set(form !== undefined)
+      dialogPresence.set(modalOpen)
       const firstField = (): HTMLElement | null =>
         dialog.querySelector('.settings-dialog-body')?.querySelector('input, select, button') as HTMLElement | null
       if (formKey !== undefined && lastFormKey === undefined) {
         opener = activeLabel
-        const first = firstField()
+        const first = skillDetail ? dialog.querySelector('.settings-dialog-close') as HTMLElement | null : firstField()
         if (first) pendingFocus.unshift(first)
       } else if (form?.kind === 'provider' && formKey === lastFormKey) {
         // A row 添加模型 just put in the table: straight to its model id.
@@ -793,6 +916,7 @@ export function createSettingsView(
         if (keep) pendingFocus.unshift(keep)
       }
       lastFormKey = formKey
+      lastSkillName = skillDetail?.card.title
       lastRowIds = new Set(form?.kind === 'provider' ? form.models.map((row) => row.rowId) : [])
       lastConfirmDiscard = form?.confirmDiscard === true
 
@@ -818,6 +942,7 @@ export function createSettingsView(
         kept.delete(key)
         commits.delete(key)
         toggles.delete(key)
+        tabIntents.delete(key)
       }
 
       // Only now: everything above is built before it is inserted, and `focus()`
@@ -833,7 +958,7 @@ export function createSettingsView(
         // the fallback rather than a guess at a replacement: it is what `Ctrl+,`
         // focuses too, and it is the node whose keydown answers Esc. With a form
         // up, the dialog is, for the same reasons.
-        ;(form ? dialog : container).focus()
+        ;(modalOpen ? dialog : container).focus()
       }
     },
   }
@@ -907,6 +1032,7 @@ function alerting(node: HTMLElement, id?: string): HTMLElement {
 function headerNode(
   view: SettingsViewModel,
   onIntent: (intent: SettingsIntent) => void,
+  skillProjectPicker?: HTMLElement,
 ): HTMLElement {
   const header = el('div', 'settings-header', el('div', 'settings-title', view.title))
   if (view.editor) {
@@ -921,8 +1047,10 @@ function headerNode(
       ),
     )
   }
-  // Only worth a selector when there is a choice to make.
-  if (view.projectChoices.length > 1) {
+  // Always on a project-scoped page, even when there is only one project: it is
+  // what says which project the page is editing, and what changes it.
+  if (skillProjectPicker) header.appendChild(skillProjectPicker)
+  else if (view.projectChoices.length > 0) {
     header.appendChild(
       selectField({
         className: 'settings-select settings-project',
@@ -937,12 +1065,16 @@ function headerNode(
   return header
 }
 
-function confirmNode(message: string, onIntent: (intent: SettingsIntent) => void): HTMLElement {
+function confirmNode(
+  message: string,
+  onIntent: (intent: SettingsIntent) => void,
+  actionLabel = '删除',
+): HTMLElement {
   return el(
     'div',
     'settings-confirm',
     el('span', 'settings-confirm-text', message),
-    button('settings-btn danger', '删除', `${message}（Enter）`, () =>
+    button('settings-btn danger', actionLabel, `${message}（Enter）`, () =>
       onIntent({ kind: 'confirm-remove' }),
     ),
     button('settings-btn', '取消', '取消（Esc）', () => onIntent({ kind: 'cancel-remove' })),
@@ -955,7 +1087,7 @@ function cardNode(
     openMenu: string | undefined
     justOpened: string | undefined
     focusAfterPaint: (element: HTMLElement) => void
-    confirm?: { message: string; anchor: SettingsAnchor }
+    confirm?: { message: string; anchor: SettingsAnchor; actionLabel?: string }
     rowError?: { rowId: string; message: string }
     node: NodeFactory
     keptInput: InputFactory
@@ -964,8 +1096,18 @@ function cardNode(
   },
 ): HTMLElement {
   const { node, onIntent } = context
-  const section = node(`card:${card.id}`, 'section', 'settings-card')
-  const children: Array<Node | null> = [el('div', 'settings-card-title', card.title)]
+  // The id is a second class so a card can style its own rows: a skill row's
+  // description is one line, and that must not decide how a rule row wraps.
+  const section = node(`card:${card.id}`, 'section', `settings-card settings-card--${card.id}`)
+  const title = el('div', 'settings-card-title', card.title)
+  const children: Array<Node | null> = []
+  if (card.headerButtons?.length) {
+    const actions = el('div', 'settings-card-actions')
+    for (const spec of card.headerButtons) actions.appendChild(buttonNode(spec, onIntent))
+    children.push(el('div', 'settings-card-header', title, actions))
+  } else {
+    children.push(title)
+  }
   if (card.note) children.push(hinted(el('div', 'settings-card-note', card.note), card.noteHint))
   for (const warning of card.warnings ?? []) {
     children.push(alerting(el('div', 'settings-card-warning', warning)))
@@ -980,11 +1122,11 @@ function cardNode(
       children.push(alerting(el('div', 'settings-row-error', context.rowError.message)))
     }
     if (context.confirm?.anchor.rowId === row.id) {
-      children.push(confirmNode(context.confirm.message, onIntent))
+      children.push(confirmNode(context.confirm.message, onIntent, context.confirm.actionLabel))
     }
   }
   if (context.confirm && context.confirm.anchor.rowId === undefined) {
-    children.push(confirmNode(context.confirm.message, onIntent))
+    children.push(confirmNode(context.confirm.message, onIntent, context.confirm.actionLabel))
   }
   if (card.footerButtons?.length) {
     const footer = el('div', 'settings-card-footer')
@@ -1009,7 +1151,26 @@ function rowNode(
   },
 ): HTMLElement {
   const { onIntent } = context
-  const label = el('div', 'settings-row-label', el('div', 'settings-row-name', row.label))
+  // A row with an `open` intent has a name that is the way into its own page: a
+  // real button, so it is a tab stop and Enter works, kept by row so a repaint
+  // does not replace the node under the pointer. The intent is a function of the
+  // row's identity alone, which is why the handler may capture it.
+  const openIntent = row.open
+  const name = openIntent
+    ? context.node(`open:${cardId}:${row.id}`, 'button', 'settings-row-name settings-row-open', (made) => {
+        made.type = 'button'
+        made.addEventListener('click', (event) => {
+          event.stopPropagation()
+          onIntent(openIntent)
+        })
+      })
+    : el('div', 'settings-row-name')
+  if (openIntent) {
+    name.setAttribute('aria-label', `查看 ${row.label} 的详情`)
+    name.title = `查看 ${row.label} 的详情`
+  }
+  name.textContent = row.label
+  const label = el('div', 'settings-row-label', name)
   if (row.detail) label.appendChild(hinted(el('div', 'settings-row-desc', row.detail), row.detailHint))
   if (row.warning) label.appendChild(el('div', 'settings-row-warning', row.warning))
 
@@ -1116,13 +1277,23 @@ function rowNode(
   const element = context.node(
     `row:${cardId}:${row.id}`,
     'div',
-    row.pending ? 'settings-row pending' : 'settings-row',
+    `settings-row${row.pending ? ' pending' : ''}${openIntent ? ' settings-row--open' : ''}`,
+    openIntent ? (made) => made.addEventListener('click', (event) => {
+      if (event.target instanceof Element && event.target.closest('.settings-row-control, .settings-row-open')) return
+      name.focus({ preventScroll: true })
+      onIntent(openIntent)
+    }) : undefined,
   )
   // Says "this row is waiting" to a screen reader, which the dimming alone does
   // not: colour may not be the only carrier.
   if (row.pending) element.setAttribute('aria-busy', 'true')
   else element.removeAttribute('aria-busy')
-  reconcile(element, [label, control])
+  const parts: Node[] = []
+  if (row.icon) parts.push(el('span', 'settings-row-icon', icon(row.icon)))
+  parts.push(label)
+  if (row.badge) parts.push(el('span', 'settings-row-badge', row.badge))
+  parts.push(control)
+  reconcile(element, parts)
   return element
 }
 

@@ -105,7 +105,6 @@
               <div id="suggestions" hidden role="listbox" aria-label="补全"></div>
             </div>
             <!-- Running background processes; empty (and not drawn) when there are none. -->
-            <div id="process-strip"></div>
             <!--
               The merge reminder (stage 5): a thread canvas's own pending branch,
               or the coordinator's summary of every one. Resident and in the
@@ -131,7 +130,9 @@
                 empties it whenever there is nothing to show.
               -->
               <div id="composer-attachments"></div>
-<textarea id="input" spellcheck="false" aria-label="消息" aria-autocomplete="list" aria-controls="suggestions" placeholder="随心输入，/ 调用命令，@ 引用文件" rows="1"></textarea>
+              <div id="composer-editor">
+                <textarea id="input" spellcheck="false" aria-label="消息" aria-autocomplete="list" aria-controls="suggestions" placeholder="随心输入，/ 调用命令，@ 引用文件" rows="1"></textarea>
+              </div>
               <div id="composer-bar">
                 <button id="composer-attach" type="button"></button>
                 <!--

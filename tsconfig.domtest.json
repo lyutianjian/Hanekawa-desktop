@@ -44,7 +44,8 @@
     "test/rendererWelcomeView.test.ts",
     "test/rendererWorkingMark.test.ts",
     "test/helpers/**/*.ts",
-    "src/types/picomatch.d.ts"
+    "src/types/picomatch.d.ts",
+    "src/types/domino.d.ts"
   ],
   // Restated for the same reason `tsconfig.preload.json` restates it: the base
   // `exclude` names exactly the files this program exists to check, and

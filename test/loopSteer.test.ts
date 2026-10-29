@@ -1,5 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { mkdtemp, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import path from 'node:path'
 import { z } from 'zod/v3'
 import { AgentLoop, type AgentLoopOptions } from '../src/harness/loop.js'
 import { ContextBuilder } from '../src/harness/contextBuilder.js'
@@ -68,6 +71,21 @@ function userTexts(records: readonly SessionRecord[]): string[] {
   return records.flatMap((record) => record.type === 'message' && record.role === 'user' ? [record.content] : [])
 }
 
+test('an unmatched slash message still resolves its file mentions', async () => {
+  const cwd = await mkdtemp(path.join(tmpdir(), 'slash-mention-'))
+  await writeFile(path.join(cwd, 'notes.txt'), 'file mention content', 'utf8')
+  const records: SessionRecord[] = []
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage() { return { content: 'done', toolCalls: [] } },
+  }
+  await loopFor(provider, records, steerFrom([]), () => {}, {
+    toolContext: { cwd, sessionId: 's1', readFiles: new Set() },
+  }).run({ text: '/inspect @notes.txt' })
+  assert.deepEqual(userTexts(records), ['/inspect @notes.txt'])
+  assert.ok(records.some((record) => record.type === 'at_mention_context'))
+})
+
 test('a message sent mid-turn joins the turn at the next step', async () => {
   const records: SessionRecord[] = []
   const pending: PersistedQueuedMessage[] = []
@@ -84,11 +102,11 @@ test('a message sent mid-turn joins the turn at the next step', async () => {
   }
 
   await loopFor(provider, records, steerFrom(pending), () => {
-    pending.push(queued('q1', 'also check the tests'), queued('q2', '/model'), queued('q3', 'and the docs'))
+    pending.push(queued('q1', 'also check the tests'), queued('q2', '  /tmp/notes\n请检查  '), queued('q3', 'and the docs'))
   }).run({ text: 'fix the bug' })
 
   assert.equal(calls, 2)
-  assert.deepEqual(userTexts(records), ['fix the bug', 'also check the tests'])
+  assert.deepEqual(userTexts(records), ['fix the bug', 'also check the tests', '  /tmp/notes\n请检查  ', 'and the docs'])
   const steered = records.find((record) => record.type === 'message' && record.content === 'also check the tests')
   assert.equal(steered?.type === 'message' && steered.sourceQueuedMessageId, 'q1')
   // After the tool result, within the same turn.
@@ -96,8 +114,8 @@ test('a message sent mid-turn joins the turn at the next step', async () => {
   assert.equal(steered?.type === 'message' && steered.turnId, records[0]?.type === 'message' ? records[0].turnId : undefined)
   assert.ok(requests[1]?.includes('also check the tests'))
   assert.ok(!requests[0]?.includes('also check the tests'))
-  // The slash command waits for the turn to end, and holds everything behind it.
-  assert.deepEqual(pending.map((message) => message.id), ['q2', 'q3'])
+  assert.ok(requests[1]?.includes('/tmp/notes'))
+  assert.deepEqual(pending, [])
 })
 
 test('the queued message a turn started from is not steered into it again', async () => {

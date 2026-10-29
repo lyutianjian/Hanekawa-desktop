@@ -312,6 +312,78 @@ test('the workspace roots are every project, in wire order', () => {
   assert.deepEqual(roots, ['/a', '/b', 'C:\\repo\\solo'])
 })
 
+// --- the cut ----------------------------------------------------------------
+
+/** `count` sessions, newest first, one second apart. */
+function many(count: number): WireSessionSummary[] {
+  return Array.from({ length: count }, (_, index) => session(`s${index + 1}`, { updatedAt: at(index * 1000) }))
+}
+
+test('a workspace lists its newest few sessions and says how many it kept back', () => {
+  const view = sidebarView(stateWith({ projects: [project('/a', 'alpha', many(8))] }))
+
+  assert.deepEqual(view.groups[0]!.rows.map((row) => row.sessionId), ['s1', 's2', 's3', 's4', 's5'])
+  assert.equal(view.groups[0]!.hidden, 3)
+  assert.equal(view.groups[0]!.expanded, false)
+  // The cursor and `Ctrl+1`–`9` walk what is drawn, so the cut has to reach here too.
+  assert.deepEqual(view.rows.map((row) => row.sessionId), ['s1', 's2', 's3', 's4', 's5'])
+})
+
+test('an expanded workspace draws every session it holds', () => {
+  const view = sidebarView(
+    stateWith({ projects: [project('/a', 'alpha', many(8))], expandedProjects: new Set(['/a']) }),
+  )
+
+  assert.equal(view.groups[0]!.rows.length, 8)
+  assert.equal(view.groups[0]!.hidden, 0)
+  assert.equal(view.groups[0]!.expanded, true)
+})
+
+test('a search lifts the cut, or a match past it would read as no such session', () => {
+  const sessions = many(8)
+  sessions[7] = session('s8', { title: 'Finder' })
+  const view = sidebarView(
+    stateWith({ projects: [project('/a', 'alpha', sessions)], searchQuery: 'find' }),
+  )
+
+  assert.deepEqual(view.rows.map((row) => row.sessionId), ['s8'])
+  assert.equal(view.groups[0]!.hidden, 0)
+  assert.equal(view.noMatches, false)
+})
+
+test('an open session is never cut away, and the one on screen keeps its mark through the cut', () => {
+  const state = stateWith({
+    projects: [project('/a', 'alpha', many(8))],
+    lanes: [lane('9', 's8', '/a')],
+    laneStatus: new Map([['9', paneStatus()]]),
+    activeLane: '9',
+  })
+  const view = sidebarView(state)
+
+  // Appended rather than reordered: the list stays newest-first, and the gap is
+  // what the expander under it explains.
+  assert.deepEqual(view.groups[0]!.rows.map((row) => row.sessionId), ['s1', 's2', 's3', 's4', 's5', 's8'])
+  assert.equal(view.groups[0]!.hidden, 2)
+  assert.equal(view.rows.find((row) => row.sessionId === 's8')!.active, true)
+  // Still the switch chords' index space, so the pane is reachable from the rail.
+  assert.deepEqual(sidebarChordToIntent({ key: '1', ctrlKey: true }, state, 'win32'), { kind: 'switch', lane: '9' })
+})
+
+test('the render signature covers the cut, so a session arriving under it repaints', () => {
+  const capped = (count: number) =>
+    sidebarView(stateWith({ projects: [project('/a', 'alpha', many(count))] }))
+
+  // The same five rows on screen; only the count behind the expander moved.
+  assert.deepEqual(capped(6).rows.map((row) => row.sessionId), capped(5).rows.map((row) => row.sessionId))
+  assert.notEqual(sidebarRenderSignature(capped(5)), sidebarRenderSignature(capped(6)))
+  assert.notEqual(
+    sidebarRenderSignature(capped(6)),
+    sidebarRenderSignature(sidebarView(
+      stateWith({ projects: [project('/a', 'alpha', many(6))], expandedProjects: new Set(['/a']) }),
+    )),
+  )
+})
+
 // --- history × topology -----------------------------------------------------
 
 test('a live lane with nothing on disk stays invisible until it has content', () => {
@@ -541,6 +613,9 @@ test('badges come off the pane snapshot, with awaiting-input outranking running'
   const state = stateWith({
     projects: [project('/a', 'alpha', [session('a1'), session('a2'), session('a3'), session('a4'), session('a5'), session('a6')])],
     lanes: [lane('1', 'a1', '/a'), lane('2', 'a2', '/a'), lane('3', 'a3', '/a'), lane('4', 'a4', '/a'), lane('5', 'a5', '/a')],
+    // The sixth row is past the list's cut; this test is about badges, so the
+    // group is unfolded rather than cut down to the five that carry a pane.
+    expandedProjects: new Set(['/a']),
     laneStatus: new Map([
       ['1', paneStatus({ streaming: true })],
       // Still streaming, but parked on a prompt: "waiting for you" is the

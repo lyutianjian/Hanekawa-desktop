@@ -279,6 +279,29 @@ test('P6: Read and Edit deny rules also reach the paths a shell command touches'
   assert.equal(await h.outcome(bashTool, bash('cat dist/out.txt')), 'allow')
 })
 
+test('P6: Read deny rules block the internal reads of string edits in every mode', async (t) => {
+  const cwd = await scratch(t)
+  for (const mode of ['default', 'plan', 'auto', 'bypass', 'readonly'] as PermissionMode[]) {
+    const h = harness(cwd, mode, { allow: ['Edit'], deny: ['Read(**/.env)'] }, () => true)
+    for (const tool of [editTool, fileTool('MultiEdit', false)]) {
+      assert.equal(await h.outcome(tool, { filePath: 'config/.env' }), 'deny', `${mode}: ${tool.name}`)
+    }
+    assert.equal(h.requests.length, 0, mode)
+  }
+})
+
+test('P6: Read ask rules apply to string edits and Read allow never grants a write', async (t) => {
+  const cwd = await scratch(t)
+  for (const tool of [editTool, fileTool('MultiEdit', false)]) {
+    for (const mode of ['default', 'auto', 'bypass'] as PermissionMode[]) {
+      const h = harness(cwd, mode, { allow: ['Edit'], ask: ['Read(src/**)'] })
+      assert.equal(await h.outcome(tool, { filePath: 'src/a.ts' }), mode === 'bypass' ? 'allow' : 'ask', `${mode}: ${tool.name}`)
+    }
+    const h = harness(cwd, 'default', { allow: ['Read'] })
+    assert.equal(await h.outcome(tool, { filePath: 'src/a.ts' }), 'ask', tool.name)
+  }
+})
+
 test('P7: a deny rule stays a denial, however often the model retries', async (t) => {
   const cwd = await scratch(t)
   const h = harness(cwd, 'default', { deny: ['Bash(curl:*)'] }, () => true)

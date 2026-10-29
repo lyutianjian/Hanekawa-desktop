@@ -69,8 +69,11 @@ const flush = () => new Promise<void>((resolve) => setImmediate(resolve))
 test('a running thread is re-read on the timer with the last token; leaving the page stops it', async (t) => {
   const m = mount(t)
   m.view.render(page())
+  assert.equal(m.find('waiting').length, 1, 'a running thread shows feedback before its first read')
   await flush()
   assert.deepEqual(m.loads, [undefined])
+  assert.equal(m.find('transcript-column')[0]?.children.at(-1)?.classes.includes('waiting'), true)
+  assert.equal(m.find('mark').length, 1)
 
   t.mock.timers.tick(1500)
   await flush()
@@ -121,6 +124,7 @@ test('a settled thread is read once and has no timer', async (t) => {
   await flush()
   assert.equal(m.loads.length, 1)
   assert.equal(m.find('thread-detail-stop').length, 0)
+  assert.equal(m.find('waiting').length, 0)
 })
 
 test('the controls and the needs-you notice reach the host', (t) => {
@@ -219,7 +223,7 @@ test('the head is pinned outside the scrolling body, and back leads to a list wh
   assert.equal(detailRoot.hidden, false)
 })
 
-test('the brief is a card above the conversation, and prose between tool calls carries no copy row', async (t) => {
+test('the kickoff and follow-up stay in order with thread replies in the conversation', async (t) => {
   const m = mount(t)
   m.reply.next = {
     unchanged: false,
@@ -227,11 +231,18 @@ test('the brief is a card above the conversation, and prose between tool calls c
     records: [
       { type: 'message', id: 'u1', role: 'user', content: 'Background:\nbuild it', createdAt: '2026-10-10T00:00:00Z', turnId: 't1' },
       { type: 'message', id: 'a1', role: 'assistant', content: 'working on it', createdAt: '2026-10-10T00:00:01Z', turnId: 't1' },
+      { type: 'message', id: 'u2', role: 'user', content: 'also check the tests', createdAt: '2026-10-10T00:00:02Z', turnId: 't2' },
+      { type: 'message', id: 'a2', role: 'assistant', content: 'checking the tests', createdAt: '2026-10-10T00:00:03Z', turnId: 't2' },
     ],
   }
   m.view.render(page())
   await flush()
-  assert.equal(m.find('thread-brief-preview')[0]?.text, 'Background:')
-  assert.equal(m.find('user').length, 0, 'the brief is not drawn as the user\'s bubble')
-  assert.equal(m.find('item-copy').length, 0)
+  assert.equal(m.find('thread-brief').length, 0)
+  assert.deepEqual(m.find('user-text').map((item) => item.text), ['Background:\nbuild it', 'also check the tests'])
+  const messages = m.find('transcript-column')[0]!.children.filter((item) => item.classes.includes('user') || item.classes.includes('assistant'))
+  assert.equal(messages.length, 4)
+  for (const [index, text] of ['Background:', 'working on it', 'also check the tests', 'checking the tests'].entries()) {
+    assert.ok(messages[index]?.text.includes(text), `message ${index} is in its original place`)
+  }
+  assert.equal(m.find('assistant').at(-1)?.children.some((item) => item.classes.includes('item-meta')), false, 'the current reply has not settled')
 })

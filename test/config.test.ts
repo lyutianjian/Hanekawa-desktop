@@ -6,6 +6,7 @@ import { z } from 'zod/v3'
 import { ConfigService, carryJsonOnlyModelFields, type ModelConfig } from '../src/config/service.js'
 import {
   loadMergedSettings,
+  loadSettingsLayers,
   localSettingsPath,
   trustMcpServerLocally,
   validateSettings,
@@ -985,7 +986,7 @@ test('loadMergedSettings ignores legacy permissionMode from local settings', asy
   }
 })
 
-test('loadMergedSettings merges permission rules and overrides startup mode', async () => {
+test('loadMergedSettings merges permission rules and takes the mode from the user layer alone', async () => {
   const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-settings-'))
   try {
     await mkdir(path.join(dir, '.myagent'), { recursive: true })
@@ -1004,10 +1005,18 @@ test('loadMergedSettings merges permission rules and overrides startup mode', as
         ask: ['Write:src/**'],
       },
     }), 'utf8')
+    const home = process.env.USERPROFILE!
+    await mkdir(path.join(home, '.myagent'), { recursive: true })
+    await writeFile(path.join(home, '.myagent', 'settings.json'), JSON.stringify({
+      permissions: { mode: 'auto' },
+    }), 'utf8')
 
     const settings = await loadMergedSettings(dir)
+    // The groups concatenate across layers. The mode does not: it is one
+    // user-layer value, so the `bypass` both lower layers name is dropped
+    // rather than overriding anything.
     assert.deepEqual(settings.permissions, {
-      mode: 'bypass',
+      mode: 'auto',
       allow: ['Read', 'Grep'],
       deny: ['Delete'],
       ask: ['Write:src/**'],
@@ -1069,6 +1078,39 @@ test('loadMergedSettings folds legacy mcp.json before local settings overrides',
     const mcpConfig = await loadMcpConfig(dir, settings)
     assert.deepEqual(mcpConfig.filesystem?.args, ['local.js'])
     assert.deepEqual(mcpConfig.github?.args, ['github.js'])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('loadMergedSettings reads .mcp.json underneath .myagent/mcp.json', async () => {
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-settings-'))
+  try {
+    await mkdir(path.join(dir, '.myagent'), { recursive: true })
+    // Claude Code's project file: its servers are read as is.
+    await writeFile(path.join(dir, '.mcp.json'), JSON.stringify({
+      mcpServers: {
+        theirs: { transport: 'stdio', command: 'node', args: ['theirs.js'] },
+        // Declared by both files: Hanekawa's own entry is the one the user
+        // meant, and a silent preference for the other would look like an edit
+        // that did nothing.
+        shared: { transport: 'stdio', command: 'node', args: ['theirs-shared.js'] },
+      },
+    }), 'utf8')
+    await writeFile(path.join(dir, '.myagent', 'mcp.json'), JSON.stringify({
+      mcpServers: {
+        shared: { transport: 'stdio', command: 'node', args: ['our-shared.js'] },
+      },
+    }), 'utf8')
+
+    const settings = await loadMergedSettings(dir)
+    const mcpConfig = await loadMcpConfig(dir, settings)
+    assert.deepEqual(mcpConfig.theirs?.args, ['theirs.js'])
+    assert.deepEqual(mcpConfig.shared?.args, ['our-shared.js'])
+
+    // The screen can say where a row came from without touching either file.
+    const layers = await loadSettingsLayers(dir)
+    assert.deepEqual([...layers.compatMcp], ['theirs', 'shared'])
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

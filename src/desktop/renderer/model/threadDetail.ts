@@ -5,7 +5,6 @@
 
 import type { WireCoordinationThreads, WireThreadInfo } from '../../shellProtocol.js'
 import { THREAD_STATUS_LABEL, threadBlocked, threadTone, type ThreadTone } from './coordinationStatus.js'
-import type { TranscriptState } from './transcript.js'
 
 export interface ThreadSelection {
   readonly projectRoot: string
@@ -56,14 +55,4 @@ export function threadPage(
     canStop: thread.status === 'running' || threadBlocked(thread.status),
     stopPending: pending.has(thread.threadId),
   }
-}
-
-/**
- * A thread's first user message is the coordinator's brief, not anything the
- * user typed; the page draws it as a card of its own above the conversation.
- */
-export function splitThreadBrief(state: TranscriptState): { brief: string | undefined; state: TranscriptState } {
-  const index = state.items.findIndex((item) => item.kind === 'user')
-  if (index < 0) return { brief: undefined, state }
-  return { brief: state.items[index]!.text, state: { ...state, items: state.items.filter((_, i) => i !== index) } }
 }

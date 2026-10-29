@@ -16,10 +16,10 @@ import {
   localSettingsPath,
   setLocalCacheTtl1h,
   setLocalPermissionEntries,
-  setLocalStartupPermissionMode,
   setMcpServerTrustLocally,
   setSkillEnabledLocally,
   saveEffortLevel,
+  saveStartupPermissionMode,
   updateLocalSettings,
 } from '../src/config/settings.js'
 
@@ -432,15 +432,38 @@ test('a patch rewrites the keys it names and nothing else', async () => {
     )
 
     await setLocalCacheTtl1h(cwd, true)
-    await setLocalStartupPermissionMode(cwd, 'auto')
+    await setLocalPermissionEntries(cwd, 'allow', ['Read'])
 
     const local = await loadLocalSettings(cwd)
     assert.equal(local.cache?.ttl1h, true)
-    assert.equal(local.permissions?.mode, 'auto')
+    assert.deepEqual(local.permissions?.allow, ['Read'])
     assert.equal(local.models?.hand?.model, 'by-hand', 'the untouched key is still there')
 
     await updateLocalSettings(cwd, { cache: undefined })
     assert.equal((await loadLocalSettings(cwd)).cache, undefined, 'undefined deletes rather than writing null')
+    assert.deepEqual((await loadLocalSettings(cwd)).permissions?.allow, ['Read'])
+  })
+})
+
+test('the startup permission mode is one global value, and project layers cannot pin it', async () => {
+  await withLocalLayer({ permissions: { mode: 'bypass' } }, async (cwd) => {
+    const local = localSettingsPath(cwd)
+    await mkdir(path.dirname(local), { recursive: true })
+    await writeFile(local, JSON.stringify({ permissions: { mode: 'auto' } }), 'utf8')
+    // Both lower layers name a mode, and both are dropped on load: the value a
+    // session starts in is the user's, not the repository's.
+    assert.equal((await loadMergedSettings(cwd)).permissions?.mode, undefined)
+
+    await saveStartupPermissionMode('auto')
+
+    assert.equal((await loadMergedSettings(cwd)).permissions?.mode, 'auto')
+    const userFile = path.join(getGlobalMyAgentDir(), 'settings.json')
+    assert.equal(
+      (JSON.parse(await readFile(userFile, 'utf8')) as MyAgentSettings).permissions?.mode,
+      'auto',
+    )
+    // The layers that tried to pin it are left exactly as written — merging
+    // ignores them, writing does not rewrite them.
     assert.equal((await loadLocalSettings(cwd)).permissions?.mode, 'auto')
   })
 })
@@ -510,9 +533,11 @@ test('a permissions edit does not write config.json', async () => {
 
 test('a legacy acceptEdits mode loads as auto', async () => {
   await withLocalLayer({}, async (cwd) => {
-    await mkdir(path.dirname(localSettingsPath(cwd)), { recursive: true })
-    await writeFile(localSettingsPath(cwd), JSON.stringify({ permissions: { mode: 'acceptEdits' } }), 'utf8')
-    assert.equal((await loadLocalSettings(cwd)).permissions?.mode, 'auto')
+    // The alias is still honoured where the mode is read — the user layer. A
+    // lower layer naming it is ignored along with every other lower-layer mode.
+    const userFile = path.join(getGlobalMyAgentDir(), 'settings.json')
+    await mkdir(path.dirname(userFile), { recursive: true })
+    await writeFile(userFile, JSON.stringify({ permissions: { mode: 'acceptEdits' } }), 'utf8')
     assert.equal((await loadMergedSettings(cwd)).permissions?.mode, 'auto')
   })
 })

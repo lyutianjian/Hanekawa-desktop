@@ -81,9 +81,8 @@ export const readFileTool: Tool = {
     const imageResult = await tryReadImage(absolute, filePath, offset, limit, context)
     if (imageResult !== undefined) return imageResult
 
-    // The full file is always remembered, even for a windowed read: Edit
-    // matches against the remembered content, so a partial view must not
-    // narrow what a later edit can address.
+    // Whole-file state is needed for freshness checks and post-compact restore,
+    // even when the model only asks to see a window.
     const raw = await readFileAndRemember(absolute, context)
     const content = configFileView(absolute, context.redactToolOutput?.(raw) ?? raw)
     const totalLines = countLines(content)

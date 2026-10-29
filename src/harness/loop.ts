@@ -31,6 +31,7 @@ import type { ImageAttachmentRef, UserInput } from '../media/types.js'
 import { mergeHooks, runLifecycleHooks, type Hooks, type LifecycleHookName } from './hooks.js'
 import { FallbackTriggeredError } from '../config/retry.js'
 import {
+  countMessageTokens,
   countTextTokens,
   getAvailableContextTokens,
   getAutoCompactThreshold,
@@ -326,8 +327,15 @@ export class AgentLoop {
    * The provider's count for the last foreground request and the record it
    * ended on. Kept across turns, so a turn's first compaction check adds the
    * new records to a real count instead of estimating the whole transcript.
+   * `localEstimate` is what that same request was estimated to cost locally, so
+   * a later build can move the real count by the estimate's change alone.
    */
-  private responseBaseline: { tokens: number; recordCount: number; recordId: string | undefined } | undefined
+  private responseBaseline: {
+    tokens: number
+    localEstimate: number
+    recordCount: number
+    recordId: string | undefined
+  } | undefined
   private pendingSubagentTranscriptUsage: TokenUsage = { ...EMPTY_TOKEN_USAGE }
   private readonly pendingToolUseSummaries: PendingToolUseSummary[] = []
   // Serializes run() and runTool() against each other. Both helpers funnel
@@ -625,7 +633,7 @@ export class AgentLoop {
     // them to the user message *before* it is recorded. A failed explicit
     // image reference throws here — no user record, no at-mention record, the
     // draft survives in the shell — instead of degrading to plain text.
-    const mentionImages = this.options.imageAttachments && !userInput.text.trimStart().startsWith('/')
+    const mentionImages = this.options.imageAttachments
       ? await collectAtMentionImages({
           userInput: userInput.text,
           toolContext: this.options.toolContext,
@@ -665,17 +673,15 @@ export class AgentLoop {
       createdAt: new Date().toISOString(),
     }
     await this.appendRecord(userMessage)
-    if (!userInput.text.trimStart().startsWith('/')) {
-      const atMentionRecord = await buildAtMentionContextRecord({
-        userInput: userInput.text,
-        userMessageId: userMessage.id,
-        turnId,
-        toolContext: this.options.toolContext,
-        createdAt: new Date().toISOString(),
-      })
-      if (atMentionRecord) {
-        await this.appendRecord(atMentionRecord)
-      }
+    const atMentionRecord = await buildAtMentionContextRecord({
+      userInput: userInput.text,
+      userMessageId: userMessage.id,
+      turnId,
+      toolContext: this.options.toolContext,
+      createdAt: new Date().toISOString(),
+    })
+    if (atMentionRecord) {
+      await this.appendRecord(atMentionRecord)
     }
     return userMessage
   }
@@ -699,8 +705,7 @@ export class AgentLoop {
 
   /**
    * Steering: messages the user sent mid-turn join the turn at the next step,
-   * in order. A slash command stops the walk — it runs as a turn of its own —
-   * and so does a message the gates refuse; both, and everything behind them,
+   * in order. A message the gates refuse, and everything behind it,
    * stay queued for the queue pump once the turn is over.
    */
   private async takeSteerMessages(turnId: string, signal?: AbortSignal): Promise<void> {
@@ -709,7 +714,6 @@ export class AgentLoop {
     for (const message of steer.pending()) {
       // The message this turn started from; its removal may still be in flight.
       if (message.id === this.activeRunOverrides?.sourceQueuedMessageId) continue
-      if (message.content.trimStart().startsWith('/')) return
       // A coordinator message never joins a turn someone else is driving; it
       // stays queued (and keeps the order) for the pump.
       if (message.origin === 'coordinator' && this.activeRunOverrides?.origin !== 'coordinator') return
@@ -923,7 +927,11 @@ export class AgentLoop {
             ? `compacted model=${this.activeModel.model} ${compactResult.metrics?.preTokens ?? '?'}->${compactResult.metrics?.postTokens ?? '?'}`
             : `skipped model=${this.activeModel.model}`,
         }])
-        if (compactResult.compacted) recordsBeforeCompact = await this.loadPreparedRecords(turnId, userMessage.id)
+        if (compactResult.compacted) {
+          // The count described a context this compaction just replaced.
+          this.responseBaseline = undefined
+          recordsBeforeCompact = await this.loadPreparedRecords(turnId, userMessage.id)
+        }
 
       if (this.retryPrimaryIfReady(cacheSource)) {
         resetModelRequestState()
@@ -963,6 +971,7 @@ export class AgentLoop {
         usage = addTokenUsage(usage, overflowCompact.usage)
         compactedThisStep = overflowCompact.compacted
         if (overflowCompact.compacted) {
+          this.responseBaseline = undefined
           records = await this.materializePostCompactRestore(await this.loadPreparedRecords(turnId, userMessage.id))
           built = await this.buildModelRequest(records, turnId, userMessage.id, cacheSource, {
             includeUserContext: true,
@@ -1040,10 +1049,33 @@ export class AgentLoop {
       // count and get a context readout that keeps up mid-turn.
       if (response.usage) this.options.onRequestUsage?.(response.usage, records.at(-1)?.id)
       await this.emitTurnMetric(modelStartedAt, response.usage ?? EMPTY_TOKEN_USAGE, response.toolCalls.length)
+      const assistantMessage: ChatMessage & { type: 'message' } = {
+        type: 'message',
+        id: randomUUID(),
+        role: 'assistant',
+        content: response.content,
+        turnId,
+        createdAt: new Date().toISOString(),
+        model: this.activeModel.model,
+        ...(response.reasoningContent ? { reasoningContent: response.reasoningContent } : {}),
+        ...(response.thinkingBlocks && response.thinkingBlocks.length > 0
+          ? { thinkingBlocks: response.thinkingBlocks, ...(response.thinkingSource ? { thinkingSource: response.thinkingSource } : {}) }
+          : {}),
+        ...(response.reasoningDetails?.length ? { reasoningDetails: response.reasoningDetails } : {}),
+        ...(response.responseItems?.length ? { responseItems: response.responseItems } : {}),
+      }
       const responseTokens = canReuseResponseTokenEstimate ? requestTokenCountFromUsage(response.usage) : undefined
       this.responseBaseline = responseTokens === undefined
         ? undefined
-        : { tokens: responseTokens, recordCount: requestRecordCount, recordId: records.at(-1)?.id }
+        : {
+            tokens: responseTokens,
+            // The provider counts this request plus the answer it produced; the
+            // local estimate of the same pair has to sit beside it, or the next
+            // plan cannot tell how much of its estimate is drift.
+            localEstimate: built.inputTokens + countMessageTokens(assistantMessage, imageTokenStrategy),
+            recordCount: requestRecordCount,
+            recordId: records.at(-1)?.id,
+          }
       lastRequestId = response.requestId
       if (response.cacheBreak) {
         await this.emitMetric({
@@ -1063,25 +1095,12 @@ export class AgentLoop {
         }
       }
 
-      const assistantMessage: ChatMessage & { type: 'message' } = {
-        type: 'message',
-        id: randomUUID(),
-        role: 'assistant',
-        content: response.content,
-        turnId,
-        createdAt: new Date().toISOString(),
-        model: this.activeModel.model,
-        ...(response.reasoningContent ? { reasoningContent: response.reasoningContent } : {}),
-        ...(response.thinkingBlocks && response.thinkingBlocks.length > 0
-          ? { thinkingBlocks: response.thinkingBlocks, ...(response.thinkingSource ? { thinkingSource: response.thinkingSource } : {}) }
-          : {}),
-        ...(response.reasoningDetails?.length ? { reasoningDetails: response.reasoningDetails } : {}),
-        ...(response.responseItems?.length ? { responseItems: response.responseItems } : {}),
-      }
-
       // max_output_tokens escalation: retry with higher limit
       if (response.stopReason === 'max_tokens') {
         if (maxOutputTokensOverride === undefined) {
+          // This response never joins the records, so the count that includes
+          // it describes a request shape the next build will not have.
+          this.responseBaseline = undefined
           maxOutputTokensOverride = ESCALATED_MAX_TOKENS
           continue
         }
@@ -1905,6 +1924,14 @@ export class AgentLoop {
       includeUserContext: tail.includeUserContext,
       permissionMode: tail.permissionMode,
       transientUserContext: tail.transientUserContext?.() ?? [],
+      ...(this.responseBaseline
+        ? {
+            usageBaseline: {
+              tokens: this.responseBaseline.tokens,
+              localEstimate: this.responseBaseline.localEstimate,
+            },
+          }
+        : {}),
     })
     this.logContextBudget(built.selection)
 

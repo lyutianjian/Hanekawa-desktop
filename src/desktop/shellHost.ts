@@ -1,7 +1,7 @@
 import { z } from 'zod/v3'
 import path from 'node:path'
 import { homedir } from 'node:os'
-import { mkdir, rm } from 'node:fs/promises'
+import { mkdir, readFile, rm } from 'node:fs/promises'
 import { maskKey } from '../config/maskKey.js'
 import { VALID_EFFORT_LEVELS, normalizeSupportedEfforts } from '../config/effort.js'
 import { resolveImageCapability, SUPPORTED_PROVIDER_NAMES } from '../config/providers/registry.js'
@@ -17,11 +17,12 @@ import {
   setLocalCacheTtl1h,
   setLocalThinking,
   setLocalPermissionEntries,
-  setLocalStartupPermissionMode,
+  saveStartupPermissionMode,
   setMcpServerTrustLocally,
   setMcpServerLocally,
   removeMcpServerLocally,
   setSkillEnabledLocally,
+  setSkillEnabledForUser,
   disabledSkillNames,
   type MyAgentSettings,
   type StartupPermissionMode,
@@ -34,11 +35,14 @@ import { SessionStore } from '../sessions/service.js'
 import type { McpServerConfig } from '../services/mcp/index.js'
 import type { BaseAgentDefinition } from '../tools/AgentTool/AgentTool.js'
 import { SkillsService, type SkillDefinition } from '../services/skills/skillsService.js'
-import { importSkill } from '../services/skills/importSkill.js'
+import { importSkill, type SkillImportPrompt } from '../services/skills/importSkill.js'
+import { removeSkill } from '../services/skills/removeSkill.js'
+import { inspectSkillDir, type SkillInspection } from '../services/skills/skillInspect.js'
+import { skillScopeOf } from '../services/skills/skillRoots.js'
 import { readUserInstructions, writeUserInstructions } from '../services/context/projectContext.js'
 import { peekSessions } from './recentProjects.js'
 import { UsageScanner } from './usageStats.js'
-import { getDefaultWorkingDir, getProjectDataDir, getProjectMemoryDir, getSkillsDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
+import { getDefaultWorkingDir, getProjectDataDir, getProjectMemoryDir, getSharedSkillsDir, getSkillsDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
 import type {
   DirectoryProject,
   DirectoryWorkspace,
@@ -55,6 +59,7 @@ import type { SessionPane, SessionWorkspace } from '../runtime/sessionWorkspace.
 import type { McpConnectionStatus, RuntimeHost } from '../runtime/types.js'
 import {
   CONTEXT_MANAGEMENT_FIELDS,
+  SKILL_PREVIEW_CHARS,
   SHELL_LANE,
   USER_INSTRUCTIONS_MAX_CHARS,
   type ShellCommand,
@@ -62,6 +67,8 @@ import {
   type WireLaneInfo,
   type WireShellDeleteSessionResult,
   type WireShellOpenInEditorResult,
+  type WireShellReadSkillResult,
+  type WireShellRevealSkillResult,
   type WireMenuAction,
   type WireShellSetWindowThemeResult,
   type WireShellProbeEndpointResult,
@@ -347,6 +354,12 @@ export interface ShellHostDeps<
    */
   onOpenInEditor?: (cwd: string, target?: { path: string; line?: number }) => Promise<void>
   /**
+   * Shows a path in the OS file manager (`reveal-skill`). A shell without one
+   * rejects the command, the same rule `onOpenInEditor` follows: silence would
+   * read as success.
+   */
+  onRevealPath?: (target: string) => void | Promise<void>
+  /**
    * A native directory picker, for `import-skill` and `new-coordinator-project`.
    *
    * Awaited and allowed to answer `undefined` (cancelled) — the same shape
@@ -354,6 +367,13 @@ export interface ShellHostDeps<
    * rejects the pathless variant rather than silently importing nothing.
    */
   onPickDirectory?: (options: { title: string; buttonLabel: string }) => Promise<string | undefined>
+  /**
+   * Asks before a `medium` or `high` skill is imported (what it can do is in the
+   * prompt). Resolves `true` only for an explicit yes; a dismissed dialog is no.
+   * A shell without one cannot ask, so such a skill is refused — never imported
+   * unseen.
+   */
+  onConfirmSkillImport?: (prompt: SkillImportPrompt) => Promise<boolean>
   /**
    * 「选择图片」 (S11): a native multi-select image picker, answered with
    * absolute paths. `defaultPath` is the directory the dialog opens in, when
@@ -646,6 +666,14 @@ const SETTINGS_CHANGE_SCHEMAS = {
     .object({
       scope: z.literal('extensions'),
       kind: z.literal('import-skill'),
+      target: z.union([z.literal('project'), z.literal('personal')]).optional(),
+    })
+    .strict(),
+  'remove-skill': z
+    .object({
+      scope: z.literal('extensions'),
+      kind: z.literal('remove-skill'),
+      name: z.string().min(1),
     })
     .strict(),
   'reload-skills': z
@@ -720,7 +748,7 @@ const SHELL_COMMAND_SCHEMAS = {
     })
     .strict(),
   'get-settings': z
-    .object({ type: z.literal('get-settings'), id: commandId, projectRoot: z.string().optional() })
+    .object({ type: z.literal('get-settings'), id: commandId, projectRoot: z.string().optional(), skillsScope: z.literal('personal').optional() })
     .strict(),
   'settings-change': z
     .object({
@@ -728,6 +756,7 @@ const SHELL_COMMAND_SCHEMAS = {
       id: commandId,
       projectRoot: z.string(),
       change: settingsChangeSchema,
+      skillsScope: z.literal('personal').optional(),
     })
     .strict(),
   'probe-endpoint': z
@@ -763,6 +792,15 @@ const SHELL_COMMAND_SCHEMAS = {
         .strict()
         .optional(),
     })
+    .strict(),
+  'read-skill': z
+    .object({ type: z.literal('read-skill'), id: commandId, projectRoot: z.string(), name: z.string().min(1), skillsScope: z.literal('personal').optional() })
+    .strict(),
+  'reveal-skill': z
+    .object({ type: z.literal('reveal-skill'), id: commandId, projectRoot: z.string(), name: z.string().min(1), skillsScope: z.literal('personal').optional() })
+    .strict(),
+  'open-skill': z
+    .object({ type: z.literal('open-skill'), id: commandId, projectRoot: z.string(), name: z.string().min(1), skillsScope: z.literal('personal').optional() })
     .strict(),
   'set-window-theme': z
     .object({
@@ -1312,15 +1350,21 @@ export class ShellHost<
       case 'delete-session':
         return this.deleteSession(command.projectRoot, command.sessionId)
       case 'get-settings':
-        return this.getSettings(command.projectRoot)
+        return this.getSettings(command.projectRoot, command.skillsScope)
       case 'settings-change':
-        return this.applySettingsChange(command.projectRoot, command.change)
+        return this.applySettingsChange(command.projectRoot, command.change, command.skillsScope)
       case 'probe-endpoint':
         return this.probeEndpoint(command)
       case 'rename-session':
         return this.renameSession(command.projectRoot, command.sessionId, command.title)
       case 'open-in-editor':
         return this.openInEditor(command.projectRoot, command.target)
+      case 'read-skill':
+        return this.readSkill(command.projectRoot, command.name, command.skillsScope)
+      case 'reveal-skill':
+        return this.revealSkill(command.projectRoot, command.name, command.skillsScope)
+      case 'open-skill':
+        return this.openSkill(command.projectRoot, command.name, command.skillsScope)
       case 'set-window-theme': {
         // Unlike `open-project` / `open-in-editor`, a missing callback answers
         // `ok` rather than rejecting: the overlay is chrome, a shell without one
@@ -1789,17 +1833,18 @@ export class ShellHost<
   }
 
   /** The settings read model, plus the project list the screen's selector needs. */
-  private async getSettings(projectRoot?: string): Promise<WireShellSettingsResult> {
-    const projects = (): WireShellSettingsResult['projects'] =>
-      this.deps.directory.entries().map((open) => ({
-        projectRoot: open.root,
-        projectName: projectDisplayName(open.cwd),
-      }))
+  private async getSettings(projectRoot?: string, skillsScope?: 'personal'): Promise<WireShellSettingsResult> {
     return this.withProjectEntry(await this.settingsRoot(projectRoot), async (entry) => ({
-      settings: await this.describeSettings(entry),
-      // Read inside, while the transient project is still open: the screen's
-      // selector must be able to name the project it is showing.
-      projects: projects(),
+      settings: await this.describeSettings(entry, skillsScope ?? (isGlobalWorkspaceRoot(entry.cwd) ? 'personal' : undefined)),
+      // The sidebar's own list, not the open runtimes: a project's runtime opens
+      // only when one of its sessions does, and the selector must offer a
+      // project before that. Read inside, while the transient project is still
+      // open, so the one on screen is always among the rows.
+      projects: (await this.listSessions()).projects.map(({ projectRoot: root, projectName, isGlobal }) => ({
+        projectRoot: root,
+        projectName,
+        ...(isGlobal ? { isGlobal } : {}),
+      })),
     } satisfies WireShellSettingsResult))
   }
 
@@ -1841,10 +1886,11 @@ export class ShellHost<
   private async applySettingsChange(
     projectRoot: string,
     change: SettingsChange,
+    skillsScope?: 'personal',
   ): Promise<WireShellSettingsChangeResult> {
     // Provider configuration is global, so a stale root must not block it.
     const root = change.scope === 'provider' ? await this.settingsRoot(projectRoot) : projectRoot
-    return this.withProjectEntry(root, (entry) => this.applySettingsChangeTo(entry, change))
+    return this.withProjectEntry(root, (entry) => this.applySettingsChangeTo(entry, change, skillsScope))
   }
 
   private async probeEndpoint(
@@ -1864,6 +1910,7 @@ export class ShellHost<
   private async applySettingsChangeTo(
     entry: ProjectEntry<P, W>,
     change: SettingsChange,
+    skillsScope?: 'personal',
   ): Promise<WireShellSettingsChangeResult> {
     // Before anything is mutated: a model a turn is *running on* cannot be
     // deleted. Every other reference — the default model, a routing role, an
@@ -1875,12 +1922,17 @@ export class ShellHost<
     // onto an existing key, a context number that cannot mean anything).
     // Letting it throw keeps them in one place — and nothing has been saved
     // yet, so a rejection leaves the config as it was.
-    const effect = await applySettingsEffect(entry, change, this.deps.onPickDirectory)
+    const effect = await applySettingsEffect(entry, change, {
+      ...(this.deps.onPickDirectory ? { pickDirectory: this.deps.onPickDirectory } : {}),
+      ...(this.deps.onConfirmSkillImport ? { confirmSkillImport: this.deps.onConfirmSkillImport } : {}),
+    }, skillsScope)
     if (effect.saveConfig) await entry.project.config.save()
-    // Provider configuration is global. A project opened before first-time
-    // setup must see the same saved models as the project editing settings.
-    const affected = change.scope === 'provider' ? this.deps.directory.entries() : [entry]
+    // Provider configuration and the startup permission mode are global. A
+    // project opened before either was last edited must see the same saved
+    // values as the project editing settings.
+    const affected = change.scope === 'provider' || effect.allProjects ? this.deps.directory.entries() : [entry]
     for (const target of affected) await target.project.reloadSettings()
+    if (effect.reloadSkills) for (const target of affected) await target.project.reloadSkills()
     if (effect.afterReload) await effect.afterReload()
 
     let rebuiltLanes = 0
@@ -1898,7 +1950,7 @@ export class ShellHost<
       }
     }
     return {
-      settings: await this.describeSettings(entry),
+      settings: await this.describeSettings(entry, skillsScope),
       rebuiltLanes,
     } satisfies WireShellSettingsChangeResult
   }
@@ -2000,6 +2052,40 @@ export class ShellHost<
     return { ok: true } satisfies WireShellOpenInEditorResult
   }
 
+  /** The skill's own `SKILL.md`, found through the service rather than a path from the renderer. */
+  private async readSkill(projectRoot: string, name: string, skillsScope?: 'personal'): Promise<WireShellReadSkillResult> {
+    const skill = await this.findSkill(projectRoot, name, skillsScope)
+    const file = path.join(skill.skillDir!, 'SKILL.md')
+    return { file, raw: await readFile(file, 'utf8') }
+  }
+
+  private async revealSkill(projectRoot: string, name: string, skillsScope?: 'personal'): Promise<WireShellRevealSkillResult> {
+    const skill = await this.findSkill(projectRoot, name, skillsScope)
+    if (!this.deps.onRevealPath) throw new Error('The shell cannot reveal files.')
+    await this.deps.onRevealPath(skill.skillDir!)
+    return { ok: true } satisfies WireShellRevealSkillResult
+  }
+
+  /** The skill's `SKILL.md` in the editor — the shell resolves the path, so a personal skill outside the project is fine. */
+  private async openSkill(projectRoot: string, name: string, skillsScope?: 'personal'): Promise<WireShellOpenInEditorResult> {
+    const skill = await this.findSkill(projectRoot, name, skillsScope)
+    if (!this.deps.onOpenInEditor) throw new Error('The shell cannot open an editor.')
+    const cwd = await this.cwdForRoot(projectRoot)
+    if (cwd === undefined) throw new Error(`No project is open at ${projectRoot}`)
+    const workingDir = getDefaultWorkingDir(cwd)
+    if (isGlobalWorkspaceRoot(cwd)) await mkdir(workingDir, { recursive: true })
+    await this.deps.onOpenInEditor(workingDir, { path: path.join(skill.skillDir!, 'SKILL.md') })
+    return { ok: true } satisfies WireShellOpenInEditorResult
+  }
+
+  private async findSkill(projectRoot: string, name: string, skillsScope?: 'personal'): Promise<SkillDefinition> {
+    const cwd = await this.cwdForRoot(projectRoot)
+    if (cwd === undefined) throw new Error(`No project is open at ${projectRoot}`)
+    const skill = (await new SkillsService(cwd).listAll(skillsScope)).find((entry) => entry.name === name)
+    if (!skill?.skillDir) throw new Error(`找不到技能 ${name}，可能已经被删除。`)
+    return skill
+  }
+
   /**
    * The settings snapshot, projected **field by field**.
    *
@@ -2012,7 +2098,7 @@ export class ShellHost<
    * beside the merged one — the merge concatenates and unions, so it cannot say
    * which entries this screen is allowed to rewrite.
    */
-  private async describeSettings(entry: ProjectEntry<P, W>): Promise<WireSettingsSnapshot> {
+  private async describeSettings(entry: ProjectEntry<P, W>, skillsScope?: 'personal'): Promise<WireSettingsSnapshot> {
     const { config } = entry.project
     const raw = config.get()
     const routing = config.getRouting()
@@ -2062,7 +2148,6 @@ export class ShellHost<
     const permissions: WirePermissionsInfo = {
       localPath: localSettingsPath(entry.cwd),
       mode: startupMode(merged.permissions?.mode),
-      modeIsLocal: local.permissions?.mode !== undefined,
       groups: (['allow', 'ask', 'deny'] as const).map((behavior) =>
         splitPermissionGroup(behavior, merged, local),
       ),
@@ -2070,9 +2155,11 @@ export class ShellHost<
 
     // Read off disk rather than through the runtime: `getSkills()` is already
     // filtered, and the card has to draw the switched-off ones too.
-    const disabledSkills = disabledSkillNames(merged)
-    const skills = (await new SkillsService(entry.cwd).listAll()).map((skill) =>
-      describeSkill(skill, !disabledSkills.has(skill.name)),
+    const disabledSkills = disabledSkillNames(skillsScope === 'personal' ? layers.user : merged)
+    const skills = await Promise.all(
+      (await new SkillsService(entry.cwd).listAll(skillsScope)).map((skill) =>
+        describeSkill(skill, !disabledSkills.has(skill.name)),
+      ),
     )
 
     const locallyTrusted = new Set(local.mcp?.trustedServers ?? [])
@@ -2084,6 +2171,7 @@ export class ShellHost<
       describeMcpServer(name, server, entry.project.mcp, trusted, locallyTrusted, {
         isLocal: !!local.mcpServers?.[name],
         shadowsInherited: !!local.mcpServers?.[name] && inherited.has(name),
+        fromCompat: layers.compatMcp.has(name) && !local.mcpServers?.[name],
       }),
     )
 
@@ -2113,7 +2201,9 @@ export class ShellHost<
       subagentTypes,
       permissions,
       skills,
+      ...(skillsScope ? { skillsScope } : {}),
       skillsDir: getSkillsDir(entry.cwd),
+      sharedSkillsDir: getSharedSkillsDir(),
       mcpServers,
       contextManagement,
       userInstructions: readUserInstructions(),
@@ -2374,16 +2464,39 @@ function describeCoordination(
   }
 }
 
-function describeSkill(skill: SkillDefinition, enabled: boolean): WireSkillInfo {
+async function describeSkill(skill: SkillDefinition, enabled: boolean): Promise<WireSkillInfo> {
+  const root = skill.root
+  // Inspected per skill rather than cached: a snapshot is built after every
+  // change, and a folder edited on disk must show its new grade on the next one.
+  // A folder that cannot be read still gets a row — grading is never what hides it.
+  let inspection: SkillInspection | undefined
+  if (skill.skillDir) {
+    try {
+      inspection = await inspectSkillDir(skill.skillDir)
+    } catch {
+      inspection = undefined
+    }
+  }
   const info: WireSkillInfo = {
     name: skill.name,
     description: skill.description,
     enabled,
+    scope: skillScopeOf(skill.source ?? 'project'),
     // The parser defaults an absent `inclusion` to `manual`; the fallback is
     // for a definition that reached here from somewhere else.
     inclusion: skill.inclusion ?? 'manual',
     hasHooks: skill.hooks !== undefined,
+    dir: skill.skillDir ?? '',
+    file: skill.skillDir ? path.join(skill.skillDir, 'SKILL.md') : '',
+    rootLabel: root?.label ?? '',
+    origin: root?.managed === false ? 'compat' : 'managed',
+    removable: root?.managed === true,
+    risk: inspection?.risk ?? (skill.hooks !== undefined ? 'high' : 'low'),
+    riskNotes: inspection?.findings.map((finding) => finding.message) ?? [],
+    content: skill.content.slice(0, SKILL_PREVIEW_CHARS),
   }
+  if (skill.content.length > SKILL_PREVIEW_CHARS) info.contentTruncated = true
+  if (inspection?.hookEvents.length) info.hookEvents = [...inspection.hookEvents]
   if (skill.paths?.length) info.paths = [...skill.paths]
   if (skill.allowedTools?.length) info.allowedTools = [...skill.allowedTools]
   if (skill.model !== undefined) info.model = skill.model
@@ -2406,7 +2519,7 @@ function describeMcpServer(
   status: McpConnectionStatus,
   trusted: ReadonlySet<string>,
   locallyTrusted: ReadonlySet<string>,
-  layer: { isLocal: boolean; shadowsInherited: boolean },
+  layer: { isLocal: boolean; shadowsInherited: boolean; fromCompat: boolean },
 ): WireMcpServerInfo {
   const connected = status.connected.find((entry) => entry.name === name)
   const failed = status.failed.find((entry) => entry.name === name)
@@ -2424,6 +2537,7 @@ function describeMcpServer(
     status: connected ? 'connected' : failed ? 'failed' : 'unknown',
     ...(layer.isLocal ? { isLocal: true, config: server } : {}),
     ...(layer.shadowsInherited ? { shadowsInherited: true } : {}),
+    ...(layer.fromCompat ? { fromCompat: true } : {}),
   }
   if (connected) info.toolCount = connected.toolCount
   if (failed) info.error = failed.error
@@ -2452,6 +2566,12 @@ interface SettingsChangeEffect {
    */
   onlyRoles?: readonly ('coordinator' | 'thread')[]
   /**
+   * The edit wrote a value every project reads (the startup permission mode),
+   * so every open project reloads rather than just the one that edited it.
+   */
+  allProjects?: boolean
+  reloadSkills?: boolean
+  /**
    * Re-apply the session's resolved effort after the rebuild. Only a change to a
    * role's effort sets it: every other edit must leave a manual pick alone.
    */
@@ -2476,10 +2596,15 @@ interface SettingsChangeEffect {
 async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLaneWorkspace<PaneLike>>(
   entry: ProjectEntry<P, W>,
   change: SettingsChange,
-  // Only `import-skill` needs it. Passed in rather than reached for so this
+  // `import-skill` needs both. Passed in rather than reached for so this
   // stays Electron-free.
-  pickDirectory?: ShellHostDeps<P, PaneLike, W>['onPickDirectory'],
+  dialogs: {
+    pickDirectory?: ShellHostDeps<P, PaneLike, W>['onPickDirectory']
+    confirmSkillImport?: ShellHostDeps<P, PaneLike, W>['onConfirmSkillImport']
+  } = {},
+  skillsScope?: 'personal',
 ): Promise<SettingsChangeEffect> {
+  const pickDirectory = dialogs.pickDirectory
   if (change.scope === 'provider') {
     // The coordination roles are part of the global model configuration, so
     // they ride the same save-and-fan-out path as every other provider edit.
@@ -2515,11 +2640,13 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
       // nothing.
       return { saveConfig: false, rebuild: false, scope: 'models' }
     case 'set-startup-permission-mode':
-      // Startup only, and deliberately so: the mode is read when a scope builds
-      // its gate, so this reaches the *next* session rather than fighting with
-      // the mode the user has toggled in an open one.
-      await setLocalStartupPermissionMode(entry.cwd, change.mode)
-      return { saveConfig: false, rebuild: false, scope: 'models' }
+      // One global value, like the composer pill's: every project's next session
+      // starts in it, so the reload reaches all of them. Startup only, and
+      // deliberately so — a scope reads the mode when it builds its gate, so an
+      // open session keeps the mode it is in rather than fighting the user's
+      // toggle.
+      await saveStartupPermissionMode(change.mode)
+      return { saveConfig: false, rebuild: false, scope: 'models', allProjects: true }
     case 'set-cache-ttl':
       await setLocalCacheTtl1h(entry.cwd, change.enabled)
       // `cacheRuntime` is captured at runtime construction, so this one does
@@ -2541,7 +2668,8 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
       // into the session scope at bootstrap, which is why the rows say so.
       return { saveConfig: true, rebuild: false, scope: 'models' }
     case 'set-skill-enabled':
-      await setSkillEnabledLocally(entry.cwd, change.name, change.enabled)
+      if (skillsScope === 'personal') await setSkillEnabledForUser(change.name, change.enabled)
+      else await setSkillEnabledLocally(entry.cwd, change.name, change.enabled)
       // The reload comes after `reloadSettings()` because `SkillsService` reads
       // the merged layers to decide what is switched on; the rebuild is for the
       // same reason the agent reload needs one — a runtime is handed the skill
@@ -2550,18 +2678,16 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
         saveConfig: false,
         rebuild: true,
         scope: 'models',
-        afterReload: async () => {
-          await entry.project.reloadSkills()
-        },
+        reloadSkills: true,
+        allProjects: skillsScope === 'personal',
       }
     case 'reload-skills':
       return {
         saveConfig: false,
         rebuild: true,
         scope: 'models',
-        afterReload: async () => {
-          await entry.project.reloadSkills()
-        },
+        reloadSkills: true,
+        allProjects: skillsScope === 'personal',
       }
     case 'import-skill': {
       // The copy happens *before* the reload, not in `afterReload`: a failed
@@ -2569,22 +2695,43 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
       // rather than come back as a successful-looking snapshot with nothing new
       // in it. Nothing has been written to config or settings at this point.
       if (!pickDirectory) throw new Error('The shell cannot open a folder picker.')
-      const sourceDir = await pickDirectory({ title: '导入技能', buttonLabel: '导入' })
+      const target = change.target ?? skillsScope ?? 'project'
+      const sourceDir = await pickDirectory({
+        title: target === 'personal' ? '导入技能（个人）' : '导入技能',
+        buttonLabel: '导入',
+      })
       // Cancelling is a no-op, not an error — the same rule the project picker
       // follows. The reload still runs and answers with an unchanged snapshot.
       if (!sourceDir) return { saveConfig: false, rebuild: false, scope: 'models' }
-      await importSkill(entry.cwd, sourceDir)
+      const imported = await importSkill(entry.cwd, sourceDir, {
+        target,
+        ...(dialogs.confirmSkillImport ? { confirm: dialogs.confirmSkillImport } : {}),
+      })
+      // Declined at the confirmation: nothing was copied or written, so nothing
+      // has to be reloaded either.
+      if (imported.cancelled) return { saveConfig: false, rebuild: false, scope: 'models' }
       // Rebuild for the reason `set-skill-enabled` needs one: a runtime is handed
       // the skill list it was built with.
       return {
         saveConfig: false,
         rebuild: true,
         scope: 'models',
-        afterReload: async () => {
-          await entry.project.reloadSkills()
-        },
+        reloadSkills: true,
+        allProjects: target === 'personal',
       }
     }
+    case 'remove-skill':
+      // Deleted before the reload for the same reason the import copies first: a
+      // refusal (another tool's folder, a path outside the root) must reject the
+      // command, not come back as a snapshot that looks like it worked.
+      await removeSkill(entry.cwd, change.name, skillsScope)
+      return {
+        saveConfig: false,
+        rebuild: true,
+        scope: 'models',
+        reloadSkills: true,
+        allProjects: skillsScope === 'personal',
+      }
     case 'set-mcp-trust':
       await setMcpServerTrustLocally(entry.cwd, change.name, change.trusted)
       return {

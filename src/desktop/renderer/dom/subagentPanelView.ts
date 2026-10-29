@@ -14,12 +14,13 @@ import { el, replace, show, type Child } from './dom.js'
 import { icon } from './icons.js'
 import { markdownChildren } from './markdownView.js'
 import { TONE_ICON } from './threadPanelView.js'
-import { createTranscriptView, type TranscriptView } from './transcriptView.js'
+import { createTranscriptView, isScrolledToBottom, type TranscriptView } from './transcriptView.js'
 import type { SessionRecord } from '../../../harness/types.js'
 import { subagentTone, type SubagentEntry } from '../model/subagentPanel.js'
 import { createTranscriptState, formatWorkedDuration, toolStatusLabel, type TranscriptState } from '../model/transcript.js'
 import { modelName } from '../model/modelNames.js'
 import { replayActivity } from '../model/waiting.js'
+import { formatTokens } from '../model/usage.js'
 
 export interface SubagentPanelModel {
   readonly entries: readonly SubagentEntry[]
@@ -67,8 +68,9 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
   const failure = el('div', 'load-error')
   failure.setAttribute('role', 'alert')
   show(failure, false)
+  const pageBody = el('div', 'subagent-page-body', failure, fallback, timeline, floatHost)
   let failureShown: string | undefined
-  let page: { id: string; agentId: string | undefined; finished: boolean; view: TranscriptView } | undefined
+  let page: { id: string; agentId: string | undefined; finished: boolean; startedAt: number | undefined; view: TranscriptView } | undefined
   let state: TranscriptState | undefined
   let recordsSeen: string | undefined
   /** The user's folds; every turn is open until they say otherwise. */
@@ -100,17 +102,14 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
     return node
   }
 
-  /**
-   * The row's one muted line. The page adds the type, the list does not; either way
-   * the time is one more fact on it, not a second column.
-   */
-  function meta(entry: SubagentEntry, withStatus: boolean, withType = false): HTMLElement {
+  /** The list shows token usage; the detail shows status, model and elapsed time. */
+  function meta(entry: SubagentEntry, detail: boolean): HTMLElement {
     const facts = [
-      withType ? entry.agentType : undefined,
-      withStatus ? toolStatusLabel(entry.status) : undefined,
+      detail ? toolStatusLabel(entry.status) : undefined,
       entry.model === undefined ? undefined : modelName(entry.model),
+      !detail && entry.tokens !== undefined ? `${formatTokens(entry.tokens)} token` : undefined,
     ].filter((part) => part !== undefined && part.length > 0)
-    const time = duration(entry)
+    const time = detail ? duration(entry) : undefined
     const lead = facts.length === 0 ? undefined : time === undefined ? facts.join(' · ') : `${facts.join(' · ')} · `
     return el('div', 'subagent-meta', lead, time)
   }
@@ -171,7 +170,8 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
     // The page shows one turn, still open while the run is: `replayActivity` is what
     // gives the turn its footer — time, model, copy, once, at the end — and, while
     // it runs, the status line a thread's page draws instead of a finished footer.
-    page.view.render(state, disclosure, replayActivity(state, !page.finished))
+    page.view.render(state, disclosure, { ...replayActivity(state, !page.finished, page.startedAt), statusAtEnd: true })
+    page.view.syncMotion(!visible)
   }
 
   function fetchRecords(): void {
@@ -198,7 +198,9 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
       state = createTranscriptState(records)
       show(timeline, true)
       show(fallback, false)
+      const following = isScrolledToBottom(pageBody)
       paintTimeline()
+      if (following) pageBody.scrollTop = pageBody.scrollHeight
     }, (error: unknown) => {
       settleRead()
       // A failure for a page that is no longer up is not news: it would put an
@@ -253,12 +255,14 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
     closePage()
     replace(timeline)
     replace(floatHost)
-    show(timeline, false)
+    show(timeline, true)
     show(fallback, true)
+    state = createTranscriptState([])
     page = {
       id: entry.id,
       agentId: entry.agentId,
       finished: entry.finished,
+      startedAt: entry.startedAt,
       view: createTranscriptView(timeline, floatHost, {
         onToggle: (id, expanded) => {
           manual.set(id, !expanded)
@@ -275,8 +279,8 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
         onOpenSubagent: () => {},
       }),
     }
-    replace(container, pageHead, failure, timeline, fallback, floatHost)
-    container.scrollTop = 0
+    replace(container, pageHead, pageBody)
+    pageBody.scrollTop = 0
   }
 
   function renderDetail(entry: SubagentEntry): void {
@@ -285,9 +289,9 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
     // The run ending is the one change the transcript cannot see: no record says
     // it, and the page was drawing a live turn a moment ago. Repaint before the
     // read so the status line goes and the turn's footer takes its place.
-    if (page !== undefined && page.finished !== entry.finished) {
+    if (page !== undefined) {
       page.finished = entry.finished
-      paintTimeline()
+      page.startedAt = entry.startedAt
     }
     replace(
       pageHead,
@@ -297,10 +301,11 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
         button('subagent-back', '全部任务', '返回任务列表', () => handlers.onSelect(undefined), { icon: 'arrow-left' }),
       ),
       el('div', 'subagent-title', ...heading(entry)),
-      meta(entry, true, true),
+      meta(entry, true),
       entry.notes.length === 0 ? undefined : el('div', 'subagent-notes', entry.notes.join(' · ')),
     )
     replace(fallback, ...fallbackBody(entry))
+    paintTimeline()
     // Once more on every change the parent saw — the last one is the run ending —
     // then once a second while it runs and the page is on screen.
     polling = !entry.finished
@@ -329,6 +334,7 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
   function setVisible(next: boolean): void {
     if (next === visible) return
     visible = next
+    page?.view.syncMotion(!visible)
     if (!visible) {
       // Whatever is on the wire was asked for a page the user has just left.
       epoch += 1

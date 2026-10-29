@@ -117,14 +117,14 @@ export type ShellCommand =
    * Without `projectRoot` the first open project answers, matching
    * `open-session`.
    */
-  | { type: 'get-settings'; id: string; projectRoot?: string }
+  | { type: 'get-settings'; id: string; projectRoot?: string; skillsScope?: 'personal' }
   /**
    * One edit. A single command carrying a discriminated `SettingsChange`
    * rather than ten commands: the four settings cards will otherwise add a
    * command apiece, and every one of them would repeat the same
    * project-lookup / save / reload / fan-out choreography.
    */
-  | { type: 'settings-change'; id: string; projectRoot: string; change: SettingsChange }
+  | { type: 'settings-change'; id: string; projectRoot: string; change: SettingsChange; skillsScope?: 'personal' }
   /**
    * Lists an endpoint's models — the settings screen's connection test. With
    * `endpointName` and no `apiKey` the key saved for that endpoint is used.
@@ -160,6 +160,23 @@ export type ShellCommand =
    * error box the renderer never hears about.
    */
   | { type: 'open-in-editor'; id: string; projectRoot: string; target?: WireEditorTarget }
+  /**
+   * One skill's `SKILL.md`, verbatim. The settings snapshot carries only a
+   * preview, so 复制 Markdown asks for the whole file when it is used.
+   */
+  | { type: 'read-skill'; id: string; projectRoot: string; name: string; skillsScope?: 'personal' }
+  /**
+   * Shows a skill's folder in the OS file manager. Resolved by name like
+   * `read-skill`, so the renderer cannot name a path the shell has not opened.
+   */
+  | { type: 'reveal-skill'; id: string; projectRoot: string; name: string; skillsScope?: 'personal' }
+  /**
+   * Opens a skill's `SKILL.md` in the editor. Its own command rather than
+   * `open-in-editor`'s `target`, because that one is bounded to the project's
+   * cwd: a personal skill lives in the home directory and would be refused.
+   * Resolved by name, so the path still comes from the skills service.
+   */
+  | { type: 'open-skill'; id: string; projectRoot: string; name: string; skillsScope?: 'personal' }
   /**
    * Repaints the window's native title-bar overlay for the resolved theme.
    *
@@ -430,12 +447,12 @@ export interface WirePermissionsInfo {
   /** `localSettingsPath(cwd)`, `~/.myagent/projects/<key>/settings.local.json` — the screen says what it writes. */
   localPath: string
   /**
-   * The startup mode as merged. Editable whatever layer set it: unlike the
-   * groups, `permissions.mode` is last-writer-wins, and the local layer is last.
+   * The startup mode: one global value in the user layer, written by the
+   * composer's pill and by this screen alike. A project or local layer cannot
+   * pin it (`config/settings.ts` drops one on load), so there is no "which
+   * layer" to report.
    */
   mode: 'default' | 'auto' | 'bypass'
-  /** Whether the local layer is what set the mode, for the row's own detail. */
-  modeIsLocal: boolean
   groups: WirePermissionGroup[]
 }
 
@@ -451,6 +468,8 @@ export interface WireSkillInfo {
   description: string
   /** False when `skills.disabled` names it in any settings layer. */
   enabled: boolean
+  /** Project skills live in this repo; personal ones in the user's home, for every project. */
+  scope: 'project' | 'personal'
   inclusion: 'always' | 'manual' | 'fileMatch'
   /** Only for `fileMatch`: the globs that pull the skill in. */
   paths?: string[]
@@ -460,7 +479,32 @@ export interface WireSkillInfo {
   /** The definition declares hooks; the rows say so rather than listing them. */
   hasHooks: boolean
   attachments?: number
+  /** The skill's folder, absolute — the detail page names it. */
+  dir: string
+  /** `<dir>/SKILL.md`: the file 打开 hands to the editor and 复制 reads. */
+  file: string
+  /** The skills folder it was read from, as a person writes it (`.myagent/skills`, `~/.claude/skills`). */
+  rootLabel: string
+  /**
+   * Hanekawa's own folder or another tool's. A `compat` skill is read in place and
+   * never written to, so it has no uninstall.
+   */
+  origin: 'managed' | 'compat'
+  /** Only a managed skill can be uninstalled: the settings page offers 卸载 on this alone. */
+  removable: boolean
+  /** What the folder can do beyond being read; see `inspectSkillDir`. */
+  risk: 'low' | 'medium' | 'high'
+  /** The reasons behind `risk`, one sentence each. Empty for `low`. */
+  riskNotes: string[]
+  /** `SKILL.md` without its frontmatter, cut to {@link SKILL_PREVIEW_CHARS}. */
+  content: string
+  contentTruncated?: boolean
+  /** Frontmatter hook events, e.g. `preToolUse`. Absent when there are none. */
+  hookEvents?: string[]
 }
+
+/** How much of a skill's body the detail page receives; the rest is one click away on disk. */
+export const SKILL_PREVIEW_CHARS = 6000
 
 export interface WireMcpServerInfo {
   name: string
@@ -484,6 +528,12 @@ export interface WireMcpServerInfo {
    * row. The screen has to say so, and must not predict a disappearance.
    */
   shadowsInherited?: boolean
+  /**
+   * Declared by the repository's own `.mcp.json` — Claude Code's file, read as
+   * is. Not editable from this screen: Hanekawa writes its own layer, and the
+   * row would then be an override of a file the user still has on disk.
+   */
+  fromCompat?: true
   config?: McpServerConfig
 }
 
@@ -562,8 +612,12 @@ export interface WireSettingsSnapshot {
   subagentTypes: string[]
   permissions: WirePermissionsInfo
   skills: WireSkillInfo[]
+  /** Personal-only discovery and user-layer switches, independent of this project's overrides. */
+  skillsScope?: 'personal'
   /** `.myagent/skills/` — the skills card names the directory it is reading. */
   skillsDir: string
+  /** `~/.agents/skills`, read alongside the project's own: the 个人 rows come from here. */
+  sharedSkillsDir: string
   mcpServers: WireMcpServerInfo[]
   /** From `config.json`, not the settings layers — see `setContextManagement`. */
   contextManagement: WireContextManagementInfo
@@ -648,8 +702,13 @@ export type SettingsChange =
   | { scope: 'extensions'; kind: 'set-skill-enabled'; name: string; enabled: boolean }
   /** An action: re-reads `.myagent/skills/` and re-registers their commands. */
   | { scope: 'extensions'; kind: 'reload-skills' }
-  /** Copies a skill folder the user picks into `.myagent/skills/` and reloads. */
-  | { scope: 'extensions'; kind: 'import-skill' }
+  /** Copies a skill folder the user picks into `.myagent/skills/` (or `~/.agents/skills/`) and reloads. */
+  | { scope: 'extensions'; kind: 'import-skill'; target?: 'project' | 'personal' }
+  /**
+   * Uninstalls a skill by deleting its folder. Refused for a skill read from
+   * another tool's folder (`WireSkillInfo.removable` is false for those).
+   */
+  | { scope: 'extensions'; kind: 'remove-skill'; name: string }
   | { scope: 'extensions'; kind: 'set-mcp-trust'; name: string; trusted: boolean }
   /**
    * `previousName` is a rename: one command rather than a remove plus a set, so
@@ -829,7 +888,7 @@ export interface WireShellSettingsResult {
    * Every open project. Settings are per project and N may be open, so the
    * screen needs a selector — the sidebar's grouping does not carry over here.
    */
-  projects: Array<{ projectRoot: string; projectName: string }>
+  projects: Array<{ projectRoot: string; projectName: string; isGlobal?: boolean }>
 }
 
 export interface WireShellSettingsChangeResult {
@@ -859,6 +918,16 @@ export interface WireShellPickImagesResult {
 
 /** `ok` means the editor process started, not that it drew a window. */
 export interface WireShellOpenInEditorResult {
+  ok: true
+}
+
+/** One skill's `SKILL.md`, read on demand so the settings snapshot stays small. */
+export interface WireShellReadSkillResult {
+  file: string
+  raw: string
+}
+
+export interface WireShellRevealSkillResult {
   ok: true
 }
 

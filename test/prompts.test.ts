@@ -176,6 +176,38 @@ test('a plan names what it dropped, by record id', () => {
   if (plan.trimmed.ids.includes('tool_use:call-9')) assert.ok(plan.trimmed.ids.includes('tool_result:call-9'))
 })
 
+test('a request the provider already counted keeps its history whole', () => {
+  // The local estimate charges reasoning replay far above what the provider
+  // bills, so a history it counts at thousands of tokens can be one it already
+  // accepted inside the window. The provider's own measure decides that, not
+  // the estimate, or a long turn compacts far below the autocompact threshold.
+  const now = new Date().toISOString()
+  const items: ModelContextItem[] = [
+    { kind: 'message', message: { id: 'old', role: 'user', content: 'old '.repeat(2000), createdAt: now } },
+    { kind: 'message', message: { id: 'new', role: 'user', content: 'read file', createdAt: now } },
+  ]
+  const config = { contextWindow: 1100, summaryOutputTokens: 0 }
+
+  const withoutMeasure = planContextItems(items, config)
+  assert.ok(withoutMeasure.trimmed.count > 0, 'the estimate alone still trims')
+
+  const plan = planContextItems(items, config, undefined, undefined, undefined, 80)
+  assert.equal(plan.trimmed.count, 0)
+  assert.equal(plan.items.length, items.length)
+  assert.equal(plan.overflowTokens, 0)
+})
+
+test('a request the provider measured past the window still trims', () => {
+  const now = new Date().toISOString()
+  const items: ModelContextItem[] = [
+    { kind: 'message', message: { id: 'old', role: 'user', content: 'old '.repeat(2000), createdAt: now } },
+    { kind: 'message', message: { id: 'new', role: 'user', content: 'read file', createdAt: now } },
+  ]
+  const plan = planContextItems(items, { contextWindow: 1100, summaryOutputTokens: 0 }, undefined, undefined, undefined, 5000)
+  assert.ok(plan.trimmed.count > 0)
+  assert.ok(plan.items.some((item) => item.kind === 'message' && item.message.id === 'new'))
+})
+
 test('a request\'s tool schemas come out of the window its history may use', () => {
   const config = { contextWindow: 10_000, summaryOutputTokens: 0 }
   const tools = [

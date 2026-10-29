@@ -66,7 +66,6 @@ function snapshotOf(overrides: Partial<WireSettingsSnapshot> = {}): WireSettings
     permissions: {
       localPath: 'C:\\repo\\alpha\\.myagent\\settings.local.json',
       mode: 'default',
-      modeIsLocal: false,
       groups: [
         { behavior: 'allow', local: ['Bash(git status:*)'], inherited: ['Read'] },
         { behavior: 'ask', local: [], inherited: [] },
@@ -78,13 +77,23 @@ function snapshotOf(overrides: Partial<WireSettingsSnapshot> = {}): WireSettings
         name: 'release',
         description: 'Cuts a release.',
         enabled: true,
+        scope: 'project',
         inclusion: 'manual',
         hasHooks: false,
+        dir: 'C:\\repo\\alpha\\.myagent\\skills\\release',
+        file: 'C:\\repo\\alpha\\.myagent\\skills\\release\\SKILL.md',
+        rootLabel: '.myagent/skills',
+        origin: 'managed',
+        removable: true,
+        risk: 'low',
+        riskNotes: [],
+        content: 'Cuts a release.',
       },
       {
         name: 'review',
         description: 'Reviews a diff.',
         enabled: false,
+        scope: 'personal',
         inclusion: 'fileMatch',
         paths: ['src/**'],
         allowedTools: ['Read', 'Grep'],
@@ -92,9 +101,18 @@ function snapshotOf(overrides: Partial<WireSettingsSnapshot> = {}): WireSettings
         effort: 'high',
         hasHooks: true,
         attachments: 2,
+        dir: 'C:\\Users\\me\\.agents\\skills\\review',
+        file: 'C:\\Users\\me\\.agents\\skills\\review\\SKILL.md',
+        rootLabel: '~/.agents/skills',
+        origin: 'managed',
+        removable: true,
+        risk: 'low',
+        riskNotes: [],
+        content: 'Reviews a diff.',
       },
     ],
     skillsDir: 'C:\\repo\\alpha\\.myagent\\skills',
+    sharedSkillsDir: 'C:\\Users\\me\\.agents\\skills',
     mcpServers: [
       {
         name: 'github',
@@ -415,8 +433,90 @@ function editMain(snapshot = snapshotOf()): SettingsState {
 test('a model row rejects an empty id and a non-numeric limit', () => {
   const fresh = (row: Partial<ModelRow>) => draftToChanges(endpointDraft({ name: 'fresh', models: [modelRow(row)] }), snapshotOf())
   assert.deepEqual(fresh({ model: '  ', displayName: 'x' }), { error: '模型 ID 不能为空。' })
-  assert.deepEqual(fresh({ contextWindow: '200k' }), { error: 'claude-new 的上下文长度必须是正整数。' })
+  for (const contextWindow of ['200kb', 'm', '0m', '1.5']) {
+    assert.deepEqual(fresh({ contextWindow }), { error: 'claude-new 的上下文长度必须是正整数。' }, contextWindow)
+  }
   assert.ok('error' in fresh({ maxOutputTokens: '-5' }))
+})
+
+test('both context window inputs accept K/M and save numeric token counts', () => {
+  const snapshot = snapshotOf()
+  const cases = [
+    ['272000', 272000, '272K'],
+    ['272k', 272000, '272K'],
+    ['272K', 272000, '272K'],
+    ['1m', 1000000, '1M'],
+    ['1M', 1000000, '1M'],
+    ['1.5k', 1500, '2K'],
+    ['1.25m', 1250000, '1250K'],
+    [' 272k ', 272000, '272K'],
+  ] as const
+
+  for (const [typed, contextWindow, preview] of cases) {
+    const general = applySettingsIntent(openState({ category: 'general', snapshot }), {
+      kind: 'set-context-value', field: 'contextWindow', value: typed,
+    })
+    assert.deepEqual(general.changes, [
+      { scope: 'general', kind: 'set-context-management', field: 'contextWindow', value: contextWindow },
+    ], typed)
+
+    const model = apply(editMain(snapshot), {
+      kind: 'model-row-field', rowId: 'saved-0', field: 'contextWindow', value: typed,
+    })
+    assert.equal(providerForm(model).models[0]!.context, preview, typed)
+    assert.equal(providerForm(model).models[0]!.contextWindow, typed)
+    const changes = draftToChanges(model.draft!, snapshot)
+    assert.ok(Array.isArray(changes))
+    assert.deepEqual(changes, [
+      { scope: 'provider', kind: 'set-model', key: 'big', model: 'claude-big', endpoint: 'main', contextWindow },
+    ], typed)
+    assert.equal(projectSnapshot(snapshot, pendingOf(...changes)).models[0]!.contextWindow, contextWindow)
+  }
+})
+
+test('all manual token count settings accept K/M and save numeric counts', () => {
+  const snapshot = snapshotOf()
+  const cases = [
+    ['32000', 32000],
+    ['32k', 32000],
+    ['32K', 32000],
+    ['1.5k', 1500],
+    ['1m', 1000000],
+    ['1.25M', 1250000],
+    [' 32k ', 32000],
+  ] as const
+  for (const [typed, value] of cases) {
+    for (const field of ['contextWindow', 'summaryOutputTokens', 'manualCompactBufferTokens'] as const) {
+      const outcome = applySettingsIntent(openState({ category: 'general', snapshot }), {
+        kind: 'set-context-value', field, value: typed,
+      })
+      assert.deepEqual(outcome.changes, [
+        { scope: 'general', kind: 'set-context-management', field, value },
+      ], `${field}=${typed}`)
+    }
+    const model = apply(editMain(snapshot), {
+      kind: 'model-row-field', rowId: 'saved-0', field: 'maxOutputTokens', value: typed,
+    })
+    assert.equal(providerForm(model).models[0]!.maxOutputTokens, typed)
+    const changes = draftToChanges(model.draft!, snapshot)
+    assert.ok(Array.isArray(changes), typed)
+    assert.deepEqual(changes, [
+      { scope: 'provider', kind: 'set-model', key: 'big', model: 'claude-big', endpoint: 'main', contextWindow: 200000, maxOutputTokens: value },
+    ], typed)
+    assert.equal(projectSnapshot(snapshot, pendingOf(...changes)).models[0]!.maxOutputTokens, value)
+  }
+})
+
+test('a model output limit keeps empty defaults and rejects invalid token counts', () => {
+  const fresh = (maxOutputTokens: string) => draftToChanges(
+    endpointDraft({ name: 'fresh', models: [modelRow({ maxOutputTokens })] }), snapshotOf(),
+  )
+  for (const raw of ['0', '0k', '-5k', '1.5', '32kb', 'k', 'Infinityk', '9007199254740992']) {
+    assert.deepEqual(fresh(raw), { error: 'claude-new 的最大输出 Token 必须是正整数。' }, raw)
+  }
+  const defaults = fresh('')
+  assert.ok(Array.isArray(defaults))
+  assert.ok(defaults.every((change) => !('maxOutputTokens' in change)))
 })
 
 test('a row added and never filled in is not a model', () => {
@@ -1098,7 +1198,6 @@ test('removing a rule drops one copy, not every match', () => {
       permissions: {
         localPath: 'C:\\repo\\alpha\\.myagent\\settings.local.json',
         mode: 'default',
-        modeIsLocal: true,
         groups: [
           { behavior: 'allow', local: ['Read', 'Read', 'Write'], inherited: [] },
           { behavior: 'ask', local: [], inherited: [] },
@@ -1133,9 +1232,10 @@ test('the startup mode row says it does not reach an open session', () => {
     kind: 'set-startup-permission-mode',
     mode: 'bypass',
   })
-  // The mode is last-writer-wins across layers and the local layer is last, so
-  // an inherited mode is still editable — unlike the concatenated groups.
-  assert.match(card?.noteHint ?? '', /settings\.local\.json/)
+  // One global value, written by this row and by the composer pill, so the card
+  // says so instead of pointing at this project's `settings.local.json`.
+  assert.match(card?.note ?? '', /所有项目/)
+  assert.equal(card?.noteHint, undefined)
 })
 
 // --- general, MCP and the context budget --------------------------------------
@@ -1181,7 +1281,7 @@ test('the thinking toggle reads unset as on and off as a real off', () => {
 })
 
 test('a trust granted by an upper layer is drawn but not toggleable', () => {
-  const card = settingsView(openState({ category: 'extensions' })).cards.find((card) => card.id === 'mcp')
+  const card = settingsView(openState({ category: 'extensions', extensionsTab: 'mcp' })).cards.find((card) => card.id === 'mcp')
   const shared = card?.rows.find((row) => row.id === 'mcp:shared')
   const github = card?.rows.find((row) => row.id === 'mcp:github')
   const cold = card?.rows.find((row) => row.id === 'mcp:cold')
@@ -1220,7 +1320,12 @@ test('the skills card lists every skill, switched-off ones included', () => {
   )
   assert.match(card?.noteHint ?? '', /\.myagent\\skills/)
   assert.deepEqual(card?.rows.map((row) => row.id), ['skill:release', 'skill:review'])
-  assert.equal(card?.rows[0]?.label, '/release')
+  assert.equal(card?.rows[0]?.label, 'release')
+  // A row is a name and a gist; the rest of the definition is its hover text.
+  assert.equal(card?.rows[0]?.detail, 'Cuts a release.')
+  assert.equal(card?.rows[0]?.icon, 'package')
+  // Where it came from, in the row's one word: this repo, or `~/.agents/skills`.
+  assert.equal(card?.rows[0]?.badge, '项目')
 
   const release = card?.rows[0]
   assert.ok(release && release.control.kind === 'toggle')
@@ -1228,20 +1333,22 @@ test('the skills card lists every skill, switched-off ones included', () => {
   // Never disabled, unlike MCP trust: `skills.disabled` is replaced by the
   // merge rather than unioned, so the local layer can always switch one back on.
   assert.equal(release.control.disabled, undefined)
-  assert.match(release.detail ?? '', /手动调用/)
-  assert.match(release.detail ?? '', /工具：全部/)
+  assert.match(release.detailHint ?? '', /Cuts a release/)
+  assert.match(release.detailHint ?? '', /手动调用/)
+  assert.match(release.detailHint ?? '', /工具：全部/)
 
   const review = card?.rows[1]
   assert.ok(review && review.control.kind === 'toggle')
   assert.equal(review.control.value, false)
-  assert.match(review.detail ?? '', /按文件匹配/)
-  assert.match(review.detail ?? '', /匹配 src\/\*\*/)
-  assert.match(review.detail ?? '', /工具：Read、Grep/)
-  assert.match(review.detail ?? '', /模型：claude-big/)
-  assert.match(review.detail ?? '', /思考强度：high/)
-  assert.match(review.detail ?? '', /带 hooks/)
-  assert.match(review.detail ?? '', /2 个附件/)
-  assert.match(review.detail ?? '', /已关闭/)
+  assert.equal(review.badge, '个人')
+  assert.match(review.detailHint ?? '', /按文件匹配/)
+  assert.match(review.detailHint ?? '', /匹配 src\/\*\*/)
+  assert.match(review.detailHint ?? '', /工具：Read、Grep/)
+  assert.match(review.detailHint ?? '', /模型：claude-big/)
+  assert.match(review.detailHint ?? '', /思考强度：high/)
+  assert.match(review.detailHint ?? '', /带 hooks/)
+  assert.match(review.detailHint ?? '', /2 个附件/)
+  assert.match(review.detailHint ?? '', /已关闭/)
 })
 
 test('the skills card has an empty state and a reload button', () => {
@@ -1252,8 +1359,9 @@ test('the skills card has an empty state and a reload button', () => {
   assert.match(card?.empty ?? '', /还没有技能/)
   // Import first: with no skills on disk it is the only useful action, and the
   // empty state points at it.
-  assert.deepEqual(card?.footerButtons?.map((button) => button.intent), [
-    { kind: 'import-skill' },
+  assert.deepEqual(card?.headerButtons?.map((button) => button.intent), [
+    { kind: 'import-skill', target: 'project' },
+    { kind: 'import-skill', target: 'personal' },
     { kind: 'reload-skills' },
   ])
 })
@@ -1284,13 +1392,117 @@ test('a skill switch and a skill reload are each one change', () => {
   assert.deepEqual(reload.changes, [{ scope: 'extensions', kind: 'reload-skills' }])
 })
 
-test('the extensions page is the skills card and the MCP card, in that order', () => {
-  const view = settingsView(openState({ category: 'extensions' }))
-  assert.deepEqual(view.cards.map((card) => card.id), ['skills', 'mcp'])
+test('the extensions page draws one card at a time: skills by default, MCP on its tab', () => {
+  const skills = settingsView(openState({ category: 'extensions' }))
+  assert.deepEqual(skills.cards.map((card) => card.id), ['skills'])
+  const mcp = settingsView(openState({ category: 'extensions', extensionsTab: 'mcp' }))
+  assert.deepEqual(mcp.cards.map((card) => card.id), ['mcp'])
   // And the general page no longer carries MCP.
   const general = settingsView(openState({ category: 'general' }))
   assert.deepEqual(general.cards.map((card) => card.id), ['general', 'context'])
+  // Other pages have no tab strip.
+  assert.equal(general.tabs, undefined)
 })
+
+test('the tab strip counts every skill (disabled included) and every server, skills first', () => {
+  const view = settingsView(openState({ category: 'extensions' }))
+  assert.deepEqual(
+    view.tabs?.map((tab) => [tab.id, tab.label, tab.count, tab.selected]),
+    [
+      ['skills', '技能', '2', true],
+      ['mcp', 'MCP', '3', false],
+    ],
+  )
+})
+
+test('counts follow the snapshot, including a pending optimistic removal', () => {
+  const base = openState({ category: 'extensions' })
+  const view = settingsView({
+    ...base,
+    snapshot: snapshotOf({ skills: [], mcpServers: snapshotOf().mcpServers.slice(0, 1) }),
+  })
+  assert.deepEqual(view.tabs?.map((tab) => tab.count), ['0', '1'])
+  const removing = applySettingsIntent(
+    openState({ category: 'extensions', extensionsTab: 'mcp' }),
+    { kind: 'request-remove', target: { kind: 'mcp-server', name: 'github' } },
+  ).state
+  const confirmed = applySettingsIntent(removing, { kind: 'confirm-remove' }).state
+  assert.equal(settingsView(confirmed).tabs?.[1]?.count, '2')
+})
+
+test('selecting a tab only switches the view: no change, no reload', () => {
+  const outcome = applySettingsIntent(openState({ category: 'extensions' }), {
+    kind: 'select-extensions-tab',
+    tab: 'mcp',
+  })
+  assert.equal(outcome.state.extensionsTab, 'mcp')
+  assert.equal(outcome.load, undefined)
+  assert.equal(outcome.changes, undefined)
+  assert.deepEqual(settingsView(outcome.state).tabs?.map((tab) => tab.selected), [false, true])
+})
+
+test('clearing a skill project selects personal scope and sends it on reads and writes', async () => {
+  const selected = openState({ category: 'extensions' })
+  const cleared = applySettingsIntent(selected, { kind: 'select-skill-project' })
+  assert.equal(cleared.state.skillsScope, 'personal')
+  assert.equal(cleared.load, true)
+  assert.equal(settingsView(cleared.state).skillProjectPicker?.value, '')
+  const requests: unknown[] = []
+  const snapshot = snapshotOf({ skillsScope: 'personal' })
+  const client: SettingsClient = {
+    getSettings: async (...args) => { requests.push(args); return { settings: snapshot, projects: selected.projects.map((project) => ({ ...project })) } },
+    changeSettings: async (...args) => { requests.push(args); return { settings: snapshot, rebuiltLanes: 0 } },
+  }
+  const loaded = await loadSettings(client, cleared.state)
+  assert.deepEqual(requests.pop(), [selected.projectRoot, 'personal'])
+  assert.deepEqual(settingsView(loaded).cards[0]?.headerButtons?.map((button) => button.label), ['导入到个人', '重新加载'])
+  const toggled = applySettingsIntent(loaded, { kind: 'set-skill-enabled', name: 'review', enabled: false })
+  await runSettingsChanges(client, toggled.state, toggled.pending!)
+  assert.equal((requests.pop() as unknown[])[2], 'personal')
+  const back = applySettingsIntent(loaded, { kind: 'select-skill-project', projectRoot: 'beta' })
+  assert.equal(back.state.skillsScope, undefined)
+  assert.equal(back.state.projectRoot, 'beta')
+  assert.equal(back.load, true)
+})
+
+test('the tab is remembered while open and falls back to skills on the next opening', () => {
+  const onMcp = applySettingsIntent(openState({ category: 'extensions' }), {
+    kind: 'select-extensions-tab',
+    tab: 'mcp',
+  }).state
+  // Leaving the page and coming back keeps it; so does a repeated open.
+  const elsewhere = applySettingsIntent(onMcp, { kind: 'select-category', category: 'general' }).state
+  const back = applySettingsIntent(elsewhere, { kind: 'select-category', category: 'extensions' }).state
+  assert.equal(back.extensionsTab, 'mcp')
+  assert.equal(applySettingsIntent(back, { kind: 'open' }).state.extensionsTab, 'mcp')
+  // Closed and reopened: skills again.
+  const closed = applySettingsIntent(back, { kind: 'close' }).state
+  const reopened = applySettingsIntent(closed, { kind: 'open' }).state
+  assert.equal(reopened.extensionsTab, 'skills')
+})
+
+test('a search shows every card with a hit and counts hits over totals', () => {
+  // On the skills tab, a keyword only an MCP server answers brings its card up.
+  const view = settingsView(openState({ category: 'extensions', query: 'npx github' }))
+  assert.deepEqual(view.cards.map((card) => card.id), ['mcp'])
+  assert.deepEqual(view.tabs?.map((tab) => tab.count), ['0 / 2', '1 / 3'])
+  // The remembered tab is untouched by the search…
+  assert.deepEqual(view.tabs?.map((tab) => tab.selected), [true, false])
+  // …and clearing it returns to that tab's own card and plain totals.
+  const cleared = settingsView(openState({ category: 'extensions', query: '' }))
+  assert.deepEqual(cleared.cards.map((card) => card.id), ['skills'])
+  assert.deepEqual(cleared.tabs?.map((tab) => tab.count), ['2', '3'])
+})
+
+test('a search with hits in both cards draws both; with none it says so', () => {
+  const both = settingsView(openState({ category: 'extensions', query: '。' }))
+  assert.ok(both.cards.length >= 1)
+  const none = settingsView(openState({ category: 'extensions', query: 'zzz-nothing' }))
+  assert.deepEqual(none.cards, [])
+  assert.match(none.searchEmpty ?? '', /zzz-nothing/)
+  assert.deepEqual(none.tabs?.map((tab) => tab.count), ['0 / 2', '0 / 3'])
+})
+
 
 test('the context card names its file and says the numbers need a restart', () => {
   const card = settingsView(openState({ category: 'general' })).cards.find((card) => card.id === 'context')
@@ -1327,8 +1539,10 @@ test('a context number is validated here, so a typo is not a host error', () => 
     { field: 'contextWindow', value: '2e5x', error: /必须是数字/ },
     { field: 'contextWindow', value: '0', error: /正整数/ },
     { field: 'contextWindow', value: '1.5', error: /正整数/ },
+    { field: 'contextWindow', value: '0m', error: /正整数/ },
     { field: 'autoCompactReserveRatio', value: '150', error: /百分比/ },
     { field: 'autoCompactReserveRatio', value: '0', error: /百分比/ },
+    { field: 'autoCompactReserveRatio', value: '10m', error: /百分比/ },
   ]
   for (const { field, value, error } of cases) {
     const outcome = applySettingsIntent(state, { kind: 'set-context-value', field, value })
@@ -1641,20 +1855,89 @@ test('a pending toggle keeps its row and marks it in flight', () => {
   const release = skills?.rows.find((row) => row.id === 'skill:release')
   assert.equal(release?.pending, true)
   assert.ok(release?.control.kind === 'toggle' && release.control.value === false)
-  assert.deepEqual([...pendingRowIds(outcome.state.pending)], ['skill:release'])
+  assert.deepEqual([...pendingRowIds(outcome.state.pending)], ['skill:release', 'skill-detail:release'])
 })
 
 test('an import in flight is drawn on the button that started it', () => {
   const outcome = applySettingsIntent(openState({ category: 'extensions' }), { kind: 'import-skill' })
   assert.deepEqual(outcome.changes, [{ scope: 'extensions', kind: 'import-skill' }])
   const skills = settingsView(outcome.state).cards.find((card) => card.id === 'skills')
-  const importing = skills?.footerButtons?.find((button) => button.changeKind === 'import-skill')
+  const importing = skills?.headerButtons?.find((button) => button.changeKind === 'import-skill')
   assert.equal(importing?.pending, true)
   assert.equal(
-    skills?.footerButtons?.find((button) => button.changeKind === 'reload-skills')?.pending,
+    skills?.headerButtons?.find((button) => button.changeKind === 'reload-skills')?.pending,
     undefined,
     'only the button whose change is in flight waits',
   )
+})
+
+test("a skill dialog leaves the list visible and carries its existing file actions", () => {
+  const opened = applySettingsIntent(openState({ category: 'extensions' }), {
+    kind: 'open-skill-detail',
+    name: 'release',
+  })
+  const view = settingsView(opened.state)
+  assert.deepEqual(view.cards.map((card) => card.id), ['skills'])
+  const detail = view.skillDetail?.card
+  assert.ok(detail)
+  assert.deepEqual(detail.footerButtons?.map((button) => button.intent), [
+    { kind: 'open-skill-file', name: 'release' },
+    { kind: 'reveal-skill', name: 'release' },
+    { kind: 'copy-skill-markdown', name: 'release' },
+  ])
+  assert.deepEqual(detail.headerButtons?.map((button) => button.label), ['卸载'])
+})
+
+test('skill dialogs preserve search and unwind after their uninstall confirmation', () => {
+  const opened = applySettingsIntent(openState({ category: 'extensions', query: 'release' }), {
+    kind: 'open-skill-detail', name: 'release',
+  }).state
+  assert.equal(settingsView(opened).skillDetail?.card.title, 'release')
+  assert.equal(settingsKeyToIntent({ key: 'Escape' }, opened).kind, 'close-skill-detail')
+  const confirming = applySettingsIntent(opened, { kind: 'request-remove', target: { kind: 'skill', name: 'release' } }).state
+  assert.equal(settingsKeyToIntent({ key: 'Escape' }, confirming).kind, 'cancel-remove')
+  const closed = applySettingsIntent(opened, { kind: 'close-skill-detail' }).state
+  assert.equal(closed.query, 'release')
+  assert.equal(settingsView(closed).skillDetail, undefined)
+  assert.equal(settingsKeyToIntent({ key: 'Escape' }, closed).kind, 'clear-search')
+  assert.equal(settingsView({ ...opened, snapshot: snapshotOf({ skills: [] }) }).skillDetail, undefined)
+})
+
+test('long skills load the full Markdown and ignore a reply after changing project or closing', () => {
+  const snapshot = snapshotOf()
+  snapshot.skills[0]!.contentTruncated = true
+  const opened = applySettingsIntent(openState({ category: 'extensions', snapshot }), { kind: 'open-skill-detail', name: 'release' })
+  assert.deepEqual(opened.skillAction, { kind: 'preview', name: 'release' })
+  const result = { kind: 'skill-preview-result', projectRoot: opened.state.projectRoot!, name: 'release', result: { raw: '---\r\nname: release\r\n---\r\n# Full\n\n' + 'body '.repeat(1600) } } as const
+  const loaded = applySettingsIntent(opened.state, result).state
+  assert.ok(settingsView(loaded).skillDetail!.content.length > 6000)
+  assert.match(settingsView(loaded).skillDetail!.content, /^# Full/)
+  assert.equal(settingsView(loaded).skillDetail!.contentNote, undefined)
+  const failed = applySettingsIntent(opened.state, { ...result, result: { error: '文件已移走' } }).state
+  assert.match(settingsView(failed).skillDetail!.contentNote!, /全文读取失败.*文件已移走/)
+  const closed = applySettingsIntent(opened.state, { kind: 'close-skill-detail' }).state
+  assert.equal(applySettingsIntent(closed, result).state, closed)
+  const otherProject = { ...opened.state, projectRoot: 'another-project' }
+  assert.equal(applySettingsIntent(otherProject, result).state, otherProject)
+})
+
+test('the file actions leave the page alone and answer with the action to run', () => {
+  const opened = applySettingsIntent(openState({ category: 'extensions' }), {
+    kind: 'open-skill-detail',
+    name: 'release',
+  }).state
+
+  for (const [intent, kind] of [
+    [{ kind: 'open-skill-file', name: 'release' }, 'open'],
+    [{ kind: 'reveal-skill', name: 'release' }, 'reveal'],
+    [{ kind: 'copy-skill-markdown', name: 'release' }, 'copy'],
+  ] as const) {
+    const outcome = applySettingsIntent(opened, intent)
+    assert.deepEqual(outcome.skillAction, { kind, name: 'release' })
+    assert.deepEqual(outcome.changes, undefined, 'no settings change rides along')
+    assert.equal(outcome.state.skillDetail, 'release', 'the page stays open')
+    assert.equal(outcome.state.pending.length, 0)
+  }
 })
 
 test('a failed change retires its pending row so the real snapshot comes back', async () => {

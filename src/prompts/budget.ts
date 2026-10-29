@@ -279,10 +279,32 @@ export function planContextItems(
   system?: string,
   tools?: readonly ToolSchemaCost[],
   imageTokenStrategy: ImageTokenStrategy = DEFAULT_IMAGE_TOKEN_STRATEGY,
+  /**
+   * The provider's own measure of the request this plan would send, when one
+   * exists: its count for the request it accepted last plus the estimate of
+   * what changed since. History it already accepted is kept whole rather than
+   * trimmed, because the local estimate may over-count what the provider
+   * charges — reasoning replay above all — and a request the provider counted
+   * comfortably inside the window would otherwise be cut long before the
+   * autocompact threshold.
+   */
+  knownRequestTokens?: number,
 ): ContextSelectionPlan {
   const availableTokens = getAvailableTokensForOverhead(config, requestOverhead({ system, tools }).total)
   const pinned = items.filter(isPinnedItem)
   const pinnedTokens = pinned.reduce((sum, item) => sum + countContextItemTokens(item, imageTokenStrategy), 0)
+  if (knownRequestTokens !== undefined
+    && knownRequestTokens >= 0
+    && availableTokens > 0
+    && knownRequestTokens <= getEffectiveContextWindowSize(config) - CONTEXT_SAFETY_BUFFER_TOKENS) {
+    return {
+      items: repairToolPairing(items),
+      availableTokens,
+      pinnedTokens,
+      overflowTokens: 0,
+      trimmed: { count: 0, ids: [] },
+    }
+  }
   // Pinned content must survive even when the fixed request leaves no budget;
   // the caller reports capacity failure instead of sending an incomplete task.
   const overflowTokens = Math.max(0, pinnedTokens - Math.max(0, availableTokens))

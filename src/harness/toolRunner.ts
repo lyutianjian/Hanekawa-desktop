@@ -132,7 +132,7 @@ export class ToolRunner {
         return record
       }
 
-      const decision = await this.permissionGate.approveDetailed(tool, call.input)
+      const decision = await this.permissionGate.approveDetailed(tool, call.input, call.id)
       const approved = decision.approved
       // Bind the call to the target resolved at classification time, so neither
       // the approval await nor a pre-tool hook can re-point it.

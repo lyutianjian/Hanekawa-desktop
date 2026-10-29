@@ -40,7 +40,7 @@ import {
 import { loadMergedSettings, localSettingsPath, type MyAgentSettings } from '../src/config/settings.js'
 import type { ContextManagementConfig } from '../src/prompts/budget.js'
 import type { McpConnectionStatus } from '../src/runtime/types.js'
-import { getSessionsDir } from '../src/utils/paths.js'
+import { getDefaultWorkingDir, getSessionsDir, getSharedSkillsDir } from '../src/utils/paths.js'
 
 /**
  * `ShellHost` — every lane/project decision the single-window shell makes, with
@@ -483,6 +483,8 @@ interface Harness {
   setPickedImages(paths: string[] | undefined): void
   /** The cwds `remove-project` handed to the registry, in order. */
   forgottenProjects: string[]
+  /** The folders `reveal-skill` asked the OS to show, in order. */
+  revealedPaths: string[]
   /**
    * The interleaved action log the fakes append to (`close-pane:<id>`,
    * `store-delete:<id>`, `shutdown:<cwd>:<reason>`, `closeAll`). The only place
@@ -547,6 +549,8 @@ function createHarness(
   const activates: string[] = []
   const laneEvents: WireLaneInfo[][] = []
   const allLanesClosed: string[] = []
+  /** Folders the shell asked the OS to show (`reveal-skill`). */
+  const revealedPaths: string[] = []
   const openProjectRequests = { count: 0 }
   const editorRequests: Array<{ cwd: string; target?: { path: string; line?: number } }> = []
   const windowThemes: Array<{ theme: 'dark' | 'light'; preference: 'system' | 'dark' | 'light' }> = []
@@ -623,6 +627,9 @@ function createHarness(
         }),
     ...(options.coordination ? { coordination: options.coordination } : {}),
     ...(options.pickDirectory ? { onPickDirectory: options.pickDirectory } : {}),
+    onRevealPath: (target: string) => {
+      revealedPaths.push(target)
+    },
     isQuitting: () => quitting,
     onAllLanesClosed: (reason) => allLanesClosed.push(reason),
   })
@@ -653,6 +660,7 @@ function createHarness(
     pickedImageAnchors,
     setPickedImages,
     forgottenProjects,
+    revealedPaths,
     failEditor: (message: string | undefined) => {
       editorFailure = message
     },
@@ -713,6 +721,9 @@ const COMMAND_SAMPLES = {
   'rename-session': { type: 'rename-session', id: 'h', projectRoot: 'r', sessionId: 's1', title: 'T' },
   'probe-endpoint': { type: 'probe-endpoint', id: 'w', projectRoot: 'r', provider: 'openai', endpointName: 'main' },
   'open-in-editor': { type: 'open-in-editor', id: 'i', projectRoot: 'r' },
+  'read-skill': { type: 'read-skill', id: 'rs', projectRoot: 'r', name: 's' },
+  'reveal-skill': { type: 'reveal-skill', id: 'rv', projectRoot: 'r', name: 's' },
+  'open-skill': { type: 'open-skill', id: 'os', projectRoot: 'r', name: 's' },
   'set-window-theme': { type: 'set-window-theme', id: 'j', theme: 'light', preference: 'system' },
   'request-attention': { type: 'request-attention', id: 'ra' },
   'pick-images': { type: 'pick-images', id: 'l', projectRoot: 'r' },
@@ -792,6 +803,7 @@ const SETTINGS_CHANGE_SAMPLES = {
   },
   'reload-skills': { scope: 'extensions', kind: 'reload-skills' },
   'import-skill': { scope: 'extensions', kind: 'import-skill' },
+  'remove-skill': { scope: 'extensions', kind: 'remove-skill', name: 'demo' },
   'set-mcp-trust': { scope: 'extensions', kind: 'set-mcp-trust', name: 'github', trusted: true },
   'set-mcp-server': {
     scope: 'extensions',
@@ -861,12 +873,15 @@ test('every shell command variant round-trips through its schema', () => {
       'open-in-editor',
       'open-project',
       'open-session',
+      'open-skill',
       'panes',
       'pick-images',
       'probe-endpoint',
+      'read-skill',
       'remove-project',
       'rename-session',
       'request-attention',
+      'reveal-skill',
       'set-window-theme',
       'settings-change',
       'thread-merge',
@@ -1322,6 +1337,28 @@ test('list-sessions keeps a registered project that has no sessions at all', asy
     assert.equal(result.globalRoot, projectRootKey(process.env.USERPROFILE!))
   } finally {
     await rm(emptyDir, { recursive: true, force: true })
+  }
+})
+
+test('get-settings offers every project the sidebar lists, not only the open ones', async () => {
+  // A project's runtime opens with its first session, so listing the open
+  // entries left the screen's selector empty until the user had clicked into a
+  // project — with the project the page was showing among the missing.
+  const closedDir = await mkdtemp(path.join(os.tmpdir(), 'myagent-settings-'))
+  try {
+    const h = createHarness({ knownProjects: () => Promise.resolve([closedDir]) })
+
+    const result = await h.client.getSettings()
+
+    assert.deepEqual(
+      result.projects.map((project) => project.projectName),
+      [path.basename(closedDir), 'alpha'],
+      'the registered project is offered before it is opened; alpha is open',
+    )
+    assert.equal(result.projects[1]!.projectRoot, h.entry.root)
+    assert.equal(result.settings.projectRoot, h.entry.root)
+  } finally {
+    await rm(closedDir, { recursive: true, force: true })
   }
 })
 
@@ -2197,6 +2234,7 @@ test('rename-model carries the routing reference with it', async () => {
 async function withSettingsDir(
   projectSettings: Record<string, unknown>,
   run: (h: Harness, cwd: string) => Promise<void>,
+  options: Parameters<typeof createHarness>[0] = {},
 ): Promise<void> {
   const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-shell-settings-'))
   try {
@@ -2206,7 +2244,7 @@ async function withSettingsDir(
       JSON.stringify(projectSettings),
       'utf8',
     )
-    const h = createHarness({ cwd })
+    const h = createHarness({ ...options, cwd })
     seedConfig(h.project)
     // Stands in for the load `bootstrap()` does; a constructor cannot await.
     await h.project.loadSettings()
@@ -2221,6 +2259,18 @@ async function readLocalLayer(cwd: string): Promise<Record<string, unknown>> {
     return JSON.parse(await readFile(localSettingsPath(cwd), 'utf8')) as Record<string, unknown>
   } catch (error) {
     // A global-only edit legitimately writes no local file at all.
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
+    throw error
+  }
+}
+
+/** The user layer — the global `~/.myagent/settings.json` under this test's temp home. */
+async function readUserLayer(): Promise<Record<string, unknown>> {
+  try {
+    return JSON.parse(
+      await readFile(path.join(getGlobalMyAgentDir(), 'settings.json'), 'utf8'),
+    ) as Record<string, unknown>
+  } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
     throw error
   }
@@ -2297,11 +2347,13 @@ test('a removal is a shorter group, and it really shortens the file', async () =
   })
 })
 
-test('the startup mode is stored locally and reported as local', async () => {
-  await withSettingsDir({ permissions: { mode: 'default' } }, async (h, cwd) => {
+test('the startup mode is one global value, and a project layer cannot pin it', async () => {
+  // The project layer writes `bypass`, exactly the value that must not be read:
+  // only the user layer stores this preference, so a repository cannot decide
+  // how every session opened in it starts.
+  await withSettingsDir({ permissions: { mode: 'bypass' } }, async (h, cwd) => {
     const before = await h.client.getSettings(h.entry.root)
-    assert.equal(before.settings.permissions.mode, 'default')
-    assert.equal(before.settings.permissions.modeIsLocal, false, 'it came from the project layer')
+    assert.equal(before.settings.permissions.mode, 'default', 'the project layer is ignored')
 
     const result = await h.client.changeSettings(h.entry.root, {
       scope: 'permissions',
@@ -2309,12 +2361,28 @@ test('the startup mode is stored locally and reported as local', async () => {
       mode: 'auto',
     })
 
-    assert.deepEqual((await readLocalLayer(cwd)).permissions, { mode: 'auto' })
-    // Last-writer-wins across layers and the local layer is last, so unlike the
-    // concatenated groups this really does override what sits above it.
+    assert.deepEqual((await readUserLayer()).permissions, { mode: 'auto' })
+    assert.deepEqual(await readLocalLayer(cwd), {}, 'a global preference writes no project file')
     assert.equal(result.settings.permissions.mode, 'auto')
-    assert.equal(result.settings.permissions.modeIsLocal, true)
     assert.equal(h.project.config.saves, 0)
+  })
+})
+
+test('a startup-mode edit reaches every open project, not just the one that edited it', async () => {
+  await withSettingsDir({}, async (h) => {
+    const beta = h.addProject(fixturePath('repo', 'beta'))
+    await beta.project.loadSettings()
+    const alphaReloads = h.project.reloads
+    const betaReloads = beta.project.reloads
+
+    await h.client.changeSettings(h.entry.root, {
+      scope: 'permissions',
+      kind: 'set-startup-permission-mode',
+      mode: 'auto',
+    })
+
+    assert.equal(h.project.reloads, alphaReloads + 1)
+    assert.equal(beta.project.reloads, betaReloads + 1, 'the other project reads the new value')
   })
 })
 
@@ -2667,6 +2735,98 @@ test('reload-skills reloads once per project and writes nothing at all', async (
     assert.equal(other.project.skillReloads, 0)
     assert.equal(h.project.config.saves, 0)
   })
+})
+
+test('read-skill answers the whole file, reveal-skill shows its folder, open-skill hands it to the editor', async () => {
+  await withSettingsDir({}, async (h, cwd) => {
+    await writeSkill(cwd, 'demo', 'A demo skill')
+
+    const read = await h.client.readSkill(h.entry.root, 'demo')
+    assert.equal(read.file, path.join(cwd, '.myagent', 'skills', 'demo', 'SKILL.md'))
+    assert.match(read.raw, /Body of demo/)
+
+    await h.client.revealSkill(h.entry.root, 'demo')
+    assert.deepEqual(h.revealedPaths, [path.join(cwd, '.myagent', 'skills', 'demo')])
+
+    await h.client.openSkill(h.entry.root, 'demo')
+    // The skill's own file, not the project directory: a personal skill lives
+    // outside the cwd `open-in-editor` bounds its target to.
+    assert.deepEqual(h.editorRequests, [
+      {
+        cwd: getDefaultWorkingDir(cwd),
+        target: { path: path.join(cwd, '.myagent', 'skills', 'demo', 'SKILL.md') },
+      },
+    ])
+  })
+})
+
+test('read-skill rejects a name nothing on disk defines', async () => {
+  await withSettingsDir({}, async (h) => {
+    await assert.rejects(h.client.readSkill(h.entry.root, 'missing'), /找不到技能 missing/)
+    await assert.rejects(h.client.revealSkill(h.entry.root, 'missing'), /找不到技能 missing/)
+    assert.deepEqual(h.revealedPaths, [])
+  })
+})
+
+test('personal skills ignore project shadows and overrides, and global switches refresh every project', async () => {
+  await withSettingsDir({ skills: { disabled: ['other'] } }, async (h, cwd) => {
+    await writeSkill(cwd, 'demo', 'Project copy')
+    await mkdir(path.join(getSharedSkillsDir(), 'demo'), { recursive: true })
+    await writeFile(path.join(getSharedSkillsDir(), 'demo', 'SKILL.md'), '---\nname: demo\ndescription: Personal copy\n---\n\nPersonal body.\n')
+    const other = h.addProject(fixturePath('repo', 'other'))
+    await openOneLane(h)
+    const personal = await h.client.getSettings(h.entry.root, 'personal')
+    assert.equal(personal.settings.skillsScope, 'personal')
+    assert.deepEqual(personal.settings.skills.map((skill) => [skill.name, skill.description]), [['demo', 'Personal copy']])
+    const file = await h.client.readSkill(h.entry.root, 'demo', 'personal')
+    assert.match(file.raw, /Personal body/)
+    await h.client.revealSkill(h.entry.root, 'demo', 'personal')
+    assert.equal(h.revealedPaths.at(-1), path.join(getSharedSkillsDir(), 'demo'))
+    const switched = await h.client.changeSettings(h.entry.root, { scope: 'extensions', kind: 'set-skill-enabled', name: 'demo', enabled: false }, 'personal')
+    assert.deepEqual((await readUserLayer()).skills, { disabled: ['demo'] })
+    assert.deepEqual(await readLocalLayer(cwd), {})
+    assert.equal(switched.settings.skills[0]?.enabled, false)
+    assert.equal(h.project.skillReloads, 1)
+    assert.equal(other.project.skillReloads, 1)
+    assert.equal((await h.client.getSettings(h.entry.root)).settings.skills.find((skill) => skill.name === 'demo')?.enabled, true, 'the project keeps its explicit list')
+    await h.client.changeSettings(h.entry.root, { scope: 'extensions', kind: 'set-skill-enabled', name: 'demo', enabled: true }, 'personal')
+    assert.deepEqual((await readUserLayer()).skills, { disabled: [] })
+    await h.client.changeSettings(h.entry.root, { scope: 'extensions', kind: 'remove-skill', name: 'demo' }, 'personal')
+    assert.ok(existsSync(path.join(cwd, '.myagent', 'skills', 'demo', 'SKILL.md')), 'uninstall leaves the project copy alone')
+    assert.equal(existsSync(path.join(getSharedSkillsDir(), 'demo')), false)
+  })
+})
+
+test('import-skill with a personal target copies into ~/.agents/skills', async () => {
+  const source = await mkdtemp(path.join(os.tmpdir(), 'myagent-skill-source-'))
+  const shared = path.join(getSharedSkillsDir(), 'personal-demo')
+  try {
+    await writeFile(
+      path.join(source, 'SKILL.md'),
+      '---\nname: personal-demo\ndescription: Personal\n---\n\nBody.\n',
+      'utf8',
+    )
+    await withSettingsDir(
+      {},
+      async (h) => {
+        await h.client.changeSettings(h.entry.root, {
+          scope: 'extensions',
+          kind: 'import-skill',
+          target: 'personal',
+        })
+
+        const { settings } = await h.client.getSettings(h.entry.root)
+        const imported = settings.skills.find((skill) => skill.name === 'personal-demo')
+        assert.ok(imported, 'the shared folder is listed beside the project one')
+        assert.equal(imported.scope, 'personal')
+        assert.equal(imported.removable, true)
+      },
+      { pickDirectory: async () => source },
+    )
+  } finally {
+    await rm(source, { recursive: true, force: true })
+    await rm(shared, { recursive: true, force: true })
+  }
 })
 
 test('reconnect-mcp reconnects once per project and writes nothing at all', async () => {
