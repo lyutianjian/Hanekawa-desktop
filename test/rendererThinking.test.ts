@@ -10,9 +10,9 @@ import {
   pruneDisclosure,
   runHasTools,
   summarizeRun,
+  thoughtCollapsedLabel,
   thoughtFirstSentence,
   thoughtLabel,
-  thoughtLiveLabel,
   thoughtRest,
   toggleDisclosure,
 } from '../src/desktop/renderer/model/thinking.js'
@@ -28,18 +28,16 @@ import type {
  * What an activity line says and which of them are open, as pure decisions.
  */
 
-test('a thought reads as its first sentence, live or sealed, and never as a half-written one', () => {
+test('a sealed thought reads as its first sentence, or the fallback when empty', () => {
   const text = '先确认目录是否为空。再看本机有哪些运行时，然后定技术栈。\n设计上只用一个强调色。'
   assert.equal(thoughtFirstSentence(text), '先确认目录是否为空。')
   assert.equal(thoughtLabel(text), '先确认目录是否为空。')
-  assert.equal(thoughtLiveLabel(text), '先确认目录是否为空。')
-  // The first sentence still being written: the line waits rather than following it.
-  assert.equal(thoughtLiveLabel('先确认目录是'), THINKING_LIVE_LABEL)
+  assert.equal(THINKING_LIVE_LABEL, '思考')
   // A dot inside a name is not a sentence end; one before a space is.
   assert.equal(thoughtFirstSentence('open design-directions.md first. Then read'), 'open design-directions.md first.')
   // Nothing said yet.
   assert.equal(thoughtLabel(''), THINKING_DONE_FALLBACK)
-  assert.equal(thoughtLiveLabel('  \n'), THINKING_LIVE_LABEL)
+  assert.equal(thoughtLabel('  \n'), THINKING_DONE_FALLBACK)
 })
 
 test('an open thought\'s body is what follows the first sentence', () => {
@@ -47,6 +45,14 @@ test('an open thought\'s body is what follows the first sentence', () => {
   assert.equal(thoughtRest('open design.md first. Then read'), 'Then read')
   assert.equal(thoughtRest('标题\n正文'), '正文')
   assert.equal(thoughtRest('只有一句'), '')
+})
+
+test('a folded thought uses measured seconds or the process fallback', () => {
+  assert.equal(thoughtCollapsedLabel(), '思考过程')
+  assert.equal(thoughtCollapsedLabel(0), '思考了 1 秒')
+  assert.equal(thoughtCollapsedLabel(1499), '思考了 1 秒')
+  assert.equal(thoughtCollapsedLabel(1500), '思考了 2 秒')
+  assert.equal(thoughtCollapsedLabel(458_000), '思考了 458 秒')
 })
 
 const tool = (id: string, toolName: string, extra: Partial<Extract<ActivityStep, { kind: 'tool' }>> & { useSummary?: string; detail?: string } = {}): ActivityStep => {
@@ -111,8 +117,12 @@ test('a failure or an interruption is said beside the counts, not in them', () =
   assert.equal(summarizeRun(run([tool('a', 'Read')], 'aborted')).aborted, true)
 })
 
-test('everything is folded until the user opens it, and the answer is absolute', () => {
+test('tools stay folded by default; thoughts start open and manual answers are absolute', () => {
   assert.equal(isExpanded(NO_DISCLOSURE, 'a'), false)
+  assert.equal(isExpanded(NO_DISCLOSURE, 'thought', true), true)
+  const foldedThought = toggleDisclosure(NO_DISCLOSURE, 'thought', true)
+  assert.equal(isExpanded(foldedThought, 'thought', true), false)
+  assert.equal(isExpanded(NO_DISCLOSURE, 'thought', true), true, 'another session has no manual answer')
   const opened = toggleDisclosure(NO_DISCLOSURE, 'a', false)
   assert.equal(isExpanded(opened, 'a'), true)
   const closed = toggleDisclosure(opened, 'a', true)
@@ -125,9 +135,9 @@ test('pruning keeps only the runs, steps and user messages that exist', () => {
     { kind: 'item', item: { id: 'm1', kind: 'user', text: 'hi' } },
     { kind: 'run', run: run([thinking('t1'), tool('a', 'Read')]) },
   ]
-  const state: DisclosureState = new Map([['t1', true], ['a', true], ['m1', true], ['gone', true]])
+  const state: DisclosureState = new Map([['t1', false], ['a', true], ['m1', true], ['gone', true]])
 
-  assert.deepEqual([...pruneDisclosure(entries, state)], [['t1', true], ['a', true], ['m1', true]])
+  assert.deepEqual([...pruneDisclosure(entries, state)], [['t1', false], ['a', true], ['m1', true]])
   // A `transcript-reset` restarts the id counter, so nothing may survive it.
   assert.deepEqual([...pruneDisclosure([], state)], [])
 })

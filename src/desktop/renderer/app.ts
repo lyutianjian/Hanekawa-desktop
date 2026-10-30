@@ -1811,7 +1811,7 @@ function sidePanelInput(): SidePanelInput {
   const root = activeLaneInfo()?.projectRoot
   const pane = activePane()
   const isCoordinated = coordinated()
-  const groups = backgroundTaskGroups(pane?.client.getBackgroundTasks() ?? [], pane?.subagents() ?? [])
+  const groups = backgroundTasks.visibleGroups(activeLaneInfo()?.sessionId ?? '', backgroundTaskGroups(pane?.client.getBackgroundTasks() ?? [], pane?.subagents() ?? []))
   return {
     coordinated: isCoordinated,
     laneOpen: activeLane !== undefined && panelOpenLanes.has(activeLane),
@@ -1977,7 +1977,10 @@ const backgroundTasks = createBackgroundTasksView({ running: required('running-t
     const taskId = row.kind === 'shell' ? row.id : client?.getBackgroundTasks().find((task) => task.toolUseId === row.id && task.status === 'running')?.id
     if (taskId !== undefined) void client?.killTask(taskId).catch((error) => reportError({ action: '停止任务' }, error))
   },
+  onClearFinished: () => renderSubagents(),
 })
+backgroundTasks.clearButton.hidden = true
+required('side-actions').insertBefore(backgroundTasks.clearButton, browserMaximize)
 const threadsPage = required('threads-page')
 const threadView = required('thread-view')
 const threadPanel = createThreadPanelView(threadView, (intent) => runThreadPanelIntent(intent))
@@ -2079,9 +2082,10 @@ function renderSubagents(): void {
   const onTasks = visible && view.mode === 'tasks'
   const entries = onTasks ? pane?.subagents() ?? [] : []
   const tasks = onTasks ? pane?.client.getBackgroundTasks() ?? [] : []
-  const groups = backgroundTaskGroups(tasks, entries)
+  const groups = backgroundTasks.visibleGroups(activeLaneInfo()?.sessionId ?? '', backgroundTaskGroups(tasks, entries))
   const selected = entries.find((entry) => entry.id === selectedSubagent)
   const onAgentPage = onTasks && selected !== undefined
+  show(backgroundTasks.clearButton, onTasks && !onAgentPage)
   show(sideSections, onTasks)
   show(tasksEmpty, onTasks && !onAgentPage && view.sections.length === 0)
   const folded = new Set(SIDE_SECTIONS.filter((id) => isSectionCollapsed(sectionsCollapsed, root, id)))

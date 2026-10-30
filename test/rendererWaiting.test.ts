@@ -8,6 +8,7 @@ import {
   type TranscriptItem,
 } from '../src/desktop/renderer/model/transcript.js'
 import {
+  completedRow,
   rowLabel,
   settleLabel,
   statusMeta,
@@ -59,7 +60,38 @@ const bare: TranscriptItem = { ...RUNNING_BASH, id: 'c', tool: { displayName: 'B
 const said: TranscriptItem = { id: 'a1', kind: 'assistant', text: '先看一下。', turnId: TURN }
 
 test('an idle session says nothing at all', () => {
-  assert.deepEqual(activity([USER, DONE_BASH], false), { row: undefined, mark: undefined, place: 'line' })
+  assert.deepEqual(activity([USER, DONE_BASH], false), { row: undefined, mark: undefined })
+})
+
+test('normal completion labels use only the ending turn’s last step and measured thinking duration', () => {
+  const input: WaitingInput = { isStreaming: true, startedAt: STARTED_AT, turnId: TURN }
+  const thought = (durationMs?: number): TranscriptItem => ({ ...THINKING, pending: false, durationMs })
+  const cases: Array<[readonly TranscriptItem[], string]> = [
+    [[USER], '已完成'],
+    [turn([DONE_BASH, said]), '已完成'],
+    [turn([thought()]), '已完成'],
+    [turn([thought(0)]), '思考了 1 秒'],
+    [turn([thought(1_499)]), '思考了 1 秒'],
+    [turn([thought(1_500), said]), '思考了 2 秒'],
+    [turn([thought(63_000)]), '思考了 63 秒'],
+    [turn([thought(3_000), DONE_BASH]), '已完成'],
+    [[{ ...thought(3_000), turnId: 't0' }, USER, said], '已完成'],
+  ]
+  for (const [items, label] of cases) {
+    assert.deepEqual(completedRow(groupTranscript(items), input), { label, startedAt: STARTED_AT, timing: 'immediate' })
+  }
+  assert.equal(completedRow(groupTranscript(turn([thought(3_000)])), { ...input, startedAt: undefined })?.startedAt, undefined)
+})
+
+test('failed and interrupted turns do not get normal completion feedback', () => {
+  const input: WaitingInput = { isStreaming: true, startedAt: STARTED_AT, turnId: TURN }
+  const cases: readonly TranscriptItem[][] = [
+    turn([DONE_BASH, { id: 'e', kind: 'error', text: 'boom', turnId: TURN }]),
+    turn([DONE_BASH, { id: 'e', kind: 'turn-failure', text: '失败', turnId: TURN }]),
+    turn([{ ...DONE_BASH, failed: true }]),
+    turn([THINKING, { id: 'stop', kind: 'notice', text: '中断', interrupt: true }]),
+  ]
+  for (const items of cases) assert.equal(completedRow(groupTranscript(items), input), undefined)
 })
 
 test('what the status reads, by priority', () => {
@@ -253,47 +285,64 @@ test('the label gate: a new epoch switches at once', () => {
   assert.deepEqual([r.label, r.recheckAt, r.gate.epoch], ['B', undefined, 2])
 })
 
-test('short tools stay readable, while a long tool gives a gap 650ms to settle', () => {
+test('short tools and processing share a 150ms debounce and 650ms minimum stay', () => {
   const tool = activity(turn([RUNNING_BASH])).row!
   const gap = activity(turn([DONE_BASH])).row!
   const step = (gate: LabelGate | undefined, row: typeof tool, now: number) => settleLabel(gate, row.label, row.startedAt, now, row.timing)
   let r = step(undefined, tool, 0)
   r = step(r.gate, gap, 200)
-  assert.deepEqual([r.label, r.recheckAt], ['跑测试', 850], 'the two delays overlap instead of adding up')
-  r = step(r.gate, gap, 849)
+  assert.deepEqual([r.label, r.recheckAt], ['跑测试', 650], 'the two delays overlap instead of adding up')
+  r = step(r.gate, gap, 649)
   assert.equal(r.label, '跑测试')
-  r = step(r.gate, gap, 850)
+  r = step(r.gate, gap, 650)
   assert.equal(r.label, '处理中')
 
   r = step(undefined, tool, 0)
   r = step(r.gate, gap, 2_000)
-  assert.deepEqual([r.label, r.recheckAt], ['跑测试', 2_650])
-  r = step(r.gate, gap, 2_649)
+  assert.deepEqual([r.label, r.recheckAt], ['跑测试', 2_150])
+  r = step(r.gate, gap, 2_149)
   assert.equal(r.label, '跑测试')
-  r = step(r.gate, gap, 2_650)
+  r = step(r.gate, gap, 2_150)
   assert.equal(r.label, '处理中')
 })
 
-test('the next tool replaces a brief gap without showing processing or inheriting its delay', () => {
+test('the next tool cancels a pending gap, while a shown gap has the same minimum stay', () => {
   let r = settleLabel(undefined, 'A', 1, 0, 'tool')
-  r = settleLabel(r.gate, '处理中', 1, 2_000, 'gap')
-  r = settleLabel(r.gate, 'B', 1, 2_500, 'tool')
-  assert.deepEqual([r.label, r.recheckAt], ['A', 2_650])
-  r = settleLabel(r.gate, 'B', 1, 2_650, 'tool')
+  r = settleLabel(r.gate, '处理中', 1, 100, 'gap')
+  r = settleLabel(r.gate, 'B', 1, 200, 'tool')
+  assert.deepEqual([r.label, r.recheckAt], ['A', 650])
+  r = settleLabel(r.gate, 'B', 1, 650, 'tool')
   assert.equal(r.label, 'B')
 
   r = settleLabel(undefined, '处理中', 1, 0, 'gap')
   r = settleLabel(r.gate, 'A', 1, 100, 'tool')
-  assert.equal(r.recheckAt, 250, 'processing has no minimum stay of its own')
+  assert.equal(r.recheckAt, 650, 'processing stays readable too')
 })
 
-test('thinking, output, user waits, retries and failures bypass a held tool description', () => {
+test('thinking, output and compaction share the normal label rhythm', () => {
+  const rows = [
+    activity(turn([THINKING])).row!,
+    activity([USER, DRAFT('好的')], true, undefined).row!,
+    activity(turn([RUNNING_BASH]), true, TURN, { phase: { kind: 'compacting' } }).row!,
+  ]
+  for (const row of rows) {
+    assert.notEqual(row.timing, 'immediate', row.label)
+    let r = settleLabel(undefined, '跑测试', STARTED_AT, 0, 'tool')
+    r = settleLabel(r.gate, row.label, STARTED_AT, 30, row.timing)
+    assert.deepEqual([r.label, r.recheckAt], ['跑测试', 650])
+    r = settleLabel(r.gate, row.label, STARTED_AT, 650, row.timing)
+    r = settleLabel(r.gate, row.label, STARTED_AT, 700, row.timing)
+    assert.equal(r.gate.shownAt, 650, 'unchanged paints do not restart the minimum stay')
+    r = settleLabel(r.gate, '下一条命令', STARTED_AT, 710, 'tool')
+    assert.equal(r.recheckAt, 1_300)
+  }
+})
+
+test('user waits, retries, failures and interruptions bypass a held description', () => {
   const cases = [
-    activity(turn([THINKING])),
-    activity([USER, DRAFT('好的')], true, undefined),
     activity(turn([asking])),
     activity(turn([RUNNING_BASH]), true, TURN, { asking: '数据库' }),
-    activity(turn([RUNNING_BASH]), true, TURN, { phase: { kind: 'compacting' } }),
+    activity(turn([RUNNING_BASH]), true, TURN, { awaitingApproval: true }),
     activity(turn([RUNNING_BASH]), true, TURN, { phase: { kind: 'retrying', attempt: 2, reason: 'overload' } }),
     activity(turn([{ ...DONE_BASH, failed: true }])),
     activity(turn([DONE_BASH, { id: 'stop', kind: 'notice', text: 'Interrupted.', turnId: TURN, interrupt: true }])),
@@ -305,8 +354,10 @@ test('thinking, output, user waits, retries and failures bypass a held tool desc
     r = settleLabel(r.gate, '下一条命令', STARTED_AT, 20, 'tool')
     r = settleLabel(r.gate, row.label, STARTED_AT, 30, row.timing)
     assert.deepEqual([r.label, r.recheckAt, r.gate.pending], [row.label, undefined, undefined])
-    r = settleLabel(r.gate, '下一条命令', STARTED_AT, 40, 'tool')
-    assert.equal(r.recheckAt, 190, 'leaving an immediate state does not hold its old words')
+    r = settleLabel(r.gate, row.label, STARTED_AT, 40, row.timing)
+    assert.equal(r.gate.shownAt, 30)
+    r = settleLabel(r.gate, '下一条命令', STARTED_AT, 50, 'tool')
+    assert.equal(r.recheckAt, 680, 'normal replacements still respect the minimum stay')
   }
 })
 
@@ -320,36 +371,18 @@ test('a running sub-agent names the status, though it is no run’s step', () =>
   assert.equal(activity(turn([asking]))?.row?.label, '等待你确认 · 子代理 · 扫一遍 tools/')
 })
 
-test('where the status is said: the turn’s tool group, or its own line', () => {
-  const group = { run: `run:${RUNNING_BASH.id}` }
-  const draft = { draftCall: { name: 'Bash', input: '' } }
-  const cases: Array<[string, unknown, readonly TranscriptItem[], Partial<WaitingInput>?, boolean?]> = [
-    ['before the first step', 'line', [USER], {}, true],
-    ['a thought in progress', 'line', turn([THINKING])],
-    ['a finished thought', 'line', turn([{ ...THINKING, pending: false }])],
-    ['a running call', group, turn([THINKING, RUNNING_BASH])],
-    ['a detail panel running call', 'line', turn([RUNNING_BASH]), { statusAtEnd: true }],
-    ['between two tools', group, turn([DONE_BASH])],
-    ['a detail panel between tools', 'line', turn([DONE_BASH]), { statusAtEnd: true }],
-    ['the next call of the group being written', group, turn([DONE_BASH]), draft],
-    ['an approval in the group', { run: `run:${asking.id}` }, turn([asking])],
-    ['text after the group', 'line', turn([DONE_BASH, said])],
-    ['a draft arriving', 'line', [USER, DRAFT('好的')], {}, true],
-    ['a compaction', 'line', turn([RUNNING_BASH]), { phase: { kind: 'compacting' } }],
-    ['a question', 'line', turn([RUNNING_BASH]), { asking: '数据库' }],
-    ['another turn’s group', 'line', turn([{ ...RUNNING_BASH, turnId: 't0' }])],
-  ]
-  for (const [name, want, items, extra, noTurn] of cases) {
-    assert.deepEqual(activity(items, true, noTurn ? undefined : TURN, extra).place, want, name)
+test('turn activity only describes the row and mark, regardless of the transcript’s last entry', () => {
+  for (const items of [[USER], turn([THINKING]), turn([RUNNING_BASH]), turn([DONE_BASH]), turn([DONE_BASH, said])]) {
+    const live = activity(items)
+    assert.deepEqual(Object.keys(live).sort(), ['mark', 'row'])
+    assert.ok(live.row)
+    assert.ok(live.mark)
   }
-  const interrupted: TranscriptItem = { id: 'stop', kind: 'notice', text: 'Interrupted.', turnId: TURN, interrupt: true }
-  assert.equal(activity(turn([RUNNING_BASH, interrupted])).place, 'line')
 })
 
-test('with a checklist on screen the status keeps its own line, thinking included', () => {
+test('with a checklist on screen the activity still describes the current work', () => {
   const taskCard = { rows: [{ id: '1', status: 'in_progress' as const, label: '改侧栏' }], hiddenBefore: 0, openAfter: 0 }
   for (const items of [turn([THINKING]), turn([RUNNING_BASH]), turn([DONE_BASH])]) {
-    assert.equal(activity(items, true, TURN, { taskCard }).place, 'line')
+    assert.deepEqual(activity(items, true, TURN, { taskCard }), activity(items))
   }
-  assert.equal(activity(turn([THINKING]), true, TURN, { taskCard }).row?.label, '正在思考')
 })

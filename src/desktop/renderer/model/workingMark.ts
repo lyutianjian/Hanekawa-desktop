@@ -69,12 +69,27 @@ export const SHEETS: Readonly<Record<MarkClip, SheetInfo>> = {
 
 export const MARK_BODIES: readonly MarkBody[] = ['default', 'think', 'search', 'read', 'write', 'compose', 'code', 'blocked']
 
-/** A switch out of a loop plays only its last this-many frames. */
+/** The final frames used to shorten a loop when handing off to or from default/blocked. */
 export const TAIL_FRAMES = 20
 /** A loop with more than this left is cut short through `tail`; less, and it plays out. */
 export const LOOP_HANDOFF_MS = 1500
 export const IDLE_TIMEOUT_MS = 200
 export const IDLE_FALLBACK_MS = 32
+
+/** Dedicated bodies wait for a seam or loop end; default/blocked may shorten a long remainder. */
+export function loopHandoff(body: MarkBody, want: MarkBody, elapsedMs: number):
+  | { readonly kind: 'seam'; readonly delayMs: number }
+  | { readonly kind: 'tail' }
+  | undefined {
+  if (body === want) return undefined
+  const sheet = SHEETS[`${body}.loop`]
+  const immediate = body === 'default' || want === 'default' || body === 'blocked' || want === 'blocked'
+  if (!immediate) {
+    const seam = sheet.seams?.map((frame) => frame * sheet.speed).find((time) => time > elapsedMs + 50)
+    return seam === undefined ? undefined : { kind: 'seam', delayMs: seam - elapsedMs }
+  }
+  return sheet.frames * sheet.speed - elapsedMs > LOOP_HANDOFF_MS ? { kind: 'tail' } : undefined
+}
 
 /** The body to show: `blocked` outranks the activity, and a body whose sheets are not decoded yet falls back to `default`. */
 export function wantBody(spec: MarkSpec, ready?: (body: MarkBody) => boolean): MarkBody {

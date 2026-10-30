@@ -170,7 +170,7 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
     // The page shows one turn, still open while the run is: `replayActivity` is what
     // gives the turn its footer — time, model, copy, once, at the end — and, while
     // it runs, the status line a thread's page draws instead of a finished footer.
-    page.view.render(state, disclosure, { ...replayActivity(state, !page.finished, page.startedAt), statusAtEnd: true })
+    page.view.render(state, disclosure, replayActivity(state, !page.finished, page.startedAt))
     page.view.syncMotion(!visible)
   }
 
@@ -277,7 +277,7 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
           return ok
         }),
         onOpenSubagent: () => {},
-      }),
+      }, { lingerOnCompletion: false }),
     }
     replace(container, pageHead, pageBody)
     pageBody.scrollTop = 0

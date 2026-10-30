@@ -1,9 +1,12 @@
-import type { BackgroundTaskGroups, BackgroundTaskRow, TaskGroup } from '../model/backgroundTasks.js'
+import { backgroundTaskKey, withoutClearedTasks, type BackgroundTaskGroups, type BackgroundTaskRow, type TaskGroup } from '../model/backgroundTasks.js'
 import { formatElapsed } from '../model/commandsPanel.js'
 import { modelName } from '../model/modelNames.js'
 import { formatTokens } from '../model/usage.js'
 import { button } from './controls.js'
+import { copyText } from './clipboard.js'
+import { copyButton } from './copyButton.js'
 import { el, replace } from './dom.js'
+import { focusByKey, heldFocusKey } from './focus.js'
 import { icon } from './icons.js'
 import { TONE_ICON } from './threadPanelView.js'
 
@@ -17,20 +20,37 @@ export interface BackgroundTasksHandlers {
   loadOutput(taskId: string): Promise<string>
   onSelectAgent(id: string): void
   onStop(row: BackgroundTaskRow): void
+  onClearFinished(): void
 }
 
 export interface BackgroundTasksView {
+  readonly clearButton: HTMLButtonElement
+  visibleGroups(sessionId: string, groups: BackgroundTaskGroups): BackgroundTaskGroups
   render(model: BackgroundTasksModel | undefined): void
 }
 
 const POLL_MS = 1000
 const EMPTY_OUTPUT = '还没有输出'
 
+function atBottom(node: HTMLElement): boolean {
+  return node.scrollHeight - node.scrollTop - node.clientHeight <= 1
+}
+
 /** One list for commands and agents. Only visible commands poll their output. */
 export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup, HTMLElement>>, handlers: BackgroundTasksHandlers): BackgroundTasksView {
   let model: BackgroundTasksModel | undefined
   let sessionId: string | undefined
   let drawn: string | undefined
+  const cleared = new Map<string, Set<string>>()
+  const clearButton = button('side-action bt-clear', '', '清空已完成任务（仅隐藏，不删除）', () => {
+    if (model === undefined || model.groups.finished.length === 0) return
+    const ids = cleared.get(model.sessionId) ?? new Set<string>()
+    for (const row of model.groups.finished) ids.add(backgroundTaskKey(row))
+    cleared.set(model.sessionId, ids)
+    view.render(model)
+    handlers.onClearFinished()
+  }, { icon: 'trash' })
+  clearButton.setAttribute('aria-disabled', 'true')
   const expanded = new Set<string>()
   const outputs = new Map<string, string>()
   const outputNodes = new Map<string, HTMLElement>()
@@ -38,13 +58,21 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
   let clocks: Array<{ node: HTMLElement; startedAt: number }> = []
   let timer: ReturnType<typeof setInterval> | undefined
 
+  function visibleGroups(owner: string, groups: BackgroundTaskGroups): BackgroundTaskGroups {
+    return withoutClearedTasks(groups, cleared.get(owner))
+  }
+
   function load(id: string): void {
     const owner = sessionId
     void handlers.loadOutput(id).then((text) => {
       if (owner !== sessionId || outputs.get(id) === text) return
       outputs.set(id, text)
       const pre = outputNodes.get(id)
-      if (pre) pre.textContent = text.length > 0 ? text : EMPTY_OUTPUT
+      if (pre) {
+        const following = atBottom(pre)
+        pre.textContent = text.length > 0 ? text : EMPTY_OUTPUT
+        if (following) pre.scrollTop = pre.scrollHeight
+      }
     }).then(() => {
       if (owner === sessionId && failures.delete(id)) paint()
     }, (error: unknown) => {
@@ -86,30 +114,40 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
       }
     })
     if (row.kind === 'shell') head.setAttribute('aria-expanded', String(open))
-    const status = row.tone === 'attention' || row.tone === 'danger' || row.tone === 'neutral' ? row.status : undefined
+    head.dataset.focusKey = `task:${row.id}:head`
     replace(
       head,
-      el('div', 'bt-title', mark, el('span', 'bt-text', row.title), row.running ? undefined : el('span', `bt-chevron${open ? ' open' : ''}`, icon('chevron-right'))),
+      el('div', 'bt-title', mark, el('span', `bt-text${row.kind === 'shell' ? ' bt-shell-title' : ''}`, row.title), row.kind === 'shell' ? el('span', `bt-chevron${open ? ' open' : ''}`, icon('chevron-right')) : undefined),
       el('div', 'bt-meta',
-        status === undefined ? undefined : el('span', 'bt-status', status),
+        el('span', 'bt-status', row.status),
         row.model === undefined ? undefined : el('span', 'bt-model', modelName(row.model)),
         metric,
       ),
     )
-    const output = open ? el('pre', 'command-output', outputs.get(row.id) || EMPTY_OUTPUT) : undefined
-    if (output) outputNodes.set(row.id, output)
+    const pre = open ? el('pre', 'command-output step-terminal', outputs.get(row.id) || EMPTY_OUTPUT) : undefined
+    if (pre) {
+      pre.setAttribute('tabindex', '0')
+      pre.setAttribute('role', 'region')
+      pre.setAttribute('aria-label', `${row.title} 的输出`)
+      pre.dataset.focusKey = `task:${row.id}:output`
+      outputNodes.set(row.id, pre)
+    }
+    const copy = copyButton('step-output-copy', '复制输出', () => copyText(outputs.get(row.id) ?? ''))
+    copy.dataset.focusKey = `task:${row.id}:copy`
+    const output = pre === undefined ? undefined : el('div', 'bt-output step-output', pre, copy)
     const failed = open ? failures.get(row.id) : undefined
+    const retry = failed === undefined
+      ? undefined
+      : button('load-retry', '重试', '重新读取输出', () => load(row.id))
+    if (retry !== undefined) retry.dataset.focusKey = `task:${row.id}:retry`
     const failure = failed === undefined
       ? undefined
-      : el('div', 'load-error', el('span', 'load-error-text', `无法读取输出：${failed}`), button('load-retry', '重试', '重新读取输出', () => load(row.id)))
-    return el('div', 'bt-row',
-      head,
-      row.running ? button('bt-stop', '', `停止 ${row.title}`, () => handlers.onStop(row), { icon: 'stop' }) : undefined,
-      open ? el('pre', 'bt-command', row.title) : undefined,
-      open ? el('div', 'bt-output-status', row.status) : undefined,
-      output,
-      failure,
-    )
+      : el('div', 'load-error', el('span', 'load-error-text', `无法读取输出：${failed}`), retry)
+    const stop = row.running
+      ? button('bt-stop', '', `停止 ${row.title}`, () => handlers.onStop(row), { icon: 'stop' })
+      : undefined
+    if (stop !== undefined) stop.dataset.focusKey = `task:${row.id}:stop`
+    return el('div', 'bt-row', head, stop, output, failure)
   }
 
   function stopClock(): void {
@@ -118,19 +156,36 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
   }
 
   function paint(): void {
+    const positions = new Map([...outputNodes].map(([id, node]) => [id, { top: node.scrollTop, following: atBottom(node) }]))
+    // Expanding a row or receiving a new task rebuilds the focused button; Chromium
+    // moves focus to <body> without a blur. Put it back on the node that replaced it.
+    const focusRoot = [containers.running, containers.finished].find((root) => root.contains(document.activeElement))
+    const focusKey = focusRoot === undefined ? undefined : heldFocusKey(focusRoot)
     clocks = []
     outputNodes.clear()
     for (const group of ['running', 'finished'] as const) {
       replace(containers[group], ...(model?.open.has(group) ? model.groups[group].map(rowNode) : []))
+    }
+    for (const [id, pre] of outputNodes) {
+      const position = positions.get(id)
+      pre.scrollTop = position?.following === false ? position.top : pre.scrollHeight
+    }
+    // A finished task moves between the two containers, so try both.
+    if (focusKey !== undefined) {
+      focusByKey(containers.running, focusKey) || focusByKey(containers.finished, focusKey)
     }
     tick()
     if (clocks.length === 0 && !visibleRows().some((row) => row.kind === 'shell' && row.running && expanded.has(row.id))) stopClock()
     else timer ??= setInterval(tick, POLL_MS)
   }
 
-  return {
+  const view: BackgroundTasksView = {
+    clearButton,
+    visibleGroups,
     render(next) {
+      if (next !== undefined) next = { ...next, groups: visibleGroups(next.sessionId, next.groups) }
       model = next
+      clearButton.setAttribute('aria-disabled', String(next === undefined || next.groups.finished.length === 0))
       if (next === undefined) {
         stopClock()
         drawn = undefined
@@ -140,6 +195,7 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
         sessionId = next.sessionId
         expanded.clear()
         outputs.clear()
+        outputNodes.clear()
         failures.clear()
       }
       const rows = [...next.groups.running, ...next.groups.finished]
@@ -152,4 +208,5 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
       paint()
     },
   }
+  return view
 }

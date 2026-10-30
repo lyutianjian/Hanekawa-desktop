@@ -6,7 +6,6 @@ import type { AtMentionContextRecord, AtMentionFileContext, ToolContext } from '
 import { wrapInSystemReminder } from './systemReminder.js'
 import { readFileAndRemember } from '../tools/fileState.js'
 import { atMentionPatterns } from '../runtime/suggestions/atToken.js'
-import { filterGitIgnoredPaths } from '../utils/gitIgnore.js'
 import { assertInsideCwd } from '../utils/paths.js'
 import { isProtectedPath } from '../utils/permissions/protectedPaths.js'
 import type { ImageAttachmentRef, ImageInputErrorReason } from '../media/types.js'
@@ -70,6 +69,18 @@ export const CODE_TEXT_EXTENSIONS = new Set([
   '.csv',
   '.tsv',
 ])
+
+/**
+ * Whether a name belongs to the text half of `@` mentions — what completion
+ * offers and what an explicit mention attaches. Beyond the code extensions it
+ * takes dotfiles (`.env`, `.env.local`) and extensionless documents
+ * (`Makefile`); images take their own path.
+ */
+export function isTextFileName(name: string): boolean {
+  if (name.startsWith('.')) return true
+  const extension = path.extname(name).toLowerCase()
+  return extension === '' || CODE_TEXT_EXTENSIONS.has(extension)
+}
 
 const MAX_AT_MENTION_FILES = 5
 const MAX_ATTACHMENT_LINES = 2_000
@@ -265,16 +276,12 @@ async function readAtMentionedCodeFiles(
     return []
   }
 
-  const ignorePath = fileStat.isDirectory() ? `${displayPath}/` : displayPath
-  const visiblePaths = await filterGitIgnoredPaths(toolContext.cwd, [ignorePath])
-  if (visiblePaths.length === 0) return []
-
   if (fileStat.isDirectory()) {
     return readAtMentionedCodeDirectory(absolute, displayPath, toolContext, limit)
   }
 
   if (!fileStat.isFile()) return []
-  if (!CODE_TEXT_EXTENSIONS.has(path.extname(absolute).toLowerCase())) return []
+  if (!isTextFileName(path.basename(absolute))) return []
 
   const attachment = await readAtMentionedCodeFileAtPath(absolute, displayPath, mention, toolContext)
   return attachment ? [attachment] : []
@@ -305,9 +312,8 @@ async function readAtMentionedCodeDirectory(
     .filter((entry) => !isProtectedPath(entry))
     .sort((a, b) => a.localeCompare(b))
 
-  const visibleCandidates = await filterGitIgnoredPaths(toolContext.cwd, candidates)
   const attachments: Array<{ file: AtMentionFileContext; content: string }> = []
-  for (const candidate of visibleCandidates.slice(0, limit)) {
+  for (const candidate of candidates.slice(0, limit)) {
     let absolute: string
     try {
       absolute = assertInsideCwd(toolContext.cwd, candidate)
@@ -476,8 +482,8 @@ export interface AtMentionImageCollection {
  * bytes, over quota, outside the project, `#L` suffix): the errors come back
  * structured and the caller must block the turn and keep the draft — never
  * quietly fall back to plain text. Silently skipped mentions are only those
- * the code-text path also skips (protected and git-ignored paths), plus
- * directories, which never contribute images (design §7.1: no recursion).
+ * the code-text path also skips (protected paths), plus directories, which
+ * never contribute images (design §7.1: no recursion).
  */
 export async function collectAtMentionImages(input: {
   userInput: string
@@ -534,9 +540,6 @@ export async function collectAtMentionImages(input: {
       continue
     }
     if (!fileStat.isFile()) continue
-
-    const visiblePaths = await filterGitIgnoredPaths(input.toolContext.cwd, [displayPath])
-    if (visiblePaths.length === 0) continue
 
     if (images.length >= budget) {
       errors.push({

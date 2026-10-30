@@ -3,8 +3,8 @@ import type { SuggestionItem } from './types.js'
 /**
  * The half of `@` file completion that a browser can run.
  *
- * `fileSuggestions.ts` needs `node:fs`, `node:path`, `fuse.js` and the gitignore
- * reader to *find* candidates, none of which a renderer bundle can carry. But
+ * `fileSuggestions.ts` needs `node:fs`, `node:path` and `fuse.js` to *find*
+ * candidates, none of which a renderer bundle can carry. But
  * deciding **where the `@` token starts** and **what the text looks like after
  * accepting one** is pure string work, and both shells need exactly that: the
  * host searches, the view splices.

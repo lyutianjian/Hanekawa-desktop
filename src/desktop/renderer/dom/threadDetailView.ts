@@ -70,7 +70,7 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
     for (const item of state.items) {
       if (item.turnId !== undefined && !disclosure.has(item.turnId)) disclosure.set(item.turnId, true)
     }
-    current.view.render(state, disclosure, { ...replayActivity(state, current.running), statusAtEnd: true })
+    current.view.render(state, disclosure, replayActivity(state, current.running))
   }
 
   function showFailure(message: string | undefined): void {

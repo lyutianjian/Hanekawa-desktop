@@ -217,7 +217,7 @@ function depsOf(
     channel,
     mount,
     permissionRequest: views.permissionRequest,
-    questionCard: { show: () => {} } satisfies QuestionCardView,
+    questionCard: { show: () => {}, focus: () => {} } satisfies QuestionCardView,
     planCard: { showEnter: () => {}, showExit: () => {} } satisfies PlanCardView,
     rewindPanel: views.rewindPanel,
     surface: views.surface,
@@ -249,19 +249,23 @@ test('the status waits only while a real permission card is pending, never durin
   t.mock.timers.enable({ apis: ['Date', 'setInterval', 'setTimeout'], now: 1_700_000_000_000 })
   const stub = installDomStub()
   const remote = fakeChannel()
-  const pane = createPaneSession(depsOf('status-lane', remote.channel, stub.createContainer(), stubViews()))
+  const views = stubViews()
+  let questionFocus = 0
+  const pane = createPaneSession(depsOf('status-lane', remote.channel, stub.createContainer(), views, {
+    questionCard: { show: () => {}, focus: () => { questionFocus += 1 } },
+  }))
   t.after(() => { pane.dispose(); stub.uninstall() })
   pane.activate()
   remote.deliver({ type: 'snapshot', snapshot: { ...pane.client.getSnapshot(), isStreaming: true }, subagentProgress: [] })
   const record = (record: SessionRecord): void => remote.deliver({ type: 'session-event', event: { type: 'record', record } })
-  const label = (): string => pane.paneEl.querySelector('.run')?.querySelector('.line-text')?.textContent ?? ''
+  const label = (): string => pane.paneEl.querySelector('.waiting')?.querySelector('.line-text')?.textContent ?? ''
   record({ type: 'message', id: 'user', role: 'user', content: 'go', turnId: 't1', createdAt: new Date().toISOString() })
   record({ type: 'tool_use', id: 'automatic', tool: 'Bash', input: { command: 'npm test', description: '跑测试' }, riskLevel: 'safe', turnId: 't1', createdAt: new Date().toISOString() })
   t.mock.timers.tick(40)
   assert.doesNotMatch(label(), /等待你确认/, 'the first tool paint, before any approval record')
   record({ type: 'tool_approval', id: 'approved', tool: 'Bash', input: {}, approved: true, riskLevel: 'confirm', turnId: 't1', createdAt: new Date().toISOString() })
   await tick()
-  t.mock.timers.tick(200)
+  t.mock.timers.tick(700)
   assert.equal(label(), '跑测试')
   assert.equal(pane.shellState().hasOverlay, false)
 
@@ -273,11 +277,22 @@ test('the status waits only while a real permission card is pending, never durin
   } } })
   assert.equal(label(), '等待你确认 · 构建', 'only the actual request names the waiting call')
   assert.equal(pane.shellState().hasOverlay, true)
+  const statusButton = pane.paneEl.querySelector('.waiting-main')!
+  stub.click(statusButton)
+  assert.equal(views.permissionRequest.calls.at(-1), 'focus', 'status clicks focus the existing approval card')
+  assert.equal(remote.posted.some((message) => message.type === 'ui-response'), false, 'focusing does not answer the request')
   pane.handleOverlayAction({ kind: 'slot', index: 0 })
   await tick()
-  t.mock.timers.tick(200)
-  assert.equal(label(), '构建', 'answering removes the user wait before its approval record is sent')
+  t.mock.timers.tick(700)
+  assert.equal(label(), '构建', 'answering replaces the user wait on the label clock, before its approval record is sent')
   assert.equal(pane.shellState().hasOverlay, false)
+
+  remote.deliver({ type: 'ui-request', request: { kind: 'ask-user-question', requestId: 'request-question', payload: {
+    questions: [{ question: '选哪个？', header: '选择', multiSelect: false, options: [{ label: 'A', description: '第一个' }] }],
+  } } })
+  assert.equal(pane.paneEl.querySelector('.waiting-main'), statusButton)
+  stub.click(statusButton)
+  assert.equal(questionFocus, 1, 'the same status button now focuses the question card')
 })
 
 test('a newly attached background pane stays out of the canvas layout until activated', (t) => {
@@ -296,6 +311,35 @@ test('a newly attached background pane stays out of the canvas layout until acti
   current.deactivate()
   next.activate()
   assert.equal(stub.inspect(mount).children.filter((node) => !node.hidden).length, 1)
+})
+
+test('thought disclosure survives pane activation and stays with its session across rebinds', (t) => {
+  const stub = installDomStub()
+  const remote = fakeChannel()
+  const pane = createPaneSession(depsOf('thought-memory', remote.channel, stub.createContainer(), stubViews()))
+  t.after(() => { pane.dispose(); stub.uninstall() })
+  pane.activate()
+  const records: SessionRecord[] = [{ type: 'message', id: 'a1', role: 'assistant', content: '',
+    thinkingBlocks: [{ type: 'thinking', thinking: '首句。正文。' }], createdAt: '2026-10-30T00:00:00.000Z' }]
+  const bind = (id: string): void => {
+    remote.deliver({ type: 'session-changed', session: { id, shortId: id, createdAt: 'now', updatedAt: 'now', messageCount: 1 } })
+    remote.deliver({ type: 'session-event', event: { type: 'transcript-reset', records, systemMessages: [], bumpGeneration: true } })
+  }
+  const head = (): HTMLElement => pane.paneEl.querySelector('.thinking')!.querySelector<HTMLElement>('.run-line')!
+  bind('session-a')
+  assert.equal(head().getAttribute('aria-expanded'), 'true')
+  stub.click(head())
+  assert.equal(head().getAttribute('aria-expanded'), 'false')
+  assert.equal(head().getAttribute('aria-label'), '思考过程')
+  pane.deactivate()
+  pane.activate()
+  assert.equal(head().getAttribute('aria-expanded'), 'false', 'switching away does not forget the manual fold')
+  bind('session-b')
+  assert.equal(head().getAttribute('aria-expanded'), 'true', 'reused thinking ids cannot inherit another session’s fold')
+  bind('session-a')
+  assert.equal(head().getAttribute('aria-expanded'), 'false', 'returning restores that session’s answer')
+  bind('session-b')
+  assert.equal(head().getAttribute('aria-expanded'), 'true', 'the other session keeps its own default')
 })
 
 test('startup can be awaited again before revealing the initialized project and carried draft', async (t) => {

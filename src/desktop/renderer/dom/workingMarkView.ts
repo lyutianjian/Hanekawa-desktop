@@ -2,7 +2,7 @@ import {
   clipOf,
   IDLE_FALLBACK_MS,
   IDLE_TIMEOUT_MS,
-  LOOP_HANDOFF_MS,
+  loopHandoff,
   nextStage,
   restStage,
   SHEETS,
@@ -46,6 +46,11 @@ const stagesOf = (body: MarkBody): MarkClip[] => [`${body}.in`, `${body}.loop`, 
 const PRIORITY: readonly MarkClip[] = ['grow', ...(['default', 'think', 'blocked'] as const).flatMap(stagesOf)]
 const LATER = (Object.keys(SHEETS) as MarkClip[]).filter((clip) => !PRIORITY.includes(clip))
 
+function whenIdle(work: () => void): void {
+  if (typeof requestIdleCallback === 'function') requestIdleCallback(work, { timeout: IDLE_TIMEOUT_MS })
+  else setTimeout(work, IDLE_FALLBACK_MS)
+}
+
 /**
  * A sheet that fails to load stays undecoded, so any body needing it keeps the
  * dot — or `default`, through `wantBody` — rather than showing a broken image.
@@ -73,6 +78,7 @@ export function createSheetStore(): SheetStore {
   const load = async () => {
     await Promise.all(PRIORITY.map(decode))
     publish()
+    await new Promise<void>((resolve) => whenIdle(resolve))
     await Promise.all(LATER.map(decode))
     publish()
   }
@@ -87,9 +93,7 @@ export function createSheetStore(): SheetStore {
     prefetch() {
       if (started) return
       started = true
-      const start = () => { load().catch(() => {}) }
-      if (typeof requestIdleCallback === 'function') requestIdleCallback(start, { timeout: IDLE_TIMEOUT_MS })
-      else setTimeout(start, IDLE_FALLBACK_MS)
+      whenIdle(() => { load().catch(() => {}) })
     },
   }
 }
@@ -97,9 +101,12 @@ export function createSheetStore(): SheetStore {
 /** One per renderer: every mark shares the decoded sheets. */
 export const sheetStore = createSheetStore()
 
+/** A carrier can briefly disappear while the mark moves; keep its stage for that gap. */
+const RESUME_MS = 500
+
 /**
- * One transcript view's live mark. Its three carriers (the waiting line, a run's
- * head, a thinking head) never show at once, so one controller serves them all:
+ * One transcript view's live mark. Its carriers (the waiting line and jump
+ * button) never show at once, so one controller serves them both:
  * `attach` moves its node into whichever carrier this paint drew, and a
  * script-created animation survives the move without restarting.
  *
@@ -111,7 +118,7 @@ export interface WorkingMark {
   /** Shows the mark in `host` for this paint; idempotent. */
   attach(host: HTMLElement, spec: MarkSpec): void
   setSpec(spec: MarkSpec): void
-  /** No carrier this paint, the turn still running: the next `attach` resumes with `in`. */
+  /** No carrier this paint: hold the frame; resume within 500ms, otherwise re-enter. */
   hide(): void
   /** The turn is over: the next `attach` grows in again. */
   end(): void
@@ -131,16 +138,19 @@ export function createWorkingMark(store: SheetStore = sheetStore): WorkingMark {
   const layers = new Map<MarkClip, Layer>()
 
   let spec: MarkSpec = { body: 'default', state: 'working' }
-  /** `undefined` while nothing plays: before the first attach, after hide/end, or as a dot. */
+  /** `undefined` before the first attach, after end, or while showing a dot. */
   let stage: MarkStage | undefined
   /** The frame on screen when nothing animates it; where a pause resumes. */
   let held = 0
+  let leftAt: number | undefined
   let live = false
   let paused = false
   let needsGrow = true
   let anim: { readonly animation: Animation; readonly from: number; readonly sheet: SheetInfo } | undefined
+  let entryFrame: number | undefined
   let frameTimer: ReturnType<typeof setTimeout> | undefined
   let pendingSwitch: ReturnType<typeof setTimeout> | undefined
+  let loopStartedAt: number | undefined
 
   const sheets = () => (store.resident?.ready('default') ? store.resident : undefined)
   const want = () => wantBody(spec, (body) => store.resident?.ready(body) === true)
@@ -175,9 +185,12 @@ export function createWorkingMark(store: SheetStore = sheetStore): WorkingMark {
   }
 
   function stop(): void {
+    if (entryFrame !== undefined) cancelAnimationFrame(entryFrame)
+    entryFrame = undefined
     clearTimeout(pendingSwitch)
     clearTimeout(frameTimer)
     pendingSwitch = frameTimer = undefined
+    loopStartedAt = undefined
     if (anim) {
       const { animation } = anim
       const frame = frameNow()
@@ -203,6 +216,7 @@ export function createWorkingMark(store: SheetStore = sheetStore): WorkingMark {
     const clip = clipOf(next)
     const sheet = SHEETS[clip]
     const start = Math.min(sheet.frames - 1, Math.max(from, next.kind === 'tail' ? sheet.frames - TAIL_FRAMES : 0))
+    loopStartedAt = next.kind === 'loop' ? Date.now() - start * sheet.speed : undefined
     const { strip } = show(clip, start)
     const count = sheet.frames - start
     if (count < 2 || typeof strip.animate !== 'function') {
@@ -238,31 +252,38 @@ export function createWorkingMark(store: SheetStore = sheetStore): WorkingMark {
   }
 
   function begin(): void {
+    if (entryFrame !== undefined || paused) return
     const resident = sheets()
     root.classList.toggle('is-dot', !resident)
     if (!resident) return
-    const first: MarkStage = needsGrow && resident.has('grow') ? { kind: 'grow' } : { kind: 'in', body: want() }
-    needsGrow = false
-    run(first, 0)
+    const play = () => {
+      entryFrame = undefined
+      root.classList.remove('is-dot')
+      const first: MarkStage = needsGrow && resident.has('grow') ? { kind: 'grow' } : { kind: 'in', body: want() }
+      needsGrow = false
+      run(first, 0)
+    }
+    if (needsGrow && motionPolicy().animate && typeof requestAnimationFrame === 'function' && typeof cancelAnimationFrame === 'function') {
+      root.classList.add('is-dot')
+      // Composite the first sheet under the dot before starting its animation.
+      layerFor(resident.has('grow') ? 'grow' : `${want()}.in`, resident).box.classList.add('is-warm')
+      entryFrame = requestAnimationFrame(() => { entryFrame = requestAnimationFrame(play) })
+    } else play()
   }
 
-  /**
-   * The activity changed mid-loop: leave at the next seam, through the loop's
-   * tail if a lot of it is left, or when it plays out. Any other stage hands
-   * over when it ends, in `advance`.
-   */
+  /** Other stages hand over at their end; a loop follows the model's seam/tail decision. */
   function requestSwitch(): void {
     clearTimeout(pendingSwitch)
     pendingSwitch = undefined
-    if (stage?.kind !== 'loop' || (!anim && frameTimer === undefined)) return
+    if (stage?.kind !== 'loop' || loopStartedAt === undefined) return
     const body = stage.body
-    if (want() === body) return
-    const sheet = SHEETS[`${body}.loop`]
-    const at = frameNow() * sheet.speed
-    const seam = sheet.seams?.map((frame) => frame * sheet.speed).find((time) => time > at + 50)
-    if (seam !== undefined) {
-      pendingSwitch = setTimeout(() => run({ kind: 'out', body }, 0), seam - at)
-    } else if (sheet.frames * sheet.speed - at > LOOP_HANDOFF_MS) {
+    const elapsed = anim
+      ? anim.from * anim.sheet.speed + Number(anim.animation.currentTime ?? 0)
+      : Date.now() - loopStartedAt
+    const handoff = loopHandoff(body, want(), elapsed)
+    if (handoff?.kind === 'seam') {
+      pendingSwitch = setTimeout(() => run({ kind: 'out', body }, 0), handoff.delayMs)
+    } else if (handoff?.kind === 'tail') {
       run({ kind: 'tail', body }, 0)
     }
   }
@@ -270,15 +291,16 @@ export function createWorkingMark(store: SheetStore = sheetStore): WorkingMark {
   function setSpec(next: MarkSpec): void {
     if (next.body === spec.body && next.state === spec.state) return
     spec = next
-    if (stage === undefined || paused) return
+    if (stage === undefined || !live || paused) return
     if (!motionPolicy().animate) run(stage, held)
     else requestSwitch()
   }
 
   function hide(): void {
+    if (!live) return
     live = false
     stop()
-    stage = undefined
+    leftAt = Date.now()
   }
 
   const unsubscribe = store.subscribe(() => {
@@ -288,20 +310,36 @@ export function createWorkingMark(store: SheetStore = sheetStore): WorkingMark {
   return {
     attach(host, next) {
       if (root.parentElement !== host) host.appendChild(root)
+      if (live && stage !== undefined) return setSpec(next)
       live = true
-      if (stage !== undefined) return setSpec(next)
       spec = next
-      begin()
+      const resume = stage !== undefined && leftAt !== undefined && Date.now() - leftAt <= RESUME_MS
+      leftAt = undefined
+      if (resume) {
+        run(stage!, held)
+        requestSwitch()
+      } else {
+        stage = undefined
+        begin()
+      }
     },
     setSpec,
     hide,
     end() {
       hide()
+      stage = undefined
+      held = 0
+      leftAt = undefined
       needsGrow = true
     },
     syncMotion(hidden) {
       paused = hidden
-      if (stage === undefined) return
+      if (!live) return
+      if (stage === undefined) {
+        if (hidden || !motionPolicy().animate) stop()
+        if (!hidden) begin()
+        return
+      }
       stop()
       if (hidden) return
       run(stage, held)

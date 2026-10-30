@@ -534,7 +534,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     onToggle: (id, expanded) => toggleDisclosureAt(id, expanded),
     onOpenSubagent: (id) => deps.onOpenSubagent?.(id),
     ...(deps.onViewEdits ? { onViewEdits: deps.onViewEdits } : {}),
-    onOpenBackgroundTasks: () => deps.onOpenTasks?.(),
+    ...(deps.onOpenTasks ? { onOpenBackgroundTasks: deps.onOpenTasks } : {}),
+    onFocusRequest: focusStatusRequest,
     onOpenThread: (id) => deps.onOpenThread?.(id),
     ...(deps.onOpenProviderSettings ? { onOpenProviderSettings: deps.onOpenProviderSettings } : {}),
     onRetryTurn: (id) => { void retryTurn(id) },
@@ -603,6 +604,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    * would fold a step in a session the user never touched.
    */
   let disclosure: DisclosureState = NO_DISCLOSURE
+  /** `/resume` can rebind this pane; each session keeps its own manual answers. */
+  const sessionDisclosures = new Map<string, DisclosureState>()
   /** A 「重试」 between its press and the turn it starts. */
   let retrying = false
   /**
@@ -1590,6 +1593,18 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     deps.permissionRequest.focus()
   }
 
+  function focusStatusRequest(kind: 'permission' | 'ask-user-question'): void {
+    if (!active) return
+    const current = activeRequest(queue)
+    const request = current?.kind === kind ? current : queue.entries.find((entry) => entry.kind === kind)
+    if (!request) return
+    queue = { ...queue, activeId: request.requestId }
+    prepareActive()
+    renderOverlay()
+    if (kind === 'permission') deps.permissionRequest.focus()
+    else deps.questionCard.focus()
+  }
+
   /** Routes a keystroke to whichever dialog is on top. */
   function handleOverlayKey(event: KeyboardEvent): void {
     const current = activeRequest(queue)
@@ -1864,6 +1879,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // resolve to a message the new session has never heard of.
     const session = client.getSession()
     if (session && session.id !== boundSessionId) {
+      if (boundSessionId !== undefined) sessionDisclosures.set(boundSessionId, disclosure)
+      disclosure = sessionDisclosures.get(session.id) ?? NO_DISCLOSURE
       boundSessionId = session.id
       // A rebind (`/clear`, `/resume`) moves the conversation: the old
       // session's drafts stay with the old session's files (S23 owns the

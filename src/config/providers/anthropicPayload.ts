@@ -125,7 +125,7 @@ function eligibleThinkingBlocks(message: ChatMessage, request: ModelRequest): Th
   return blocks
 }
 
-export function buildAnthropicMessages(request: ModelRequest, allowEmptySignature = false) {
+export function buildAnthropicMessages(request: ModelRequest) {
   const contextItems = request.contextItems ?? request.messages.map((message) => ({ kind: 'message', message }) satisfies ModelContextItem)
   const messages: Array<Record<string, unknown>> = []
   let pendingToolResults: Array<Record<string, unknown>> = []
@@ -157,13 +157,10 @@ export function buildAnthropicMessages(request: ModelRequest, allowEmptySignatur
           if ((block.signature ?? '').trim() !== '') {
             return [{ type: 'thinking', thinking, signature: block.signature }]
           }
-          // A signature-less block is rejected by a strict Anthropic endpoint.
-          // Replay its text as ordinary assistant content instead; compatible
-          // endpoints that emit and accept empty signatures opt in.
-          if (allowEmptySignature) {
-            return [{ type: 'thinking', thinking, signature: '' }]
-          }
-          return thinking.trim() === '' ? [] : [{ type: 'text', text: thinking }]
+          // Compatible endpoints emit unsigned thinking and require it back on
+          // any history that continues tool calls, so replay it as-is.
+          if (thinking.trim() === '') return []
+          return [{ type: 'thinking', thinking, signature: '' }]
         })
         const merged = [...thinkingBlocks, ...content] as Array<Record<string, unknown>>
         if (merged.length === 0) continue
@@ -294,8 +291,6 @@ export function buildAnthropicTools(
 export interface AnthropicPayloadOptions {
   promptCaching?: boolean
   dynamicToolSearch?: boolean
-  /** Replay virtual `thinking` blocks with an empty signature for endpoints that emit them. */
-  allowEmptySignature?: boolean
 }
 
 export function buildAnthropicPayload(request: ModelRequest, maxOutputTokens?: number, options: AnthropicPayloadOptions = {}) {
@@ -310,7 +305,7 @@ export function buildAnthropicPayload(request: ModelRequest, maxOutputTokens?: n
   // ALL deferred tool names from the full (unfiltered) tool list for <available-deferred-tools>.
   const allDeferredNames = request.allDeferredToolNames
   const tools = buildAnthropicTools(request.tools, enableCaching, request.cacheRuntime, deferLoadingNames)
-  let messages: Array<Record<string, unknown>> = buildAnthropicMessages(request, options.allowEmptySignature === true)
+  let messages: Array<Record<string, unknown>> = buildAnthropicMessages(request)
   const systemBlocks = request.systemBlocks ?? (request.system ? [request.system] : [])
 
   // Announce ALL deferred tool names (not just discovered ones) so the model

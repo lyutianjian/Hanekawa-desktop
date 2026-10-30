@@ -139,16 +139,14 @@
   --space-7: 48px;
 
   /* --- shape ---
-     Large for the panels the eye frames the app by, medium for menus and
-     mid-sized controls, small for the things *inside* a menu (a row, a file
-     chip) — at 12px those read as swollen — and pill for anything that reads
-     as a control (design_guidance 四.2). Below small: xs for the glyph-sized
-     boxes that sit in a line of text (a key cap, a badge, inline code, a check)
-     and mark for the swatches and highlights that are barely rounded at all.
-     The user bubble's own 13px was one pixel off md and is md now. */
-  --radius-lg: 20px;
-  --radius-md: 12px;
-  --radius-sm: 8px;
+     Tight corners for marks, badges and icon buttons; row for list items and
+     inputs, md for cards and popovers, panel for modal and browser surfaces,
+     lg for the composer. Capsules and circles keep their own geometry. */
+  --radius-lg: 14px;
+  --radius-panel: 12px;
+  --radius-md: 10px;
+  --radius-row: 8px;
+  --radius-sm: 6px;
   --radius-xs: 4px;
   --radius-mark: 2px;
   --radius-pill: 9999px;
@@ -169,7 +167,7 @@
      Four square sizes for every icon-only button, by where it sits: xs on a
      tile (an attachment's remove), sm inside a card or row (copy, ⋯, a
      toast's ✕), md in a bar (the title bar, the composer tools, settings) and
-     lg for the one action a surface is about (send, stop, back to bottom, the
+     lg for the one action a surface is about (send, stop, the
      viewer's close). There were eight, 18 to 36px, a pixel or two apart. */
   --control-xs: 20px;
   --control-sm: 24px;
@@ -210,6 +208,8 @@
   --motion-press: 0ms;
   --motion-release: 300ms;
   --motion-micro: 60ms;
+  --motion-reveal: 120ms;
+  --motion-task-chevron: 120ms;
   --motion-popover-in: 200ms;
   --motion-popover-out: 120ms;
   --motion-disclosure: 200ms;
@@ -659,15 +659,20 @@ body {
 :root:not([data-platform="darwin"]) .transcript { scrollbar-gutter: stable both-edges; }
 
 /* --- keyboard focus ---
-   Chromium's own ring is the platform accent drawn as a thick halo, which on a
-   menu row reads as an error state. The base is the brand hairline, at zero
-   specificity so every rule below that draws its own ring still wins; rows
-   inside a menu or list take the hover fill instead of any ring, because the
-   menu's own frame is already the outline. */
+   Standalone controls keep air around the ring; rows keep it inside their
+   container so scrolling and rounded surfaces cannot clip it. */
 :where(button, a, [role="button"], [role="option"], [role="menuitem"], [role="switch"], [tabindex]):focus-visible {
   outline: 2px solid var(--focus-ring);
-  outline-offset: 1px;
+  outline-offset: 2px;
 }
+:where(.sidebar-nav-item, .sidebar-settings, .subagent-row, .session-open, .session-delete,
+       .session-confirm-yes, .session-confirm-no, .settings-nav-item, .settings-tab,
+       .settings-pill, .settings-model-row, .mcp-segmented-btn, #surface .row,
+       #suggestions .suggestion, #rewind-panel .row):focus-visible {
+  outline-offset: -2px;
+}
+:where(.user-more, .item-copy, .item-rewind, .step-output-more, .failure-fold,
+       .settings-probe-skip, .session-open):focus-visible { border-radius: var(--radius-sm); }
 .titlebar-menu-item:focus-visible,
 .canvas-menu-item:focus-visible,
 .project-menu-item:focus-visible,
@@ -678,7 +683,8 @@ body {
 .branch-picker-row:focus-visible,
 .project-picker-row:focus-visible,
 .thread-menu-item:focus-visible {
-  outline: none;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: -2px;
   background: var(--surface-hover);
 }
 /* One highlight per menu. `followPointer` (`dom/focus.ts`) gives focus to the row
@@ -691,7 +697,7 @@ body {
 .project-menu:has(:focus-visible) .project-menu-item:hover:not(:focus-visible),
 .composer-menu:has(:focus-visible) .composer-menu-item:hover:not(:focus-visible):not(.active),
 .chip-menu:has(:focus-visible) .chip-menu-row:hover:not(:focus-visible):not(.open),
-.chip-flyout:has(:focus-visible) .chip-flyout-item:hover:not(:focus-visible),
+.chip-flyout:has(:focus-visible) .chip-flyout-item:hover:not(:focus-visible):not([aria-selected="true"]),
 .settings-menu:has(:focus-visible) .settings-menu-item:hover:not(:focus-visible):not(.active),
 .thread-menu:has(:focus-visible) .thread-menu-item:hover:not(:focus-visible) {
   background: transparent;
@@ -784,7 +790,7 @@ body.resizing #frame::after { transition: none; }
   background: transparent;
   color: var(--text-secondary);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   font: inherit;
   cursor: pointer;
 }
@@ -864,7 +870,7 @@ body.resizing #frame::after { transition: none; }
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
@@ -920,13 +926,13 @@ body.resizing #frame::after { transition: none; }
   background: var(--surface-card);
   color: var(--text-primary);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   padding: var(--space-1) var(--space-2);
   font: inherit;
   font-size: var(--type-ui);
   min-width: 16rem;
 }
-.canvas-title-input:focus { outline: none; border-color: var(--focus-ring); }
+.canvas-title-input:focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 /* While renaming, the field floats over the title it edits. The title stays in
    the flow, hidden, so the menu trigger and the controls to its right do not
    move when the field is wider than the name. */
@@ -953,7 +959,7 @@ body.resizing #frame::after { transition: none; }
   background: transparent;
   color: var(--text-secondary);
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   font: inherit;
   cursor: pointer;
 }
@@ -990,7 +996,7 @@ body.resizing #frame::after { transition: none; }
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
@@ -1253,7 +1259,7 @@ body.resizing #sidebar { transition: none; }
   margin-top: clamp(var(--space-2), calc(var(--titlebar-inset-right) * 1000), var(--titlebar-height));
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-panel);
   overflow: hidden;
 }
 #browser-panel.tasks { flex-basis: var(--tasks-panel-width); }
@@ -1329,7 +1335,7 @@ body.browser-maximized #browser-resizer { display: none; }
 .browser-error-retry {
   margin-top: var(--space-2);
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: var(--surface-card);
   color: var(--text-primary);
   font: inherit;
@@ -1370,7 +1376,7 @@ body.browser-maximized #browser-resizer { display: none; }
   cursor: pointer;
 }
 .browser-tab:hover { background: var(--surface-hover); }
-.browser-tab.active { background: var(--surface-card); color: var(--text-primary); }
+.browser-tab.active { background: var(--surface-active); color: var(--text-primary); }
 /* `1 1 auto` is what pushes the ✕ to the far edge: the label takes every pixel
    the icon and the ✕ do not, and truncates inside it. The close affordance sits
    at the end of the tab with air before it, not tight against the title. */
@@ -1524,14 +1530,15 @@ body.resizing #browser-resizer::after { opacity: 1; }
   display: inline-flex;
   align-items: center;
   border: 0;
-  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-tertiary);
   font: inherit;
   padding: 0 var(--space-2);
   cursor: pointer;
 }
-.side-action:hover { color: var(--text-primary); }
+.side-action:hover:not([aria-disabled="true"]) { color: var(--text-primary); }
+.side-action[aria-disabled="true"] { opacity: var(--opacity-disabled); cursor: default; }
+.side-action:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 /* --- 改动: one turn's edited files ---
    A head with the totals, then one section per file under a head that sticks
    while its rows scroll by. Rows wrap rather than scroll sideways: the panel is
@@ -1594,7 +1601,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   height: 28px;
   padding: 0 var(--space-2);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
@@ -1610,7 +1617,6 @@ body.resizing #browser-resizer::after { opacity: 1; }
   width: 14px;
   height: 14px;
   color: var(--text-tertiary);
-  transition: transform var(--motion-micro) var(--ease-out);
 }
 .changes-file-toggle[aria-expanded="false"] > .icon { transform: rotate(-90deg); }
 .changes-file-name { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
@@ -1638,12 +1644,11 @@ body.resizing #browser-resizer::after { opacity: 1; }
   color: var(--text-tertiary);
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--motion-micro) var(--ease-out);
 }
 .changes-file-open .icon { width: 14px; height: 14px; }
 .changes-file-head:hover .changes-file-open,
-.changes-file-open:focus-visible { opacity: 1; }
-.changes-file-open:hover { background: var(--surface-hover); color: var(--text-primary); }
+.changes-file-head:focus-within .changes-file-open { opacity: 1; }
+.changes-file-open:hover { background: var(--surface-active); color: var(--text-primary); }
 .changes-diff {
   padding: var(--space-1) 0;
   font-family: var(--font-mono);
@@ -1703,7 +1708,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 .changes-row.elided:first-child { margin-top: 0; }
 .changes-row.elided:last-child { margin-bottom: 0; }
-/* 任务: sections stacked in one scroller, hairlines between them. A
+/* 任务: sections stacked in one padded scroller. A
    section holding a page (a sub-agent's or thread's transcript) stands alone
    and takes the column's height. */
 #side-sections {
@@ -1712,6 +1717,8 @@ body.resizing #browser-resizer::after { opacity: 1; }
   overflow-y: auto;
   display: flex;
   flex-direction: column;
+  gap: var(--space-4);
+  padding: 10px;
 }
 .side-section { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; }
 .side-section-head {
@@ -1730,12 +1737,13 @@ body.resizing #browser-resizer::after { opacity: 1; }
   text-align: left;
   cursor: pointer;
 }
-/* Room for the panel's ✕ over whichever section comes first. */
+/* Room for the panel's actions over whichever section comes first. */
 .side-section-head { padding-right: 40px; }
-#tasks-empty { margin: 0; padding: var(--space-3); padding-right: 40px; color: var(--text-tertiary); font-size: var(--type-meta); }
+#browser-panel.tasks .side-section-head { padding-right: 64px; }
+#tasks-empty { margin: 0; padding: var(--space-3); color: var(--text-tertiary); font-size: var(--type-meta); text-align: center; }
 /* 线程: the project's head over its thread list, or one thread's page. */
 #threads-page { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
-.side-section-head .icon { width: 14px; height: 14px; color: var(--text-tertiary); transition: transform var(--motion-micro) var(--ease-out); }
+.side-section-head .icon { width: 14px; height: 14px; color: var(--text-tertiary); }
 .side-section-head[aria-expanded="false"] .icon { transform: rotate(-90deg); }
 .side-section-head:hover .icon { color: var(--text-primary); }
 .side-section-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-sm); }
@@ -1747,7 +1755,8 @@ body.resizing #browser-resizer::after { opacity: 1; }
   max-height: 40vh;
 }
 .task-group .side-section-body { max-height: none; }
-.task-group .side-section-head { color: var(--text-tertiary); font-size: var(--type-meta); font-weight: 400; }
+.task-group .side-section-head { padding-left: 0; color: var(--text-tertiary); font-size: var(--type-meta); font-weight: 400; }
+.task-group .side-section-head .icon { transition-duration: var(--motion-task-chevron); }
 #subagent-view {
   flex: 1 1 auto;
   min-height: 0;
@@ -1755,16 +1764,39 @@ body.resizing #browser-resizer::after { opacity: 1; }
   display: flex;
   flex-direction: column;
 }
-/* Commands and agents share flat rows in the panel's single scroller. */
+/* Commands and agents share single-layer cards in the panel's scroller. */
 .background-tasks-view {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  padding: 0 var(--space-2) var(--space-2);
+  gap: var(--space-1);
+  padding: 0;
 }
+.bt-clear {
+  width: var(--control-sm);
+  height: var(--control-sm);
+  align-self: center;
+  justify-content: center;
+  padding: 0;
+  border-radius: var(--radius-sm);
+}
+.bt-clear:hover:not([aria-disabled="true"]) { background: var(--surface-hover); }
+.bt-clear:active:not([aria-disabled="true"]) { background: var(--surface-active); }
+.bt-clear[aria-disabled="true"] { opacity: var(--opacity-disabled); cursor: default; }
+
 /* `bt-` is this panel's own namespace: the checklist card in the transcript
    already owns every flat `task-*` name. */
-.bt-row { position: relative; display: flex; flex-direction: column; min-width: 0; border-bottom: 1px solid var(--border-subtle); }
+.bt-row {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+  border-radius: var(--radius-row);
+  background: var(--surface-hover);
+}
+.bt-row:hover,
+.bt-row:focus-within { background: var(--surface-active); }
 .bt-head {
   display: flex;
   flex-direction: column;
@@ -1773,14 +1805,13 @@ body.resizing #browser-resizer::after { opacity: 1; }
   min-width: 0;
   padding: var(--space-2);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
-.bt-head:hover { background: var(--surface-hover); }
 .bt-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .bt-row:has(.bt-stop) .bt-head { padding-right: 40px; }
 .bt-title { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
@@ -1793,6 +1824,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   white-space: nowrap;
   overflow: hidden;
 }
+.bt-shell-title { white-space: pre-wrap; overflow-wrap: anywhere; }
 .bt-mark { flex: none; display: inline-flex; color: var(--text-tertiary); }
 .bt-mark .icon, .bt-chevron .icon { width: 14px; height: 14px; }
 .bt-mark.tone-running { color: var(--accent-brand-strong); }
@@ -1824,37 +1856,20 @@ body.resizing #browser-resizer::after { opacity: 1; }
   height: 28px;
   padding: var(--space-1);
   cursor: pointer;
+  opacity: 0;
 }
+.bt-row:hover .bt-stop,
+.bt-row:focus-within .bt-stop { opacity: 1; }
 .bt-stop .icon { width: 16px; height: 16px; }
-.bt-stop:hover { background: var(--surface-hover); color: var(--text-danger); }
+.bt-stop:hover { background: var(--surface-active); color: var(--text-danger); }
 .bt-stop:focus-visible { outline: 2px solid var(--focus-ring); }
-/* The full command, shown above the output once a row is expanded (the head truncates it). */
-.bt-command {
-  margin: 0 var(--space-2) var(--space-2);
-  padding: var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--surface-hover);
-  color: var(--text-primary);
-  font-family: var(--font-mono);
-  font-size: var(--type-code);
-  line-height: var(--leading-dense);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.bt-output-status { padding: var(--space-1) var(--space-2); color: var(--text-tertiary); font-size: var(--type-meta); }
+.bt-output { margin: 0 var(--space-2) var(--space-2); }
 .command-output {
-  margin: 0 var(--space-2) var(--space-2);
-  max-height: 240px;
-  overflow-y: auto;
-  padding: var(--space-2);
-  border-radius: var(--radius-sm);
-  background: var(--surface-hover);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-secondary);
-  font-family: var(--font-mono);
-  font-size: var(--type-code);
-  line-height: var(--leading-dense);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 #thread-detail-view {
   flex: 1 1 auto;
@@ -1931,7 +1946,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   min-width: 0;
   padding: var(--space-2);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: inherit;
   font: inherit;
@@ -1981,7 +1996,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   cursor: pointer;
 }
 .subagent-back:hover { background: var(--surface-hover); color: var(--text-primary); }
-.subagent-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.subagent-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .subagent-section { margin-top: var(--space-3); min-width: 0; overflow-wrap: anywhere; font-size: var(--type-ui); }
 .subagent-label {
   margin-bottom: var(--space-1);
@@ -2063,7 +2078,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   padding: var(--space-2) var(--space-3);
   font: inherit;
   font-size: var(--type-ui);
@@ -2071,7 +2086,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   white-space: nowrap;
   cursor: pointer;
 }
-.sidebar-nav-item:hover:enabled { color: var(--text-primary); background: var(--surface-hover); }
+.sidebar-nav-item:hover:enabled:not(.on) { color: var(--text-primary); background: var(--surface-hover); }
 /* The「最近」filter while it is on. Same idiom as `.sidebar-help.open`: a filled
    row, because the state is one the user has to be able to see they are in. */
 .sidebar-nav-item.on { color: var(--text-primary); background: var(--surface-active); }
@@ -2084,7 +2099,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   padding: var(--space-1) var(--space-2);
   min-height: 28px;
   font: inherit;
@@ -2109,7 +2124,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
    ring around the whole column every time the user picked a session read as an
    error state. Keyboard entry still shows it — that is the only time it says
    anything the user cannot already see. */
-.sidebar-list:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
+.sidebar-list:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .sidebar-empty { color: var(--text-tertiary); font-size: var(--type-meta); padding: var(--space-2) var(--space-3); }
 /* The first read of the history, still under way: three rows the shape of a
    session row — same height, same left edge as a title — with a quiet bar for
@@ -2144,7 +2159,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   cursor: pointer;
 }
 .sidebar-load-retry:hover { color: var(--text-primary); }
-.sidebar-load-retry:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-xs); }
+.sidebar-load-retry:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 .sidebar-footer {
   position: relative;
   flex: 0 0 auto;
@@ -2203,7 +2218,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   background: transparent;
   color: var(--text-secondary);
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   font: inherit;
   cursor: pointer;
 }
@@ -2231,7 +2246,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   min-height: 34px;
   margin: var(--space-2) var(--space-2) 2px;
   padding: var(--space-2) var(--space-3);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   cursor: pointer;
 }
 /* Painted on the row rather than on the heading inside it, exactly as
@@ -2299,7 +2314,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .project-more:focus { outline: none; }
 .project-heading:focus-visible,
 .project-new:focus-visible,
-.project-more:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
+.project-more:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-sm); }
 /* Where the session count used to be. Quiet until the row is hovered or
    focused, like `.session-actions`. */
 .project-actions {
@@ -2315,14 +2330,14 @@ body.resizing #browser-resizer::after { opacity: 1; }
   background: transparent;
   color: var(--text-secondary);
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   padding: 3px;
   font: inherit;
   line-height: 1;
   cursor: pointer;
 }
 .project-new:hover:enabled,
-.project-more:hover { color: var(--text-primary); background: var(--surface-hover); }
+.project-more:hover { color: var(--text-primary); background: var(--surface-active); }
 /* `⋯` stays while its menu is open so it reads as the trigger the menu hangs off. */
 .project-new,
 .project-more { opacity: 0; }
@@ -2365,7 +2380,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
@@ -2447,7 +2462,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   background: transparent;
   color: var(--text-tertiary);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   padding: var(--space-1) var(--space-3) var(--space-2)
            calc(var(--space-2) + var(--space-3) + 14px + var(--space-2));
   font: inherit;
@@ -2457,7 +2472,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 .project-expand:hover { color: var(--text-primary); background: var(--surface-hover); }
 .project-expand:focus { outline: none; }
-.project-expand:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: -1px; }
+.project-expand:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .project-expand .icon { width: 12px; height: 12px; }
 /* `8px 12px` around a single `--type-ui` line lands the row at ~34px
    (design_guidance 四.3). The vertical padding lives here and not on
@@ -2475,28 +2490,18 @@ body.resizing #browser-resizer::after { opacity: 1; }
      full width, which is why this is padding and not a margin. */
   padding: var(--space-2) var(--space-3) var(--space-2)
            calc(var(--space-3) + 14px + var(--space-2));
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   cursor: pointer;
 }
-/* Four row states, and the cascade order below is the whole design:
-   hover (the pointer is here) → selected (the keyboard cursor, a hairline, so it
-   can coexist with a fill) → active (the session on screen) → confirming (the
-   row asking to be deleted, which must win outright).
-
-   The active fill is `--surface-active`, the same surface `.settings-nav-item.selected`
-   uses: the app has one way of saying "you are on this one". Only *showing on
-   screen* paints — a session merely open in a background lane still reads as
-   history, which is why `.open` stays on the node as data and styles nothing. */
+/* Four row states, in cascade order: hover → selected → active → confirming.
+   Selection and the displayed session share the active fill; the keyboard
+   cursor also keeps a hairline when both states land on the same row. */
 .session-row:hover { background: var(--surface-hover); }
 .session-row.selected {
-  background: var(--surface-hover);
+  background: var(--surface-active);
   box-shadow: inset 0 0 0 1px var(--border-strong);
 }
-/* After `.selected`, so the row that is both the cursor *and* the open session
-   keeps the active fill and gains the cursor's hairline rather than losing one
-   of the two. Deliberately no `:hover` override: `--surface-hover` is a step
-   *below* this one, so repainting it under the pointer would read as the active
-   row dimming. */
+/* After selection, preserving its cursor hairline. */
 .session-row.active { background: var(--surface-active); }
 .session-open {
   flex: 1 1 auto;
@@ -2589,7 +2594,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .session-badge .icon { width: 16px; height: 16px; }
 .session-badge.awaiting-input { color: var(--accent-warn); }
 .session-badge.failed { color: var(--text-danger); }
-/* A running session's name: the thinking line's sheen, so a background lane at
+/* A running session's name sweeps with a sheen, so a background lane at
    work is seen at a glance without a mark beside it. Drawn on both copies of the
    name so the hover marquee carries it along. The name itself keeps its resting
    colour — only the highlight moves — and the highlight is the palette's one pure
@@ -2676,6 +2681,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .session-actions { flex: 0 0 auto; display: flex; gap: 2px; opacity: 0; }
 .session-row:hover .session-actions,
+.session-row:focus-within .session-actions,
 .session-row.selected .session-actions,
 /* Tab lands on the delete button; it must be visible when it does. */
 .session-actions:focus-within { opacity: 1; }
@@ -2689,9 +2695,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
   font: inherit;
   line-height: 1;
   cursor: pointer;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
 }
-.session-delete:hover { color: var(--text-danger); background: var(--surface-hover); }
+.session-delete:hover { color: var(--text-danger); background: var(--surface-active); }
 /* After `.active`, or the capsule would win and the row asking the question would
    be the one row that does not look like it is. The name stays where it was and
    the two buttons take the actions slot, so the question is "delete *this*?"
@@ -2707,13 +2713,13 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .session-confirm-no {
   background: transparent;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   padding: 1px var(--space-2);
   font: inherit;
   font-size: var(--type-meta);
   cursor: pointer;
 }
-.session-confirm-yes { color: var(--text-danger); border-color: var(--text-danger); }
+.session-confirm-yes { border-radius: var(--radius-pill); color: var(--text-danger); }
 .session-confirm-no { color: var(--text-secondary); }
 .session-confirm-yes:hover,
 .session-confirm-no:hover { background: var(--surface-hover); }
@@ -2728,6 +2734,12 @@ body.resizing #browser-resizer::after { opacity: 1; }
    sits in the bar and the bar does not read taller. */
 .transcript.scrolled {
   mask-image: linear-gradient(to bottom, transparent, currentColor 24px);
+}
+.transcript.has-bottom-fade {
+  mask-image: linear-gradient(to top, transparent, currentColor var(--space-7));
+}
+.transcript.scrolled.has-bottom-fade {
+  mask-image: linear-gradient(to bottom, transparent, currentColor 24px, currentColor calc(100% - var(--space-7)), transparent);
 }
 #transcript-area {
   flex: 1 1 auto;
@@ -2951,10 +2963,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
   font-variant-numeric: tabular-nums;
   user-select: none;
   opacity: 0;
-  transition: opacity var(--motion-micro) var(--ease-out);
 }
 .transcript .item:hover .item-meta,
-.transcript .item .item-meta:focus-within { opacity: 1; }
+.transcript .item:focus-within .item-meta { opacity: 1; }
 /* The tail under a turn that did not end in an answer: it has no message to hang on, so it follows the entry and shows with it. */
 .transcript .turn-foot {
   display: flex;
@@ -2966,10 +2977,11 @@ body.resizing #browser-resizer::after { opacity: 1; }
   font-variant-numeric: tabular-nums;
   user-select: none;
   opacity: 0;
-  transition: opacity var(--motion-micro) var(--ease-out);
 }
 .transcript .turn-foot:hover,
-.transcript-column > :hover + .turn-foot { opacity: 1; }
+.transcript .turn-foot:focus-within,
+.transcript-column > :hover + .turn-foot,
+.transcript-column > :focus-within + .turn-foot { opacity: 1; }
 .item-meta .item-fact::before,
 .item-meta .item-model + .item-time::before { content: '·'; margin-right: var(--space-2); }
 .item-meta > :first-child.item-fact::before { content: none; }
@@ -3022,17 +3034,15 @@ body.resizing #browser-resizer::after { opacity: 1; }
   margin-right: 4px;
   vertical-align: -2px;
 }
-/* Text stays still except a thought still arriving or a compaction running, which shimmer; otherwise
-   only status marks move. Reduced-motion lives at the end of the sheet: the
-   token parser allows no other nested rule here except `@keyframes`. */
+/* Working descriptions carry a quiet sheen; the thought body stays readable.
+   Reduced motion is handled at the end of the sheet. */
 @keyframes breathe { 50% { opacity: 0.65; } }
 @keyframes sheen { 0% { background-position: 100% 0; } 100% { background-position: -100% 0; } }
 /* --- activity lines ---
    A run of work folds to one quiet line — 「已运行 2 个命令，读取 2 个文件」 — and
    opens into a bordered card with a row per step. A thought outside a run is the
    same line with its first sentence on it. While the turn works, the last line of
-   the transcript is its status: mark, the words, then elapsed time and tokens —
-   the time ahead of the words while a thought streams.
+   the transcript is its status: mark, words, then elapsed time and tokens.
    `model/waiting.ts` decides what it says. */
 .run {
   min-width: 0;
@@ -3060,12 +3070,52 @@ body.resizing #browser-resizer::after { opacity: 1; }
   text-align: left;
   cursor: pointer;
 }
-.run-line:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; border-radius: var(--radius-sm); }
+.run-line:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 .waiting {
+  flex-wrap: wrap;
+  row-gap: 0;
+  min-height: 24px;
+  line-height: 24px;
   color: var(--text-secondary);
   font-size: var(--type-ui);
   user-select: none;
 }
+.waiting-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 24px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  line-height: 24px;
+  text-align: left;
+  font-variant-numeric: inherit;
+  cursor: default;
+}
+.waiting-main:not(:disabled) { cursor: pointer; }
+.waiting-main > .icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--text-tertiary);
+  transition: transform var(--motion-text-in) var(--ease-out);
+}
+.waiting-main[aria-expanded="true"] > .icon { transform: rotate(90deg); }
+.waiting > .thinking-body {
+  flex-basis: calc(100% - var(--mark-size) - 6px);
+  margin-inline-start: calc(var(--mark-size) + 6px);
+  user-select: text;
+}
+.waiting-main:not(:disabled):hover .line-text,
+.waiting-main:focus-visible .line-text { color: var(--text-primary); }
+.waiting-main:focus-visible,
+.line-tasks:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 .thinking { min-width: 0; margin-bottom: var(--space-3); }
 .thinking-run > .thinking:last-child { margin-bottom: 0; }
 /* Open, the line is the first sentence of the body below it: whole, in the body's
@@ -3074,7 +3124,6 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .thinking.open > .run-line .line-text { white-space: normal; overflow-wrap: anywhere; }
 .run-line:hover,
 .thinking.open > .run-line:hover { color: var(--text-primary); }
-.thinking.live:not(.open) > .run-line .line-text,
 .transcript .item.compaction.pending .line-text {
   background: linear-gradient(90deg, var(--text-tertiary) 35%, var(--text-primary) 50%, var(--text-tertiary) 65%);
   background-size: 200% 100%;
@@ -3082,19 +3131,52 @@ body.resizing #browser-resizer::after { opacity: 1; }
   color: transparent;
   animation: sheen var(--motion-running) linear infinite;
 }
+/* The live status is the one place a working description sweeps: a band of the
+   primary colour travels over words that keep their normal weight and colour, so
+   the line reads as 「still going」 rather than as dimmed or disabled text. */
+.waiting.is-working .line-label {
+  background: linear-gradient(100deg, var(--text-secondary) 30%, var(--text-primary) 48%, var(--text-secondary) 66%);
+  background-size: 250% 100%;
+  background-clip: text;
+  color: transparent;
+  animation: sheen calc(var(--motion-running) * 1.4) linear infinite;
+}
 .line-text {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
 }
-.line-label { animation: fade-in var(--motion-disclosure) var(--ease-out); }
+.text-swap {
+  position: relative;
+  display: block;
+  max-width: 100%;
+  overflow: visible;
+}
+.text-swap > span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.text-swap > .text-swap-leaving { position: absolute; inset: 0; pointer-events: none; }
 .line-meta { flex: none; color: var(--text-tertiary); }
-.waiting .line-meta { display: flex; gap: 6px; color: inherit; }
-.waiting.thinking .line-elapsed { order: -1; }
-.waiting.thinking .line-mark { order: -2; }
-.waiting:not(.thinking) .line-elapsed::before,
-.waiting.thinking .line-elapsed::after { content: '·'; color: var(--text-tertiary); }
+.waiting .line-meta {
+  display: block;
+  min-width: 0;
+  overflow: clip;
+  color: var(--text-tertiary);
+}
+.line-meta-values {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: max-content;
+  white-space: nowrap;
+}
+.line-meta-values > span { flex: none; white-space: nowrap; }
+.waiting .line-elapsed:has(> .line-meta-values:empty) { margin-inline-start: -6px; }
 .line-sep { color: var(--text-tertiary); }
 /* 「N 个后台任务」: the status line's last element, a quiet text button. */
 .line-tasks {
@@ -3109,30 +3191,21 @@ body.resizing #browser-resizer::after { opacity: 1; }
   cursor: pointer;
 }
 .line-tasks:hover { background: var(--surface-hover); color: var(--text-secondary); }
-.line-tasks:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .waiting.idle { user-select: auto; }
 .waiting.idle .line-tasks { margin-left: 0; padding-left: 0; }
-/* The live run's line is a button, so the background-task button rides beside it
-   rather than inside it; the line keeps the row and the button never wraps. */
-.run-head-row { display: flex; align-items: center; max-width: 100%; }
-.run-head-row > .run-line { flex: 0 1 auto; min-width: 0; }
 .line-fail { flex: none; color: var(--text-danger); }
-/* The counter stays out of the line until the wait is worth a number. */
-.line-elapsed:empty { display: none; }
+/* The counter's seat opens only when the wait is worth a number. */
+.line-elapsed { transition: margin-inline-start var(--motion-text-in) var(--ease-out); }
 .stat-add { color: var(--diff-add-fg); }
 .stat-del { color: var(--diff-del-fg); }
 .run-line .icon {
   width: 13px;
   height: 13px;
   flex: none;
-  opacity: 0.8;
-  transition: transform var(--motion-disclosure) var(--ease-snap);
 }
-.run.open .run-line .icon { transform: rotate(90deg); }
-/* The run the turn is in: its line is the status, the mark in the column like the status line's. */
-.run-line.live { color: var(--text-secondary); }
-.run-line.live .line-meta { display: flex; gap: 6px; }
-/* A settled run of one step is that step's row alone: a plain line like a run's,
+.run.open > .run-line > .icon,
+.thinking.open > .run-line > .icon { transform: rotate(90deg); }
+/* A run of one step is that step's row alone: a plain line like a run's,
    whose body opens into the card's frame. */
 .run.single > .step > .step-head {
   width: auto;
@@ -3239,7 +3312,6 @@ body.resizing #browser-resizer::after { opacity: 1; }
   width: 11px;
   height: 11px;
   flex: none;
-  transition: transform var(--motion-disclosure) var(--ease-snap);
 }
 .step:not(.collapsed) > .step-head .icon { transform: rotate(90deg); }
 /* The row's counts sit against the name rather than at the far right: beside the
@@ -3268,10 +3340,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .agent-description:hover { color: var(--text-primary); text-decoration: underline; text-underline-offset: 3px; }
 .agent-description:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 .step-fail { color: var(--text-danger); }
-/* An open thought's whole text, under its line: markdown in the quiet voice of
-   the line above it, selectable, and scrolling past 320px so one long thought
-   does not push the answer off screen. The first block sits close under the
-   line; the last leaves no margin of its own. */
+/* An open thought: plain full text while streaming, markdown after sealing, in
+   the quiet voice of the line above it. Selectable and scrolling past 320px so
+   one long thought does not push the answer off screen. */
 .thinking-body {
   max-height: 320px;
   overflow-y: auto;
@@ -3281,6 +3352,8 @@ body.resizing #browser-resizer::after { opacity: 1; }
   font-size: var(--type-ui);
   line-height: var(--leading-dense);
 }
+.thinking-body.presence:not(.presence-closing, .presence-closed) { overflow-y: auto; }
+.thinking-body.live { white-space: pre-wrap; }
 .thinking-body > :first-child { margin-top: 0; }
 .thinking-body > :last-child { margin-bottom: 0; }
 /* The command list's status bead and the sub-agent panel's type tag. The
@@ -3301,7 +3374,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .step-tag {
   padding: 0 var(--space-1);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   color: var(--text-tertiary);
   font-size: var(--type-micro);
 }
@@ -3324,19 +3397,18 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .step-body .diff { max-height: 320px; margin: 0; }
 .step-path { margin-bottom: var(--space-2); overflow-wrap: anywhere; }
 
-/* The shell family's body (T14): the command in a bubble of its own — the
-   card-and-hairline content shell, with a copy button — and the output bare
-   beneath it, scrolling inside itself so a long log never turns the group into
-   a scroll window (§6.2). The output is ANSI-stripped by the view. */
+/* The shell family's body: a bare command with a copy button, then bare output
+   scrolling inside itself so a long log never turns the group into a scroll
+   window. The output is ANSI-stripped by the view. */
 .step-command {
   display: flex;
   align-items: flex-start;
   gap: var(--space-2);
   margin-bottom: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  background: var(--surface-card);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 .step-command-text {
   flex: 1;
@@ -3357,11 +3429,11 @@ body.resizing #browser-resizer::after { opacity: 1; }
   cursor: pointer;
 }
 .step-command-copy:hover { color: var(--text-secondary); }
-.step-command-copy:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.step-command-copy:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 .step-command-copy .icon { width: 13px; height: 13px; }
 .step-command-prompt { color: var(--text-tertiary); user-select: none; }
 
-/* The kinds `model/syntax.ts` assigns; shared by the command bubble and Markdown code blocks. */
+/* The kinds `model/syntax.ts` assigns; shared by commands and Markdown code blocks. */
 .syn-comment { color: var(--syntax-comment); }
 .syn-punctuation { color: var(--syntax-punctuation); }
 .syn-keyword { color: var(--syntax-keyword); }
@@ -3376,6 +3448,8 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .step-terminal {
   max-height: 320px;
   margin: 0;
+  font-size: var(--type-code);
+  line-height: var(--leading-dense);
   /* Vertically, never horizontally: the wrapping below leaves nothing to scroll
      sideways to, and `overflow: auto` on both axes would still reserve the bar
      the moment one glyph disagreed. The one block in a group allowed a
@@ -3408,10 +3482,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
   color: var(--text-tertiary);
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--motion-micro) var(--ease-out);
 }
 .step-output:hover .step-output-copy,
-.step-output-copy:focus-visible { opacity: 1; }
+.step-output:focus-within .step-output-copy { opacity: 1; }
 .step-output-copy:hover { color: var(--text-primary); background: var(--surface-hover); }
 .step-output-copy.failed { color: var(--text-danger); opacity: 1; }
 .step-output-copy .icon { width: 13px; height: 13px; }
@@ -3479,7 +3552,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   min-width: 0;
   padding: var(--space-1) var(--space-2);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: none;
   color: var(--text-secondary);
   font: inherit;
@@ -3499,7 +3572,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 .search-file-head:hover { background: var(--surface-hover); }
 .search-file-head:focus-visible,
-.search-hit:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.search-hit:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 /* A hit: its own line number, right-aligned in a fixed column so the texts
    line up, then the matched line. Indented one step under the file it belongs
    to — indentation is the group's layering device (§9), not a second card. */
@@ -3512,7 +3585,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   margin-left: var(--space-3);
   padding: var(--space-1) var(--space-2);
   border: none;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: none;
   color: var(--text-tertiary);
   font: inherit;
@@ -3682,7 +3755,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .failure-action {
   padding: 3px var(--space-3);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -3721,7 +3794,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   min-width: 0;
   padding: var(--space-2) var(--space-3);
   border: none;
-  border-radius: inherit;
+  border-radius: calc(var(--radius-md) - 1px);
   background: none;
   color: var(--text-secondary);
   font: inherit;
@@ -3772,16 +3845,16 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .scroll-bottom {
   position: absolute;
   left: 50%;
-  bottom: 12px;
+  bottom: var(--space-6);
   transform: translateX(-50%);
-  width: var(--control-lg);
-  height: var(--control-lg);
+  width: var(--control-sm);
+  height: var(--control-sm);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 0;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: var(--surface-card);
   color: var(--text-secondary);
   box-shadow: var(--shadow-float);
@@ -3789,6 +3862,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 .scroll-bottom:hover { background: var(--surface-hover); color: var(--text-primary); }
 .scroll-bottom:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.scroll-bottom.needs-input { width: auto; padding: 0 6px; gap: 6px; }
+.jump-request { display: inline-flex; align-items: center; gap: 6px; font-size: var(--type-meta); white-space: nowrap; }
+.jump-request-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--accent-brand); }
 /* The button's two glyphs share its centre and only their opacity differs, so a
    running turn swaps the arrow for the mark without the box reflowing — and the
    hover that asks 「show me the arrow」 cannot move the pointer target it is on.
@@ -3806,8 +3882,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
   transition: opacity var(--motion-micro) var(--ease-out);
 }
 /* The mark's own square, so `.mark`'s `inset: 0` lands on 20px and not on the
-   whole button — the sprite would be scaled up to 32px otherwise. */
+   whole button — the sprite would be scaled up to 24px otherwise. */
 .jump-mark { width: var(--mark-size); height: var(--mark-size); opacity: 0; }
+.scroll-bottom.needs-input .jump-arrow { position: static; translate: none; }
 .scroll-bottom.is-working .jump-arrow { opacity: 0; }
 .scroll-bottom.is-working .jump-mark { opacity: 1; }
 .scroll-bottom.is-working:hover .jump-mark,
@@ -3879,9 +3956,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
   font-size: var(--type-meta);
   cursor: pointer;
 }
-.usage-segment:hover { color: var(--text-primary); }
-.usage-segment.active { background: var(--surface-hover); color: var(--text-primary); }
-.usage-segment:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.usage-segment:hover { background: var(--surface-hover); color: var(--text-primary); }
+.usage-segment.active { background: var(--surface-active); color: var(--text-primary); }
+.usage-segment:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .usage-body { position: relative; display: flex; flex-direction: column; gap: var(--space-2); min-height: 148px; }
 .usage-cells,
 .usage-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
@@ -3903,7 +3980,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .usage-heatmap { display: flex; justify-content: flex-end; gap: 3px; overflow: hidden; }
 .usage-heat-col { flex: 0 0 10px; display: flex; flex-direction: column; gap: 3px; }
 .usage-heat { width: 10px; height: 10px; border-radius: var(--radius-mark); background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
-.usage-heat:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.usage-heat:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .usage-heat.future { background: color-mix(in srgb, var(--text-primary) 3%, transparent); }
 .usage-heat.level-1 { background: color-mix(in srgb, var(--accent-info) 30%, transparent); }
 .usage-heat.level-2 { background: color-mix(in srgb, var(--accent-info) 50%, transparent); }
@@ -3939,7 +4016,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   margin-left: var(--space-2);
   padding: 2px var(--space-3);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -4036,7 +4113,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
@@ -4104,7 +4181,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 #surface h2 { font-size: var(--type-meta); margin: 0 0 var(--space-1); color: var(--text-primary); font-weight: 600; }
 #surface .row { display: flex; gap: var(--space-2); padding: 2px 0; font-size: var(--type-ui); }
-#surface .row[role="option"] { cursor: pointer; padding: 2px 6px; margin: 0 -6px; border-radius: var(--radius-sm); }
+#surface .row[role="option"] { cursor: pointer; padding: 2px 6px; margin: 0 -6px; border-radius: var(--radius-row); }
 #surface .row[role="option"]:hover { background: var(--surface-hover); }
 #surface .row.selected { background: var(--surface-active); }
 #surface .row.selected .label { color: var(--text-primary); }
@@ -4136,7 +4213,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   box-shadow: var(--shadow-float);
   padding: var(--space-1);
 }
-#suggestions .suggestion { display: flex; gap: var(--space-2); padding: var(--menu-row-padding); border-radius: var(--radius-sm); font-size: var(--type-ui); cursor: pointer; }
+#suggestions .suggestion { display: flex; gap: var(--space-2); padding: var(--menu-row-padding); border-radius: var(--radius-row); font-size: var(--type-ui); cursor: pointer; }
 /* Hover is only an affordance: it says the row is clickable, it does not move the
    selection. The keyboard's own row stays `.selected` under the pointer. */
 #suggestions .suggestion:hover { background: var(--surface-hover); }
@@ -4247,10 +4324,10 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .task-card.flash::after {
   content: '';
   position: absolute;
-  inset: -1px;
+  inset: 0;
   border: 1px solid;
   border-color: var(--accent-brand);
-  border-radius: inherit;
+  border-radius: calc(var(--radius-md) - 1px);
   pointer-events: none;
   animation: task-flash var(--motion-locate) var(--ease-out);
 }
@@ -4588,7 +4665,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .attachment-tile.importing .attachment-placeholder {
   animation: breathe var(--motion-running) var(--ease-out) infinite;
 }
-.attachment-tile.failed .attachment-placeholder { border-color: var(--accent-danger); }
+.attachment-tile.failed .attachment-placeholder { border-color: var(--border-strong); }
 .attachment-retry {
   position: absolute;
   inset: auto var(--space-1) var(--space-1) var(--space-1);
@@ -4621,7 +4698,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font: inherit;
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--motion-micro) var(--ease-out);
 }
 .attachment-remove .icon { width: 10px; height: 10px; }
 .attachment-tile:hover .attachment-remove,
@@ -4646,7 +4722,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 #composer-request.tone-danger .request-head .icon { color: var(--text-danger); }
 #composer-request.tone-caution .request-head .icon { color: var(--text-warn); }
 #composer-request.tone-danger .dialog-btn.primary { background: var(--accent-danger); color: var(--surface-base); }
-#composer-request.tone-caution .dialog-btn.primary { border-color: var(--accent-warn); }
+#composer-request.tone-caution .dialog-btn.primary { border-color: var(--border-strong); }
 .request-head {
   display: flex;
   align-items: center;
@@ -4769,7 +4845,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: transparent;
   color: var(--text-secondary);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 #composer-attach:hover { color: var(--text-primary); background: var(--surface-hover); }
@@ -4825,7 +4901,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
@@ -4978,7 +5054,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   height: 100%;
   padding: 0;
   border: 0;
-  border-radius: inherit;
+  border-radius: var(--radius-pill);
   background: none;
   color: inherit;
   font: inherit;
@@ -5137,7 +5213,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .ctx-compact {
   padding: 2px var(--space-3);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -5232,7 +5308,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   padding: var(--space-2);
   font: inherit;
   font-size: var(--type-ui);
@@ -5244,8 +5320,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .chip-menu-row .btn-label { flex: 1 1 auto; }
 .chip-menu-value { color: var(--text-secondary); }
 .chip-menu-row .icon { color: var(--text-tertiary); width: 14px; height: 14px; }
-.chip-menu-row:hover,
-.chip-menu-row.open { background: var(--surface-hover); }
+.chip-menu-row:hover { background: var(--surface-hover); }
+.chip-menu-row.open { background: var(--surface-active); }
 .chip-flyout {
   position: absolute;
   right: 100%;
@@ -5292,7 +5368,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: transparent;
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   padding: var(--menu-row-padding);
   font: inherit;
   font-size: var(--type-ui);
@@ -5301,7 +5377,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .chip-flyout-item .btn-label { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .chip-flyout-note { flex: 0 0 auto; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-meta); }
 .chip-flyout-item .icon { color: var(--text-primary); width: 14px; height: 14px; }
-.chip-flyout-item:hover:enabled { background: var(--surface-hover); }
+.chip-flyout-item:hover:enabled:not([aria-selected="true"]) { background: var(--surface-hover); }
+.chip-flyout-item[aria-selected="true"] { background: var(--surface-active); }
 .chip-flyout-item.disabled { opacity: var(--opacity-disabled); cursor: default; }
 #submit, #stop {
   display: inline-flex;
@@ -5456,7 +5533,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   /* The button reset the other controls carry: without it the steps were drawn
      as the platform's raised grey buttons inside the viewer's capsule. */
   border: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -5519,7 +5596,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   gap: 6px;
   padding: 5px 12px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: var(--surface-card);
   color: var(--text-secondary);
   font: inherit;
@@ -5538,7 +5615,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 #rewind-panel .dialog-btn.danger,
 #composer-request .dialog-btn.danger {
-  border-color: var(--accent-danger);
+  border-color: var(--border-strong);
   color: var(--text-danger);
 }
 #rewind-panel .dialog-btn:hover:enabled,
@@ -5549,10 +5626,10 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 /* Where Enter is aimed. On a destructive permission request that is *deny*, so
    this is not decoration — it is the answer about to be given. */
 #rewind-panel .dialog-btn.selected,
-#composer-request .dialog-btn.selected { outline: 1px solid var(--border-strong); outline-offset: 1px; }
+#composer-request .dialog-btn.selected { outline: 1px solid var(--border-strong); outline-offset: 2px; }
 #rewind-panel .dialog-btn:focus-visible,
 .no-session .dialog-btn:focus-visible,
-#composer-request .dialog-btn:focus-visible { outline: 1px solid var(--focus-ring); outline-offset: 1px; }
+#composer-request .dialog-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* The key badge. Monospaced because a key name is read character by character,
    and it is the only place a shortcut is printed now that the hint line is gone. */
 #rewind-panel .kbd,
@@ -5588,7 +5665,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .ask-chip {
   flex: 0 0 auto;
   padding: 1px 8px;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-xs);
   background: color-mix(in srgb, var(--accent-warn) 16%, transparent);
   color: var(--text-warn);
   font-size: var(--type-micro);
@@ -5613,25 +5690,24 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   transition: background-color var(--motion-micro) var(--ease-out), color var(--motion-micro) var(--ease-out);
 }
 .ask-icon-btn:hover { background: var(--surface-hover); color: var(--text-primary); }
-.ask-icon-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.ask-icon-btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .ask-collapse .icon { transition: transform var(--motion-micro) var(--ease-out); }
 .ask-collapse.collapsed .icon { transform: rotate(180deg); }
 .ask-options { display: flex; flex-direction: column; gap: 4px; margin: var(--space-2) 0 0; }
 /* One focus stop for the whole list (see `questionCardView.ts`): the ring goes
    round the list, the cursor row keeps its fill. */
-.ask-options { border-radius: var(--radius-md); }
-.ask-options:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.ask-options:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-sm); }
 .ask-option {
   display: flex;
   align-items: flex-start;
   gap: 10px;
   padding: 8px 10px;
-  border-radius: var(--radius-md);
-  background: var(--surface-hover);
+  border-radius: var(--radius-row);
+  background: transparent;
   cursor: pointer;
   transition: background-color var(--motion-micro) var(--ease-out);
 }
-.ask-option:hover { background: var(--surface-active); }
+.ask-option:hover { background: var(--surface-hover); }
 .ask-option.selected { background: var(--surface-active); }
 .ask-option-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .ask-option-label { color: var(--text-primary); }
@@ -5652,13 +5728,13 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   margin-top: 5px;
   padding: 5px 8px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   background: var(--surface-canvas);
   color: var(--text-primary);
   font: inherit;
   outline: none;
 }
-.ask-other-input:focus { border-color: var(--focus-ring); }
+.ask-other-input:focus { border-color: var(--border-strong); outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 .ask-footer { display: flex; align-items: center; gap: 8px; margin-top: var(--space-3); }
 .ask-spacer { flex: 1 1 auto; }
 /* --- the docked plan card and the plan panel ---
@@ -5671,7 +5747,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   flex: 0 0 auto;
   padding: 0 var(--space-1);
   border: 0;
-  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -5680,20 +5755,20 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   transition: color var(--motion-micro) var(--ease-out);
 }
 .plan-open-link:hover { color: var(--text-primary); text-decoration: underline; }
-.plan-open-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.plan-open-link:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 .plan-feedback-input {
   box-sizing: border-box;
   width: 100%;
   margin-top: var(--space-2);
   padding: 6px 8px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   background: var(--surface-canvas);
   color: var(--text-primary);
   font: inherit;
   outline: none;
 }
-.plan-feedback-input:focus { border-color: var(--focus-ring); }
+.plan-feedback-input:focus { border-color: var(--border-strong); outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
 #composer-request .plan-actions { justify-content: space-between; }
 .plan-actions-group { display: flex; flex-wrap: wrap; gap: 8px; }
 #plan-view {
@@ -5736,7 +5811,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   gap: 6px;
   padding: 3px 10px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: var(--surface-card);
   color: var(--text-secondary);
   font: inherit;
@@ -5778,7 +5853,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 #rewind-panel {
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-panel);
   box-shadow: var(--shadow-modal);
   max-width: 44rem;
   width: 100%;
@@ -5799,13 +5874,12 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 #rewind-panel .subtitle { color: var(--text-secondary); font-size: var(--type-meta); }
 #rewind-panel .error { color: var(--text-danger); margin: 8px 0; }
-#rewind-panel .rows { margin: 10px 0 6px; border-radius: var(--radius-sm); }
-/* The list is one focus stop: the ring goes on the list, the cursor row keeps
-   its fill. The rows bleed 8px past the list on either side, so the ring sits
-   that far out to go round them rather than through them. */
-#rewind-panel .rows:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 8px; }
+#rewind-panel .rows { margin: 10px -8px 6px; padding: 0 8px; }
+/* Include the rows' horizontal bleed in the focus container without moving
+   their text. Its inset ring stays clear of the labels. */
+#rewind-panel .rows:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-sm); }
 #rewind-panel:focus { outline: none; }
-#rewind-panel .row { display: flex; gap: 10px; padding: 4px 8px; margin: 0 -8px; border-radius: var(--radius-sm); cursor: pointer; }
+#rewind-panel .row { display: flex; gap: 10px; padding: 4px 8px; margin: 0 -8px; border-radius: var(--radius-row); cursor: pointer; }
 #rewind-panel .row:hover { background: var(--surface-hover); }
 #rewind-panel .row.selected { background: var(--surface-active); }
 #rewind-panel .row.selected .label { color: var(--text-primary); }
@@ -5924,10 +5998,9 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   color: var(--text-tertiary);
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--motion-micro) var(--ease-out), color var(--motion-micro) var(--ease-out), background-color var(--motion-micro) var(--ease-out);
 }
 .md .md-code:hover .md-code-copy,
-.md .md-code-copy:focus-visible { opacity: 1; }
+.md .md-code:focus-within .md-code-copy { opacity: 1; }
 .md .md-code-copy:hover { color: var(--text-primary); background: var(--surface-hover); }
 .md .md-code-copy .icon { width: 13px; height: 13px; }
 .md .md-code-copy.failed { color: var(--text-danger); opacity: 1; }
@@ -5964,7 +6037,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   width: 100%;
   table-layout: fixed;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
 }
 .md .md-table th, .md .md-table td {
   padding: 5px 10px;
@@ -5974,8 +6047,8 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .md .md-table tbody td { border-top: 1px solid var(--border-subtle); }
 .md .md-table th + th, .md .md-table td + td { border-left: 1px solid var(--border-subtle); }
 .md .md-table th { color: var(--text-primary); font-weight: 600; background: var(--surface-card); }
-.md .md-table th:first-child { border-top-left-radius: calc(var(--radius-sm) - 1px); }
-.md .md-table th:last-child { border-top-right-radius: calc(var(--radius-sm) - 1px); }
+.md .md-table th:first-child { border-top-left-radius: calc(var(--radius-md) - 1px); }
+.md .md-table th:last-child { border-top-right-radius: calc(var(--radius-md) - 1px); }
 /* --- maths ---
    Position and colour only; the glyph metrics belong to `katex.css`, which is
    linked separately for the same reason `fonts.css` is — this sheet is parsed
@@ -6113,7 +6186,7 @@ body.projects-open #browser-resizer,
      `overflow` here: a row's dropdown would be clipped by it. */
   min-height: 0;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-panel);
   background: var(--surface-canvas);
   box-shadow: var(--shadow-modal);
 }
@@ -6152,7 +6225,7 @@ body.projects-open #browser-resizer,
   margin-bottom: var(--space-3);
   padding: 0 var(--space-3);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: var(--surface-base);
   color: var(--text-primary);
   font: inherit;
@@ -6160,8 +6233,10 @@ body.projects-open #browser-resizer,
 }
 
 .settings-search:focus {
-  border-color: var(--focus-ring);
-  outline: none;
+  border-color: var(--border-strong);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .settings-nav-list {
@@ -6194,7 +6269,7 @@ body.projects-open #browser-resizer,
   gap: var(--space-2);
   padding: 6px var(--space-3);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: none;
   color: var(--text-primary);
   font: inherit;
@@ -6202,7 +6277,7 @@ body.projects-open #browser-resizer,
   cursor: pointer;
 }
 
-.settings-nav-item:hover:enabled {
+.settings-nav-item:hover:enabled:not(.selected) {
   background: var(--surface-hover);
   color: var(--text-primary);
 }
@@ -6256,7 +6331,7 @@ body.projects-open #browser-resizer,
   font-size: var(--type-meta);
 }
 
-.settings-project-scope { display: flex; align-items: center; margin-left: auto; border-radius: var(--radius-sm); }
+.settings-project-scope { display: flex; align-items: center; margin-left: auto; }
 .settings-project-scope .settings-pill { border: 0; background: transparent; }
 .settings-project-scope .settings-menu { right: 0; left: auto; min-width: 180px; }
 .settings-project-clear {
@@ -6268,7 +6343,7 @@ body.projects-open #browser-resizer,
   height: var(--control-sm);
   padding: 0;
   border: 0;
-  border-radius: var(--radius-xs);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -6291,7 +6366,7 @@ body.projects-open #browser-resizer,
   gap: var(--space-2);
   padding: 6px var(--space-3);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: none;
   color: var(--text-secondary);
   font: inherit;
@@ -6413,7 +6488,7 @@ body.projects-open #browser-resizer,
   height: 34px;
   box-sizing: border-box;
   border: 1px solid var(--border-subtle);
-  border-radius: 50%;
+  border-radius: var(--radius-sm);
   color: var(--text-secondary);
 }
 
@@ -6444,7 +6519,7 @@ body.projects-open #browser-resizer,
   margin: var(--space-1) calc(-1 * var(--space-3));
   padding: var(--space-3);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
 }
 .settings-card--skills .settings-row--open { cursor: pointer; }
 .settings-card--skills .settings-row:hover,
@@ -6454,13 +6529,13 @@ body.projects-open #browser-resizer,
   max-width: 100%;
   padding: 0;
   border: 0;
-  border-radius: var(--radius-xs);
   background: transparent;
   font: inherit;
   text-align: left;
   overflow-wrap: anywhere;
   cursor: pointer;
 }
+.settings-row-open:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-sm); }
 .settings-card--skills .settings-row-icon { width: 44px; height: 44px; }
 .settings-card--skills .settings-row-icon .icon { width: 20px; height: 20px; }
 .settings-card--skills .settings-row-badge { max-width: 24%; text-align: right; overflow-wrap: anywhere; }
@@ -6544,7 +6619,7 @@ body.projects-open #browser-resizer,
   min-width: 200px;
   padding: 0 var(--space-2);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background-color: var(--surface-base);
   color: var(--text-primary);
   font: inherit;
@@ -6567,8 +6642,9 @@ body.projects-open #browser-resizer,
 
 .settings-input:focus,
 .settings-select:focus {
-  border-color: var(--focus-ring);
-  outline: none;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 /* Keys, base URLs and model ids are read character by character. The
@@ -6595,7 +6671,7 @@ body.projects-open #browser-resizer,
   min-height: 420px;
   padding: var(--space-3) var(--space-4);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   background: var(--surface-base);
   color: var(--text-primary);
   font: inherit;
@@ -6604,8 +6680,10 @@ body.projects-open #browser-resizer,
 }
 
 .settings-textarea:focus {
-  border-color: var(--focus-ring);
-  outline: none;
+  border-color: var(--border-strong);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 .settings-editor-actions {
@@ -6640,9 +6718,11 @@ body.projects-open #browser-resizer,
   color: var(--text-primary);
 }
 
-/* The shared focus ring is a border, and this control has none. */
+/* This ghost select has no border to carry focus. */
 .settings-project:focus {
-  box-shadow: inset 0 0 0 1px var(--focus-ring);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
 }
 
 /* The row dropdown: a ghost trigger — the value and a chevron, no box until it
@@ -6662,7 +6742,7 @@ body.projects-open #browser-resizer,
   box-sizing: border-box;
   padding: 0 var(--space-2);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
@@ -6672,7 +6752,7 @@ body.projects-open #browser-resizer,
 
 .settings-pill .icon { color: var(--text-tertiary); }
 
-.settings-pill:hover:enabled {
+.settings-pill:hover:enabled:not(.open) {
   background: var(--surface-hover);
 }
 
@@ -6709,7 +6789,7 @@ body.projects-open #browser-resizer,
   gap: 6px;
   padding: var(--menu-row-padding);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
@@ -6725,6 +6805,7 @@ body.projects-open #browser-resizer,
 }
 
 .settings-menu-item.active {
+  background: var(--surface-active);
   color: var(--text-primary);
 }
 
@@ -6779,8 +6860,8 @@ body.projects-open #browser-resizer,
 .settings-toggle:not(.on):hover:enabled { background: var(--surface-hover); }
 
 .settings-toggle:focus-visible {
-  outline: 1px solid var(--focus-ring);
-  outline-offset: 1px;
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
 .settings-toggle:disabled {
@@ -6843,7 +6924,7 @@ body.projects-open #browser-resizer,
 }
 
 .settings-row .settings-btn:hover:enabled {
-  background: var(--surface-hover);
+  background: var(--surface-active);
   color: var(--text-primary);
 }
 
@@ -6856,6 +6937,8 @@ body.projects-open #browser-resizer,
 .settings-btn.danger:hover:enabled {
   background: var(--surface-hover);
 }
+
+.settings-row .settings-btn.danger:hover:enabled { background: var(--surface-active); }
 
 /* The one high-contrast fill on the screen, and it is neutral — an accent fill
    is exactly what the 95%-neutral rule excludes. */
@@ -6880,7 +6963,7 @@ body.projects-open #browser-resizer,
   margin: 0 0 var(--space-3);
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   background: var(--surface-card);
 }
 
@@ -6908,9 +6991,8 @@ body.projects-open #browser-resizer,
 
 .settings-error {
   padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--border-subtle);
-  border-color: color-mix(in srgb, var(--accent-danger) 45%, var(--border-subtle));
-  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
   background: var(--surface-card);
   color: var(--text-danger);
   font-size: var(--type-meta);
@@ -6957,7 +7039,7 @@ body.projects-open #browser-resizer,
   width: min(520px, 100%);
   max-height: 100%;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-panel);
   background: var(--surface-card);
   box-shadow: var(--shadow-modal);
 }
@@ -7023,7 +7105,7 @@ body.projects-open #browser-resizer,
 .settings-dialog--skill {
   width: min(860px, 100%);
   min-height: 0;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-panel);
   background: var(--surface-canvas);
 }
 .settings-skill-head { padding: var(--space-5) var(--space-6) var(--space-4); }
@@ -7058,10 +7140,10 @@ body.projects-open #browser-resizer,
 .settings-skill-source { margin-top: var(--space-2); color: var(--text-tertiary); font-size: var(--type-meta); }
 .settings-skill-body { display: block; padding: 0 var(--space-6); overscroll-behavior: contain; }
 .settings-skill-markdown {
-  padding: var(--space-5);
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
+  padding: var(--space-5) 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-primary);
   font-size: var(--type-reading);
   line-height: var(--leading-prose);
@@ -7184,7 +7266,8 @@ body.projects-open #browser-resizer,
   cursor: pointer;
 }
 
-.mcp-segmented-btn:hover:enabled {
+.mcp-segmented-btn:hover:enabled:not(.active) {
+  background: var(--surface-hover);
   color: var(--text-primary);
 }
 
@@ -7292,7 +7375,7 @@ body.projects-open #browser-resizer,
   flex: 0 0 auto;
   padding: 1px 6px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-xs);
   color: var(--text-tertiary);
   font-size: var(--type-micro);
   white-space: nowrap;
@@ -7442,7 +7525,7 @@ body.projects-open #browser-resizer,
   flex-direction: column;
   padding: 0 var(--space-3);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
 }
 
 .settings-levels-trigger {
@@ -7542,7 +7625,7 @@ body.projects-open #browser-resizer,
   min-width: 0;
   padding: 6px 8px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -7551,7 +7634,7 @@ body.projects-open #browser-resizer,
 }
 
 .settings-model-row:hover { background: var(--surface-hover); color: var(--text-primary); }
-.settings-model-row.picked { color: var(--text-primary); }
+.settings-model-row.picked { background: var(--surface-active); color: var(--text-primary); }
 
 .settings-model-check {
   display: inline-flex;
@@ -7684,13 +7767,116 @@ body.projects-open #browser-resizer,
    single brand fill and has nowhere brighter to go. */
 #submit, #stop { transition-duration: var(--motion-release); transition-timing-function: var(--spring); }
 #submit:active, #stop:active { transform: scale(0.96); transition-duration: var(--motion-press); }
-/* A ghost icon button answers the press itself: one step darker than its
-   hover, so a click on a slow action still shows it landed. */
-:is(.titlebar-rail, #composer-attach, .canvas-menu-trigger, .thread-row-more, .toast-close,
-    .md .md-code-copy, .ask-icon-btn, .settings-dialog-close, .changes-file-open,
-    .sidebar-help, .mcp-btn-trash):active:enabled {
+/* Rows answer a press with the same fill as selection, without moving. */
+:is(.titlebar-menu-item, .canvas-menu-item, .project-menu-item, .thread-menu-item,
+    .composer-menu-item, .chip-menu-row, .chip-flyout-item, .branch-picker-row,
+    .project-picker-row, .sidebar-nav-item, .sidebar-settings, .project-row,
+    .project-expand, .session-row:not(.confirming, .opening), .subagent-row,
+    .thread-row, .changes-file-toggle, .search-file-head, .search-hit, .edits-row,
+    .receipt-head, .ask-option, .settings-nav-item, .settings-tab, .settings-pill,
+    .settings-menu-item, .settings-model-row, .settings-card--skills .settings-row--open,
+    .usage-segment, .mcp-segmented-btn, #surface .row, #suggestions .suggestion,
+    #rewind-panel .row):active:not(:disabled):not([aria-disabled="true"]):not(.disabled) {
   background: var(--surface-active);
   transition-duration: var(--motion-press);
+}
+/* Ghost actions use the active rung, including buttons inside hovered rows. */
+:is(.titlebar-rail, #composer-attach, .canvas-menu-trigger, .thread-row-more, .toast-close,
+    .md .md-code-copy, .ask-icon-btn, .settings-dialog-close, .changes-file-open,
+    .sidebar-help, .mcp-btn-trash, .titlebar-menu-trigger, .canvas-open-location,
+    .browser-nav, .browser-tab-close, .browser-tab-new, .project-new, .project-more,
+    .session-delete, .thread-detail-icon, .subagent-back, .step-output-copy,
+    .failure-copy, .scroll-bottom, .usage-retry, .settings-close, .settings-project-clear,
+    .canvas-back-coordinator, .canvas-stop-thread, .overview-stop-all, .thread-detail-retry,
+    .load-retry, .merge-bar-merge, .merge-bar-resolve, .merge-bar-dismiss, .toast-action,
+    .thread-note-open, .projects-new, .startup-failure-retry):active:enabled {
+  background: var(--surface-active);
+  transition-duration: var(--motion-press);
+}
+
+/* Reveals change only ink; every glyph and action keeps its layout slot. */
+.run-line > .icon,
+.step-head[aria-expanded] > .icon,
+.changes-file-toggle[aria-expanded] > .icon,
+.side-section-head[aria-expanded] > .icon,
+.thread-group-head[aria-expanded] > .icon,
+.bt-chevron,
+.step-command-copy,
+.step-output-more,
+.user-more,
+.project-expand { opacity: 0; }
+.run-line > .icon,
+.step-head[aria-expanded] > .icon,
+.changes-file-toggle[aria-expanded] > .icon,
+.side-section-head[aria-expanded] > .icon,
+.thread-group-head[aria-expanded] > .icon,
+.bt-chevron,
+.step-command-copy,
+.step-output-copy,
+.step-output-more,
+.md .md-code-copy,
+.changes-file-open,
+.user-more,
+.transcript .item .item-meta,
+.transcript .turn-foot,
+.attachment-remove,
+.project-expand,
+.project-new,
+.project-more,
+.session-actions,
+.bt-stop,
+.thread-row-more,
+.thread-row-time {
+  transition: opacity var(--motion-reveal) var(--ease-out),
+              transform var(--motion-reveal) var(--ease-out),
+              color var(--motion-micro) var(--ease-out),
+              background-color var(--motion-micro) var(--ease-out);
+}
+.run-line:hover > .icon,
+.run-line:focus-within > .icon,
+.step:hover > .step-head[aria-expanded] > .icon,
+.step:focus-within > .step-head[aria-expanded] > .icon,
+.changes-file-head:hover .changes-file-toggle[aria-expanded] > .icon,
+.changes-file-head:focus-within .changes-file-toggle[aria-expanded] > .icon,
+.side-section-head:hover > .icon,
+.side-section-head:focus-within > .icon,
+.thread-group-head:hover > .icon,
+.thread-group-head:focus-within > .icon,
+.bt-row:hover .bt-chevron,
+.bt-row:focus-within .bt-chevron,
+.step-command:hover .step-command-copy,
+.step-command:focus-within .step-command-copy,
+.step-output:hover .step-output-more,
+.step-output:focus-within .step-output-more,
+.user-bubble:hover .user-more,
+.user-bubble:focus-within .user-more,
+.project-group:hover .project-expand,
+.project-group:focus-within .project-expand { opacity: 1; }
+
+/* Without hover, these actions must be discoverable before the first press. */
+@media (hover: none), (pointer: coarse) {
+  .run-line > .icon,
+  .step-head[aria-expanded] > .icon,
+  .changes-file-toggle[aria-expanded] > .icon,
+  .side-section-head[aria-expanded] > .icon,
+  .thread-group-head[aria-expanded] > .icon,
+  .bt-chevron,
+  .step-command-copy,
+  .step-output-copy,
+  .step-output-more,
+  .md .md-code-copy,
+  .changes-file-open,
+  .user-more,
+  .transcript .item .item-meta,
+  .transcript .turn-foot,
+  .attachment-remove,
+  .project-expand,
+  .project-new:enabled,
+  .project-more,
+  .session-actions,
+  .bt-stop,
+  .thread-row .thread-row-more { opacity: 1; }
+  .thread-row-time { opacity: 0; }
 }
 
 @keyframes fade-in { from { opacity: 0; } }
@@ -7796,9 +7982,9 @@ body.projects-open #browser-resizer,
   transition: none !important;
 }
 
-/* The only nested media rule allowed by the token parser. Keep 1ms rather than
-   0s: zero-length transitions do not fire `transitionend`. JS also settles in
-   1ms, so cancelled animations or hidden ancestors cannot strand a phase. */
+/* Nested capability and motion rules are parsed by the token tests. Keep 1ms
+   rather than 0s: zero-length transitions do not fire `transitionend`. JS also
+   settles in 1ms, so hidden ancestors cannot strand a phase. */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: 1ms !important;
@@ -7811,8 +7997,8 @@ body.projects-open #browser-resizer,
     transform: none !important;
   }
   .settings-saved { animation: none !important; }
-  .thinking.live:not(.open) > .run-line .line-text,
-  .transcript .item.compaction.pending .line-text {
+  .transcript .item.compaction.pending .line-text,
+  .waiting.is-working .line-label {
     animation: none !important;
     background: none;
     color: inherit;
@@ -7917,7 +8103,7 @@ body.projects-open #browser-resizer,
 .canvas-stop-thread {
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -8002,7 +8188,7 @@ body.projects-open #browser-resizer,
   flex: none;
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -8045,9 +8231,10 @@ body.projects-open #browser-resizer,
   align-items: center;
   gap: var(--space-1);
   height: 26px;
-  padding: 0 var(--space-2);
+  margin: 0 calc(-1 * var(--space-2));
+  padding: 0 calc(2 * var(--space-2));
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 0;
   /* Opaque, so rows scrolling under the stuck band do not show through. A rung
      of the ladder, not a private 4% mix of its own. */
   background: var(--surface-card);
@@ -8061,7 +8248,7 @@ body.projects-open #browser-resizer,
 .thread-group-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .thread-group-label { color: var(--text-secondary); font-weight: 600; }
 .thread-group-count { font-variant-numeric: tabular-nums; }
-.thread-group-head .icon { width: 12px; height: 12px; transition: transform var(--motion-micro) var(--ease-out); }
+.thread-group-head .icon { width: 12px; height: 12px; }
 .thread-group-head[aria-expanded="false"] .icon { transform: rotate(-90deg); }
 .thread-group-body { display: flex; flex-direction: column; padding-top: 2px; }
 .thread-row {
@@ -8069,7 +8256,7 @@ body.projects-open #browser-resizer,
   display: flex;
   align-items: center;
   height: 32px;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
 }
 .thread-row:hover { background: var(--surface-hover); }
 /* The open thread reads as the sidebar's active session does: the same rung. */
@@ -8085,7 +8272,6 @@ body.projects-open #browser-resizer,
   height: 100%;
   padding: 0 var(--space-1) 0 var(--space-2);
   border: 0;
-  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
@@ -8093,7 +8279,7 @@ body.projects-open #browser-resizer,
   text-align: left;
   cursor: pointer;
 }
-.thread-row-main:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.thread-row-main:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-sm); }
 .thread-row-mark { flex: none; display: inline-flex; color: var(--text-tertiary); }
 .thread-row-mark .icon { width: 14px; height: 14px; }
 .thread-row-mark.tone-running { color: var(--accent-brand-strong); }
@@ -8160,7 +8346,7 @@ body.projects-open #browser-resizer,
 .thread-row.menu-open .thread-row-more { opacity: 1; }
 .thread-row:hover .thread-row-time,
 .thread-row:focus-within .thread-row-time,
-.thread-row.menu-open .thread-row-time { visibility: hidden; }
+.thread-row.menu-open .thread-row-time { opacity: 0; }
 .thread-menu {
   position: fixed;
   top: anchor(--thread-menu bottom);
@@ -8182,7 +8368,7 @@ body.projects-open #browser-resizer,
   align-items: center;
   padding: var(--menu-row-padding);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
@@ -8195,8 +8381,7 @@ body.projects-open #browser-resizer,
 .thread-menu-item.danger { color: var(--text-danger); }
 .thread-menu-item:disabled { opacity: var(--opacity-disabled); cursor: default; }
 
-/* Merge bar: the same pill vocabulary as `.process-chip`, stacked above the
-   composer in the strip's place. */
+/* Merge bar: a compact toggle above the composer opens a stack of cards. */
 #merge-bar { display: flex; flex-direction: column; gap: var(--space-1); margin-bottom: var(--space-2); }
 .merge-bar-toggle,
 .merge-bar-row {
@@ -8217,6 +8402,7 @@ body.projects-open #browser-resizer,
   display: flex;
   min-width: 0;
   padding: var(--space-1) var(--space-1) var(--space-1) var(--space-3);
+  border-radius: var(--radius-md);
 }
 /* The branch absorbs the squeeze; a long project name is capped instead of shrunk with it. */
 .merge-bar-project { flex: 0 0 auto; max-width: 35%; min-width: 0; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
@@ -8236,13 +8422,14 @@ body.projects-open #browser-resizer,
   flex: 0 0 auto;
   padding: 2px var(--space-2);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
   font-size: var(--type-meta);
   cursor: pointer;
 }
+.merge-bar-merge { border-radius: var(--radius-pill); }
 .merge-bar-merge:hover:enabled,
 .merge-bar-resolve:hover:enabled { background: var(--surface-hover); }
 .merge-bar-merge:disabled,
@@ -8330,13 +8517,13 @@ body.projects-open #browser-resizer,
   cursor: pointer;
 }
 .toast-close:hover { color: var(--text-primary); background: var(--surface-hover); }
-/* The toast's one action (重试): the same pill as the panels' 重试, so a
-   failure offers the same control wherever it is reported. */
+/* The toast's one action (重试): the same small control as the panels' 重试,
+   so a failure offers the same control wherever it is reported. */
 .toast-action {
   flex: none;
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -8344,7 +8531,7 @@ body.projects-open #browser-resizer,
   cursor: pointer;
 }
 .toast-action:hover { color: var(--text-primary); background: var(--surface-hover); }
-.toast-close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.toast-close:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 /* The coordinator's fixed welcome above the first entry. */
 .coordinator-welcome { margin-bottom: var(--space-5); color: var(--text-primary); line-height: var(--leading-prose); }
@@ -8385,7 +8572,7 @@ body.projects-open #browser-resizer,
   padding: var(--space-2) var(--space-3);
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
 }
 .thread-note-title {
   min-width: 0;
@@ -8415,7 +8602,7 @@ body.projects-open #browser-resizer,
   justify-self: end;
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -8449,7 +8636,7 @@ body.projects-open #browser-resizer,
   gap: var(--space-1);
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
@@ -8519,7 +8706,7 @@ body.projects-open #browser-resizer,
 .startup-failure-retry {
   padding: var(--space-1) var(--space-4);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: var(--surface-card);
   color: var(--text-primary);
   font: inherit;

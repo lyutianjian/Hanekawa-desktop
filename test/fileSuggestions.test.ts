@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
@@ -10,11 +11,6 @@ import {
   type FileSuggestion,
 } from '../src/runtime/suggestions/fileSuggestions.js'
 
-/**
- * The fixture is never a git repo, so `gitIgnoredPaths` spawns `git check-ignore`
- * outside a work tree, exits non-zero and yields an empty set. That keeps these
- * assertions about the extension/protected-path filters rather than about git.
- */
 async function withFixture(run: (dir: string) => Promise<void>): Promise<void> {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-filesuggest-'))
   try {
@@ -84,6 +80,40 @@ test('file suggestions skip node_modules, .git and build directories', async () 
     assert.ok(!listed.includes('node_modules/'), 'node_modules must not be suggested')
     assert.ok(!listed.includes('.git/'), '.git must not be suggested')
     assert.ok(!listed.includes('build/'), 'build must not be suggested')
+  })
+})
+
+test('file suggestions include gitignored entries', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-filesuggest-'))
+  try {
+    execFileSync('git', ['init'], { cwd: dir, stdio: 'ignore' })
+    await writeFile(path.join(dir, '.gitignore'), 'dist/\nsecret.ts\n', 'utf8')
+    await mkdir(path.join(dir, 'dist'))
+    await writeFile(path.join(dir, 'dist', 'app.js'), 'export {}\n')
+    await writeFile(path.join(dir, 'secret.ts'), 'export {}\n')
+
+    const listed = paths(await generateFileSuggestions('@', 1, dir))
+
+    assert.ok(listed.includes('dist/'))
+    assert.ok(listed.includes('secret.ts'))
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('file suggestions include dotfiles and extensionless documents', async () => {
+  await withFixture(async (dir) => {
+    await writeFile(path.join(dir, '.env'), 'TOKEN=1\n')
+    await writeFile(path.join(dir, '.env.local'), 'TOKEN=2\n')
+    await writeFile(path.join(dir, '.DS_Store'), '')
+    await writeFile(path.join(dir, 'Makefile'), 'all:\n')
+
+    const listed = paths(await generateFileSuggestions('@', 1, dir))
+
+    assert.ok(listed.includes('.env'))
+    assert.ok(listed.includes('.env.local'))
+    assert.ok(listed.includes('Makefile'))
+    assert.ok(!listed.includes('.DS_Store'))
   })
 })
 

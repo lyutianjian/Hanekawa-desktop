@@ -154,8 +154,8 @@ export type HostCommand =
    *
    * Unlike `list-commands` this cannot be fetched once and cached: the answer
    * depends on the whole composer text and the caret, and it reads the
-   * filesystem — `generateFileSuggestions` walks a directory, consults
-   * `.gitignore` and ranks with Fuse. None of that can cross into a renderer
+   * filesystem — `generateFileSuggestions` walks a directory and ranks with
+   * Fuse. None of that can cross into a renderer
    * bundle, so the round trip happens per keystroke and the client is
    * responsible for discarding answers that arrive out of order.
    */

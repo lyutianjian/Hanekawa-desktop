@@ -721,9 +721,6 @@ export function validateSettings(settings: HanekawaSettings): { valid: boolean; 
       if (model.supportsImageInput !== undefined && typeof model.supportsImageInput !== 'boolean') {
         errors.push(`models.${name}.supportsImageInput must be a boolean`)
       }
-      if (model.allowEmptySignature !== undefined && typeof model.allowEmptySignature !== 'boolean') {
-        errors.push(`models.${name}.allowEmptySignature must be a boolean`)
-      }
     }
   }
 

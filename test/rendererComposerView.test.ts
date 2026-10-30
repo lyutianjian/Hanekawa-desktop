@@ -1475,11 +1475,19 @@ test('the question card takes focus like the other cards, and keeps it across a 
   q.stub.focus(q.find('ask-footer').children.find((c) => c.text === '跳过')!.node)
   q.view.show({ ...model, rows: model.rows.map((row, index) => ({ ...row, selected: index === 1 })) })
   assert.equal(q.stub.activeElement(), q.find('ask-footer').children.find((c) => c.text === '跳过')!.node)
+  q.stub.focus(q.composer)
+  q.view.show(model)
+  assert.equal(q.stub.activeElement(), q.composer, 'a repaint alone does not steal focus')
+  q.view.focus()
+  assert.equal(q.stub.activeElement(), options().node, 'the status entry explicitly returns focus to the question')
 
   // Folded, the button that unfolds it is where focus goes.
   q.view.show({ ...model, collapsed: true })
   const collapse = q.find('ask-head').children.find((c) => c.attributes.get('aria-label') === '展开')!
   assert.equal(q.stub.activeElement(), collapse.node)
+  q.stub.focus(q.composer)
+  q.view.focus()
+  assert.equal(q.stub.activeElement(), collapse.node, 'a collapsed card focuses its expand control')
 })
 
 test('a multi-select question says so, and its ticks are what is selected', (t) => {

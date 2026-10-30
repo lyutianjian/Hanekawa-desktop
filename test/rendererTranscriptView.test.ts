@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
-import test from 'node:test'
+import test, { type TestContext } from 'node:test'
 
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
 import { trackAnimationStarts, trackIdentity } from './helpers/motion.js'
 import { createTranscriptView } from '../src/desktop/renderer/dom/transcriptView.js'
+import { createTextSwap, TEXT_SWAP_MS, TEXT_SWAP_EASING } from '../src/desktop/renderer/dom/textSwap.js'
+import { createNumberTween, NUMBER_TWEEN_MS } from '../src/desktop/renderer/dom/numberTween.js'
 import { icon } from '../src/desktop/renderer/dom/icons.js'
 import { NO_DISCLOSURE } from '../src/desktop/renderer/model/thinking.js'
 import type { DisclosureState } from '../src/desktop/renderer/model/thinking.js'
@@ -38,18 +40,19 @@ test('M03 keeps the run mounted between short tools', (t) => {
   const activity = { isStreaming: true, turnId: 't1', startedAt: Date.now() }
   const tool: TranscriptItem = { id: 'a', kind: 'tool', text: 'read', turnId: 't1', pending: true,
     toolName: 'Read', tool: { displayName: 'Read', useSummary: 'a.ts' } }
-  const open = new Map([['run:a', true]])
-  view.render(transcript([tool]), open, activity)
+  const first = { ...tool, id: 'first', pending: false }
+  const open = new Map([['run:first', true]])
+  view.render(transcript([first, tool]), open, activity)
   const run = runOf(view).node
   const head = runOf(view).children[0]!.node
   const card = runOf(view).children[1]!.node
-  view.render(transcript([{ ...tool, pending: undefined }]), open, activity)
-  view.render(transcript([{ ...tool, pending: undefined }, { ...tool, id: 'b' }]), open, activity)
+  view.render(transcript([first, { ...tool, pending: undefined }]), open, activity)
+  view.render(transcript([first, { ...tool, pending: undefined }, { ...tool, id: 'b' }]), open, activity)
   assert.equal(runOf(view).node, run)
   assert.equal(runOf(view).children[0]!.node, head)
   assert.equal(runOf(view).children[1]!.node, card, 'the card is not rebuilt under a growing run')
   // The reader's fold outranks the next step arriving.
-  view.render(transcript([tool, { ...tool, id: 'b' }]), new Map([['run:a', false]]), activity)
+  view.render(transcript([first, tool, { ...tool, id: 'b' }]), new Map([['run:first', false]]), activity)
   assert.equal(view.stub.inspect(card).attributes.has('inert'), true)
   view.stub.dispatch(card, 'transitionend', { propertyName: 'height' })
   assert.equal(runOf(view).children.length, 1, 'a manual fold survives the next step')
@@ -77,7 +80,7 @@ test('M04 keeps the thinking line through an unchanged streaming snapshot', (t) 
   view.render(transcript(items, { generation: 1 }), NO_DISCLOSURE, RUNNING_T1)
   assert.notEqual(identity.sample(), head, 'a reset with reused ids clears the nested cache')
   view.stub.click(identity.sample() as HTMLElement)
-  assert.deepEqual(view.toggled.at(-1), ['th', false], 'reset does not inherit the previous disclosure ref')
+  assert.deepEqual(view.toggled.at(-1), ['th', true], 'reset restores the new default, not the previous disclosure ref')
 })
 
 test('M05 keeps the thought text node and settled assistant blocks across deltas', (t) => {
@@ -117,7 +120,7 @@ test('M21 real stream records retain thinking, Markdown and manual disclosure th
   assert.ok(body)
   const text = 'Stable paragraph.\n\n~~~ts\nconst value = 1\n~~~\n\n$E=mc^2$\n\nMore.'
   apply({ type: 'stream', event: { type: 'text_delta', text } })
-  const owner = trackIdentity(view.column, '.md').sample()
+  const owner = trackIdentity(view.column, '.assistant').sample()
   const children = [...(owner as HTMLElement).childNodes]
   view.stub.focus(head)
   apply({ type: 'record', record: { type: 'message', id: 'a1', role: 'assistant', content: text,
@@ -125,9 +128,9 @@ test('M21 real stream records retain thinking, Markdown and manual disclosure th
   assert.equal(trackIdentity(view.column, '.run-line').sample(), head)
   assert.equal(trackIdentity(view.column, '.line-text').sample(), body)
   assert.equal(view.stub.activeElement(), head)
-  assert.equal(trackIdentity(view.column, '.md').sample(), owner)
+  assert.equal(trackIdentity(view.column, '.assistant').sample(), owner)
   apply({ type: 'record', record: { type: 'tool_use', id: 'tool1', tool: 'Read', input: { filePath: 'a.ts' }, turnId: 't1', createdAt, riskLevel: 'safe' } })
-  assert.equal(trackIdentity(view.column, '.md').sample(), owner, 'the prose keeps its carrier when a tool follows it')
+  assert.equal(trackIdentity(view.column, '.assistant').sample(), owner, 'the prose keeps its carrier when a tool follows it')
   // The commit adds the meta row after the text; every paragraph before it is the same node.
   assert.deepEqual([...(owner as HTMLElement).childNodes].slice(0, children.length), children)
   view.stub.click(head)
@@ -192,13 +195,23 @@ test('a thought opens to a body under its line, and focus stays on the line', (t
   assert.equal(line.children[0]!.node, head, 'the line is kept, not rebuilt')
   assert.equal(line.children[0]!.children[0]!.text, '首句。', 'the line keeps its first sentence')
   const body = line.children[1]!
-  assert.deepEqual(body.classes, ['thinking-body', 'md'])
+  assert.deepEqual(body.classes, ['thinking-body', 'md', 'presence', 'presence-none', 'presence-entering'])
   assert.notEqual(body.tagName, 'BUTTON')
   assert.doesNotMatch(body.text, /首句/, 'the body continues after the line, not repeating it')
   assert.ok(body.children.some((child) => child.children.some((part) => part.tagName === 'STRONG')), 'markdown, not raw text')
   assert.equal(view.stub.activeElement(), head)
   paint(false)
-  assert.equal(runOf(view).children[0]!.children.length, 1, 'folded: the body is absent, not hidden')
+  assert.equal((body.node as HTMLElement).getAttribute('inert'), '')
+  assert.equal((body.node as HTMLElement).classList.contains('presence-closing'), true)
+  assert.equal(view.stub.activeElement(), head)
+  paint(true)
+  assert.equal(runOf(view).children[0]!.children[1]!.node, body.node, 'reversing keeps the same body')
+  assert.equal((body.node as HTMLElement).classList.contains('presence-entering'), true)
+  paint(false)
+  view.stub.dispatch(body.node, 'transitionend', { propertyName: 'height' })
+  assert.equal(runOf(view).children[0]!.children.length, 1, 'after the exit: the body is absent, not hidden')
+  paint(false)
+  assert.equal(runOf(view).children[0]!.children.length, 1, 'an unchanged fold cannot remount the exiting body')
   assert.equal(view.stub.activeElement(), head)
 })
 
@@ -212,50 +225,89 @@ test('M14 advancing the current thought keeps an opened one open without replay'
   const [earlier, later] = view.items().map((item) => item.children[0]!)
   assert.equal(earlier!.classes.includes('open'), true)
   assert.equal(earlier!.children[0]!.node, head, 'the open line stays where it is')
-  assert.equal(later!.classes.includes('open'), false, 'the new thought starts folded')
+  assert.equal(later!.classes.includes('open'), true, 'a new thought starts open without changing the earlier answer')
+  const folded = new Map([['a', false]])
+  view.render(transcript([{ ...first, text: 'first. more' }, { ...first, id: 'b', text: 'next' }]), folded, RUNNING_T1)
+  assert.equal(view.items()[0]!.children[0]!.classes.includes('open'), false, 'deltas do not reopen a manual fold')
+  view.render(transcript([{ ...first, pending: false, durationMs: 5_000 }, { ...first, id: 'b', pending: false }]), folded)
+  assert.equal(view.items()[0]!.children[0]!.children[0]!.attributes.get('aria-label'), '思考了 5 秒', 'sealing and completion keep the fold')
 })
 
-test('a live thought shimmers on its first sentence, and opens to the whole text', (t) => {
+test('a live thought keeps its label and plain full text until sealing, reusing the head and body', (t) => {
   const view = mount(t)
-  const item: TranscriptItem = { id: 's', kind: 'thinking', text: '第一行。\n第二行。\n第三行。', turnId: 't1', pending: true }
+  const item: TranscriptItem = { id: 's', kind: 'thinking', text: '第一行。\n\n**第二行**。', turnId: 't1', pending: true }
   view.render(transcript([item]), NO_DISCLOSURE, { ...RUNNING_T1, startedAt: Date.now() - 7_000 })
   const line = runOf(view).children[0]!
-  assert.deepEqual(line.classes, ['thinking', 'live'])
+  assert.deepEqual(line.classes, ['thinking', 'open', 'live'])
   const head = line.children[0]!
   assert.deepEqual(head.classes, ['run-line'])
   assert.deepEqual(
     head.children.map((part) => [part.classes.join(' '), part.text]),
-    [['line-text', '第一行。']],
+    [['line-text text-swap', '思考'], ['icon', '']],
   )
-  assert.equal(head.attributes.get('aria-label'), '第一行。')
-  assert.equal(head.attributes.get('aria-expanded'), 'false')
-  assert.equal(line.children.length, 1, 'folded: no body in the page')
+  assert.equal(head.attributes.get('aria-label'), '思考')
+  assert.equal(head.attributes.get('aria-expanded'), 'true')
+  assert.equal(line.children.length, 2, 'the live thought starts open')
 
   view.stub.click(head.node)
-  assert.deepEqual(view.toggled, [['s', false]])
+  assert.deepEqual(view.toggled, [['s', true]])
 
-  view.render(transcript([item]), new Map([['s', true]]), RUNNING_T1)
+  const opened = new Map([['s', true]])
+  view.render(transcript([item]), opened, RUNNING_T1)
   const open = runOf(view).children[0]!
   assert.equal(open.classes.includes('open'), true)
-  assert.equal(open.children.length, 2, 'the line, and the body that streams under it')
-  assert.equal(open.children[0]!.children[0]!.text, '第一行。', 'the line stays one sentence')
-  assert.match(open.children[1]!.text, /第三行/, 'the body holds the rest')
-  assert.doesNotMatch(open.children[1]!.text, /第一行/, 'without repeating the line')
+  assert.equal(open.children.length, 2)
+  const body = open.children[1]!.node as HTMLElement
+  assert.deepEqual(open.children[1]!.classes, ['thinking-body', 'live', 'presence', 'presence-none', 'presence-open'])
+  assert.equal(body.textContent, item.text, 'the stream includes the first sentence and literal markdown')
+  assert.equal(body.childNodes.length, 1, 'only a text node, no parsed blocks')
+  assert.equal((body.firstChild as Text).data, item.text)
+  const textNode = body.firstChild
+  view.render(transcript([item]), opened, RUNNING_T1)
+  assert.equal(body.firstChild, textNode, 'an unchanged snapshot does not rewrite textContent')
 
-  // Sealed: the shimmer stops; the body stays while the thought is open.
-  const { pending: _pending, ...sealed } = item
-  view.render(transcript([sealed]), new Map([['s', true]]))
-  assert.equal(runOf(view).children[0]!.classes.includes('live'), false, 'sealed: the shimmer stops')
-  assert.match(runOf(view).children[0]!.children[1]!.text, /第三行/)
+  const grown = { ...item, text: `${item.text}\n\n第三行。` }
+  view.render(transcript([grown]), opened, RUNNING_T1)
+  assert.equal(runOf(view).children[0]!.children[0]!.node, head.node)
+  assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '思考', 'later sentences never become a live title')
+  assert.equal(runOf(view).children[0]!.children[1]!.node, body)
+  assert.equal(body.textContent, grown.text)
+  assert.equal(body.childNodes.length, 1)
+  assert.equal((body.firstChild as Text).data, grown.text)
+
+  const { pending: _pending, ...sealed } = grown
+  view.render(transcript([sealed]), opened)
+  const done = runOf(view).children[0]!
+  assert.equal(done.classes.includes('live'), false)
+  assert.equal(done.children[0]!.node, head.node)
+  assert.equal(done.children[0]!.attributes.get('aria-label'), '第一行。')
+  assert.equal(done.children[0]!.children[0]!.text, '第一行。')
+  assert.equal(done.children[1]!.node, body, 'sealing changes contents, not the carrier')
+  assert.deepEqual(done.children[1]!.classes, ['thinking-body', 'presence', 'presence-none', 'presence-open', 'md'])
+  assert.doesNotMatch(body.textContent!, /第一行|\*\*/)
+  assert.ok(done.children[1]!.children.some((child) => child.children.some((part) => part.tagName === 'STRONG')))
+  assert.match(body.textContent!, /第三行/)
+  const blocks = [...body.childNodes]
+  view.render(transcript([sealed]), opened)
+  assert.deepEqual([...body.childNodes], blocks, 'unchanged sealed text keeps the rendered markdown blocks')
   view.render(transcript([sealed]), NO_DISCLOSURE)
   assert.equal(runOf(view).children[0]!.children[0]!.children[0]!.text, '第一行。')
 })
 
-test('a sealed thought shows no time, measured or not', (t) => {
+test('a sealed thought shows time only in its folded label and updates when measurement arrives', (t) => {
   const view = mount(t)
   const head = (): StubView => runOf(view).children[0]!.children[0]!
-  view.render(transcript([{ id: 's', kind: 'thinking', text: 'why', turnId: 't1', durationMs: 12_000 }]))
-  assert.deepEqual(head().children.map((child) => child.classes.join(' ')), ['line-text'])
+  const item: TranscriptItem = { id: 's', kind: 'thinking', text: 'why', turnId: 't1' }
+  view.render(transcript([{ ...item, durationMs: 12_000 }]))
+  assert.deepEqual(head().children.map((child) => child.classes.join(' ')), ['line-text text-swap'])
+  assert.equal(head().attributes.get('aria-label'), 'why')
+  const folded = new Map([['s', false]])
+  view.render(transcript([item]), folded)
+  const node = head().node
+  assert.equal(head().attributes.get('aria-label'), '思考过程')
+  view.render(transcript([{ ...item, durationMs: 12_000 }]), folded)
+  assert.equal(head().node, node)
+  assert.equal(head().attributes.get('aria-label'), '思考了 12 秒')
 })
 
 function transcript(items: readonly TranscriptItem[] = [], overrides: Partial<TranscriptState> = {}): TranscriptState {
@@ -270,6 +322,7 @@ interface Rendered {
   readonly toggled: Array<readonly [string, boolean]>
   /** How many times the status line's background-task button was pressed. */
   readonly backgroundOpens: () => number
+  readonly focusedRequests: readonly string[]
   /** `[path, line]` per clicked search row, the `open-in-editor` payload. */
   readonly opened: ReadonlyArray<readonly [string, number | undefined]>
   /** `[imageId, name]` per clicked image line under a user bubble (S12). */
@@ -306,6 +359,7 @@ function mount(t: { after(fn: () => void): void }): Rendered {
   const openedSubagents: string[] = []
   const openedPlans: Array<string | undefined> = []
   let backgroundOpens = 0
+  const focusedRequests: string[] = []
   // Replaced rather than mutated, exactly as the pane's own `commands` is on a
   // reload: the bubble's signature reads its identity, so the replacement is
   // what makes an already-painted bubble repaint.
@@ -321,6 +375,7 @@ function mount(t: { after(fn: () => void): void }): Rendered {
     onRewind: (id) => rewound.push(id),
     onOpenSubagent: (id) => openedSubagents.push(id),
     onOpenBackgroundTasks: () => { backgroundOpens += 1 },
+    onFocusRequest: (kind) => focusedRequests.push(kind),
   })
   // Disposed before the stub goes: a live mark's frame timers outlive the test otherwise.
   t.after(() => {
@@ -343,6 +398,7 @@ function mount(t: { after(fn: () => void): void }): Rendered {
     container,
     host,
     backgroundOpens: () => backgroundOpens,
+    focusedRequests,
     setCommands: (next) => { commands = next },
     toggled,
     opened,
@@ -393,16 +449,30 @@ test('the float button is built once, outside the scroller, and starts hidden', 
   assert.equal(stub.inspect(container).children.some((c) => c.classes.includes('scroll-bottom')), false)
 })
 
-test('scrolling up reveals the float button and returning to the tail hides it', (t) => {
+test('scrolling up reveals the float button beyond 200px and the bottom fade beyond 8px', (t) => {
   const { jump, stub, container } = mount(t)
 
-  scrolledUpBy(stub, container, 400)
+  scrolledUpBy(stub, container, 200)
+  stub.dispatch(container, 'scroll')
+  assert.equal(jump().hidden, true)
+  assert.equal(stub.inspect(container).classes.includes('has-bottom-fade'), true)
+
+  scrolledUpBy(stub, container, 201)
   stub.dispatch(container, 'scroll')
   assert.equal(jump().hidden, false)
+
+  scrolledUpBy(stub, container, 9)
+  stub.dispatch(container, 'scroll')
+  assert.equal(jump().hidden, true)
+  assert.equal(stub.inspect(container).classes.includes('has-bottom-fade'), true)
+  scrolledUpBy(stub, container, 8)
+  stub.dispatch(container, 'scroll')
+  assert.equal(stub.inspect(container).classes.includes('has-bottom-fade'), false)
 
   stub.setMetrics(container, { scrollTop: 800 })
   stub.dispatch(container, 'scroll')
   assert.equal(jump().hidden, true)
+  assert.equal(stub.inspect(container).classes.includes('has-bottom-fade'), false)
 })
 
 test('a slow wheel inside the 24px slack is not pulled back to the tail', (t) => {
@@ -414,7 +484,7 @@ test('a slow wheel inside the 24px slack is not pulled back to the tail', (t) =>
   stub.dispatch(container, 'scroll')
   render(transcript([{ id: 'a', kind: 'assistant', text: 'xy' }]))
   assert.equal(stub.inspect(container).scrollTop, 796)
-  assert.equal(jump().hidden, false)
+  assert.equal(jump().hidden, true, 'not following, but still within the jump threshold')
 })
 
 test('a paint re-decides visibility, because the content can move the verdict', (t) => {
@@ -432,17 +502,34 @@ test('a paint re-decides visibility, because the content can move the verdict', 
   assert.equal(jump().hidden, true)
 })
 
-test('clicking the float button jumps to the tail', (t) => {
-  const { jump, stub, container } = mount(t)
+test('clicking the float button jumps to the tail and pins subsequent growth, without smooth scrolling under reduced motion', (t) => {
+  const { render, jump, stub, container } = mount(t)
+  const behaviors: Array<ScrollBehavior | undefined> = []
+  const scrollTo = container.scrollTo.bind(container)
+  t.mock.method(container, 'scrollTo', (options: ScrollToOptions) => {
+    behaviors.push(options.behavior)
+    scrollTo(options)
+  })
 
   scrolledUpBy(stub, container, 400)
   stub.dispatch(container, 'scroll')
   stub.click(jump().node)
 
   assert.equal(stub.inspect(container).scrollTop, 1000)
-  // The stub fires `scroll` from `scrollTo`, as the browser does, so the button
-  // hides through the same path it takes for real rather than from the handler.
+  assert.deepEqual(behaviors, ['auto'], 'keep the existing explicit-jump policy')
+  // The stub fires `scroll` from `scrollTo`, as the browser does.
   assert.equal(jump().hidden, true)
+  assert.equal(stub.inspect(container).classes.includes('has-bottom-fade'), false)
+
+  stub.setMetrics(container, { scrollHeight: 1400 })
+  render(transcript([{ id: 'a', kind: 'assistant', text: 'more' }]))
+  assert.equal(stub.inspect(container).scrollTop, 1400, 'the click restores follow, not just position')
+  scrolledUpBy(stub, container, 400)
+  stub.dispatch(container, 'scroll')
+  document.documentElement.dataset.reducedMotion = 'true'
+  stub.click(jump().node)
+  assert.deepEqual(behaviors, ['auto', 'auto'])
+  assert.equal(stub.inspect(container).scrollTop, 1000)
 })
 
 test('a running turn parks its working mark in the float button while the reader looks back', (t) => {
@@ -450,7 +537,7 @@ test('a running turn parks its working mark in the float button while the reader
   const inButton = (): StubView | undefined =>
     jump().children.find((child) => child.classes.includes('jump-mark'))?.children[0]
   const onLine = (): StubView | undefined =>
-    items().at(-1)?.children.find((child) => child.classes.includes('line-mark'))?.children[0]
+    items().at(-1) && statusMain(items().at(-1)!)?.children.find((child) => child.classes.includes('line-mark'))?.children[0]
 
   stub.setMetrics(container, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 })
   render(transcript([{ id: 'u1', kind: 'user', text: 'go', turnId: 't1' }]), NO_DISCLOSURE, RUNNING_T1)
@@ -466,13 +553,7 @@ test('a running turn parks its working mark in the float button while the reader
   assert.equal(inButton()?.node, mark.node, 'the same mark, moved rather than rebuilt')
   assert.equal(onLine(), undefined)
 
-  // The status line still 70px below the fold: near enough that the button
-  // stands down and the line takes the mark back.
-  stub.onLayout((node) => {
-    if (node.classes.includes('transcript')) return { top: 0, bottom: 200 }
-    if (node.classes.includes('line-mark')) return { top: 900 - container.scrollTop, bottom: 920 - container.scrollTop }
-    return undefined
-  })
+  // Back within 200px: the button stands down and the line takes the mark back.
   stub.setMetrics(container, { scrollTop: 650 })
   stub.dispatch(container, 'scroll')
   assert.equal(jump().hidden, true)
@@ -492,18 +573,31 @@ test('the transcript follows the tail only when the reader is already there', (t
 })
 
 test('content that grows after a paint does not unhook a reader following the tail', (t) => {
-  // The long-turn bug: a paint pinned the scroller to the end, a step's unfold
-  // then grew the content by more than the 24px slack with no scroll event, and
-  // the next paint read the reader as 「scrolled up」 — so the tail was never
-  // followed again and the final answer landed below the viewport.
-  const { render, stub, container, jump } = mount(t)
-
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { render, stub, container, jump, column } = mount(t)
+  stub.onLayout((node) => {
+    if (node.node === container) return { top: 0, bottom: 200 }
+    if (node.classes.includes('run-line')) return { top: 100, bottom: 120 }
+    return undefined
+  })
+  const thought = (text: string): TranscriptState => transcript([
+    { id: 'a', kind: 'thinking', text, turnId: 't1', pending: true },
+  ])
   stub.setMetrics(container, { scrollHeight: 1000, clientHeight: 200, scrollTop: 800 })
-  render(transcript([{ id: 'a', kind: 'assistant', text: 'x' }]))
-  stub.setMetrics(container, { scrollHeight: 1400 })
-  render(transcript([{ id: 'a', kind: 'assistant', text: 'xy' }]))
-  assert.equal(stub.inspect(container).scrollTop, 1400, 'still following')
-  assert.equal(jump().hidden, true)
+  render(thought('x'), NO_DISCLOSURE, RUNNING_T1)
+  const head = trackIdentity(column, '.run-line').sample()
+  assert.ok(head)
+  for (const [index, expanded] of [true, false].entries()) {
+    stub.setMetrics(container, { scrollTop: 800 + index * 400 })
+    stub.click(head)
+    stub.setMetrics(container, { scrollHeight: 1400 + index * 400 })
+    const disclosure = new Map([['a', expanded]])
+    render(thought('x'), disclosure, RUNNING_T1)
+    t.mock.timers.tick(200)
+    render(thought('xy'), disclosure, RUNNING_T1)
+    assert.equal(stub.inspect(container).scrollTop, 1400 + index * 400, 'disclosure never cancels following')
+    assert.equal(jump().hidden, true)
+  }
 })
 
 test('the items paint inside one reading column, and the scroller stays bare', (t) => {
@@ -569,7 +663,7 @@ test('a duration made from a streaming turn’s records is not drawn until the t
   assert.equal(items().some((item) => item.classes.includes('duration')), false)
   render(transcript(turn), NO_DISCLOSURE, IDLE_ACTIVITY)
   assert.equal(items().some((item) => item.classes.includes('duration')), false, 'never a row')
-  assert.deepEqual(factsOf(items().at(-1)!), ['用时 5 秒'], 'settled: the span of the records, as replay has no measured time')
+  assert.deepEqual(factsOf(items().find((item) => item.classes.includes('assistant'))!), ['用时 5 秒'], 'settled: the span of the records, as replay has no measured time')
 })
 
 // --- the thinking line -------------------------------------------------------
@@ -578,20 +672,22 @@ const sealedThinking: TranscriptItem = {
   id: 'thinking-0', kind: 'thinking', text: '推理。然后呢。', durationMs: 458_000,
 }
 
-test('a thought with no tool is a line of its own, folded until opened', (t) => {
+test('a thought with no tool is a line of its own, open by default', (t) => {
   const { render, items } = mount(t)
   render(transcript([sealedThinking]))
 
   assert.deepEqual(items()[0]!.classes, ['run', 'thinking-run'])
   const line = items()[0]!.children[0]!
-  assert.deepEqual(line.classes, ['thinking'])
+  assert.deepEqual(line.classes, ['thinking', 'open'])
   const head = line.children[0]!
   assert.equal(head.tagName, 'BUTTON')
   assert.equal(head.attributes.get('aria-label'), '推理。')
-  assert.equal(head.attributes.get('aria-expanded'), 'false')
-  // The first sentence alone: no time, no caret.
-  assert.deepEqual(head.children.map((child) => [child.className, child.text]), [['line-text', '推理。']])
-  assert.equal(line.children.length, 1, 'the whole text is absent, not hidden')
+  assert.equal(head.attributes.get('aria-expanded'), 'true')
+  // The open title keeps the first sentence; the body continues after it.
+  assert.deepEqual(head.children.map((child) => [child.className, child.text]), [['line-text text-swap', '推理。'], ['icon', '']])
+  assert.equal(line.children.length, 2)
+  assert.equal(line.children[1]!.text, '然后呢。')
+  assert.equal(line.children[1]!.classes.includes('presence-open'), true, 'history does not replay the entry')
 })
 
 test('the pane’s absolute answer outranks the default, both ways', (t) => {
@@ -605,7 +701,7 @@ test('the pane’s absolute answer outranks the default, both ways', (t) => {
 
   render(transcript([sealedThinking]), new Map([['thinking-0', false]]))
   assert.equal(line().classes.includes('open'), false)
-  assert.equal(line().children[0]!.children[0]!.text, '推理。', 'folded back to the first sentence')
+  assert.equal(line().children[0]!.children[0]!.text, '思考了 458 秒', 'folded back to the measured process label')
 })
 
 test('clicking the line reports the thought’s id and what it showed', (t) => {
@@ -615,7 +711,7 @@ test('clicking the line reports the thought’s id and what it showed', (t) => {
   // The pane stores the opposite of what the row showed, so the first click
   // always does the visible thing.
   stub.click(items()[1]!.children[0]!.children[0]!.node)
-  assert.deepEqual(toggled, [['thinking-0', false]])
+  assert.deepEqual(toggled, [['thinking-0', true]])
 })
 
 // --- runs of work ------------------------------------------------------------
@@ -731,31 +827,35 @@ test('a failed call is counted in red beside the counts, and an edit’s patch c
   )
 })
 
-test('the line of the run the turn is in is the status: mark, words, clock — and no line below it', (t) => {
+test('a running tool group keeps its summary and a separate status at the tail', (t) => {
   const view = mount(t)
   view.render(transcript(pairItems({ pending: true })), NO_DISCLOSURE, { ...RUNNING_T1, startedAt: Date.now() - 6_000 })
 
-  assert.deepEqual(view.items().map((entry) => entry.classes[0]), ['item', 'run'])
+  assert.deepEqual(view.items().map((entry) => entry.classes[0]), ['item', 'run', 'waiting'])
   const run = runOf(view)
-  assert.deepEqual(run.classes, ['run', 'live'])
+  assert.deepEqual(run.classes, ['run'])
   const head = run.children[0]!
-  assert.deepEqual(head.classes, ['run-line', 'live'])
-  assert.deepEqual(head.children.map((child) => child.classes.join(' ')), ['line-mark', 'line-text', 'line-meta line-elapsed', 'icon'])
-  assert.deepEqual(statusText(head), { label: '读取 b.ts', meta: ['6 秒'] }, 'the most recent running call')
-  for (const index of [0, 1, 2]) assert.equal(head.children[index]!.attributes.get('aria-hidden'), 'true')
-  // Named for what the run has done, not for words that change ten times a turn.
-  assert.equal(head.attributes.get('aria-label'), '正在进行 · 读取 2 个文件')
+  assert.deepEqual(head.classes, ['run-line'])
+  assert.deepEqual(head.children.map((child) => child.classes.join(' ')), ['line-text', 'icon'])
+  assert.equal(head.attributes.get('aria-label'), '读取 2 个文件')
   assert.equal(head.attributes.get('aria-expanded'), 'false', 'folded while it runs, too')
+  assert.deepEqual(statusText(view.items().at(-1)!), { label: '读取 b.ts', meta: ['6 秒'] })
+  view.stub.click(head.node)
+  assert.deepEqual(view.toggled, [[RUN, false]], 'the group can still be opened independently of the status')
 })
 
-test('a live run of one step keeps its line until it settles', (t) => {
+test('a single tool keeps its own row while running and between steps', (t) => {
   const view = mount(t)
   view.render(transcript(turnItems({ pending: true })), NO_DISCLOSURE, RUNNING_T1)
-  assert.deepEqual(runOf(view).classes, ['run', 'live'])
+  assert.deepEqual(runOf(view).classes, ['run', 'single'])
+  const row = runOf(view).children[0]!.node
   view.render(transcript(turnItems()), NO_DISCLOSURE, RUNNING_T1)
-  assert.deepEqual(runOf(view).classes, ['run', 'live'], 'between steps the run still carries the status')
+  assert.deepEqual(runOf(view).classes, ['run', 'single'])
+  assert.equal(runOf(view).children[0]!.node, row)
+  assert.equal(view.items().at(-1)!.classes[0], 'waiting')
   view.render(transcript(turnItems()))
   assert.deepEqual(runOf(view).classes, ['run', 'single'])
+  assert.equal(runOf(view).children[0]!.node, row)
 })
 
 test('under a streaming thought the status is its own line: 正在思考', (t) => {
@@ -763,24 +863,25 @@ test('under a streaming thought the status is its own line: 正在思考', (t) =
   const user: TranscriptItem = { id: 'u1', kind: 'user', text: 'go', turnId: 't1' }
   const thought: TranscriptItem = { id: 'th1', kind: 'thinking', text: '先看看', turnId: 't1', pending: true }
   view.render(transcript([user, thought]), NO_DISCLOSURE, { ...RUNNING_T1, startedAt: Date.now() - 6_000 })
-  assert.deepEqual(view.items().map((entry) => entry.classes.join(' ')), ['item user', 'run thinking-run', 'waiting thinking'])
+  assert.deepEqual(view.items().map((entry) => entry.classes.join(' ')), ['item user', 'run thinking-run', 'waiting'])
   assert.deepEqual(statusText(view.items().at(-1)!), { label: '正在思考', meta: ['6 秒'] })
-  // The counter goes ahead of these words only (in CSS order), and behind every other.
-  assert.deepEqual(view.items().at(-1)!.classes, ['waiting', 'thinking'])
+  assert.deepEqual(statusMain(view.items().at(-1)!).children.map((part) => part.classes[0]), ['line-mark', 'line-meta', 'line-text'])
   view.render(transcript([user, { ...thought, pending: false }]), NO_DISCLOSURE, RUNNING_T1)
   assert.deepEqual(view.items().at(-1)!.classes, ['waiting'])
 })
 
 test('opened, a run is a card with a row per step; a thought between tools is a line of its own', (t) => {
   const view = mount(t)
-  const [user, tool] = turnItems({ pending: true })
+  const [user, tool, second] = pairItems({ pending: true })
   const thought: TranscriptItem = { id: 'th1', kind: 'thinking', text: '先看看这个文件。', turnId: 't1' }
-  view.render(transcript([user!, thought, tool!]), new Map([[RUN, true]]), RUNNING_T1)
+  view.render(transcript([user!, thought, tool!, second!]), new Map([[RUN, true]]), RUNNING_T1)
 
-  assert.deepEqual(view.items().map((entry) => entry.classes.join(' ')), ['item user', 'run thinking-run', 'run open live'])
+  assert.deepEqual(view.items().map((entry) => entry.classes.join(' ')), ['item user', 'run thinking-run', 'run open', 'waiting'])
   const run = view.items()[2]!
   assert.equal(run.children[1]!.classes.includes('run-card'), true)
-  assert.deepEqual(run.children[1]!.children.map((row) => row.classes), [['step', 'tool', 'running', 'collapsed']])
+  assert.deepEqual(run.children[1]!.children.map((row) => row.classes), [
+    ['step', 'tool', 'running', 'collapsed'], ['step', 'tool', 'running', 'collapsed'],
+  ])
 })
 
 test('a memory save names the memory and trails its description', (t) => {
@@ -834,7 +935,7 @@ test('a row with nothing to show is a plain line, not a button that does nothing
 test('the run line names its summary, and keeps it when the turn ends', (t) => {
   const view = mount(t)
   view.render(transcript(pairItems({ pending: true })), NO_DISCLOSURE, RUNNING_T1)
-  assert.equal(runOf(view).children[0]!.attributes.get('aria-label'), '正在进行 · 读取 2 个文件')
+  assert.equal(runOf(view).children[0]!.attributes.get('aria-label'), '读取 2 个文件')
 
   view.render(transcript(pairItems()))
   assert.equal(runOf(view).children[0]!.attributes.get('aria-label'), '读取 2 个文件')
@@ -2043,6 +2144,178 @@ test('the stub carries every document member the dom helpers reach for', (t) => 
   }
 })
 
+// --- text morph --------------------------------------------------------------
+
+test('text swap crossfades both faces, slides width, and settles interrupted swaps', async (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const host = stub.createContainer('line-text')
+  stub.onLayout((node) => ({ top: 0, bottom: 24, left: 0, right: node.text.length * 10 }))
+  const animations: Array<{ keyframes: Keyframe[]; options: KeyframeAnimationOptions; finished: Promise<void>; resolve(): void; cancelled: boolean; cancel(): void }> = []
+  const prototype = Element.prototype
+  Reflect.set(prototype, 'animate', (keyframes: Keyframe[], options: KeyframeAnimationOptions) => {
+    let resolve!: () => void
+    const finished = new Promise<void>((done) => { resolve = done })
+    const animation = { keyframes, options, finished, resolve, cancelled: false, cancel() { this.cancelled = true } }
+    animations.push(animation)
+    return animation
+  })
+  t.after(() => Reflect.deleteProperty(prototype, 'animate'))
+  const swap = createTextSwap(host, 'line-label')
+  t.after(() => swap.finish())
+  swap.set('A')
+  const first = host.firstElementChild
+  swap.set('BB')
+  assert.equal(animations.length, 3)
+  assert.equal(first?.getAttribute('aria-hidden'), 'true', 'only the current face is announced')
+  assert.deepEqual(animations[0]!.keyframes, [{ opacity: 1, transform: 'translateY(0)' }, { opacity: 0, transform: 'translateY(-3px)' }])
+  assert.deepEqual(animations[1]!.keyframes, [{ opacity: 0, transform: 'translateY(3px)' }, { opacity: 1, transform: 'translateY(0)' }])
+  assert.deepEqual(animations[2]!.keyframes, [{ width: '10px' }, { width: '20px' }])
+  for (const animation of animations) assert.deepEqual(animation.options, { duration: TEXT_SWAP_MS, easing: TEXT_SWAP_EASING, fill: 'both' })
+  swap.set('BB')
+  assert.equal(animations.length, 3, 'an unchanged paint does not restart the morph')
+  swap.set('CCC')
+  assert.ok(animations.slice(0, 3).every((animation) => animation.cancelled))
+  assert.equal(host.children.length, 2, 'a new swap removes the obsolete departing face')
+  animations.slice(0, 3).forEach((animation) => animation.resolve())
+  await new Promise<void>((resolve) => queueMicrotask(resolve))
+  assert.equal(host.children.length, 2, 'an old completion cannot settle the new swap')
+  animations.slice(3).forEach((animation) => animation.resolve())
+  await new Promise<void>((resolve) => queueMicrotask(resolve))
+  assert.equal(host.textContent, 'CCC')
+  assert.equal(host.children.length, 1)
+  assert.ok(animations.every((animation) => animation.cancelled), 'settlement releases the animated width and faces')
+})
+
+test('text swap replaces immediately without animate, measurement, or enabled motion', (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const host = stub.createContainer('line-text')
+  const swap = createTextSwap(host, 'line-label')
+  swap.set('A')
+  swap.set('BB')
+  assert.equal(host.textContent, 'BB', 'no animate API')
+  const prototype = Element.prototype
+  Reflect.set(prototype, 'animate', () => { assert.fail('fallback must not animate') })
+  t.after(() => Reflect.deleteProperty(prototype, 'animate'))
+  swap.set('CCC')
+  assert.equal(host.textContent, 'CCC', 'unmeasurable host')
+  stub.onLayout(() => ({ top: 0, bottom: 24, left: 0, right: 100 }))
+  document.documentElement.dataset.reducedMotion = 'true'
+  swap.set('D')
+  assert.equal(host.textContent, 'D', 'reduced motion')
+  document.documentElement.dataset.reducedMotion = 'false'
+  stub.setHidden(true)
+  swap.set('E')
+  assert.equal(host.textContent, 'E', 'hidden document')
+  assert.equal(host.children.length, 1)
+})
+
+// --- number tween -------------------------------------------------------------
+
+function tweenFrames(t: TestContext) {
+  let now = 0
+  let sequence = 0
+  const frames = new Map<number, FrameRequestCallback>()
+  const previousRaf = globalThis.requestAnimationFrame
+  const previousCancel = globalThis.cancelAnimationFrame
+  t.mock.method(performance, 'now', () => now)
+  globalThis.requestAnimationFrame = (run) => { frames.set(++sequence, run); return sequence }
+  globalThis.cancelAnimationFrame = (id) => { frames.delete(id) }
+  t.after(() => { globalThis.requestAnimationFrame = previousRaf; globalThis.cancelAnimationFrame = previousCancel })
+  return {
+    pending: () => frames.size,
+    advance(ms: number) {
+      now += ms
+      for (const [id, run] of [...frames]) {
+        frames.delete(id)
+        run(now)
+      }
+    },
+  }
+}
+
+test('number tween uses 400ms cubic-out, keeps unchanged targets, and retargets from the shown integer', (t) => {
+  const stub = installDomStub()
+  const values: number[] = []
+  const tween = createNumberTween((value) => values.push(value))
+  t.after(() => { tween.finish(); stub.uninstall() })
+  const frames = tweenFrames(t)
+  tween.set(100)
+  tween.set(140)
+  assert.deepEqual(values, [100], 'the initial number lands immediately')
+  frames.advance(NUMBER_TWEEN_MS / 2)
+  assert.equal(values.at(-1), 135, 'halfway is 87.5% of the delta')
+  tween.set(140)
+  frames.advance(NUMBER_TWEEN_MS / 2)
+  assert.equal(values.at(-1), 140, 'an unchanged target does not extend the segment')
+  assert.equal(frames.pending(), 0)
+  tween.set(180)
+  frames.advance(200)
+  assert.equal(values.at(-1), 175)
+  tween.set(190)
+  assert.equal(values.at(-1), 175, 'interrupting does not snap to the old target')
+  assert.equal(frames.pending(), 1, 'the old segment is cancelled')
+  frames.advance(200)
+  assert.equal(values.at(-1), 188)
+  frames.advance(200)
+  assert.equal(values.at(-1), 190)
+  assert.equal(frames.pending(), 0)
+})
+
+test('number tween jumps above 50%, but animates at the boundary', (t) => {
+  const stub = installDomStub()
+  let shown = 0
+  const tween = createNumberTween((value) => { shown = value })
+  t.after(() => { tween.finish(); stub.uninstall() })
+  const frames = tweenFrames(t)
+  tween.set(100)
+  tween.set(150)
+  assert.equal(shown, 100, 'exactly 50% still animates')
+  frames.advance(400)
+  assert.equal(shown, 150)
+  tween.set(226)
+  assert.equal(shown, 226, 'more than 50% jumps')
+  assert.equal(frames.pending(), 0)
+  tween.set(200)
+  tween.set(10)
+  assert.equal(shown, 10, 'a large decrease also cancels an in-flight segment')
+  assert.equal(frames.pending(), 0)
+  tween.set(0)
+  tween.set(1)
+  assert.equal(shown, 1, 'there is no relative tween from zero')
+})
+
+test('number tween settles without frame APIs, with disabled motion, or when finished', (t) => {
+  const stub = installDomStub()
+  let shown = 0
+  const tween = createNumberTween((value) => { shown = value })
+  t.after(() => { tween.finish(); stub.uninstall() })
+  const frames = tweenFrames(t)
+  tween.set(100)
+  tween.set(120)
+  tween.finish()
+  assert.equal(shown, 120)
+  assert.equal(frames.pending(), 0)
+  tween.set(140)
+  document.documentElement.dataset.reducedMotion = 'true'
+  tween.set(140)
+  assert.equal(shown, 140, 'an unchanged target settles when reduced motion changes')
+  assert.equal(frames.pending(), 0)
+  tween.set(160)
+  assert.equal(shown, 160)
+  document.documentElement.dataset.reducedMotion = 'false'
+  tween.set(180)
+  stub.setHidden(true)
+  frames.advance(100)
+  assert.equal(shown, 180, 'a hidden document settles on the next frame')
+  assert.equal(frames.pending(), 0)
+  stub.setHidden(false)
+  Reflect.deleteProperty(globalThis, 'requestAnimationFrame')
+  tween.set(200)
+  assert.equal(shown, 200, 'no frame API falls back to immediate replacement')
+})
+
 // --- the live status -----------------------------------------------------------
 
 /** What the pane hands the view about the turn in flight. */
@@ -2050,9 +2323,13 @@ function waiting(state: TranscriptState, startedAt: number | undefined, outputTo
   return { isStreaming: true, startedAt, turnId: state.turnId, ...(outputTokens === undefined ? {} : { outputTokens }) }
 }
 
+function statusMain(row: StubView): StubView {
+  return row.children.find((child) => child.classes.includes('waiting-main'))!
+}
+
 /** The status line's words and counter, as the reader sees them. */
 function statusText(row: StubView): { label: string; meta: string[] } {
-  const part = (name: string): StubView => row.children.find((child) => child.classes.includes(name))!
+  const part = (name: string): StubView => statusMain(row).children.find((child) => child.classes.includes(name))!
   return { label: part('line-text').text, meta: part('line-meta').children.map((child) => child.text) }
 }
 
@@ -2065,16 +2342,17 @@ test('before the first step the status is a line of its own, at the tail', (t) =
   const row = items()[items().length - 1]!
   assert.deepEqual(row.classes, ['waiting'], 'the line is the last thing in the column')
   assert.deepEqual(
-    row.children.map((child) => child.classes.join(' ')),
-    ['line-mark', 'line-text', 'line-meta line-elapsed'],
-    'mark, words, counter — and the clock is painted on the first frame',
+    statusMain(row).children.map((child) => child.classes.join(' ')),
+    ['line-mark', 'line-meta line-elapsed', 'line-text text-swap'],
+    'mark, counter, words — and the clock is painted on the first frame',
   )
   assert.deepEqual(statusText(row), { label: '处理中', meta: ['5 秒', '·', '1.2k token'] })
   // `.transcript` is `aria-live="polite"`: the words may be announced, the
   // counter must not be (it changes ten times a second), and neither is the mark.
-  assert.equal(row.children[0]!.attributes.get('aria-hidden'), 'true')
-  assert.equal(row.children[1]!.attributes.get('aria-hidden'), undefined)
-  assert.equal(row.children[2]!.attributes.get('aria-hidden'), 'true')
+  assert.equal(statusMain(row).children[0]!.attributes.get('aria-hidden'), 'true')
+  assert.equal(statusMain(row).children[1]!.attributes.get('aria-hidden'), 'true')
+  assert.equal(statusMain(row).children[2]!.attributes.get('aria-hidden'), undefined)
+  assert.equal(statusMain(row).disabled, true, 'no action before the first tool')
 })
 
 test('the counter is empty on a short wait, and tokens come only beside the seconds', (t) => {
@@ -2086,33 +2364,76 @@ test('the counter is empty on a short wait, and tokens come only beside the seco
   assert.deepEqual(statusText(items().at(-1)!).meta, ['3 秒'], 'no tokens reported yet')
 })
 
-test('the run’s line carries the status while it works, and its pieces survive the step settling', (t) => {
+test('token tween survives seconds and unchanged paints, and is cleared on stop and reset', (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1_700_000_000_000 })
+  const view = mount(t)
+  const frames = tweenFrames(t)
+  const state = transcript([{ id: 'u1', kind: 'user', text: 'go' }], { turnId: 't1' })
+  const startedAt = Date.now() - 2_900
+  const paint = (tokens: number, generation = 0) => view.render({ ...state, generation }, NO_DISCLOSURE, waiting(state, startedAt, tokens))
+  const meta = () => statusText(view.items().at(-1)!).meta
+  paint(100)
+  const parts = statusMain(view.items().at(-1)!).children[1]!.children.map((child) => child.node)
+  paint(140)
+  assert.deepEqual(meta(), ['2 秒', '·', '100 token'])
+  t.mock.timers.tick(200)
+  frames.advance(200)
+  assert.deepEqual(meta(), ['3 秒', '·', '135 token'], 'seconds update independently during the tween')
+  paint(140)
+  t.mock.timers.tick(200)
+  frames.advance(200)
+  assert.deepEqual(meta(), ['3 秒', '·', '140 token'])
+  assert.equal(frames.pending(), 0, 'clock ticks and unchanged paints do not restart the tween')
+  assert.deepEqual(statusMain(view.items().at(-1)!).children[1]!.children.map((child) => child.node), parts)
+  paint(1600)
+  assert.deepEqual(meta(), ['3 秒', '·', '1.6k token'], 'large jumps keep the existing token format')
+  paint(1800)
+  view.stopClock()
+  assert.deepEqual(meta(), ['3 秒', '·', '1.8k token'])
+  assert.equal(frames.pending(), 0, 'stopping releases the pending frame')
+  paint(2000)
+  assert.equal(frames.pending(), 1)
+  paint(2100, 1)
+  assert.deepEqual(meta(), ['3 秒', '·', '2.1k token'], 'reset starts with its own number')
+  assert.equal(frames.pending(), 0, 'reset cancels the old node’s frame')
+  paint(2200, 1)
+  view.render({ ...state, generation: 1 }, NO_DISCLOSURE, { isStreaming: true, turnId: 't2', startedAt: Date.now(), outputTokens: 2200 })
+  assert.deepEqual(meta(), [], 'a new turn does not inherit the old counter before two seconds')
+  assert.equal(frames.pending(), 0, 'a new turn cancels the old token tween')
+  paint(2200, 1)
+  paint(2400, 1)
+  view.dispose()
+  assert.equal(frames.pending(), 0, 'dispose leaves no frame writing to a detached status')
+})
+
+test('the tail status and its pieces survive the tool group settling', (t) => {
   const view = mount(t)
   const startedAt = Date.now() - 6_000
   const paint = (items: TranscriptItem[]): void => view.render(
     transcript(items, { turnId: 't1' }), NO_DISCLOSURE, waiting(transcript(items, { turnId: 't1' }), startedAt))
 
   paint(pairItems({ pending: true }))
-  assert.deepEqual(view.items().map((entry) => entry.classes[0]), ['item', 'run'])
-  const head = runOf(view).children[0]!
+  assert.deepEqual(view.items().map((entry) => entry.classes[0]), ['item', 'run', 'waiting'])
+  const head = view.items().at(-1)!
   assert.equal(statusText(head).label, '读取 b.ts', 'the most recent parallel call')
-  const pieces = head.children
+  const pieces = statusMain(head).children
 
   // The tools settle and the turn keeps running: the words fall back to
   // 「处理中」 once the gate lets them, while the mark and counter stay mounted.
   paint(pairItems())
-  const still = runOf(view).children[0]!
+  const still = view.items().at(-1)!
   assert.equal(still.node, head.node)
-  for (const index of [0, 1, 2]) assert.equal(still.children[index]!.node, pieces[index]!.node)
+  for (const index of [0, 1, 2]) assert.equal(statusMain(still).children[index]!.node, pieces[index]!.node)
   assert.equal(statusText(still).label, '读取 b.ts', 'a new label waits out its delay')
 
-  // Only the end of the turn takes the status away, and the line is the summary.
+  // The turn's end keeps the same line briefly; the run keeps its summary.
   view.render(transcript(pairItems(), { turnId: undefined }), NO_DISCLOSURE, {
     isStreaming: false,
     startedAt: undefined,
     turnId: undefined,
   })
-  assert.equal(view.items().some((item) => item.classes.includes('waiting')), false)
+  assert.equal(view.items().at(-1)!.node, head.node)
+  assert.equal(statusText(view.items().at(-1)!).label, '已完成')
   assert.equal(runOf(view).children[0]!.attributes.get('aria-label'), '读取 2 个文件')
 })
 
@@ -2123,6 +2444,39 @@ test('a draft arriving does not take the status line away: it reads 正在输出
   view.render(state, NO_DISCLOSURE, waiting(state, Date.now() - 3_000))
   assert.deepEqual(view.items().map((entry) => entry.classes[0]), ['item', 'run', 'item', 'waiting'])
   assert.equal(statusText(view.items().at(-1)!).label, '正在输出')
+})
+
+test('approval and question round trips update the label in the same paint without holding a stale request', (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1_700_000_000_000 })
+  const view = mount(t)
+  const activity = { ...RUNNING_T1, startedAt: Date.now() }
+  const tool: TranscriptItem = { id: 'call', kind: 'tool', text: '', toolName: 'Read', turnId: 't1', pending: true,
+    tool: { displayName: 'Read', useSummary: 'a.ts' } }
+  const state = transcript([tool])
+  const head = () => view.items().at(-1)!
+  const label = () => statusText(head()).label
+  view.render(state, NO_DISCLOSURE, activity)
+  const row = head().node
+  const pieces = statusMain(head()).children.map((part) => part.node)
+  assert.equal(label(), '读取 a.ts')
+
+  view.render(transcript([{ ...tool, tool: { ...tool.tool!, awaitingApproval: true } }]), NO_DISCLOSURE, activity)
+  assert.equal(label(), '等待你确认 · 读取 a.ts', 'approval bypasses normal debounce on this paint')
+  t.mock.timers.tick(100)
+  view.render(state, NO_DISCLOSURE, activity)
+  assert.equal(label(), '读取 a.ts', 'resuming must not keep the approval label for 650ms')
+
+  view.render(state, NO_DISCLOSURE, { ...activity, asking: '选一个' })
+  assert.equal(label(), '正在提问 · 选一个')
+  view.render(state, NO_DISCLOSURE, activity)
+  assert.equal(label(), '读取 a.ts', 'a question also releases its label on the resume paint')
+  assert.equal(head().node, row)
+  assert.deepEqual(statusMain(head()).children.map((part) => part.node), pieces, 'round trips keep mark, clock and label carriers')
+
+  view.render(transcript([{ ...tool, tool: { ...tool.tool!, useSummary: 'b.ts' } }]), NO_DISCLOSURE, activity)
+  assert.equal(label(), '读取 a.ts', 'ordinary working handoffs still use the label gate')
+  t.mock.timers.tick(700)
+  assert.equal(label(), '读取 b.ts')
 })
 
 test('M18 keeps the mark and clock mounted across tool handoffs and unchanged paints', (t) => {
@@ -2136,18 +2490,19 @@ test('M18 keeps the mark and clock mounted across tool handoffs and unchanged pa
       toolName: toolName ?? 'Read', pending: toolName !== undefined,
       tool: { displayName: toolName ?? 'Read', useSummary: 'a.ts' } }
     view.render(transcript([item]), NO_DISCLOSURE, activity)
-    const row = runOf(view).children[0]!
-    assert.deepEqual(row.classes, ['run-line', 'live'])
-    pieces ??= row.children
-    for (const index of [0, 1, 2]) assert.equal(row.children[index]!.node, pieces[index]!.node)
+    const row = view.items().at(-1)!
+    assert.deepEqual(row.classes, ['waiting'])
+    pieces ??= statusMain(row).children
+    for (const index of [0, 1, 2]) assert.equal(statusMain(row).children[index]!.node, pieces[index]!.node)
     assert.deepEqual(statusText(row).meta.slice(0, 1), ['6 秒'])
   }
   assert.equal(starts.starts, 0, 'label updates never detach or restart the mark')
 })
 
-test('one working mark moves between the status line and the live run, and ends with the turn', (t) => {
+test('one working mark stays at the tail through tools, thinking and text, and ends with the turn', (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1_700_000_000_000 })
   const view = mount(t)
-  const markIn = (carrier: StubView | undefined) => carrier?.children.find((child) => child.classes.includes('line-mark'))?.children[0]
+  const markIn = (carrier: StubView | undefined) => carrier && statusMain(carrier)?.children.find((child) => child.classes.includes('line-mark'))?.children[0]
   const marks = (): number => {
     const count = (node: StubView): number => (node.classes.includes('mark') ? 1 : 0) + node.children.reduce((n, child) => n + count(child), 0)
     return view.items().reduce((n, item) => n + count(item), 0)
@@ -2161,18 +2516,37 @@ test('one working mark moves between the status line and the live run, and ends 
   assert.ok(mark && mark.classes.includes('mark'), 'the status line carries it')
   assert.equal(mark.attributes.get('aria-hidden'), 'true')
 
+  const status = view.items().at(-1)!
+  const pieces = statusMain(status).children
   view.render(transcript([user, tool]), NO_DISCLOSURE, RUNNING_T1)
-  assert.equal(marks(), 1, 'the status line is gone, and its mark with it')
-  assert.equal(markIn(runOf(view).children[0])?.node, mark.node, 'the run head carries the same mark')
+  assert.equal(marks(), 1)
+  assert.equal(view.items().at(-1)!.node, status.node)
+  assert.equal(markIn(view.items().at(-1))?.node, mark.node)
+  assert.equal(markIn(runOf(view).children[0]), undefined, 'tool rows do not carry the status mark')
 
-  // A draft arriving brings the line back, with the same mark.
+  const thought: TranscriptItem = { id: 'th', kind: 'thinking', text: '再想想', turnId: 't1', pending: true }
+  view.render(transcript([user, { ...tool, pending: false }, thought]), NO_DISCLOSURE, RUNNING_T1)
+  t.mock.timers.tick(700)
+  assert.deepEqual(view.items().at(-1)!.classes, ['waiting'])
+  assert.equal(statusText(view.items().at(-1)!).label, '正在思考')
+  for (const index of [0, 1, 2]) assert.equal(statusMain(view.items().at(-1)!).children[index]!.node, pieces[index]!.node)
+
+  // A draft arriving keeps the same line and mark.
   const draft: TranscriptItem = { id: '__draft__', kind: 'assistant', text: '好', pending: true }
   view.render(transcript([user, { ...tool, pending: undefined }, draft]), NO_DISCLOSURE, RUNNING_T1)
   assert.equal(marks(), 1)
   assert.equal(markIn(view.items().at(-1))?.node, mark.node)
+  assert.equal(view.items().at(-1)!.node, status.node)
+  for (const index of [0, 1, 2]) assert.equal(statusMain(view.items().at(-1)!).children[index]!.node, pieces[index]!.node)
 
   view.render(transcript([user, { ...tool, pending: undefined }]), NO_DISCLOSURE, { isStreaming: false, turnId: undefined, startedAt: undefined })
-  assert.equal(marks(), 0, 'an idle session shows none')
+  assert.equal(marks(), 1, 'the ended mark remains in the lingering completion line')
+  assert.equal(statusText(view.items().at(-1)!).label, '已完成')
+
+  view.render(transcript([{ ...user, id: 'u2', turnId: 't2' }]), NO_DISCLOSURE, { ...RUNNING_T1, turnId: 't2' })
+  assert.equal(view.items().at(-1)!.node, status.node, 'a new turn immediately reuses the lingering line')
+  assert.equal(view.items().at(-1)!.hidden, false)
+  assert.equal(statusText(view.items().at(-1)!).label, '处理中', 'an unstamped clock does not hold the previous completion label')
 })
 
 test('the status line keeps its node while it waits, and the answer starting does not remove it', (t) => {
@@ -2225,8 +2599,7 @@ test('the status words change only after the gate lets them, on the clock', asyn
   paint([user])
   assert.equal(statusText(items().at(-1)!).label, '处理中')
   paint([user, tool])
-  // The run's line now carries the words, and the gate carries over to it.
-  const head = (): StubView => items().at(-1)!.children[0]!
+  const head = (): StubView => items().at(-1)!
   assert.equal(statusText(head()).label, '处理中', 'a new label is held back at first')
   await new Promise((resolve) => setTimeout(resolve, 800))
   assert.equal(statusText(head()).label, '读取 a.ts', 'and lands on the clock, with no further paint')
@@ -2234,7 +2607,7 @@ test('the status words change only after the gate lets them, on the clock', asyn
 
 for (const startedAt of [1_700_000_000_000, undefined]) {
   test(`status descriptions bridge short tools and gaps on the clock, startedAt=${startedAt}`, (t) => {
-    t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: 1_700_000_000_000 })
+    t.mock.timers.enable({ apis: ['Date', 'setInterval', 'setTimeout'], now: 1_700_000_000_000 })
     const view = mount(t)
     const user: TranscriptItem = { id: 'u1', kind: 'user', text: 'go', turnId: 't1' }
     const a: TranscriptItem = { id: 'a', kind: 'tool', text: '', toolName: 'Read', turnId: 't1', pending: true,
@@ -2243,10 +2616,10 @@ for (const startedAt of [1_700_000_000_000, undefined]) {
     const done = (item: TranscriptItem): TranscriptItem => ({ ...item, pending: false })
     const paint = (items: TranscriptItem[]): void => view.render(transcript([user, ...items], { turnId: 't1' }), NO_DISCLOSURE,
       { isStreaming: true, turnId: 't1', startedAt, outputTokens: 1_234 })
-    const label = (): string => statusText(runOf(view).children[0]!).label
+    const label = (): string => statusText(view.items().at(-1)!).label
 
     paint([a])
-    const head = runOf(view).children[0]!.node
+    const head = view.items().at(-1)!.node
     t.mock.timers.tick(200)
     paint([done(a)])
     assert.equal(label(), '读取 a.ts', 'execution finishes without clearing the description')
@@ -2256,24 +2629,36 @@ for (const startedAt of [1_700_000_000_000, undefined]) {
     assert.equal(label(), '读取 a.ts')
     t.mock.timers.tick(100)
     assert.equal(label(), '读取 b.ts', 'the next tool takes over on the first clock tick past 650ms without a processing flash')
-    assert.equal(runOf(view).children[0]!.node, head)
+    assert.equal(view.items().at(-1)!.node, head)
 
     t.mock.timers.tick(2_000)
     paint([done(a), done(b)])
-    t.mock.timers.tick(600)
-    assert.equal(label(), '读取 b.ts', 'even a long tool buffers its following gap')
     t.mock.timers.tick(100)
-    assert.equal(label(), '处理中', 'the clock settles a 650ms gap without another render')
-    assert.deepEqual(statusText(runOf(view).children[0]!).meta, startedAt === undefined ? [] : ['3 秒', '·', '1.2k token'])
+    assert.equal(label(), '读取 b.ts', 'a long tool buffers the gap for 150ms')
+    t.mock.timers.tick(100)
+    assert.equal(label(), '处理中', 'the first clock tick past the debounce settles the gap')
+    assert.deepEqual(statusText(view.items().at(-1)!).meta, startedAt === undefined ? [] : ['2 秒', '·', '1.2k token'])
 
     paint([done(a), b])
-    t.mock.timers.tick(200)
-    assert.equal(label(), '读取 b.ts', 'processing does not impose a minimum stay')
+    t.mock.timers.tick(600)
+    assert.equal(label(), '处理中', 'processing also has a 650ms minimum stay')
+    t.mock.timers.tick(100)
+    assert.equal(label(), '读取 b.ts')
     paint([done(a), done(b), { id: 'reply', kind: 'assistant', text: '好了', turnId: 't1', pending: true }])
-    assert.equal(statusText(view.items().at(-1)!).label, '正在输出', 'output interrupts the description immediately')
-    view.render(transcript([user, done(a), done(b)]), NO_DISCLOSURE, IDLE_ACTIVITY)
-    t.mock.timers.tick(2_000)
-    assert.equal(view.items().some((item) => item.classes.includes('waiting')), false, 'ending the turn clears pending labels')
+    assert.equal(label(), '读取 b.ts', 'output follows the same rhythm')
+    t.mock.timers.tick(700)
+    assert.equal(label(), '正在输出')
+    const ended = transcript([user, done(a), done(b)])
+    view.render(ended, NO_DISCLOSURE, IDLE_ACTIVITY)
+    assert.equal(view.items().at(-1)!.node, head, 'completion reuses the line')
+    assert.equal(label(), '已完成', 'completion clears pending labels immediately')
+    t.mock.timers.tick(1_000)
+    assert.deepEqual(statusText(view.items().at(-1)!).meta, startedAt === undefined ? [] : ['5 秒', '·', '1.2k token'], 'the clock continues during linger')
+    view.render(ended, NO_DISCLOSURE, IDLE_ACTIVITY)
+    t.mock.timers.tick(1_000)
+    assert.equal(view.stub.inspect(head).hidden, true, 'unchanged paints do not extend the two-second linger; no animate hides immediately')
+    view.render(ended, NO_DISCLOSURE, IDLE_ACTIVITY)
+    assert.equal(view.items().some((item) => item.classes.includes('waiting')), false, 'the next paint prunes the hidden line')
     assert.equal(runOf(view).children[0]!.classes.includes('live'), false)
   })
 }
@@ -2295,12 +2680,12 @@ test('a kept thought row reports the disclosure it is showing, both ways', (t) =
 
   paint()
   view.stub.click(head().node)
-  assert.deepEqual(view.toggled, [['th1', false]], 'folded, so the click asks to open')
+  assert.deepEqual(view.toggled, [['th1', true]], 'open by default, so the click asks to close')
 
-  disclosure.set('th1', true)
+  disclosure.set('th1', false)
   paint()
   view.stub.click(head().node)
-  assert.deepEqual(view.toggled, [['th1', false], ['th1', true]], 'open, so the same node asks to close')
+  assert.deepEqual(view.toggled, [['th1', true], ['th1', false]], 'folded, so the same node asks to open')
 })
 
 // --- the newest question's place on screen ------------------------------------
@@ -2935,47 +3320,158 @@ test('a turn with no answer hangs its footer under its last entry; side views dr
   assert.deepEqual(items().map((item) => item.classes.join(' ')), ['item user', 'item error failed'])
 })
 
+test('the status opens the current tool group without collapsing it, and ignores old or static work', (t) => {
+  const view = mount(t)
+  const main = () => statusMain(view.items().at(-1)!)
+  view.render(transcript(pairItems({ pending: true })), NO_DISCLOSURE, RUNNING_T1)
+  const button = main().node
+  assert.equal(main().disabled, false)
+  assert.equal(main().attributes.get('aria-label'), '查看运行工具组')
+  view.stub.click(button)
+  assert.deepEqual(view.toggled, [['run:call-1', false]])
+  assert.equal(view.stub.activeElement(), runOf(view).children[0]!.node)
+
+  view.render(transcript(pairItems({ pending: true })), new Map([['run:call-1', true]]), RUNNING_T1)
+  view.stub.click(button)
+  assert.equal(view.toggled.length, 1, 'an already open group is only located, never collapsed')
+
+  const single: TranscriptItem = { id: 'single', kind: 'tool', text: 'output', turnId: 't1', pending: true,
+    toolName: 'Read', tool: { displayName: 'Read', useSummary: 'a.ts', content: 'output' } }
+  view.render(transcript([single]), NO_DISCLOSURE, RUNNING_T1)
+  assert.equal(main().node, button, 'changing the target preserves the status button')
+  view.stub.click(button)
+  assert.deepEqual(view.toggled.at(-1), ['single', false], 'one tool opens its own output')
+
+  view.render(transcript([single]), NO_DISCLOSURE, { ...RUNNING_T1, turnId: 't2' })
+  assert.equal(main().disabled, true, 'the previous turn is not a click target')
+  view.stub.click(button)
+  assert.equal(view.toggled.length, 2, 'a kept listener no longer opens stale work')
+  view.render(transcript([{ ...single, text: '', tool: { displayName: 'Read', useSummary: '' } }]), NO_DISCLOSURE, RUNNING_T1)
+  assert.equal(main().disabled, true, 'a bodyless row has no disclosure to open')
+})
+
+test('status request actions outrank tools and tasks, while the sibling task button stays independent', (t) => {
+  const view = mount(t)
+  const state = transcript(pairItems({ pending: true }))
+  const activity = { ...RUNNING_T1, backgroundTasks: 2 }
+  const main = () => statusMain(view.items().at(-1)!)
+  view.render(state, NO_DISCLOSURE, { ...activity, awaitingApproval: true })
+  const button = main().node
+  assert.equal(main().attributes.get('aria-label'), '查看待确认请求')
+  view.stub.click(button)
+  assert.deepEqual(view.focusedRequests, ['permission'])
+  assert.deepEqual(view.toggled, [])
+  view.stub.click(view.items().at(-1)!.children[1]!.node)
+  assert.equal(view.backgroundOpens(), 1)
+  assert.equal(view.focusedRequests.length, 1, 'task clicks never invoke the status action')
+
+  view.render(state, NO_DISCLOSURE, { ...activity, asking: '选一个', awaitingApproval: true })
+  view.stub.click(button)
+  assert.deepEqual(view.focusedRequests, ['permission', 'ask-user-question'], 'the kept button reads the current context')
+
+  view.render(transcript([{ id: 'u', kind: 'user', text: 'go' }]), NO_DISCLOSURE, activity)
+  assert.equal(main().attributes.get('aria-label'), '查看后台任务')
+  view.stub.click(button)
+  assert.equal(view.backgroundOpens(), 2)
+  view.render(state, NO_DISCLOSURE, { ...RUNNING_T1, phase: { kind: 'compacting' } })
+  assert.equal(main().disabled, true)
+  assert.equal(main().attributes.has('aria-label'), false)
+  view.render(state, NO_DISCLOSURE, IDLE_ACTIVITY)
+  assert.equal(main().disabled, true, 'completion linger has no action')
+})
+
+test('the approval jump uses the current request, restores follow and focuses after scrolling', (t) => {
+  const view = mount(t)
+  const state = transcript(pairItems({ pending: true }).slice(1))
+  const jumpNode = view.jump().node
+  view.render(state, NO_DISCLOSURE, RUNNING_T1)
+  scrolledUpBy(view.stub, view.container, 400)
+  view.stub.dispatch(view.container, 'scroll')
+  assert.equal(view.jump().classes.includes('is-working'), true)
+
+  view.render(state, NO_DISCLOSURE, { ...RUNNING_T1, awaitingApproval: true })
+  const request = () => view.jump().children.find((child) => child.classes.includes('jump-request'))!
+  assert.equal(view.jump().hidden, false)
+  assert.equal(view.jump().node, jumpNode)
+  assert.equal(view.jump().classes.includes('needs-input'), true)
+  assert.equal(view.jump().classes.includes('is-working'), false, 'the accent dot replaces the working mark')
+  assert.equal(request().hidden, false)
+  assert.equal(request().text, '需要你的确认')
+  assert.match(view.jump().attributes.get('aria-label')!, /聚焦请求卡/)
+
+  const scrollTo = view.container.scrollTo.bind(view.container)
+  const scroll = t.mock.method(view.container, 'scrollTo', (options: ScrollToOptions) => {
+    assert.equal(view.focusedRequests.length, 0, 'scroll precedes request focus')
+    scrollTo(options)
+  })
+  view.stub.click(jumpNode)
+  scroll.mock.restore()
+  assert.equal(view.container.scrollTop, 1000)
+  assert.deepEqual(view.focusedRequests, ['permission'])
+  assert.equal(view.jump().hidden, true)
+  view.stub.setMetrics(view.container, { scrollHeight: 1400 })
+  view.render(state, NO_DISCLOSURE, { ...RUNNING_T1, awaitingApproval: true })
+  assert.equal(view.container.scrollTop, 1400, 'approval clicks also restore following')
+
+  scrolledUpBy(view.stub, view.container, 400)
+  view.render(state, NO_DISCLOSURE, { ...RUNNING_T1, asking: '选一个', awaitingApproval: true })
+  view.stub.click(jumpNode)
+  assert.deepEqual(view.focusedRequests, ['permission', 'ask-user-question'])
+
+  scrolledUpBy(view.stub, view.container, 400)
+  view.render(state, NO_DISCLOSURE, RUNNING_T1)
+  assert.equal(request().hidden, true)
+  assert.equal(view.jump().classes.includes('needs-input'), false)
+  assert.equal(view.jump().classes.includes('is-working'), true)
+  assert.equal(view.jump().attributes.get('aria-label'), '回到最新')
+  view.stub.click(jumpNode)
+  assert.equal(view.focusedRequests.length, 2, 'settled requests are not focused again')
+})
+
 test('the background-task button ends the status line and opens the task list', (t) => {
   const view = mount(t)
   const state = transcript([{ id: 'u1', kind: 'user', text: 'go' }], { turnId: 't1' })
   view.render(state, NO_DISCLOSURE, { ...waiting(state, Date.now() - 5000), backgroundTasks: 2 })
 
   const row = view.items().at(-1)!
-  assert.deepEqual(row.children.map((child) => child.classes.join(' ')), ['line-mark', 'line-text', 'line-meta line-elapsed', 'line-tasks'])
-  const tasks = row.children[3]!
+  assert.deepEqual(row.children.map((child) => child.classes.join(' ')), ['waiting-main', 'line-tasks'])
+  assert.equal(row.tagName, 'DIV', 'the live region is outside both buttons')
+  assert.equal(row.children[0]!.tagName, 'BUTTON')
+  const tasks = row.children[1]!
   assert.equal(tasks.text, '2 个后台任务')
   assert.equal(tasks.attributes.get('aria-label'), '2 个后台任务，查看')
   view.stub.click(tasks.node)
   assert.equal(view.backgroundOpens(), 1)
 
   // A new count refills the button in place; the mark and counter stay mounted.
-  const pieces = row.children
+  const pieces = statusMain(row).children
   view.render(state, NO_DISCLOSURE, { ...waiting(state, Date.now() - 5000), backgroundTasks: 3 })
   const again = view.items().at(-1)!
-  assert.equal(again.children[3]!.text, '3 个后台任务')
-  assert.equal(again.children[3]!.node, tasks.node)
-  for (const index of [0, 1, 2]) assert.equal(again.children[index]!.node, pieces[index]!.node)
+  assert.equal(again.children[1]!.text, '3 个后台任务')
+  assert.equal(again.children[1]!.node, tasks.node)
+  for (const index of [0, 1, 2]) assert.equal(statusMain(again).children[index]!.node, pieces[index]!.node)
 
   // None left: the button goes, the rest of the line stays.
   view.render(state, NO_DISCLOSURE, waiting(state, Date.now() - 5000))
-  assert.equal(view.items().at(-1)!.children.length, 3)
+  assert.equal(view.items().at(-1)!.children.length, 1)
 })
 
-test('a live run carries the background-task button on its own line, not below it', (t) => {
+test('a running tool group leaves the background-task button at the transcript’s tail', (t) => {
   const view = mount(t)
   view.render(transcript(pairItems({ pending: true })), NO_DISCLOSURE, { ...RUNNING_T1, startedAt: Date.now() - 6_000, backgroundTasks: 1 })
 
-  assert.deepEqual(view.items().map((entry) => entry.classes[0]), ['item', 'run'], 'no idle status line of its own')
-  const row = runOf(view).children[0]!
-  assert.deepEqual(row.classes, ['run-head-row'])
-  assert.deepEqual(row.children.map((child) => child.classes[0]), ['run-line', 'line-tasks'])
+  assert.deepEqual(view.items().map((entry) => entry.classes[0]), ['item', 'run', 'waiting'])
+  assert.deepEqual(runOf(view).children[0]!.classes, ['run-line'])
+  const row = view.items().at(-1)!
+  assert.deepEqual(row.children.map((child) => child.classes[0]), ['waiting-main', 'line-tasks'])
   assert.equal(row.children[1]!.text, '1 个后台任务')
   view.stub.click(row.children[1]!.node)
   assert.equal(view.backgroundOpens(), 1)
 
-  // None left: the row goes, the line is the run's head again.
   view.render(transcript(pairItems({ pending: true })), NO_DISCLOSURE, { ...RUNNING_T1, startedAt: Date.now() - 6_000 })
-  assert.deepEqual(runOf(view).children[0]!.classes, ['run-line', 'live'])
+  assert.equal(view.items().at(-1)!.node, row.node)
+  assert.equal(view.items().at(-1)!.children.length, 1)
+  assert.deepEqual(runOf(view).children[0]!.classes, ['run-line'])
 })
 
 test('with tasks still running, an idle session keeps the button alone as its status line', (t) => {
@@ -3000,5 +3496,5 @@ test('a turn starting over an idle task button swaps it for the full status line
   view.render(state, NO_DISCLOSURE, { isStreaming: false, startedAt: undefined, turnId: undefined, backgroundTasks: 1 })
   const running = transcript([{ id: 'u1', kind: 'user', text: 'go' }], { turnId: 't1' })
   view.render(running, NO_DISCLOSURE, { ...waiting(running, Date.now() - 3000), backgroundTasks: 1 })
-  assert.deepEqual(view.items().at(-1)!.children.map((child) => child.classes[0]), ['line-mark', 'line-text', 'line-meta', 'line-tasks'])
+  assert.deepEqual(view.items().at(-1)!.children.map((child) => child.classes[0]), ['waiting-main', 'line-tasks'])
 })

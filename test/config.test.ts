@@ -1230,8 +1230,8 @@ test('the image-input switch is form-owned and survives saves and reference repa
     // A hand-written, form-less field is carried instead.
     assert.equal(carryJsonOnlyModelFields(
       { provider: 'anthropic', model: 'claude-v' },
-      { provider: 'anthropic', model: 'claude-v', allowEmptySignature: true },
-    ).allowEmptySignature, true)
+      { provider: 'anthropic', model: 'claude-v', promptCaching: 'on' },
+    ).promptCaching, 'on')
 
     // The form-shaped save — rebuilt with its own switch, JSON-only fields
     // carried — keeps the declaration and the unrelated edit together.
@@ -1356,8 +1356,8 @@ test('Anthropic payload replays signed thinking only to the model that wrote it'
   }
 })
 
-test('Anthropic payload turns signature-less thinking into text unless the endpoint opts in', () => {
-  const build = (block: { type: 'thinking'; thinking: string; signature: string }, allowEmptySignature?: boolean) => {
+test('Anthropic payload replays signature-less thinking with an empty signature', () => {
+  const build = (block: { type: 'thinking'; thinking: string; signature: string }) => {
     const request: ModelRequest = {
       cacheSource: 'agent:test',
       model: 'compatible-model',
@@ -1380,18 +1380,12 @@ test('Anthropic payload turns signature-less thinking into text unless the endpo
         },
       ],
     }
-    return buildAnthropicPayload(request, undefined, { allowEmptySignature, promptCaching: false }) as {
+    return buildAnthropicPayload(request, undefined, { promptCaching: false }) as {
       messages: Array<{ content: unknown }>
     }
   }
 
-  const converted = build({ type: 'thinking', thinking: 'plain reasoning', signature: '' })
-  assert.deepEqual(converted.messages[1]!.content, [
-    { type: 'text', text: 'plain reasoning' },
-    { type: 'text', text: 'answer' },
-  ])
-
-  const replayed = build({ type: 'thinking', thinking: 'plain reasoning', signature: '' }, true)
+  const replayed = build({ type: 'thinking', thinking: 'plain reasoning', signature: '' })
   assert.deepEqual(replayed.messages[1]!.content, [
     { type: 'thinking', thinking: 'plain reasoning', signature: '' },
     { type: 'text', text: 'answer' },

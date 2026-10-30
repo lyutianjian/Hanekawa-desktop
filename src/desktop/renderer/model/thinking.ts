@@ -6,25 +6,25 @@ import { isMemoryIndex, memoryOp, memorySlug } from './memoryOps.js'
  * What the transcript's activity lines say, and which of them are open — as pure
  * decisions.
  *
- * Disclosure is the user's alone: everything is folded by default (a failure and
- * an edit's diff included — the summary line says how many failed), and a click
- * records `expanded: true | false` as an absolute answer that nothing recomputes.
+ * Disclosure is the user's alone: thoughts start open; tools, failures and edit
+ * diffs start folded. A click records `expanded: true | false` as an absolute
+ * answer that nothing recomputes.
  *
  * DOM-free, like everything in `model/`.
  */
 
-/** While the thought's first sentence is still being written. */
+/** While a thought is still arriving. */
 export const THINKING_LIVE_LABEL = '思考'
-/** A sealed thought that said nothing; its elapsed time, when measured, sits beside it. */
+/** An empty sealed thought, or a folded thought with no measured duration. */
 export const THINKING_DONE_FALLBACK = '思考过程'
 
-/** What the user decided by hand, by run, step or user-message id. Absent = folded. */
+/** What the user decided by hand, by run, step or user-message id. */
 export type DisclosureState = ReadonlyMap<string, boolean>
 
 export const NO_DISCLOSURE: DisclosureState = new Map()
 
-export function isExpanded(state: DisclosureState, id: string): boolean {
-  return state.get(id) === true
+export function isExpanded(state: DisclosureState, id: string, defaultExpanded = false): boolean {
+  return state.get(id) ?? defaultExpanded
 }
 
 /**
@@ -91,13 +91,11 @@ export function thoughtLabel(text: string): string {
   return thoughtFirstSentence(text) || THINKING_DONE_FALLBACK
 }
 
-/**
- * The live line: the first sentence once a second one has begun, so the line
- * settles once rather than following the stream; 「思考」 until then.
- */
-export function thoughtLiveLabel(text: string): string {
-  const parts = sentences(text)
-  return parts.length > 1 ? parts[0]! : THINKING_LIVE_LABEL
+/** A folded thought names the process, not its hidden first sentence. */
+export function thoughtCollapsedLabel(durationMs?: number): string {
+  return durationMs === undefined
+    ? THINKING_DONE_FALLBACK
+    : `思考了 ${Math.max(1, Math.round(durationMs / 1000))} 秒`
 }
 
 // --- run summary -------------------------------------------------------------

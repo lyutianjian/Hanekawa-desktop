@@ -64,9 +64,12 @@ export function createTitleBarView(
     const next = event.relatedTarget
     // `null` is this view's own repaint destroying the focused node — the same
     // reasoning `sidebarView.ts` spells out. A real departure lands somewhere.
-    if (next === null) return
-    if (next instanceof Node && container.contains(next)) return
-    if (openMenu !== undefined) onOpenMenu(undefined)
+    if (next === null || openMenu === undefined) return
+    // Only the open menu's own items keep it alive. Tab to another menu's trigger
+    // (both live in this bar) used to leave the old menu standing.
+    const open = menus.find((entry) => entry.menu.id === openMenu)?.list
+    if (open !== undefined && next instanceof Node && open.contains(next)) return
+    onOpenMenu(undefined)
   })
 
   container.addEventListener('keydown', (event) => {

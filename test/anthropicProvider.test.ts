@@ -532,16 +532,15 @@ test('a resumed or forked same-name model replays thinking only through its orig
   assert.deepEqual(history.thinkingBlocks, [signed, redacted], 'changing the request never rewrites history')
 })
 
-test('a signature-less thinking block is replayed as text unless the model opts in', async () => {
+test('a signature-less thinking block is replayed with an empty signature', async () => {
   const unsigned = { type: 'thinking' as const, thinking: 'plain reasoning', signature: '' }
-  const create = (allowEmptySignature?: boolean) => {
+  const create = () => {
     const payloads: Record<string, unknown>[] = []
     const provider = new AnthropicProvider({
       provider: 'anthropic',
       model: 'compatible-model',
       apiKey: 'test-key',
       baseUrl: 'https://compatible.example',
-      ...(allowEmptySignature === undefined ? {} : { allowEmptySignature }),
     })
     ;(provider as unknown as { client: { messages: { stream: (payload: Record<string, unknown>) => FakeAnthropicStream } } }).client = {
       messages: { stream: (payload) => {
@@ -561,8 +560,8 @@ test('a signature-less thinking block is replayed as text unless the model opts 
     thinkingBlocks: response.thinkingBlocks, thinkingSource: response.thinkingSource,
   }))
 
-  const replay = async (allowEmptySignature?: boolean) => {
-    const { provider, payloads } = create(allowEmptySignature)
+  const replay = async () => {
+    const { provider, payloads } = create()
     await provider.createMessage(cacheRequest({
       model: 'compatible-model',
       messages: [history],
@@ -573,11 +572,7 @@ test('a signature-less thinking block is replayed as text unless the model opts 
       .flatMap((message) => message.content)
   }
 
-  const converted = await replay()
-  assert.ok(converted.some((block) => block.type === 'text' && block.text === 'plain reasoning'))
-  assert.equal(converted.some((block) => block.type === 'thinking'), false)
-
-  const kept = await replay(true)
+  const kept = await replay()
   assert.deepEqual(kept.find((block) => block.type === 'thinking'), unsigned)
 })
 

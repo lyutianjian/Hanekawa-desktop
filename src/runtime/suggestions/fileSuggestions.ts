@@ -1,8 +1,7 @@
 import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import Fuse, { type FuseResult } from 'fuse.js'
-import { CODE_TEXT_EXTENSIONS } from '../../harness/atMentions.js'
-import { gitIgnoredPaths } from '../../utils/gitIgnore.js'
+import { isTextFileName } from '../../harness/atMentions.js'
 import { assertInsideCwd } from '../../utils/paths.js'
 import { isProtectedPath } from '../../utils/permissions/protectedPaths.js'
 import { extractAtCompletionToken, type FileSuggestion } from './atToken.js'
@@ -30,6 +29,7 @@ interface FileSearchItem {
 
 const MAX_FILE_SUGGESTIONS = 15
 const IGNORED_DIR_NAMES = new Set(['.git', '.hanekawa', 'node_modules', 'build', 'coverage'])
+const IGNORED_FILE_NAMES = new Set(['.ds_store'])
 
 export async function generateFileSuggestions(
   input: string,
@@ -133,7 +133,8 @@ async function loadFileSearchItems(cwd: string, dirPrefix: string): Promise<File
       }
 
       if (!entry.isFile()) return []
-      if (!CODE_TEXT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) return []
+      if (IGNORED_FILE_NAMES.has(entry.name.toLowerCase())) return []
+      if (!isTextFileName(entry.name)) return []
       if (isProtectedPath(displayPath)) return []
       return [{
         path: displayPath,
@@ -142,19 +143,10 @@ async function loadFileSearchItems(cwd: string, dirPrefix: string): Promise<File
       }]
     })
 
-  const visibleEntries = await filterGitIgnored(cwd, directEntries)
-  return visibleEntries.sort((a, b) => {
+  return directEntries.sort((a, b) => {
     if (a.kind !== b.kind) return a.kind === 'directory' ? -1 : 1
     return a.path.localeCompare(b.path)
   })
-}
-
-async function filterGitIgnored(cwd: string, entries: FileSearchItem[]): Promise<FileSearchItem[]> {
-  if (entries.length === 0) return entries
-
-  const ignored = await gitIgnoredPaths(cwd, entries.map((entry) => entry.path))
-  if (ignored.size === 0) return entries
-  return entries.filter((entry) => !ignored.has(entry.path))
 }
 
 function normalizePath(filePath: string): string {

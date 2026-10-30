@@ -432,14 +432,20 @@ export function createSidebarView(
     // cancelled the confirmation in the same frame it appeared. A real departure
     // lands on some other element.
     if (next === null) return
-    if (next instanceof Node && container.contains(next)) return
-    onIntent({ kind: 'cancel-delete' })
-    // The heading's question and its context menu are scoped to sidebar focus
-    // for the same reason the row's confirmation is: neither may survive as a
-    // dialog drawn where nothing can answer it.
-    onIntent({ kind: 'cancel-remove-project' })
-    onIntent({ kind: 'open-project-menu', projectRoot: undefined })
-    if (helpOpen) onIntent({ kind: 'toggle-help' })
+    const inside = (selector: string): boolean =>
+      next instanceof Element && next.closest(selector) !== null
+    const leftSidebar = !(next instanceof Node && container.contains(next))
+    // The row's confirmation and the heading's question die when focus leaves the
+    // rail: neither may survive as a dialog drawn where nothing can answer it.
+    if (leftSidebar) {
+      onIntent({ kind: 'cancel-delete' })
+      onIntent({ kind: 'cancel-remove-project' })
+    }
+    // The two popovers are scoped to their own panel. Tab from the help panel or
+    // the project menu to another control in the rail is a departure; only a move
+    // between their own rows keeps them up.
+    if (asking.menu && !inside('.project-menu')) onIntent({ kind: 'open-project-menu', projectRoot: undefined })
+    if (asking.help && !inside('.sidebar-hint')) onIntent({ kind: 'toggle-help' })
   })
 
   const buildRow = (

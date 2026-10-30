@@ -21,6 +21,16 @@ export interface BackgroundTaskRow {
 
 export type BackgroundTaskGroups = Readonly<Record<TaskGroup, readonly BackgroundTaskRow[]>>
 
+export function backgroundTaskKey(row: BackgroundTaskRow): string {
+  return `${row.kind}:${row.id}`
+}
+
+/** Dismissal only affects settled rows; a running task always remains visible. */
+export function withoutClearedTasks(groups: BackgroundTaskGroups, cleared: ReadonlySet<string> | undefined): BackgroundTaskGroups {
+  if (cleared === undefined || cleared.size === 0) return groups
+  return { running: groups.running, finished: groups.finished.filter((row) => !cleared.has(backgroundTaskKey(row))) }
+}
+
 /** Both kinds share a list: active in start order, finished newest first. */
 export function backgroundTaskGroups(tasks: readonly BackgroundTaskSnapshot[], agents: readonly SubagentEntry[]): BackgroundTaskGroups {
   const rows: BackgroundTaskRow[] = commandRows(tasks).map((command) => ({

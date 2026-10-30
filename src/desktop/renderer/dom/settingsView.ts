@@ -111,13 +111,16 @@ export function createSettingsView(
     return true
   })
 
-  // Focus leaving the screen closes an open dropdown. `relatedTarget === null` is
-  // this view's own repaint — every render can fire one — and a target still
-  // inside the container is a move between the trigger and its items.
+  // Focus leaving the open dropdown closes it. `relatedTarget === null` is this
+  // view's own repaint — every render can fire one — and focus moving between the
+  // menu's own rows is not a departure. The screen is too wide a scope: Tab from
+  // a row lands on a nearby pill or field and the old menu used to stay standing.
   container.addEventListener('focusout', (event) => {
     const next = event.relatedTarget
     if (next === null) return
-    if (next instanceof Node && container.contains(next)) return
+    const openPill = Array.from(container.querySelectorAll('.settings-pill')).find((pill) => pill.classList.contains('open'))
+    const open = openPill?.parentElement?.querySelector('.settings-menu') ?? null
+    if (open !== null && next instanceof Node && open.contains(next)) return
     onIntent({ kind: 'close-menu' })
   })
 

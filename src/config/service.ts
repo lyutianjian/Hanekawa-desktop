@@ -60,13 +60,6 @@ export interface ModelConfig {
   maxOutputTokens?: number
   thinking?: ThinkingConfig
   /**
-   * Whether this endpoint emits thinking blocks without a signature and
-   * accepts them back as thinking. Absent means off: an unsigned block is
-   * replayed as ordinary assistant text instead of risking a strict endpoint's
-   * rejection. Hand-written in `config.json`; no settings form owns it.
-   */
-  allowEmptySignature?: boolean
-  /**
    * The effort levels this model accepts, or absent for "all of them".
    *
    * A set rather than a ceiling: a model can refuse a level in the middle of the
@@ -109,7 +102,6 @@ const JSON_ONLY_MODEL_FIELDS = [
   'baseUrl',
   'promptCaching',
   'promptCacheRetention',
-  'allowEmptySignature',
 ] as const satisfies readonly (keyof ModelConfig)[]
 
 /**

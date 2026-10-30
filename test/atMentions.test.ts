@@ -128,11 +128,10 @@ test('buildAtMentionContextRecord skips non-code, empty directories, protected p
   try {
     await mkdir(path.join(dir, 'src'))
     await writeFile(path.join(dir, 'src', 'blob.bin'), 'nope', 'utf8')
-    await writeFile(path.join(dir, '.env'), 'SECRET=1', 'utf8')
     await writeFile(path.join(outside, 'x.py'), 'print(1)', 'utf8')
 
     const record = await buildAtMentionContextRecord({
-      userInput: `@src @src/blob.bin @.env @${path.relative(dir, path.join(outside, 'x.py'))}`,
+      userInput: `@src @src/blob.bin @${path.relative(dir, path.join(outside, 'x.py'))}`,
       userMessageId: 'u1',
       turnId: 't1',
       toolContext: context(dir),
@@ -176,7 +175,7 @@ test('buildAtMentionContextRecord expands mentioned directories to code files', 
   }
 })
 
-test('buildAtMentionContextRecord skips gitignored directory files', async () => {
+test('buildAtMentionContextRecord attaches gitignored directory files', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-at-'))
   try {
     await execFile('git', ['init'], { cwd: dir })
@@ -193,9 +192,52 @@ test('buildAtMentionContextRecord skips gitignored directory files', async () =>
     })
 
     assert.ok(record)
-    assert.deepEqual(record.files.map((file) => file.displayPath), ['src/visible.py'])
+    assert.deepEqual(record.files.map((file) => file.displayPath), [
+      'src/ignored.py',
+      'src/visible.py',
+    ])
+    assert.match(record.content, /ignored/)
     assert.match(record.content, /visible/)
-    assert.doesNotMatch(record.content, /ignored/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('buildAtMentionContextRecord attaches dotfile and extensionless mentions', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-at-'))
+  try {
+    await writeFile(path.join(dir, '.env'), 'TOKEN=abc\n', 'utf8')
+    await writeFile(path.join(dir, 'Makefile'), 'all:\n', 'utf8')
+
+    const record = await buildAtMentionContextRecord({
+      userInput: '@.env @Makefile',
+      userMessageId: 'u1',
+      turnId: 't1',
+      toolContext: context(dir),
+    })
+
+    assert.ok(record)
+    assert.deepEqual(record.files.map((file) => file.displayPath), ['.env', 'Makefile'])
+    assert.match(record.content, /TOKEN=abc/)
+    assert.match(record.content, /all:/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('buildAtMentionContextRecord rejects binary content without an extension', async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-at-'))
+  try {
+    await writeFile(path.join(dir, 'blob'), Buffer.from([0, 1, 2, 3]))
+
+    const record = await buildAtMentionContextRecord({
+      userInput: '@blob',
+      userMessageId: 'u1',
+      turnId: 't1',
+      toolContext: context(dir),
+    })
+
+    assert.equal(record, undefined)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
@@ -392,7 +434,7 @@ test('collectAtMentionImages surfaces importer failures instead of degrading to 
   }
 })
 
-test('collectAtMentionImages skips gitignored images like code mentions do', async () => {
+test('collectAtMentionImages attaches gitignored images like any other mention', async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-at-'))
   try {
     await execFile('git', ['init'], { cwd: dir })
@@ -408,7 +450,7 @@ test('collectAtMentionImages skips gitignored images like code mentions do', asy
     })
 
     assert.deepEqual(result.errors, [])
-    assert.deepEqual(result.images.map((ref) => ref.name), ['visible.png'])
+    assert.deepEqual(result.images.map((ref) => ref.name), ['ignored.png', 'visible.png'])
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

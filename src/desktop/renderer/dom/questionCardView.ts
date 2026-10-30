@@ -25,6 +25,8 @@ import { focusByKey, heldFocusKey } from './focus.js'
  */
 export interface QuestionCardView {
   show(view: AskViewModel): void
+  /** Focus the options, or the expand control while the card is collapsed. */
+  focus(): void
 }
 
 export function createQuestionCardView(
@@ -116,6 +118,9 @@ export function createQuestionCardView(
   }
 
   return {
+    focus() {
+      focusByKey(container, card?.classList.contains('collapsed') ? 'collapse' : OPTIONS_FOCUS_KEY)
+    },
     show(view) {
       const key = JSON.stringify({ ...view, otherText: '', canSubmit: false })
       otherIndex = view.rows.length - 1

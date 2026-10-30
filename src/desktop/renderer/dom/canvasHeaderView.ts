@@ -155,8 +155,10 @@ export function createCanvasHeaderView(
     // then wrote its own menu-bearing subtree over the closed one. The menu
     // stayed on screen with the flag already false, so every later dismissal hit
     // `closeHeaderMenu`'s early return and only choosing an item could close it.
-    if (next === null) return
-    if (next instanceof Node && container.contains(next)) return
+    if (next === null || !menuWasOpen) return
+    // Only the open menu is inside; focus moving to another header control —
+    // including the trigger — is a Tab departure and closes it.
+    if (next instanceof Node && menu.contains(next)) return
     actions.onCloseMenu()
   })
   container.addEventListener('keydown', (event) => {

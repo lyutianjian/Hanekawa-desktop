@@ -31,6 +31,8 @@ const MOTION_TOKENS = {
   "--motion-press": "0ms",
   "--motion-release": "300ms",
   "--motion-micro": "60ms",
+  "--motion-reveal": "120ms",
+  "--motion-task-chevron": "120ms",
   "--motion-popover-in": "200ms",
   "--motion-popover-out": "120ms",
   "--motion-disclosure": "200ms",
@@ -171,6 +173,7 @@ test('the stylesheet parses exactly, so nothing below can pass vacuously', () =>
     atRules.map((match) => match[0].replace(/\s+/g, ' ').trim()),
     [
       '@container composer-bar (inline-size < 320px) {',
+      '@media (hover: none), (pointer: coarse) {',
       '@media (prefers-reduced-motion: reduce) {',
     ],
     'a conditional rule belongs in this list',
@@ -384,9 +387,11 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-5': '24px',
       '--space-6': '32px',
       '--space-7': '48px',
-      '--radius-lg': '20px',
-      '--radius-md': '12px',
-      '--radius-sm': '8px',
+      '--radius-lg': '14px',
+      '--radius-panel': '12px',
+      '--radius-md': '10px',
+      '--radius-row': '8px',
+      '--radius-sm': '6px',
       '--radius-xs': '4px',
       '--radius-mark': '2px',
       '--radius-pill': '9999px',
@@ -547,9 +552,11 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-5': '24px',
       '--space-6': '32px',
       '--space-7': '48px',
-      '--radius-lg': '20px',
-      '--radius-md': '12px',
-      '--radius-sm': '8px',
+      '--radius-lg': '14px',
+      '--radius-panel': '12px',
+      '--radius-md': '10px',
+      '--radius-row': '8px',
+      '--radius-sm': '6px',
       '--radius-xs': '4px',
       '--radius-mark': '2px',
       '--radius-pill': '9999px',
@@ -688,7 +695,9 @@ test('the light block overrides only colours, and adds no token the dark palette
     '--space-6',
     '--space-7',
     '--radius-lg',
+    '--radius-panel',
     '--radius-md',
+    '--radius-row',
     '--radius-sm',
     '--radius-xs',
     '--radius-mark',
@@ -901,6 +910,8 @@ test('accents are for icons and state rules, never for fills', () => {
     { selector: '.settings-toggle.on', prop: 'background' },
     { selector: '#submit', prop: 'background' },
     { selector: '.ask-chip', prop: 'background' },
+    // A 6px pending-input indicator, not the jump button's surface (T19).
+    { selector: '.jump-request-dot', prop: 'background' },
     { selector: '#composer-request.tone-danger .dialog-btn.primary', prop: 'background' },
     // The usage card's data marks: heatmap cells and share bars are the chart.
     { selector: '.usage-heat.level-1', prop: 'background' },
@@ -1272,7 +1283,7 @@ test('line heights are a leading token or a box height', () => {
     '.plan-panel-body': 'dense',
     '#rewind-panel': 'dense',
     '.md .md-code': 'dense',
-    '.command-output': 'dense',
+    '.step-terminal': 'dense',
   }
   for (const [selector, leading] of Object.entries(WRAPS)) {
     assert.ok(
@@ -1483,8 +1494,8 @@ test('the session on screen is painted, and the four row states stack in order',
     return index
   }
   assert.ok(
-    declares(blockFor('.session-row.selected'), 'background', 'var(--surface-hover)'),
-    'the keyboard cursor keeps its hover fill and hairline',
+    declares(blockFor('.session-row.selected'), 'background', 'var(--surface-active)'),
+    'the keyboard cursor keeps its selected fill and hairline',
   )
   assert.ok(
     order('.session-row:hover') < order('.session-row.selected'),
@@ -1966,6 +1977,20 @@ test('activity lines carry one running mark, which moves and stays readable', ()
   assert.ok(declares(carrier, 'flex', 'none'))
   assert.ok(declares(carrier, 'width', 'var(--mark-size)'))
   assert.ok(declares(carrier, 'height', 'var(--mark-size)'))
+  const waiting = blocks.find((block) => block.selector === '.waiting' && declares(block, 'min-height', '24px'))
+  assert.ok(waiting)
+  assert.ok(declares(waiting, 'line-height', '24px'))
+  assert.ok(declares(blockFor('.waiting .line-meta'), 'gap', '6px'))
+  const separator = blockFor('.waiting .line-elapsed:not(:empty)::after')
+  assert.ok(declares(separator, 'content', "'·'"))
+  assert.ok(declares(separator, 'color', 'var(--text-tertiary)'))
+  assert.ok(declares(blockFor('.line-elapsed:empty'), 'display', 'none'))
+  assert.ok(!blocks.some((block) => /\.waiting\.thinking|\.run-line\.live|\.run-head-row/.test(block.selector)))
+  assert.ok(!blocks.some((block) => block.selector.includes('.thinking')
+    && block.decls.some((decl) => decl.prop === 'animation' && /\bsheen\b/.test(decl.value))), 'thinking text does not shimmer')
+  assert.ok(declares(blockFor('.transcript .item.compaction.pending .line-text'), 'animation', 'sheen var(--motion-running) linear infinite'))
+  assert.ok(declares(blockFor('.thinking-body.live'), 'white-space', 'pre-wrap'))
+  assert.ok(declares(blockFor('.thinking-body'), 'overflow-wrap', 'anywhere'))
   assert.ok(declares(blockFor('.mark-layer'), 'overflow', 'clip'))
   assert.ok(declares(blockFor('.mark-layer.is-warm'), 'opacity', '0.001'), 'warm layers stay composited, so not 0')
   const strip = blockFor('.mark-strip')
@@ -1992,25 +2017,22 @@ test('activity lines carry one running mark, which moves and stays readable', ()
   }
 })
 
-test("the shell family's command bubble is card-shelled and its output reddens whole on failure", () => {
-  // §6.2/T14: a Bash step opens into the command in a bubble on the same
-  // card-and-hairline content shell a fenced block or a diff gets, and the
-  // output bare beneath it, scrolling inside itself so a long log never turns
-  // the group into a scroll window. Failure turns the whole output to the
-  // danger colour, and the error code above it is danger on its own, because
-  // the only step that shows one is a failed step.
-  const bubble = blockFor('.step-command')
+test("the shell family's command is bare and its output reddens whole on failure", () => {
+  // UI polish T12: the command and copy button sit directly on the tool body,
+  // without another card. Output still scrolls inside itself and reddens whole
+  // on failure; the error code above it keeps its own danger colour.
+  const command = blockFor('.step-command')
   assert.ok(
-    declares(bubble, 'background', 'var(--surface-card)'),
-    'the command bubble sits on the card surface (§6.2)',
+    declares(command, 'background', 'transparent'),
+    'the command has no nested surface',
   )
   assert.ok(
-    declares(bubble, 'border', '1px solid var(--border-subtle)'),
-    'the command bubble carries the content hairline',
+    declares(command, 'border', '0'),
+    'the command has no inner border',
   )
   assert.ok(
-    declares(bubble, 'border-radius', 'var(--radius-md)'),
-    'the command bubble joins the fenced block and the diff on their radius rung, not a third one',
+    declares(command, 'border-radius', '0'),
+    'the bare command has no card corners',
   )
   const terminal = blockFor('.step-terminal')
   assert.ok(
@@ -2116,8 +2138,8 @@ test('depth is two steps: menus float, modals sit deeper, and the composer joins
   for (const selector of ['#rewind-panel']) {
     const panel = blockFor(selector)
     assert.ok(
-      declares(panel, 'border-radius', 'var(--radius-lg)'),
-      `${selector} is a modal panel, not a menu: it takes --radius-lg`,
+      declares(panel, 'border-radius', 'var(--radius-panel)'),
+      `${selector} is a modal panel, not a menu: it takes --radius-panel`,
     )
     assert.ok(
       declares(panel, 'box-shadow', 'var(--shadow-modal)'),
@@ -2602,10 +2624,10 @@ test('every corner comes from the shape ladder', () => {
   // Seventeen literals had grown between the rungs: 2, 3, 4, 5, 6, 13 and 999px.
   // Each one now names what it rounds — a key cap or badge is xs, a swatch or a
   // word highlight is mark, a capsule is pill. Only the geometric keywords stay
-  // literal: 50% is a circle, 0 is square, `inherit` follows the parent.
+  // literal: 50% is a circle, 0 is square.
   for (const { selector, prop, value } of declarations) {
     if (!prop.endsWith('radius') || TOKEN_SELECTORS.has(selector)) continue
-    if (['50%', '0', 'inherit'].includes(value)) continue
+    if (['50%', '0'].includes(value)) continue
     assert.match(value, /var\(--radius-[a-z]+\)/, `${selector} { ${prop}: ${value} } must use a --radius- rung`)
     assert.doesNotMatch(value.replace(/var\([^)]*\)/g, ''), /\d{2,}px|[3-9]px/, `${selector} mixes a literal into its radius`)
   }
@@ -2692,7 +2714,7 @@ test('every menu is one card and every menu row one height', () => {
     const row = blockFor(selector)
     assert.ok(declares(row, 'padding', 'var(--menu-row-padding)'), `${selector} takes the shared row padding`)
     assert.ok(declares(row, 'font-size', 'var(--type-ui)'), `${selector} is set at the UI size`)
-    assert.ok(declares(row, 'border-radius', 'var(--radius-sm)'), `${selector} rounds as a row inside a card`)
+    assert.ok(declares(row, 'border-radius', 'var(--radius-row)'), `${selector} rounds as a row inside a card`)
     assert.ok(declares(row, 'color', 'var(--text-primary)'), `${selector} rests on primary text, like a native menu`)
   }
 })
@@ -2718,6 +2740,14 @@ test('buttons answer the pointer and the keyboard, and there is one primary', ()
     blocks.some((block) => block.selector.includes('.session-actions:focus-within') && declares(block, 'opacity', '1')),
     'a focused session action is shown',
   )
+  const reveal = blocks.find((block) => block.at === undefined && block.selector.includes('.attachment-remove')
+    && block.decls.some((decl) => decl.prop === 'transition' && decl.value.includes('opacity var(--motion-reveal)')))
+  assert.ok(reveal, 'operation reveals use the 120ms token')
+  assert.ok(reveal.selector.includes('.step-output-more') && reveal.selector.includes('.transcript .item .item-meta'))
+  const touch = blocks.find((block) => block.at === '@media (hover: none), (pointer: coarse) {'
+    && block.selector.includes('.attachment-remove'))
+  assert.ok(touch && declares(touch, 'opacity', '1'), 'touch keeps operations visible without changing their layout')
+  assert.ok(touch.selector.includes('.bt-stop') && touch.selector.includes('.session-actions'))
   // Four retry/back buttons reset `font` and never set a size, so they were the
   // inherited UI size beside their meta-sized neighbours.
   for (const selector of ['.usage-retry', '.canvas-back-coordinator', '.thread-detail-retry, .load-retry', '.startup-failure-retry']) {
