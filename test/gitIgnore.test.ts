@@ -19,7 +19,7 @@ test('gitignore preserves Unicode, whitespace and embedded separators in filenam
 })
 
 test('outside a repository git exits before reading stdin, and the paths still come back unfiltered', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-gitignore-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-gitignore-'))
   try {
     // Far more than a pipe buffer, so the write is still pending when git exits.
     const paths = Array.from({ length: 20_000 }, (_, index) => `src/deep/path/file-${index}.ts`)

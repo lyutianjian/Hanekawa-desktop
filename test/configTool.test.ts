@@ -12,7 +12,7 @@ import { createModelConfigPort } from '../src/runtime/modelConfigPort.js'
 const previousHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
 let testHome: string | undefined
 beforeEach(async () => {
-  testHome = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-home-'))
+  testHome = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-home-'))
   process.env.HOME = testHome
   process.env.USERPROFILE = testHome
 })
@@ -40,7 +40,7 @@ test('Config tool is registered with correct properties', () => {
 // ── List action ────────────────────────────────────────────────────────────────
 
 test('Config list returns all supported settings', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     const result = await configTool.execute({ action: 'list' }, context(dir))
     assert.equal(result.ok, true)
@@ -57,7 +57,7 @@ test('Config list returns all supported settings', async () => {
 // ── Get action ─────────────────────────────────────────────────────────────────
 
 test('Config get returns current value for known key', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     // The isolated home's merged defaults remain readable.
     const result = await configTool.execute({ action: 'get', key: 'effortLevel' }, context(dir))
@@ -69,7 +69,7 @@ test('Config get returns current value for known key', async () => {
 })
 
 test('Config get requires key parameter', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     const result = await configTool.execute({ action: 'get' }, context(dir))
     assert.equal(result.ok, false)
@@ -80,7 +80,7 @@ test('Config get requires key parameter', async () => {
 })
 
 test('Config get rejects unknown key', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     const result = await configTool.execute({ action: 'get', key: 'nonexistent' }, context(dir))
     assert.equal(result.ok, false)
@@ -94,7 +94,7 @@ test('Config get rejects unknown key', async () => {
 // ── Set action ─────────────────────────────────────────────────────────────────
 
 test('Config set validates enum values', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     const result = await configTool.execute({ action: 'set', key: 'effortLevel', value: 'invalid' }, context(dir))
     assert.equal(result.ok, false)
@@ -106,7 +106,7 @@ test('Config set validates enum values', async () => {
 })
 
 test('Config set validates boolean type', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     const result = await configTool.execute({ action: 'set', key: 'autoCompact', value: 'notabool' }, context(dir))
     assert.equal(result.ok, false)
@@ -117,7 +117,7 @@ test('Config set validates boolean type', async () => {
 })
 
 test('Config set validates number range for autoCompactThreshold', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     const tooHigh = await configTool.execute({ action: 'set', key: 'autoCompactThreshold', value: 1.5 }, context(dir))
     assert.equal(tooHigh.ok, false)
@@ -132,7 +132,7 @@ test('Config set validates number range for autoCompactThreshold', async () => {
 })
 
 test('Config set requires value parameter', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     const result = await configTool.execute({ action: 'set', key: 'effortLevel' }, context(dir))
     assert.equal(result.ok, false)
@@ -143,7 +143,7 @@ test('Config set requires value parameter', async () => {
 })
 
 test('Config set requires key parameter', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     const result = await configTool.execute({ action: 'set', value: 'test' }, context(dir))
     assert.equal(result.ok, false)
@@ -154,7 +154,7 @@ test('Config set requires key parameter', async () => {
 })
 
 test('Config set rejects unknown key', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     const result = await configTool.execute({ action: 'set', key: 'nonexistent', value: 'test' }, context(dir))
     assert.equal(result.ok, false)
@@ -165,7 +165,7 @@ test('Config set rejects unknown key', async () => {
 })
 
 test('Config set with coerced number string succeeds', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     // autoCompactThreshold accepts numbers — string "0.8" should be coerced
     const result = await configTool.execute({ action: 'set', key: 'autoCompactThreshold', value: '0.8' }, context(dir))
@@ -179,8 +179,8 @@ test('Config set with coerced number string succeeds', async () => {
 // ── Atomic write safety ────────────────────────────────────────────────────────
 
 test('Config set writes atomically (tmp + rename)', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
-  const tmpHome = await mkdtemp(path.join(os.tmpdir(), 'myagent-home-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
+  const tmpHome = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-home-'))
   const origUserProfile = process.env.USERPROFILE
   const origHome = process.env.HOME
   try {
@@ -192,7 +192,7 @@ test('Config set writes atomically (tmp + rename)', async () => {
     assert.equal(setResult.ok, true)
 
     // Verify the file was created at the temp home
-    const settingsPath = path.join(tmpHome, '.myagent', 'settings.json')
+    const settingsPath = path.join(tmpHome, '.hanekawa', 'settings.json')
     const content = await readFile(settingsPath, 'utf-8')
     const parsed = JSON.parse(content)
     assert.equal(parsed.effortLevel, 'low')
@@ -205,8 +205,8 @@ test('Config set writes atomically (tmp + rename)', async () => {
 })
 
 test('Config set preserves existing settings in file', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
-  const tmpHome = await mkdtemp(path.join(os.tmpdir(), 'myagent-home-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
+  const tmpHome = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-home-'))
   const origUserProfile = process.env.USERPROFILE
   const origHome = process.env.HOME
   try {
@@ -214,9 +214,9 @@ test('Config set preserves existing settings in file', async () => {
     process.env.HOME = tmpHome
 
     // Pre-create settings file with existing values
-    await mkdir(path.join(tmpHome, '.myagent'), { recursive: true })
+    await mkdir(path.join(tmpHome, '.hanekawa'), { recursive: true })
     await writeFile(
-      path.join(tmpHome, '.myagent', 'settings.json'),
+      path.join(tmpHome, '.hanekawa', 'settings.json'),
       JSON.stringify({ defaultModel: 'my-model', effortLevel: 'high' }, null, 2),
       'utf-8',
     )
@@ -226,7 +226,7 @@ test('Config set preserves existing settings in file', async () => {
     assert.equal(setResult.ok, true)
 
     // Verify existing values are preserved
-    const settingsPath = path.join(tmpHome, '.myagent', 'settings.json')
+    const settingsPath = path.join(tmpHome, '.hanekawa', 'settings.json')
     const content = await readFile(settingsPath, 'utf-8')
     const parsed = JSON.parse(content)
     assert.equal(parsed.defaultModel, 'my-model')
@@ -241,8 +241,8 @@ test('Config set preserves existing settings in file', async () => {
 })
 
 test('Config never replaces corrupted user settings and reports a safe failure for each action', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
-  const file = path.join(testHome!, '.myagent', 'settings.json')
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
+  const file = path.join(testHome!, '.hanekawa', 'settings.json')
   const bytes = '{ "apiKey": "fake-secret-do-not-report", broken'
   try {
     await mkdir(path.dirname(file), { recursive: true })
@@ -262,7 +262,7 @@ test('Config never replaces corrupted user settings and reports a safe failure f
 // ── Unknown action ─────────────────────────────────────────────────────────────
 
 test('Config rejects unknown action', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-'))
   try {
     const result = await configTool.execute({ action: 'unknown' }, context(dir))
     assert.equal(result.ok, false)
@@ -280,9 +280,9 @@ test('Config rejects unknown action', async () => {
 // tool through the same port the runtime injects.
 
 async function withConfig(models: Record<string, { provider: string; model: string }>, run: (dir: string, config: ConfigService) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-models-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-models-'))
   try {
-    const configDir = path.join(testHome!, '.myagent')
+    const configDir = path.join(testHome!, '.hanekawa')
     await mkdir(configDir, { recursive: true })
     await writeFile(
       path.join(configDir, 'config.json'),
@@ -328,7 +328,7 @@ test('Config set writes the model reference to config.json, where it takes effec
 
     // Persisted, and effective without a restart: the port reads the same value
     // the runtime uses for `getFallbackModel()`.
-    const onDisk = JSON.parse(await readFile(path.join(testHome!, '.myagent', 'config.json'), 'utf-8'))
+    const onDisk = JSON.parse(await readFile(path.join(testHome!, '.hanekawa', 'config.json'), 'utf-8'))
     assert.equal(onDisk.fallbackModel, 'haiku')
     assert.equal(config.getFallbackModel()?.model, 'claude-haiku-4')
 
@@ -346,7 +346,7 @@ test('Config set refuses an unknown model instead of saving it', async () => {
     assert.match(result.content, /Unknown model "gpt-nope" for compactModel/)
     assert.match(result.content, /sonnet, haiku, opus/)
 
-    const onDisk = JSON.parse(await readFile(path.join(testHome!, '.myagent', 'config.json'), 'utf-8'))
+    const onDisk = JSON.parse(await readFile(path.join(testHome!, '.hanekawa', 'config.json'), 'utf-8'))
     assert.equal(onDisk.compactModel, undefined)
   })
 })
@@ -354,7 +354,7 @@ test('Config set refuses an unknown model instead of saving it', async () => {
 test('Config set reports a failed save and leaves the running config unchanged', async () => {
   await withConfig(MODELS, async (dir, config) => {
     // A directory where the config file should be: the atomic write cannot land.
-    const configPath = path.join(testHome!, '.myagent', 'config.json')
+    const configPath = path.join(testHome!, '.hanekawa', 'config.json')
     await rm(configPath, { force: true })
     await mkdir(configPath, { recursive: true })
 
@@ -375,14 +375,14 @@ test('Config list reports the model reference the config owns', async () => {
 })
 
 test('a context with no model configuration refuses the write instead of writing settings', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-config-models-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-config-models-'))
   try {
     const result = await configTool.execute({ action: 'set', key: 'defaultModel', value: 'anything' }, context(dir))
     assert.equal(result.ok, false, result.content)
     assert.equal(result.errorCode, 'precondition_failed')
     assert.match(result.content, /config\.json/)
     // Nothing was silently written to the settings layers.
-    const settingsPath = path.join(testHome!, '.myagent', 'settings.json')
+    const settingsPath = path.join(testHome!, '.hanekawa', 'settings.json')
     await assert.rejects(readFile(settingsPath, 'utf-8'))
   } finally {
     await rm(dir, { recursive: true, force: true })

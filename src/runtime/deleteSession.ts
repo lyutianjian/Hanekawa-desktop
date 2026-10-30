@@ -24,7 +24,7 @@ import { assertSafeSessionId, type SessionMeta } from '../sessions/service.js'
  * `services/`, so it is the only place the full list can be named.
  *
  * **Adding an artifact goes here.** If a feature starts writing
- * `.myagent/<something>/<sessionId>`, this function is what makes it removable.
+ * `.hanekawa/<something>/<sessionId>`, this function is what makes it removable.
  */
 
 /** The slice of `SessionStore` this needs. Structural so a test fakes it without casting. */
@@ -54,7 +54,7 @@ export async function deleteSessionArtifacts(
   assertSafeSessionId(sessionId)
   await store.delete(sessionId)
   // Unlike every other artifact here, the file history lives under the global
-  // `~/.myagent`, not the project — deleting the project would not take it.
+  // `~/.hanekawa`, not the project — deleting the project would not take it.
   await removeFileHistory(sessionId)
   await removeSubagentTranscripts(cwd, sessionId)
   await rm(getToolResultSpillDir(cwd, sessionId), { recursive: true, force: true })

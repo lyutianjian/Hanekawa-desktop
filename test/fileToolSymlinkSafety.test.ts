@@ -10,7 +10,7 @@ import { editFileTool } from '../src/tools/FileEditTool/FileEditTool.js'
 import { deleteFileTool } from '../src/tools/FileDeleteTool/FileDeleteTool.js'
 import { classifyToolCall } from '../src/harness/risk/index.js'
 import { createRiskContext } from '../src/harness/risk/paths.js'
-import { getGlobalMyAgentDir } from '../src/utils/paths.js'
+import { getGlobalHanekawaDir } from '../src/utils/paths.js'
 import { assertTargetUnchanged, resolveSafeTarget } from '../src/tools/pathSafety.js'
 
 function context(cwd: string, onTrack?: (filePath: string) => Promise<void>) {
@@ -117,7 +117,7 @@ test('a link out of the workspace is still judged by where it lands', async (t) 
 
 test('a link into Hanekawa runtime data follows the normal file-write path', async (t) => {
   const root = await scratch(t)
-  const runtime = path.join(getGlobalMyAgentDir(), 'projects', 'nope')
+  const runtime = path.join(getGlobalHanekawaDir(), 'projects', 'nope')
   await mkdir(runtime, { recursive: true })
   await symlink(runtime, path.join(root, 'escape'))
 

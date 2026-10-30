@@ -108,7 +108,7 @@ interface SwitchHarness {
 }
 
 async function createSwitchHarness(): Promise<SwitchHarness> {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-switch-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-switch-'))
   const store = new SessionStore(cwd)
   await store.init()
 

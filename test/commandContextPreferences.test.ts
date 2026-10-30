@@ -10,11 +10,11 @@ import {
 } from '../src/runtime/protocol/commandContext.js'
 import type { CommandContext, SetModelResult } from '../src/commands/types.js'
 import type { ConfigService } from '../src/config/service.js'
-import type { MyAgentSettings } from '../src/config/settings.js'
+import type { HanekawaSettings } from '../src/config/settings.js'
 import type { SessionMeta } from '../src/sessions/service.js'
 import type { ProjectRuntime, SessionScope } from '../src/runtime/types.js'
 import type { RuntimeSlot } from '../src/runtime/runtimeSlot.js'
-import { getGlobalMyAgentDir } from '../src/utils/paths.js'
+import { getGlobalHanekawaDir } from '../src/utils/paths.js'
 
 /**
  * The two host commands whose pick is also a *preference*: `/model` and
@@ -30,16 +30,16 @@ import { getGlobalMyAgentDir } from '../src/utils/paths.js'
  */
 
 beforeEach(async () => {
-  const testHome = mkdtempSync(path.join(os.tmpdir(), 'myagent-home-'))
+  const testHome = mkdtempSync(path.join(os.tmpdir(), 'hanekawa-home-'))
   process.env.USERPROFILE = testHome
   process.env.HOME = testHome
-  await mkdir(path.join(testHome, '.myagent'), { recursive: true })
+  await mkdir(path.join(testHome, '.hanekawa'), { recursive: true })
 })
 
-const userSettingsFile = (): string => path.join(getGlobalMyAgentDir(), 'settings.json')
+const userSettingsFile = (): string => path.join(getGlobalHanekawaDir(), 'settings.json')
 
-async function readUserSettings(): Promise<MyAgentSettings> {
-  return JSON.parse(await readFile(userSettingsFile(), 'utf8')) as MyAgentSettings
+async function readUserSettings(): Promise<HanekawaSettings> {
+  return JSON.parse(await readFile(userSettingsFile(), 'utf8')) as HanekawaSettings
 }
 
 const normalSession = (): SessionMeta => ({ id: 'session-1' }) as SessionMeta

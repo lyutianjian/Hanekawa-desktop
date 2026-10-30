@@ -12,7 +12,7 @@ export interface PromptHistoryEntry {
 }
 
 export function getPromptHistoryPath(home = userHome()): string {
-  return path.join(home, '.myagent', 'history.jsonl')
+  return path.join(home, '.hanekawa', 'history.jsonl')
 }
 
 export async function loadPromptHistory(

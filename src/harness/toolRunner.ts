@@ -249,8 +249,8 @@ export class ToolRunner {
       await this.events.onProgress?.(event)
     } catch (error) {
       // Progress updates are UI-only; tool execution and persistence own truth.
-      if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
-        console.error('[myagent][toolRunner] emitProgress error:', error)
+      if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
+        console.error('[hanekawa][toolRunner] emitProgress error:', error)
       }
     }
   }

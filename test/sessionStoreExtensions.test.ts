@@ -17,13 +17,13 @@ import { parseJsonLines } from '../src/utils/json.js'
  * Each test uses an isolated temp directory created with `mkdtemp` so tests
  * never interfere with the surrounding project or with each other. The temp
  * directory is passed as the `cwd` to `SessionStore`, which writes session
- * data under `<cwd>/.myagent/sessions/`.
+ * data under `<cwd>/.hanekawa/sessions/`.
  *
  * Validates: Requirements 6.1, 6.2, 6.4
  */
 
 async function makeTempCwd(): Promise<string> {
-  return mkdtemp(path.join(os.tmpdir(), 'myagent-session-ext-'))
+  return mkdtemp(path.join(os.tmpdir(), 'hanekawa-session-ext-'))
 }
 
 async function cleanup(dir: string): Promise<void> {

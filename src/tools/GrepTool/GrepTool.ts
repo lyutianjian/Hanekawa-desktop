@@ -358,7 +358,7 @@ export const grepTool: Tool = {
       after,
       cwd: context.cwd,
       // A browse of a home directory must not wade through the sessions and
-      // spilled output Hanekawa keeps under `~/.myagent`, nor the coordination
+      // spilled output Hanekawa keeps under `~/.hanekawa`, nor the coordination
       // worktrees; a search aimed inside those keeps them.
       exclusions: runtimeDataExclusions(target),
     }

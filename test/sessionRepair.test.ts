@@ -76,7 +76,7 @@ class GatedLoadStore extends SessionStore {
 }
 
 async function withTempStore(run: (cwd: string) => Promise<void>): Promise<void> {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-repair-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-repair-'))
   try {
     await run(cwd)
   } finally {
@@ -240,7 +240,7 @@ test('a failed repair rewrite releases the lock and leaves the index alone', asy
 })
 
 test('another process cannot append into a repair in flight', async (t) => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-repair-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-repair-'))
   t.after(() => rm(cwd, { recursive: true, force: true }))
 
   const setup = new SessionStore(cwd)

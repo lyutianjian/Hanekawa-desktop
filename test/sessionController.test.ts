@@ -80,7 +80,7 @@ async function createHarness(options: {
   /** The stub compactor, when a test needs to hold or inspect it. */
   compact?: (instructions?: string, signal?: AbortSignal) => Promise<CompactCheckResult>
 } = {}): Promise<Harness> {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-controller-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-controller-'))
   const store = new SessionStore(cwd)
   await store.init()
   let session = options.untitled ? await store.create() : await store.create('controller test')

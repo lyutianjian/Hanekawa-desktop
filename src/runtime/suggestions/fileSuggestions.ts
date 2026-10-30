@@ -29,7 +29,7 @@ interface FileSearchItem {
 }
 
 const MAX_FILE_SUGGESTIONS = 15
-const IGNORED_DIR_NAMES = new Set(['.git', '.myagent', 'node_modules', 'build', 'coverage'])
+const IGNORED_DIR_NAMES = new Set(['.git', '.hanekawa', 'node_modules', 'build', 'coverage'])
 
 export async function generateFileSuggestions(
   input: string,

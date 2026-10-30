@@ -177,7 +177,7 @@ function nameBody(name: string): MarkBody {
 
 const DOC_FILE = /\.(md|mdx|txt|rst|docx|pdf)$/i
 /** Configuration and instructions are not documents being written. */
-const NOT_A_DOC = /(^|[\\/])\.myagent[\\/]|(^|[\\/])(AGENTS|CLAUDE)(\.local)?\.md$/i
+const NOT_A_DOC = /(^|[\\/])\.hanekawa[\\/]|(^|[\\/])(AGENTS|CLAUDE)(\.local)?\.md$/i
 
 interface CallHints {
   readonly path?: string

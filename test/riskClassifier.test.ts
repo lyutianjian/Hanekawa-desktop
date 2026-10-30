@@ -207,7 +207,7 @@ test('plainly dangerous commands are critical', () => {
     'echo x >> ~/.bashrc',
     'echo secret > ~/.zshrc',
     'echo x > .git/hooks/pre-commit',
-    'echo "{}" > ~/.myagent/settings.json',
+    'echo "{}" > ~/.hanekawa/settings.json',
     'mkfs.ext4 /dev/sda1',
     'dd if=/dev/zero of=/dev/sda',
     'shutdown -h now',
@@ -289,8 +289,8 @@ test('file tools classify by path', () => {
   assert.equal(level(write, '/etc/x.txt'), 'risky')
   assert.equal(level(write, '/tmp/x.txt'), 'normal')
   assert.equal(level(write, path.join(homedir(), '.zshrc')), 'critical')
-  assert.equal(level(write, path.join(homedir(), '.myagent', 'config.json')), 'critical')
-  assert.equal(level(write, path.join(workspace, '.myagent', 'settings.json')), 'critical')
+  assert.equal(level(write, path.join(homedir(), '.hanekawa', 'config.json')), 'critical')
+  assert.equal(level(write, path.join(workspace, '.hanekawa', 'settings.json')), 'critical')
   assert.equal(classifyToolCall(write, { filePath: 'src/a.ts' }, ctx).isFileWrite, true)
 })
 

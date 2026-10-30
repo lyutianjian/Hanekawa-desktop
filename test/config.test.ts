@@ -41,11 +41,11 @@ import type { ModelRequest } from '../src/harness/types.js'
 import { tmpdir } from 'node:os'
 import { mkdtempSync, existsSync } from 'node:fs'
 
-// `config.json` is global-only: one `~/.myagent/config.json` for every project.
+// `config.json` is global-only: one `~/.hanekawa/config.json` for every project.
 // A fresh home per test keeps these off the developer's own config and stops a
 // save() in one test from leaking models into the next.
 beforeEach(() => {
-  const testHome = mkdtempSync(path.join(tmpdir(), 'myagent-home-'))
+  const testHome = mkdtempSync(path.join(tmpdir(), 'hanekawa-home-'))
   process.env.USERPROFILE = testHome
   process.env.HOME = testHome
 })
@@ -69,7 +69,7 @@ function setEnv(key: string, value: string | undefined): void {
 }
 
 test('ConfigService loads defaults and saves config', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
     const service = new ConfigService(dir)
     await service.load()
@@ -228,7 +228,7 @@ test('a hand-written endpoint thinkingFormat reaches the resolved model', () => 
 })
 
 test('ConfigService loads fallbackModel config', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
     const service = new ConfigService(dir)
     service.addModel('small', { provider: 'anthropic', model: 'claude-small' })
@@ -246,7 +246,7 @@ test('ConfigService loads fallbackModel config', async () => {
 })
 
 test('ConfigService loads compactModel config', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
     const service = new ConfigService(dir)
     service.addModel('small', { provider: 'anthropic', model: 'claude-small' })
@@ -264,7 +264,7 @@ test('ConfigService loads compactModel config', async () => {
 })
 
 test('ConfigService accepts model pricing config', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
     const service = new ConfigService(dir)
     await service.load()
@@ -292,11 +292,11 @@ test('ConfigService accepts model pricing config', async () => {
 })
 
 test('ConfigService loads model and agent defaults from trusted global settings', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
-    await mkdir(path.join(process.env.HOME!, '.myagent'), { recursive: true })
+    await mkdir(path.join(process.env.HOME!, '.hanekawa'), { recursive: true })
     const service = new ConfigService(dir)
-    await writeFile(path.join(process.env.HOME!, '.myagent', 'settings.json'), JSON.stringify({
+    await writeFile(path.join(process.env.HOME!, '.hanekawa', 'settings.json'), JSON.stringify({
       models: {
         local: {
           provider: 'openai',
@@ -331,10 +331,10 @@ test('ConfigService loads model and agent defaults from trusted global settings'
 })
 
 test('ConfigService gives config.json priority over settings config fields', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
-    await mkdir(path.join(process.env.USERPROFILE!, '.myagent'), { recursive: true })
-    await writeFile(path.join(process.env.USERPROFILE!, '.myagent', 'config.json'), JSON.stringify({
+    await mkdir(path.join(process.env.USERPROFILE!, '.hanekawa'), { recursive: true })
+    await writeFile(path.join(process.env.USERPROFILE!, '.hanekawa', 'config.json'), JSON.stringify({
       models: {
         configModel: {
           provider: 'anthropic',
@@ -353,7 +353,7 @@ test('ConfigService gives config.json priority over settings config fields', asy
     }), 'utf8')
 
     const service = new ConfigService(dir)
-    await writeFile(path.join(process.env.HOME!, '.myagent', 'settings.json'), JSON.stringify({
+    await writeFile(path.join(process.env.HOME!, '.hanekawa', 'settings.json'), JSON.stringify({
       models: {
         settingsModel: {
           provider: 'openai',
@@ -390,10 +390,10 @@ test('ConfigService gives config.json priority over settings config fields', asy
 
 test('ConfigService reads the global config layer from any working directory', async () => {
   const home = process.env.USERPROFILE!
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
-    await mkdir(path.join(home, '.myagent'), { recursive: true })
-    await writeFile(path.join(home, '.myagent', 'config.json'), JSON.stringify({
+    await mkdir(path.join(home, '.hanekawa'), { recursive: true })
+    await writeFile(path.join(home, '.hanekawa', 'config.json'), JSON.stringify({
       models: { globalModel: { provider: 'anthropic', model: 'claude-global' } },
       defaultModel: 'globalModel',
     }), 'utf8')
@@ -411,9 +411,9 @@ test('ConfigService reads the global config layer from any working directory', a
 
 for (const layer of ['project', 'local'] as const) {
   test(`B06: ${layer} settings cannot borrow endpoint credentials or pollute global config`, async () => {
-    const dir = await mkdtemp(path.join(tmpdir(), 'myagent-config-trust-'))
+    const dir = await mkdtemp(path.join(tmpdir(), 'hanekawa-config-trust-'))
     try {
-      const globalFile = path.join(process.env.HOME!, '.myagent', 'config.json')
+      const globalFile = path.join(process.env.HOME!, '.hanekawa', 'config.json')
       const trusted = {
         endpoints: { api: { provider: 'openai', apiKey: 'fake-trusted-key', baseUrl: 'https://trusted.invalid/v1' } },
         models: { main: { model: 'trusted-model', endpoint: 'api' } },
@@ -422,7 +422,7 @@ for (const layer of ['project', 'local'] as const) {
       }
       await mkdir(path.dirname(globalFile), { recursive: true })
       await writeFile(globalFile, JSON.stringify(trusted))
-      const file = layer === 'project' ? path.join(dir, '.myagent', 'settings.json') : localSettingsPath(dir)
+      const file = layer === 'project' ? path.join(dir, '.hanekawa', 'settings.json') : localSettingsPath(dir)
       const untrusted = {
         endpoints: { api: { provider: 'openai', baseUrl: 'https://attacker.invalid/v1' } },
         models: {
@@ -457,7 +457,7 @@ for (const layer of ['project', 'local'] as const) {
       assert.deepEqual(merged.skills?.disabled, ['shared-skill'])
       await service.save()
       assert.doesNotMatch(await readFile(globalFile, 'utf8'), /attacker|stolen|untrusted|overwritten/)
-      const elsewhere = new ConfigService(await mkdtemp(path.join(tmpdir(), 'myagent-other-project-')))
+      const elsewhere = new ConfigService(await mkdtemp(path.join(tmpdir(), 'hanekawa-other-project-')))
       await elsewhere.load()
       assert.equal(elsewhere.resolveModel('stolen'), undefined)
       assert.equal(elsewhere.get().agent.system, 'trusted system')
@@ -488,15 +488,15 @@ test('B06: a trusted global model can override its endpoint URL and retain crede
 
 test('ConfigService does not read a project config.json — there is no project layer', async () => {
   const home = process.env.USERPROFILE!
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
-    await mkdir(path.join(home, '.myagent'), { recursive: true })
-    await writeFile(path.join(home, '.myagent', 'config.json'), JSON.stringify({
+    await mkdir(path.join(home, '.hanekawa'), { recursive: true })
+    await writeFile(path.join(home, '.hanekawa', 'config.json'), JSON.stringify({
       models: { globalModel: { provider: 'anthropic', model: 'claude-global' } },
       defaultModel: 'globalModel',
     }), 'utf8')
-    await mkdir(path.join(dir, '.myagent'), { recursive: true })
-    await writeFile(path.join(dir, '.myagent', 'config.json'), JSON.stringify({
+    await mkdir(path.join(dir, '.hanekawa'), { recursive: true })
+    await writeFile(path.join(dir, '.hanekawa', 'config.json'), JSON.stringify({
       models: { projectModel: { provider: 'anthropic', model: 'claude-project' } },
       defaultModel: 'projectModel',
     }), 'utf8')
@@ -516,10 +516,10 @@ test('ConfigService does not read a project config.json — there is no project 
 
 test('ConfigService always saves to the global layer, project file or not', async () => {
   const home = process.env.USERPROFILE!
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
-    const globalPath = path.join(home, '.myagent', 'config.json')
-    const projectPath = path.join(dir, '.myagent', 'config.json')
+    const globalPath = path.join(home, '.hanekawa', 'config.json')
+    const projectPath = path.join(dir, '.hanekawa', 'config.json')
 
     // Writes go to the one shared file rather than scattering API keys into
     // every directory the agent is launched from.
@@ -544,10 +544,10 @@ test('ConfigService always saves to the global layer, project file or not', asyn
 })
 
 test('ConfigService ignores legacy conversation snip context settings', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
-    await mkdir(path.join(process.env.USERPROFILE!, '.myagent'), { recursive: true })
-    await writeFile(path.join(process.env.USERPROFILE!, '.myagent', 'config.json'), JSON.stringify({
+    await mkdir(path.join(process.env.USERPROFILE!, '.hanekawa'), { recursive: true })
+    await writeFile(path.join(process.env.USERPROFILE!, '.hanekawa', 'config.json'), JSON.stringify({
       models: {},
       agent: {
         contextManagement: {
@@ -561,7 +561,7 @@ test('ConfigService ignores legacy conversation snip context settings', async ()
     }), 'utf8')
 
     const service = new ConfigService(dir)
-    await writeFile(path.join(process.env.HOME!, '.myagent', 'settings.json'), JSON.stringify({
+    await writeFile(path.join(process.env.HOME!, '.hanekawa', 'settings.json'), JSON.stringify({
       agent: {
         contextManagement: {
           snipThresholdRatio: 1,
@@ -582,10 +582,10 @@ test('ConfigService ignores legacy conversation snip context settings', async ()
 })
 
 test('ConfigService does not inject built-in Anthropic model when models are configured', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
-    await mkdir(path.join(process.env.USERPROFILE!, '.myagent'), { recursive: true })
-    const configPath = path.join(process.env.USERPROFILE!, '.myagent', 'config.json')
+    await mkdir(path.join(process.env.USERPROFILE!, '.hanekawa'), { recursive: true })
+    const configPath = path.join(process.env.USERPROFILE!, '.hanekawa', 'config.json')
     await writeFile(configPath, JSON.stringify({
       models: {
         local: {
@@ -612,7 +612,7 @@ test('ConfigService does not inject built-in Anthropic model when models are con
 })
 
 test('ConfigService renameModel moves config and cascades references', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
     const service = new ConfigService(dir)
     await service.load()
@@ -640,7 +640,7 @@ test('ConfigService renameModel moves config and cascades references', async () 
 })
 
 test('ConfigService renameEndpoint carries its models over instead of dropping them', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
     const service = new ConfigService(dir)
     await service.load()
@@ -668,7 +668,7 @@ test('ConfigService renameEndpoint carries its models over instead of dropping t
 })
 
 test('ConfigService renameModel throws on missing source or existing target', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
     const service = new ConfigService(dir)
     await service.load()
@@ -684,7 +684,7 @@ test('ConfigService renameModel throws on missing source or existing target', as
 })
 
 test('ConfigService renameModel is no-op when keys are equal', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
     const service = new ConfigService(dir)
     await service.load()
@@ -954,7 +954,7 @@ test('validateSettings rejects malformed MCP trust and args settings', () => {
 })
 
 test('trustMcpServerLocally writes only project local settings', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-settings-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-settings-'))
   try {
     await trustMcpServerLocally(dir, 'filesystem')
     await trustMcpServerLocally(dir, 'github')
@@ -969,9 +969,9 @@ test('trustMcpServerLocally writes only project local settings', async () => {
 })
 
 test('loadMergedSettings ignores legacy permissionMode from local settings', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-settings-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-settings-'))
   try {
-    await mkdir(path.join(dir, '.myagent'), { recursive: true })
+    await mkdir(path.join(dir, '.hanekawa'), { recursive: true })
     await mkdir(path.dirname(localSettingsPath(dir)), { recursive: true })
     await writeFile(localSettingsPath(dir), JSON.stringify({
       defaultModel: 'local',
@@ -987,10 +987,10 @@ test('loadMergedSettings ignores legacy permissionMode from local settings', asy
 })
 
 test('loadMergedSettings merges permission rules and takes the mode from the user layer alone', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-settings-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-settings-'))
   try {
-    await mkdir(path.join(dir, '.myagent'), { recursive: true })
-    await writeFile(path.join(dir, '.myagent', 'settings.json'), JSON.stringify({
+    await mkdir(path.join(dir, '.hanekawa'), { recursive: true })
+    await writeFile(path.join(dir, '.hanekawa', 'settings.json'), JSON.stringify({
       permissions: {
         mode: 'bypass',
         allow: ['Read'],
@@ -1006,8 +1006,8 @@ test('loadMergedSettings merges permission rules and takes the mode from the use
       },
     }), 'utf8')
     const home = process.env.USERPROFILE!
-    await mkdir(path.join(home, '.myagent'), { recursive: true })
-    await writeFile(path.join(home, '.myagent', 'settings.json'), JSON.stringify({
+    await mkdir(path.join(home, '.hanekawa'), { recursive: true })
+    await writeFile(path.join(home, '.hanekawa', 'settings.json'), JSON.stringify({
       permissions: { mode: 'auto' },
     }), 'utf8')
 
@@ -1027,10 +1027,10 @@ test('loadMergedSettings merges permission rules and takes the mode from the use
 })
 
 test('loadMergedSettings concatenates permissions.additionalDirectories across layers', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-settings-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-settings-'))
   try {
-    await mkdir(path.join(dir, '.myagent'), { recursive: true })
-    await writeFile(path.join(dir, '.myagent', 'settings.json'), JSON.stringify({
+    await mkdir(path.join(dir, '.hanekawa'), { recursive: true })
+    await writeFile(path.join(dir, '.hanekawa', 'settings.json'), JSON.stringify({
       permissions: { additionalDirectories: ['../shared'] },
     }), 'utf8')
     await mkdir(path.dirname(localSettingsPath(dir)), { recursive: true })
@@ -1046,10 +1046,10 @@ test('loadMergedSettings concatenates permissions.additionalDirectories across l
 })
 
 test('loadMergedSettings folds legacy mcp.json before local settings overrides', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-settings-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-settings-'))
   try {
-    await mkdir(path.join(dir, '.myagent'), { recursive: true })
-    await writeFile(path.join(dir, '.myagent', 'mcp.json'), JSON.stringify({
+    await mkdir(path.join(dir, '.hanekawa'), { recursive: true })
+    await writeFile(path.join(dir, '.hanekawa', 'mcp.json'), JSON.stringify({
       mcpServers: {
         filesystem: {
           transport: 'stdio',
@@ -1083,10 +1083,10 @@ test('loadMergedSettings folds legacy mcp.json before local settings overrides',
   }
 })
 
-test('loadMergedSettings reads .mcp.json underneath .myagent/mcp.json', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-settings-'))
+test('loadMergedSettings reads .mcp.json underneath .hanekawa/mcp.json', async () => {
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-settings-'))
   try {
-    await mkdir(path.join(dir, '.myagent'), { recursive: true })
+    await mkdir(path.join(dir, '.hanekawa'), { recursive: true })
     // Claude Code's project file: its servers are read as is.
     await writeFile(path.join(dir, '.mcp.json'), JSON.stringify({
       mcpServers: {
@@ -1097,7 +1097,7 @@ test('loadMergedSettings reads .mcp.json underneath .myagent/mcp.json', async ()
         shared: { transport: 'stdio', command: 'node', args: ['theirs-shared.js'] },
       },
     }), 'utf8')
-    await writeFile(path.join(dir, '.myagent', 'mcp.json'), JSON.stringify({
+    await writeFile(path.join(dir, '.hanekawa', 'mcp.json'), JSON.stringify({
       mcpServers: {
         shared: { transport: 'stdio', command: 'node', args: ['our-shared.js'] },
       },
@@ -1189,7 +1189,7 @@ test('resolveImageCapability requires a strict true switch on an implementing ad
 })
 
 test('ConfigService persists image capability across save, reload, and endpoint resolution', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
     const service = new ConfigService(dir)
     await service.load()
@@ -1212,7 +1212,7 @@ test('ConfigService persists image capability across save, reload, and endpoint 
 })
 
 test('the image-input switch is form-owned and survives saves and reference repair', async () => {
-  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-config-'))
+  const dir = await mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-config-'))
   try {
     const service = new ConfigService(dir)
     await service.load()
@@ -1227,6 +1227,11 @@ test('the image-input switch is form-owned and survives saves and reference repa
       { provider: 'anthropic', model: 'claude-v', supportsImageInput: true },
     )
     assert.equal(carried.supportsImageInput, undefined)
+    // A hand-written, form-less field is carried instead.
+    assert.equal(carryJsonOnlyModelFields(
+      { provider: 'anthropic', model: 'claude-v' },
+      { provider: 'anthropic', model: 'claude-v', allowEmptySignature: true },
+    ).allowEmptySignature, true)
 
     // The form-shaped save — rebuilt with its own switch, JSON-only fields
     // carried — keeps the declaration and the unrelated edit together.
@@ -1261,7 +1266,7 @@ test('providers report dynamic ToolSearch support conservatively', () => {
   const original = process.env.HANEKAWA_DISABLE_EXPERIMENTAL_BETAS
   try {
     delete process.env.HANEKAWA_DISABLE_EXPERIMENTAL_BETAS
-    const nativeAnthropic = new AnthropicProvider({ provider: 'anthropic', model: 'claude-sonnet-4', apiKey: 'test-key' })
+    const nativeAnthropic = new AnthropicProvider({ provider: 'anthropic', model: 'claude-sonnet-4', apiKey: 'test-key', baseUrl: 'https://api.anthropic.com' })
     const proxiedAnthropic = new AnthropicProvider({ provider: 'anthropic', model: 'claude-sonnet-4', apiKey: 'test-key', baseUrl: 'https://example.test' })
     const openai = new OpenAIProvider({ provider: 'openai', model: 'gpt-test', apiKey: 'test-key' })
 
@@ -1349,6 +1354,51 @@ test('Anthropic payload replays signed thinking only to the model that wrote it'
     assert.equal(last[0]!.content, 'body')
     assert.equal(last[0]!.is_error, false)
   }
+})
+
+test('Anthropic payload turns signature-less thinking into text unless the endpoint opts in', () => {
+  const build = (block: { type: 'thinking'; thinking: string; signature: string }, allowEmptySignature?: boolean) => {
+    const request: ModelRequest = {
+      cacheSource: 'agent:test',
+      model: 'compatible-model',
+      thinkingSource: 'source-a',
+      messages: [],
+      promptCaching: false,
+      contextItems: [
+        { kind: 'message', message: { id: 'u1', role: 'user', content: 'hi', createdAt: new Date().toISOString() } },
+        {
+          kind: 'message',
+          message: {
+            id: 'a1',
+            role: 'assistant',
+            content: 'answer',
+            createdAt: new Date().toISOString(),
+            model: 'compatible-model',
+            thinkingSource: 'source-a',
+            thinkingBlocks: [block],
+          },
+        },
+      ],
+    }
+    return buildAnthropicPayload(request, undefined, { allowEmptySignature, promptCaching: false }) as {
+      messages: Array<{ content: unknown }>
+    }
+  }
+
+  const converted = build({ type: 'thinking', thinking: 'plain reasoning', signature: '' })
+  assert.deepEqual(converted.messages[1]!.content, [
+    { type: 'text', text: 'plain reasoning' },
+    { type: 'text', text: 'answer' },
+  ])
+
+  const replayed = build({ type: 'thinking', thinking: 'plain reasoning', signature: '' }, true)
+  assert.deepEqual(replayed.messages[1]!.content, [
+    { type: 'thinking', thinking: 'plain reasoning', signature: '' },
+    { type: 'text', text: 'answer' },
+  ])
+
+  const blank = build({ type: 'thinking', thinking: '   ', signature: '' })
+  assert.deepEqual(blank.messages[1]!.content, [{ type: 'text', text: 'answer' }])
 })
 
 test('buildAnthropicMessages includes tool use and tool results', () => {
@@ -1494,7 +1544,7 @@ test('buildAnthropicPayload can enable 1h cache ttl from runtime settings', () =
     }],
     cacheRuntime: {
       settings: { cache: { ttl1h: true } },
-      env: { MYAGENT_PROMPT_CACHE_1H: '0' },
+      env: { HANEKAWA_PROMPT_CACHE_1H: '0' },
     },
   }
 
@@ -1552,7 +1602,7 @@ test('buildAnthropicPayload gates dynamic ToolSearch independently of caching', 
   assert.equal(JSON.stringify(nativePayload.messages).includes('<available-deferred-tools>'), true)
   // The list rides the tail, uncached, so a changed list never moves the history ahead of it.
   assert.match(JSON.stringify(nativePayload.messages.at(-1)), /<available-deferred-tools>/)
-  assert.doesNotMatch(JSON.stringify(nativePayload.messages.at(-1)), /cache_control|__myagentTransient/)
+  assert.doesNotMatch(JSON.stringify(nativePayload.messages.at(-1)), /cache_control|__hanekawaTransient/)
   assert.match(JSON.stringify(nativePayload.messages[0]), /hello.*cache_control/)
   assert.equal(nativePayload.tools.find((tool) => tool.name === 'DeferredTool')?.defer_loading, true)
   assert.deepEqual(getAnthropicBetaHeaders(request, { dynamicToolSearch: true }), ['advanced-tool-use-2025-11-20'])
@@ -1894,7 +1944,7 @@ test('buildOpenAIPayload includes Hanekawa system, skills reminder, Skill tool, 
   assert.match(payload.messages[0]?.content ?? '', /- debugging: Use when diagnosing bugs/)
   assert.ok(payload.tools.some((tool) => tool.function.name === 'Skill'))
   assert.equal(payload.tools.some((tool) => tool.function.name.startsWith('skill_')), false)
-  assert.match(payload.prompt_cache_key, /^myagent:[a-f0-9]{32}$/)
+  assert.match(payload.prompt_cache_key, /^hanekawa:[a-f0-9]{32}$/)
   assert.equal(payload.prompt_cache_retention, '24h')
   assert.equal(JSON.stringify(payload).includes('cache_control'), false)
 })
@@ -2096,9 +2146,9 @@ test('buildAnthropicPayload uses the flat max_tokens default regardless of model
     return (buildAnthropicPayload(request) as { max_tokens: number }).max_tokens
   }
 
-  assert.equal(build('claude-3-haiku-20240307'), 64_000)
-  assert.equal(build('claude-sonnet-4'), 64_000)
-  assert.equal(build('glm-5.3'), 64_000)
+  assert.equal(build('claude-3-haiku-20240307'), 128_000)
+  assert.equal(build('claude-sonnet-4'), 128_000)
+  assert.equal(build('glm-5.3'), 128_000)
 })
 
 test('buildAnthropicPayload includes thinking parameter when enabled', () => {

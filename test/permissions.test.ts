@@ -210,7 +210,7 @@ test('PermissionGate allows read-only tools inside protected paths', async () =>
   })
 
   assert.equal(await gate.approve(readFileTool, { filePath: '.git/config' }), true)
-  assert.equal(await gate.approve(readFileTool, { filePath: '.myagent/settings.json' }), true)
+  assert.equal(await gate.approve(readFileTool, { filePath: '.hanekawa/settings.json' }), true)
   assert.equal(prompted, false)
 })
 
@@ -648,7 +648,7 @@ test('isProtectedPath catches dangerous directories', () => {
   assert.equal(isProtectedPath('repo/.git/HEAD'), true)
   assert.equal(isProtectedPath('.vscode/settings.json'), true)
   assert.equal(isProtectedPath('.idea/workspace.xml'), true)
-  assert.equal(isProtectedPath('.myagent/config.json'), true)
+  assert.equal(isProtectedPath('.hanekawa/config.json'), true)
 })
 
 test('isProtectedPath catches shell config and agent config files', () => {
@@ -661,7 +661,7 @@ test('isProtectedPath catches shell config and agent config files', () => {
   assert.equal(isProtectedPath('.profile'), true)
   assert.equal(isProtectedPath('.ripgreprc'), true)
   assert.equal(isProtectedPath('.mcp.json'), true)
-  assert.equal(isProtectedPath('.myagent.json'), true)
+  assert.equal(isProtectedPath('.hanekawa.json'), true)
 })
 
 test('isProtectedPath does not protect secrets outside the CC list', () => {

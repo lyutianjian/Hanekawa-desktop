@@ -9,7 +9,7 @@ import { loadKeybindingsConfig } from '../src/config/keybindings.js'
 /**
  * Property 9: Double-tap window configuration validation.
  *
- * For any value V written to `.myagent/keybindings.json` as `doubleTapWindow`:
+ * For any value V written to `.hanekawa/keybindings.json` as `doubleTapWindow`:
  *   - if V is an integer in [100, 1000] inclusive, the effective window equals V
  *   - otherwise (float, non-number, out of range, null, missing, malformed),
  *     the effective window equals 300 (the default)
@@ -21,8 +21,8 @@ describe('Property 9: doubleTapWindow configuration validation', () => {
   let tmpDir: string
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(path.join(tmpdir(), 'myagent-keybindings-prop-'))
-    await mkdir(path.join(tmpDir, '.myagent'), { recursive: true })
+    tmpDir = await mkdtemp(path.join(tmpdir(), 'hanekawa-keybindings-prop-'))
+    await mkdir(path.join(tmpDir, '.hanekawa'), { recursive: true })
   })
 
   afterEach(async () => {
@@ -31,14 +31,14 @@ describe('Property 9: doubleTapWindow configuration validation', () => {
 
   /**
    * Writes the given JSON-serializable value as the `doubleTapWindow` field
-   * of `.myagent/keybindings.json` in the temp dir.
+   * of `.hanekawa/keybindings.json` in the temp dir.
    *
    * Uses a manual JSON document so values like `null` are preserved exactly
    * (JSON.stringify of `{doubleTapWindow: undefined}` would drop the key).
    */
   async function writeKeybindings(rawValueJson: string): Promise<void> {
     const content = `{"doubleTapWindow": ${rawValueJson}}`
-    await writeFile(path.join(tmpDir, '.myagent', 'keybindings.json'), content, 'utf8')
+    await writeFile(path.join(tmpDir, '.hanekawa', 'keybindings.json'), content, 'utf8')
   }
 
   it('accepts any integer in [100, 1000] inclusive (Validates: Requirements 7.2, 7.3)', () => {
@@ -149,7 +149,7 @@ describe('Property 9: doubleTapWindow configuration validation', () => {
   })
 
   it('falls back to 300 when keybindings.json is missing (Validates: Requirements 7.6)', async () => {
-    // No keybindings.json written in beforeEach; the .myagent directory is empty.
+    // No keybindings.json written in beforeEach; the .hanekawa directory is empty.
     const config = loadKeybindingsConfig(tmpDir)
     assert.equal(config.doubleTapWindow, DEFAULT_WINDOW)
   })
@@ -168,7 +168,7 @@ describe('Property 9: doubleTapWindow configuration validation', () => {
       })
     return fc.assert(
       fc.asyncProperty(malformed, async (s) => {
-        await writeFile(path.join(tmpDir, '.myagent', 'keybindings.json'), s, 'utf8')
+        await writeFile(path.join(tmpDir, '.hanekawa', 'keybindings.json'), s, 'utf8')
         const config = loadKeybindingsConfig(tmpDir)
         assert.equal(
           config.doubleTapWindow,

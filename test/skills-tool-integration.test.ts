@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { getAllTools, getBuiltinTools } from '../src/tools/index.js'
 
 test('getAllTools() includes builtin tools', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const tools = await getAllTools()
     const builtinTools = getBuiltinTools()
@@ -22,9 +22,9 @@ test('getAllTools() includes builtin tools', async () => {
 })
 
 test('getAllTools() includes the generic Skill tool', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'debugging'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'debugging', 'SKILL.md'),
@@ -52,9 +52,9 @@ test('getAllTools() includes the generic Skill tool', async () => {
 })
 
 test('Skill tools do not conflict with builtin tools', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'debugging'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'debugging', 'SKILL.md'),
@@ -81,9 +81,9 @@ test('Skill tools do not conflict with builtin tools', async () => {
 })
 
 test('Skill tools have riskLevel safe', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'test'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'test', 'SKILL.md'),
@@ -102,9 +102,9 @@ test('Skill tools have riskLevel safe', async () => {
 })
 
 test('Skill tool execution returns skill content', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'debugging'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'debugging', 'SKILL.md'),
@@ -133,9 +133,9 @@ test('Skill tool execution returns skill content', async () => {
 })
 
 test('Multiple calls to same skill tool return consistent results', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'test'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'test', 'SKILL.md'),
@@ -159,7 +159,7 @@ test('Multiple calls to same skill tool return consistent results', async () => 
 })
 
 test('getAllTools() works when no skills directory exists', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const tools = await getAllTools()
     const builtinTools = getBuiltinTools()
@@ -177,9 +177,9 @@ test('getAllTools() works when no skills directory exists', async () => {
 })
 
 test('Skill tool and builtin tools coexist in tool list', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'skill1'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'skill1', 'SKILL.md'),

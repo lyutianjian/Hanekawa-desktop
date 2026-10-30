@@ -83,8 +83,8 @@ interface Lane {
 }
 
 async function setup(t: TestContext, script: Script, options: { git?: boolean; side?: (request: ModelRequest) => ModelResponse | Promise<ModelResponse> } = {}) {
-  const testHome = await mkdtemp(path.join(tmpdir(), 'myagent-coord-home-'))
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-coord-project-'))
+  const testHome = await mkdtemp(path.join(tmpdir(), 'hanekawa-coord-home-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-coord-project-'))
   const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
   process.env.HOME = testHome
   process.env.USERPROFILE = testHome

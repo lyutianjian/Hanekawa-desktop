@@ -8,7 +8,7 @@ import { existsSync } from 'node:fs'
  * folder, the folder the installer launched from, or `/` — never something the
  * user chose. Treating it as intent is how the install directory used to end up
  * in the projects registry: a sidebar row pointing at the `.app` bundle, a data
- * directory under `~/.myagent/projects/`, and a startup target for the next
+ * directory under `~/.hanekawa/projects/`, and a startup target for the next
  * launch, all from double-clicking the icon.
  *
  * Only `--cwd=` names a project. Everything else is "come to the front", which

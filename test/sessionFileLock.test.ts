@@ -22,7 +22,7 @@ import { getSessionsDir } from '../src/utils/paths.js'
 const repoRootUrl = new URL('..', import.meta.url)
 
 async function lockDir(): Promise<string> {
-  return mkdtemp(path.join(tmpdir(), 'myagent-lock-'))
+  return mkdtemp(path.join(tmpdir(), 'hanekawa-lock-'))
 }
 
 test('a second holder waits for the first to finish', async () => {
@@ -107,7 +107,7 @@ test('the lock records who holds it', async () => {
 })
 
 test('two processes appending to one session do not lose records', async (t) => {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-lock-store-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-lock-store-'))
   const store = new SessionStore(cwd)
   await store.init()
   const session = await store.create('concurrent writers')
@@ -200,7 +200,7 @@ test('an uncreatable lock fails strictly and stays advisory by default', async (
 })
 
 test('a session append waits for the file lock instead of writing unlocked', async () => {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-lock-store-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-lock-store-'))
   try {
     const store = new SessionStore(cwd)
     await store.init()

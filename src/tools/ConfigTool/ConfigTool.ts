@@ -1,6 +1,6 @@
 import { z } from 'zod/v3'
 import type { ModelReferenceField, Tool, ToolContext, ToolResult } from '../../harness/types.js'
-import type { MyAgentSettings } from '../../config/settings.js'
+import type { HanekawaSettings } from '../../config/settings.js'
 import { loadMergedSettings, SettingsValidationError, updateUserSettings } from '../../config/settings.js'
 import { ConfigurationFileError } from '../../config/file.js'
 import { VALID_EFFORT_LEVELS, type EffortLevel } from '../../config/effort.js'
@@ -22,8 +22,8 @@ interface SettingDef {
    * for a context that has no configuration wired.
    */
   modelReference?: ModelReferenceField
-  get: (settings: MyAgentSettings) => unknown
-  set: (settings: MyAgentSettings, value: unknown) => void
+  get: (settings: HanekawaSettings) => unknown
+  set: (settings: HanekawaSettings, value: unknown) => void
   validate?: (value: unknown) => string | null
 }
 
@@ -170,7 +170,7 @@ export const configTool: Tool = {
  * references come from the config service, everything else from the merged
  * settings. Writing to the wrong one is exactly what B26 was.
  */
-function readSetting(def: SettingDef, context: ToolContext, merged: MyAgentSettings): unknown {
+function readSetting(def: SettingDef, context: ToolContext, merged: HanekawaSettings): unknown {
   if (def.modelReference && context.modelConfig) {
     return context.modelConfig.getModelReference(def.modelReference)
   }

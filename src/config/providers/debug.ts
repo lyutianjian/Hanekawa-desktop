@@ -6,7 +6,7 @@ import { collectCacheControlTelemetry } from './cacheControlTelemetry.js'
 import { normalizeAnthropicUsage, normalizeOpenAIUsage } from './usage.js'
 
 function shouldDebugProviderPayloads() {
-  return process.env.MYAGENT_DEBUG_PROVIDER === '1'
+  return process.env.HANEKAWA_DEBUG_PROVIDER === '1'
 }
 
 /**
@@ -18,7 +18,7 @@ function shouldDebugProviderPayloads() {
  */
 export function debugProviderPayload(label: string, payload: unknown, request?: ModelRequest) {
   if (!shouldDebugProviderPayloads()) return
-  console.error(`[myagent][provider:${label}] payload\n${JSON.stringify(redactPayloadImageBytes(payload), null, 2)}`)
+  console.error(`[hanekawa][provider:${label}] payload\n${JSON.stringify(redactPayloadImageBytes(payload), null, 2)}`)
   if (!request) return
   const refs = collectRequestImageRefs(request)
   if (refs.length === 0) return
@@ -34,7 +34,7 @@ export function debugProviderPayload(label: string, payload: unknown, request?: 
       ...(loaded ? { loadedByteLength: loaded.bytes.byteLength } : {}),
     }
   })
-  console.error(`[myagent][provider:${label}] payload images\n${JSON.stringify(facts, null, 2)}`)
+  console.error(`[hanekawa][provider:${label}] payload images\n${JSON.stringify(facts, null, 2)}`)
 }
 
 function approxBase64Bytes(base64: string): number {
@@ -171,7 +171,7 @@ export function debugProviderSummary(
     })
   }
 
-  console.error(`[myagent][provider:${label}] request summary ${JSON.stringify({
+  console.error(`[hanekawa][provider:${label}] request summary ${JSON.stringify({
     model: request.model,
     ...(betas ? { betas } : {}),
     systemPresent: Boolean(request.system),
@@ -194,7 +194,7 @@ export function debugProviderResponse(label: string, response: unknown) {
     const textBlocks = typed.content.filter((item) => item.type === 'text')
     const toolBlocks = typed.content.filter((item) => item.type === 'tool_use')
     const usage = normalizeAnthropicUsage(typed.usage)
-    console.error(`[myagent][provider:${label}] response summary ${JSON.stringify({
+    console.error(`[hanekawa][provider:${label}] response summary ${JSON.stringify({
       id: typed.id,
       model: typed.model,
       stopReason: typed.stop_reason,
@@ -214,7 +214,7 @@ export function debugProviderResponse(label: string, response: unknown) {
   const typed = response as OpenAI.Chat.ChatCompletion
   const message = typed.choices[0]?.message
   const usage = normalizeOpenAIUsage(typed.usage)
-  console.error(`[myagent][provider:${label}] response summary ${JSON.stringify({
+  console.error(`[hanekawa][provider:${label}] response summary ${JSON.stringify({
     id: typed.id,
     model: typed.model,
     finishReason: typed.choices[0]?.finish_reason,

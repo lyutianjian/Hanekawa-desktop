@@ -3,7 +3,7 @@ import { existsSync, lstatSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { checkWindowsPathSafety, isProtectedPath } from '../../utils/permissions/protectedPaths.js'
 import {
-  getGlobalMyAgentDir,
+  getGlobalHanekawaDir,
   getProjectDataDir,
   getProjectPlansDir,
   getToolResultSpillDir,
@@ -40,13 +40,13 @@ export function createRiskContext(options: RiskContextOptions): RiskContext {
     cwd,
     home,
     workspaceRoots: [cwd, ...[...additional, ...extraRoots].map(realPath), ...tempRoots],
-    readableRoots: [realPath(getGlobalMyAgentDir())],
+    readableRoots: [realPath(getGlobalHanekawaDir())],
     tempRoots,
     configFiles: [
-      path.join(getGlobalMyAgentDir(), 'settings.json'),
-      path.join(getGlobalMyAgentDir(), 'config.json'),
+      path.join(getGlobalHanekawaDir(), 'settings.json'),
+      path.join(getGlobalHanekawaDir(), 'config.json'),
       path.join(getProjectDataDir(projectDir), 'settings.local.json'),
-      path.join(options.cwd, '.myagent', 'settings.json'),
+      path.join(options.cwd, '.hanekawa', 'settings.json'),
     ].map(realPath),
   }
 }

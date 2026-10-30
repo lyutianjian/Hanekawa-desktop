@@ -82,6 +82,8 @@ export class AnthropicProvider implements ModelProvider {
   private readonly imageInputEnabled: boolean
   /** The model's own thinking switch, ANDed with the session's. */
   private readonly thinkingOff: boolean
+  /** Compatible endpoints may emit signature-less thinking that they accept back as-is. */
+  private readonly allowEmptySignature: boolean
 
   constructor(config: ModelConfig) {
     this.client = new Anthropic({
@@ -97,6 +99,7 @@ export class AnthropicProvider implements ModelProvider {
     this.promptCaching = config.promptCaching ?? 'auto'
     this.imageInputEnabled = config.supportsImageInput === true
     this.thinkingOff = config.thinking?.type === 'disabled'
+    this.allowEmptySignature = config.allowEmptySignature === true
   }
 
   supportsDynamicToolSearch(): boolean {
@@ -133,8 +136,8 @@ export class AnthropicProvider implements ModelProvider {
           // so an unrelated 400 can mention `cache_control` by accident.
           const response = await this.sendMessage(request, attempt, false)
           rejectedPromptCaching.add(key)
-          if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
-            console.error(`[myagent][prompt-cache] ${request.model} rejected prompt caching; retrying without cache_control`)
+          if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
+            console.error(`[hanekawa][prompt-cache] ${request.model} rejected prompt caching; retrying without cache_control`)
           }
           return response
         }
@@ -159,6 +162,7 @@ export class AnthropicProvider implements ModelProvider {
     const payload = buildAnthropicPayload(request, this.maxOutputTokens, {
       promptCaching: enableCaching,
       dynamicToolSearch,
+      allowEmptySignature: this.allowEmptySignature,
     })
     // The final pre-send check (design §11.1 step 5): per-image bytes, image
     // count, and the whole serialized body, against the stricter of the local

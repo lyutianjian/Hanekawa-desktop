@@ -55,12 +55,12 @@ test('cache ttl1h can be enabled from runtime settings', () => {
 
   assert.equal(should1hCacheTTL({
     settings: { cache: { ttl1h: true } },
-    env: { MYAGENT_PROMPT_CACHE_1H: '0' },
+    env: { HANEKAWA_PROMPT_CACHE_1H: '0' },
   }), true)
   // getCacheControl without runtime re-evaluates from env (no permanent caching).
   assert.deepEqual(getCacheControl({
     settings: { cache: { ttl1h: true } },
-    env: { MYAGENT_PROMPT_CACHE_1H: '0' },
+    env: { HANEKAWA_PROMPT_CACHE_1H: '0' },
   }), { type: 'ephemeral', ttl: '1h' })
 })
 
@@ -69,7 +69,7 @@ test('cache ttl1h is the default and both opt-outs still work', () => {
   assert.equal(should1hCacheTTL({ env: {} }), true)
 
   resetCacheTTLEvaluation()
-  assert.equal(should1hCacheTTL({ env: { MYAGENT_PROMPT_CACHE_1H: '0' } }), false)
+  assert.equal(should1hCacheTTL({ env: { HANEKAWA_PROMPT_CACHE_1H: '0' } }), false)
 
   resetCacheTTLEvaluation()
   assert.equal(should1hCacheTTL({ settings: { cache: { ttl1h: false } }, env: {} }), false)
@@ -80,25 +80,25 @@ test('cache ttl1h settings override environment', () => {
 
   assert.equal(should1hCacheTTL({
     settings: { cache: { ttl1h: false } },
-    env: { MYAGENT_PROMPT_CACHE_1H: '1' },
+    env: { HANEKAWA_PROMPT_CACHE_1H: '1' },
   }), false)
 })
 
 test('cache ttl1h falls back to environment and stays latched until reset', () => {
   resetCacheTTLEvaluation()
 
-  assert.equal(should1hCacheTTL({ env: { MYAGENT_PROMPT_CACHE_1H: '1' } }), true)
+  assert.equal(should1hCacheTTL({ env: { HANEKAWA_PROMPT_CACHE_1H: '1' } }), true)
   // A settings reload must not flip the marker shape mid-session: that flip is
   // itself a cache break.
   assert.equal(should1hCacheTTL({
     settings: { cache: { ttl1h: false } },
-    env: { MYAGENT_PROMPT_CACHE_1H: '0' },
+    env: { HANEKAWA_PROMPT_CACHE_1H: '0' },
   }), true)
 
   resetCacheTTLEvaluation()
   assert.equal(should1hCacheTTL({
     settings: { cache: { ttl1h: false } },
-    env: { MYAGENT_PROMPT_CACHE_1H: '0' },
+    env: { HANEKAWA_PROMPT_CACHE_1H: '0' },
   }), false)
 })
 
@@ -246,7 +246,7 @@ test('promptCacheTtlMs is 1h by default and 5m when opted out, without latching'
   resetCacheTTLEvaluation()
   assert.equal(promptCacheTtlMs({ env: {} }), 3_600_000)
   assert.equal(promptCacheTtlMs({ settings: { cache: { ttl1h: false } }, env: {} }), 300_000)
-  assert.equal(promptCacheTtlMs({ env: { MYAGENT_PROMPT_CACHE_1H: '0' } }), 300_000)
+  assert.equal(promptCacheTtlMs({ env: { HANEKAWA_PROMPT_CACHE_1H: '0' } }), 300_000)
   // Evaluating TTL must not latch: a later evaluation with different inputs still answers fresh.
   assert.equal(promptCacheTtlMs({ settings: { cache: { ttl1h: true } }, env: {} }), 3_600_000)
   assert.equal(should1hCacheTTL({ settings: { cache: { ttl1h: false } }, env: {} }), false)

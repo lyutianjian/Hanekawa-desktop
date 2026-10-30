@@ -35,7 +35,7 @@ interface Harness {
 }
 
 async function createHarness(): Promise<Harness> {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-workspace-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-workspace-'))
   const store = new SessionStore(cwd)
   await store.init()
 

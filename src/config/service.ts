@@ -5,7 +5,7 @@ import type { ContextManagementConfig } from '../prompts/budget.js'
 import type { ModelPricing } from '../harness/types.js'
 import type { ModelCatalogEntry } from './modelCatalog.js'
 import { ApiKeyRedactor } from './apiKeys.js'
-import { loadUserSettings, type MyAgentSettings } from './settings.js'
+import { loadUserSettings, type HanekawaSettings } from './settings.js'
 import type { ChatThinkingFormat } from './providers/openaiCompat.js'
 import {
   resolveCoordination,
@@ -60,6 +60,13 @@ export interface ModelConfig {
   maxOutputTokens?: number
   thinking?: ThinkingConfig
   /**
+   * Whether this endpoint emits thinking blocks without a signature and
+   * accepts them back as thinking. Absent means off: an unsigned block is
+   * replayed as ordinary assistant text instead of risking a strict endpoint's
+   * rejection. Hand-written in `config.json`; no settings form owns it.
+   */
+  allowEmptySignature?: boolean
+  /**
    * The effort levels this model accepts, or absent for "all of them".
    *
    * A set rather than a ceiling: a model can refuse a level in the middle of the
@@ -102,6 +109,7 @@ const JSON_ONLY_MODEL_FIELDS = [
   'baseUrl',
   'promptCaching',
   'promptCacheRetention',
+  'allowEmptySignature',
 ] as const satisfies readonly (keyof ModelConfig)[]
 
 /**
@@ -163,7 +171,7 @@ export interface ConfigServiceOptions {
 }
 
 /**
- * The config layer is **global only**: one `~/.myagent/config.json` for every
+ * The config layer is **global only**: one `~/.hanekawa/config.json` for every
  * project.
  *
  * Endpoints, models and routing are account-level facts — an API key and a model
@@ -731,7 +739,7 @@ function routingReferences(routing: Routing | undefined): Array<[string, string]
   return pairs
 }
 
-function configFromSettings(settings?: MyAgentSettings): Partial<Config> {
+function configFromSettings(settings?: HanekawaSettings): Partial<Config> {
   if (!settings) return {}
 
   return {

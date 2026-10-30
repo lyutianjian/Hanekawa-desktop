@@ -101,9 +101,9 @@ test('command registry supports aliases and hides hidden commands from listings'
 })
 
 test('slash command suggestions include registered skill commands', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-command-suggestion-skill-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-command-suggestion-skill-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'suggestion-skill'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'suggestion-skill', 'SKILL.md'),

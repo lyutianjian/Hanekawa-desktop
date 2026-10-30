@@ -21,7 +21,7 @@ import type { ImagePresentableErrorReason } from '../../media/imageErrors.js'
 /**
  * Session image attachment storage (design doc §12.1, §12.2, §13).
  *
- * Layout under the project's data dir, `~/.myagent/projects/<key>/` (see
+ * Layout under the project's data dir, `~/.hanekawa/projects/<key>/` (see
  * `getProjectDataDir`; the global workspace is keyed by the home directory):
  *
  * ```text
@@ -360,7 +360,7 @@ export class ImageAttachmentService {
         await writeFile(path.join(dir, METADATA_FILE), serializeMetadata(stored), 'utf8')
       } catch (error) {
         // Best effort: the half-written directory may not be reachable at all —
-        // a regular file where `.myagent` should be makes the removal itself
+        // a regular file where `.hanekawa` should be makes the removal itself
         // fail with ENOTDIR, which `force` does not cover — and a cleanup that
         // throws would replace the answer the caller is owed with the error of
         // the tidy-up.

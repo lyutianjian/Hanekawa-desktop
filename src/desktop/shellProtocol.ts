@@ -103,10 +103,10 @@ export type ShellCommand =
    */
   | { type: 'open-project'; id: string }
   /**
-   * Forgets a project: unregisters it from `~/.myagent/projects.json` and
+   * Forgets a project: unregisters it from `~/.hanekawa/projects.json` and
    * releases any lane it still holds.
    *
-   * **Deletes nothing.** The project's `.myagent/` directory and every session
+   * **Deletes nothing.** The project's `.hanekawa/` directory and every session
    * in it survive, so re-opening the directory restores the group and its
    * history — which is what makes this safe as the sidebar's only way to make a
    * project row go away. The global workspace is not removable.
@@ -358,7 +358,7 @@ export interface WireBrowserTabInfo {
 
 // --- settings ----------------------------------------------------------------
 
-/** The cap on `~/.myagent/AGENTS.md`, shared by the host's schema and the editor's `maxLength`. */
+/** The cap on `~/.hanekawa/AGENTS.md`, shared by the host's schema and the editor's `maxLength`. */
 export const USER_INSTRUCTIONS_MAX_CHARS = 64_000
 
 /**
@@ -444,7 +444,7 @@ export interface WirePermissionGroup {
 }
 
 export interface WirePermissionsInfo {
-  /** `localSettingsPath(cwd)`, `~/.myagent/projects/<key>/settings.local.json` — the screen says what it writes. */
+  /** `localSettingsPath(cwd)`, `~/.hanekawa/projects/<key>/settings.local.json` — the screen says what it writes. */
   localPath: string
   /**
    * The startup mode: one global value in the user layer, written by the
@@ -483,7 +483,7 @@ export interface WireSkillInfo {
   dir: string
   /** `<dir>/SKILL.md`: the file 打开 hands to the editor and 复制 reads. */
   file: string
-  /** The skills folder it was read from, as a person writes it (`.myagent/skills`, `~/.claude/skills`). */
+  /** The skills folder it was read from, as a person writes it (`.hanekawa/skills`, `~/.claude/skills`). */
   rootLabel: string
   /**
    * Hanekawa's own folder or another tool's. A `compat` skill is read in place and
@@ -576,11 +576,11 @@ export interface WireCoordinationSettingsInfo {
 }
 
 export interface WireGeneralInfo {
-  /** `localSettingsPath(cwd)`, `~/.myagent/projects/<key>/settings.local.json`, same file the permission groups use. */
+  /** `localSettingsPath(cwd)`, `~/.hanekawa/projects/<key>/settings.local.json`, same file the permission groups use. */
   localPath: string
   /**
    * `cache.ttl1h`. Absent is not `false`: unset means the 1h TTL is on, which
-   * `MYAGENT_PROMPT_CACHE_1H=0` turns off, and the row says so.
+   * `HANEKAWA_PROMPT_CACHE_1H=0` turns off, and the row says so.
    */
   cacheTtl1h?: boolean
   /**
@@ -614,7 +614,7 @@ export interface WireSettingsSnapshot {
   skills: WireSkillInfo[]
   /** Personal-only discovery and user-layer switches, independent of this project's overrides. */
   skillsScope?: 'personal'
-  /** `.myagent/skills/` — the skills card names the directory it is reading. */
+  /** `.hanekawa/skills/` — the skills card names the directory it is reading. */
   skillsDir: string
   /** `~/.agents/skills`, read alongside the project's own: the 个人 rows come from here. */
   sharedSkillsDir: string
@@ -623,7 +623,7 @@ export interface WireSettingsSnapshot {
   contextManagement: WireContextManagementInfo
   general: WireGeneralInfo
   coordination: WireCoordinationSettingsInfo
-  /** `~/.myagent/AGENTS.md`; empty when the file does not exist. Global, not per project. */
+  /** `~/.hanekawa/AGENTS.md`; empty when the file does not exist. Global, not per project. */
   userInstructions: string
 }
 
@@ -700,9 +700,9 @@ export type SettingsChange =
    * moved onto the skills page with it, and one page is one scope.
    */
   | { scope: 'extensions'; kind: 'set-skill-enabled'; name: string; enabled: boolean }
-  /** An action: re-reads `.myagent/skills/` and re-registers their commands. */
+  /** An action: re-reads `.hanekawa/skills/` and re-registers their commands. */
   | { scope: 'extensions'; kind: 'reload-skills' }
-  /** Copies a skill folder the user picks into `.myagent/skills/` (or `~/.agents/skills/`) and reloads. */
+  /** Copies a skill folder the user picks into `.hanekawa/skills/` (or `~/.agents/skills/`) and reloads. */
   | { scope: 'extensions'; kind: 'import-skill'; target?: 'project' | 'personal' }
   /**
    * Uninstalls a skill by deleting its folder. Refused for a skill read from

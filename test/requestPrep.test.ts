@@ -211,31 +211,6 @@ test('prepareRecordsForRequest leaves the shared prefix byte-identical as turns 
   assert.deepEqual(after.slice(0, before.length), before)
 })
 
-test('prepareRecordsForRequestWithDiagnostics can strip all assistant thinking for outbound requests', () => {
-  const records: SessionRecord[] = [{
-    type: 'message',
-    id: 'assistant-1',
-    role: 'assistant',
-    content: 'message',
-    thinkingBlocks: [{
-      type: 'thinking',
-      thinking: 'private reasoning',
-      signature: 'signature-1',
-    }],
-    createdAt: '2026-05-10T00:00:00.000Z',
-  }]
-
-  const prepared = prepareRecordsForRequestWithDiagnostics(
-    records,
-    {},
-    new Date('2026-05-10T00:00:00.000Z'),
-    { stripAllThinkingBlocks: true },
-  ).records
-
-  assert.equal(prepared[0]?.type === 'message' ? prepared[0].thinkingBlocks : undefined, undefined)
-  assert.equal(records[0]?.type === 'message' ? records[0].thinkingBlocks?.[0]?.signature : undefined, 'signature-1')
-})
-
 test('prepareRecordsForRequest does not mutate records with cached token counts', () => {
   const records: SessionRecord[] = [
     ...toolPair('first', 'Read', 'first output', 0),

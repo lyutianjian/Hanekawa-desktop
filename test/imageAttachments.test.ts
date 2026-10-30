@@ -16,7 +16,7 @@ import { getProjectDataDir } from '../src/utils/paths.js'
 
 /**
  * S05: the session attachment store. Every test works on its own scratch
- * project so `<cwd>/.myagent` really is the store root — the same shape the
+ * project so `<cwd>/.hanekawa` really is the store root — the same shape the
  * runtime will hand the service.
  */
 let project = ''

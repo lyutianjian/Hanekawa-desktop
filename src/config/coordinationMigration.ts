@@ -3,8 +3,8 @@
  * the global config.
  *
  * The preferred source is the user's global settings plus every registered
- * project's personal layer, `~/.myagent/projects/<key>/settings.local.json`.
- * A repository's own `.myagent/settings.json` is deliberately not read: it is
+ * project's personal layer, `~/.hanekawa/projects/<key>/settings.local.json`.
+ * A repository's own `.hanekawa/settings.json` is deliberately not read: it is
  * checked-in data and must never become account configuration.
  *
  * Behaviour, per field:
@@ -24,7 +24,7 @@
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { readConfigurationFile, updateConfigurationFile } from './file.js'
-import { getGlobalMyAgentDir } from '../utils/paths.js'
+import { getGlobalHanekawaDir } from '../utils/paths.js'
 import { localSettingsPath } from './settings.js'
 import { VALID_EFFORT_LEVELS, type EffortLevel } from './effort.js'
 import type { ConfigService } from './service.js'
@@ -165,7 +165,7 @@ async function readSources(
   home: string | undefined,
   findings: string[],
 ): Promise<Source[]> {
-  const globalPath = join(home ?? getGlobalMyAgentDir(), 'settings.json')
+  const globalPath = join(home ?? getGlobalHanekawaDir(), 'settings.json')
   const entries: Array<{ path: string; label: string }> = [{ path: globalPath, label: globalPath }]
   for (const root of roots) entries.push({ path: localSettingsPath(root), label: root })
 

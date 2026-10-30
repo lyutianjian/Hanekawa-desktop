@@ -44,7 +44,7 @@ const ARTIFACT_DIRS = new Set([
   '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache', '.tox', '.gradle',
 ])
 /** Process names that would take this agent down with them. */
-const SELF_PROCESS = /node|electron|hanekawa|myagent/i
+const SELF_PROCESS = /node|electron|hanekawa/i
 const PKILL_VALUE_FLAGS = new Set(['-u', '-U', '-g', '-G', '-P', '-s', '-t', '-F', '--signal', '--uid', '--euid', '--group', '--parent', '--session', '--terminal', '--pidfile'])
 const PARTED_WRITES =new Set(['mklabel', 'mkpart', 'rm', 'resizepart', 'rescue', 'name', 'set', 'toggle', 'mkfs'])
 

@@ -25,7 +25,7 @@ import { getSessionsDir, normalizeCaseForComparison } from '../src/utils/paths.j
  */
 
 async function withHome(run: (home: string) => Promise<void>): Promise<void> {
-  const home = await mkdtemp(path.join(os.tmpdir(), 'myagent-projects-home-'))
+  const home = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-projects-home-'))
   try {
     await run(home)
   } finally {
@@ -40,7 +40,7 @@ async function withProject(
   sessions: ReadonlyArray<{ id: string; updatedAt: string; messageCount?: number; title?: string }>,
   run: (cwd: string) => Promise<void>,
 ): Promise<void> {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), `myagent-project-${name}-`))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), `hanekawa-project-${name}-`))
   await mkdir(getSessionsDir(cwd), { recursive: true })
   await writeFile(
     path.join(getSessionsDir(cwd), 'index.json'),
@@ -68,8 +68,8 @@ test('recording appends, and re-opening keeps a project where it is', async () =
   // The array is the sidebar's group order, so a re-open must not move a row:
   // clicking `+` on a closed project used to hoist it to the top of the sidebar.
   await withHome(async (home) => {
-    const a = await mkdtemp(path.join(os.tmpdir(), 'myagent-a-'))
-    const b = await mkdtemp(path.join(os.tmpdir(), 'myagent-b-'))
+    const a = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-a-'))
+    const b = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-b-'))
     try {
       await recordProjectOpen(a, home)
       await recordProjectOpen(b, home)
@@ -97,7 +97,7 @@ test('the cap drops the oldest addition, never the project being opened', async 
     try {
       // One past `MAX_PROJECTS` (20): the first addition falls off the front.
       for (let index = 0; index < 21; index += 1) {
-        const dir = await mkdtemp(path.join(os.tmpdir(), `myagent-cap${index}-`))
+        const dir = await mkdtemp(path.join(os.tmpdir(), `hanekawa-cap${index}-`))
         dirs.push(dir)
         await recordProjectOpen(dir, home)
       }
@@ -110,8 +110,8 @@ test('the cap drops the oldest addition, never the project being opened', async 
 
 test('writing prunes directories that no longer exist', async () => {
   await withHome(async (home) => {
-    const gone = await mkdtemp(path.join(os.tmpdir(), 'myagent-gone-'))
-    const stays = await mkdtemp(path.join(os.tmpdir(), 'myagent-stays-'))
+    const gone = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-gone-'))
+    const stays = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-stays-'))
     await recordProjectOpen(gone, home)
     await rm(gone, { recursive: true, force: true })
     try {
@@ -126,9 +126,9 @@ test('writing prunes directories that no longer exist', async () => {
 
 test('forgetting a project drops just that one, in place', async () => {
   await withHome(async (home) => {
-    const a = await mkdtemp(path.join(os.tmpdir(), 'myagent-fa-'))
-    const b = await mkdtemp(path.join(os.tmpdir(), 'myagent-fb-'))
-    const c = await mkdtemp(path.join(os.tmpdir(), 'myagent-fc-'))
+    const a = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-fa-'))
+    const b = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-fb-'))
+    const c = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-fc-'))
     try {
       await recordProjectOpen(a, home)
       await recordProjectOpen(b, home)
@@ -161,8 +161,8 @@ test('forgetting one project does not prune the others off disk', async () => {
   // not silently take unrelated ones with it — a project on a disconnected
   // network share is still a project the user added.
   await withHome(async (home) => {
-    const gone = await mkdtemp(path.join(os.tmpdir(), 'myagent-fgone-'))
-    const target = await mkdtemp(path.join(os.tmpdir(), 'myagent-ftarget-'))
+    const gone = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-fgone-'))
+    const target = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-ftarget-'))
     try {
       await recordProjectOpen(gone, home)
       await recordProjectOpen(target, home)
@@ -178,9 +178,9 @@ test('forgetting one project does not prune the others off disk', async () => {
 
 test('a corrupted registry reads as empty', async () => {
   await withHome(async (home) => {
-    await mkdir(path.join(home, '.myagent'), { recursive: true })
+    await mkdir(path.join(home, '.hanekawa'), { recursive: true })
     await writeFile(
-      path.join(home, '.myagent', 'projects.json'),
+      path.join(home, '.hanekawa', 'projects.json'),
       '{not json',
       'utf8',
     )
@@ -189,7 +189,7 @@ test('a corrupted registry reads as empty', async () => {
 })
 
 test('peekNewestSessionAt reads the index without a store', async () => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-peek-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-peek-'))
   try {
     assert.equal(await peekNewestSessionAt(cwd), undefined)
     await mkdir(getSessionsDir(cwd), { recursive: true })
@@ -272,7 +272,7 @@ test('startup resolves to the global workspace when the registry has nothing to 
 
 test('startup skips roots that vanished from disk', async () => {
   await withHome(async (home) => {
-    const gone = await mkdtempSync(path.join(os.tmpdir(), 'myagent-vanished-'))
+    const gone = await mkdtempSync(path.join(os.tmpdir(), 'hanekawa-vanished-'))
     await mkdir(getSessionsDir(gone), { recursive: true })
     await writeFile(
       path.join(getSessionsDir(gone), 'index.json'),

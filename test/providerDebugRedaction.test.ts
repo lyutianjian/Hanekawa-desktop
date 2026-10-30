@@ -57,7 +57,7 @@ function imageRequest(refs: ImageAttachmentRef[]): ModelRequest {
 }
 
 test('debugProviderPayload redacts base64 image data and logs attachment facts instead', () => {
-  process.env.MYAGENT_DEBUG_PROVIDER = '1'
+  process.env.HANEKAWA_DEBUG_PROVIDER = '1'
   try {
     const shot = ref('img-shot', { name: 'shot.png', mimeType: 'image/jpeg' })
     const diagram = ref('img-diagram')
@@ -78,13 +78,13 @@ test('debugProviderPayload redacts base64 image data and logs attachment facts i
     const lines = captureConsole(() => debugProviderPayload('anthropic', payload, request))
     const output = lines.join('\n')
 
-    assert.ok(output.includes('[myagent][provider:anthropic] payload'), 'the payload line still logs')
+    assert.ok(output.includes('[hanekawa][provider:anthropic] payload'), 'the payload line still logs')
     assert.ok(!output.includes(base64), 'no base64 body anywhere in the debug output')
     assert.match(output, /"media_type": "image\/jpeg"/, 'the MIME is kept')
     assert.match(output, /<redacted base64: \d+ chars, ~\d+ bytes>/, 'the data field states its size')
     assert.match(output, /base64,<redacted \d+ chars/, 'the data URL keeps its prefix and redacts the body')
 
-    assert.ok(output.includes('[myagent][provider:anthropic] payload images'), 'the facts line logs')
+    assert.ok(output.includes('[hanekawa][provider:anthropic] payload images'), 'the facts line logs')
     assert.match(output, /"attachmentId": "img-shot"/)
     assert.match(output, /"name": "shot\.png"/)
     assert.match(output, /"mimeType": "image\/jpeg"/)
@@ -96,29 +96,29 @@ test('debugProviderPayload redacts base64 image data and logs attachment facts i
     // The payload object itself was not mutated by the redaction walk.
     assert.deepEqual(payload, payloadSnapshot)
   } finally {
-    delete process.env.MYAGENT_DEBUG_PROVIDER
+    delete process.env.HANEKAWA_DEBUG_PROVIDER
   }
 })
 
 test('debugProviderPayload without images logs the payload as-is, with no facts line', () => {
-  process.env.MYAGENT_DEBUG_PROVIDER = '1'
+  process.env.HANEKAWA_DEBUG_PROVIDER = '1'
   try {
     const lines = captureConsole(() => debugProviderPayload('openai', { model: 'm', messages: [] }))
     assert.equal(lines.length, 1)
-    assert.match(lines[0]!, /\[myagent\]\[provider:openai\] payload/)
+    assert.match(lines[0]!, /\[hanekawa\]\[provider:openai\] payload/)
   } finally {
-    delete process.env.MYAGENT_DEBUG_PROVIDER
+    delete process.env.HANEKAWA_DEBUG_PROVIDER
   }
 })
 
 test('debugProviderPayload stays silent unless the debug env var is set', () => {
-  delete process.env.MYAGENT_DEBUG_PROVIDER
+  delete process.env.HANEKAWA_DEBUG_PROVIDER
   const lines = captureConsole(() => debugProviderPayload('anthropic', { model: 'm' }, imageRequest([ref('img-silent')])))
   assert.equal(lines.length, 0)
 })
 
 test('debugProviderSummary previews image blocks as mime labels, never their data', () => {
-  process.env.MYAGENT_DEBUG_PROVIDER = '1'
+  process.env.HANEKAWA_DEBUG_PROVIDER = '1'
   try {
     const base64 = Buffer.from(new Uint8Array(8)).toString('base64')
     const request = imageRequest([ref('img-shot')])
@@ -136,6 +136,6 @@ test('debugProviderSummary previews image blocks as mime labels, never their dat
     assert.match(output, /image:image\/webp/)
     assert.match(output, /image_url:image\/png/)
   } finally {
-    delete process.env.MYAGENT_DEBUG_PROVIDER
+    delete process.env.HANEKAWA_DEBUG_PROVIDER
   }
 })

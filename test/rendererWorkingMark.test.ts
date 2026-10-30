@@ -146,7 +146,7 @@ test('markSpecFor: a running write to a document composes; settled, it writes', 
   assert.equal(write('src/a.ts'), 'write')
   assert.equal(write('AGENTS.md'), 'write')
   assert.equal(write('pkg/CLAUDE.local.md'), 'write')
-  assert.equal(write('.myagent/rules/style.md'), 'write')
+  assert.equal(write('.hanekawa/rules/style.md'), 'write')
   assert.equal(write('docs/guide.md', false), 'write')
 })
 

@@ -116,7 +116,7 @@ interface HarnessOptions {
 }
 
 async function createHarness(options: HarnessOptions = {}): Promise<Harness> {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-protocol-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-protocol-'))
   const store = new SessionStore(cwd)
   await store.init()
   const session = await store.create('protocol test')
@@ -1539,7 +1539,7 @@ test('switch-branch refuses a name git must never see, without reaching git', as
 })
 
 test('hello reports the global workspace when cwd is the home directory', async () => {
-  const workingDir = path.join(tmpdir(), 'Documents', 'myagent')
+  const workingDir = path.join(tmpdir(), 'Documents', 'hanekawa')
   const harness = await createHarness({ workingDir })
   // `os.homedir()` answers from USERPROFILE/HOME on the platforms this suite
   // runs on; pointing both at the scratch project makes it the global root

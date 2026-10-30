@@ -61,7 +61,7 @@ interface Harness {
 }
 
 async function createHarness(): Promise<Harness> {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-desktop-ui-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-desktop-ui-'))
   // A real file, so the preview is a genuine overwrite diff rather than a
   // create: `buildFileToolPreview` reads the disk through `defaultReadFile`.
   await writeFile(path.join(cwd, 'notes.txt'), 'alpha\nbeta\ngamma\n', 'utf8')

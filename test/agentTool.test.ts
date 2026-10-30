@@ -529,11 +529,11 @@ test('custom agent model frontmatter requests a concrete model key', async () =>
 })
 
 test('explicit Agent.model wins over environment, definition and routing in foreground and background', async (t) => {
-  const previous = process.env.MYAGENT_SUBAGENT_MODEL_REVIEWER
-  process.env.MYAGENT_SUBAGENT_MODEL_REVIEWER = 'env-key'
+  const previous = process.env.HANEKAWA_SUBAGENT_MODEL_REVIEWER
+  process.env.HANEKAWA_SUBAGENT_MODEL_REVIEWER = 'env-key'
   t.after(() => {
-    if (previous === undefined) delete process.env.MYAGENT_SUBAGENT_MODEL_REVIEWER
-    else process.env.MYAGENT_SUBAGENT_MODEL_REVIEWER = previous
+    if (previous === undefined) delete process.env.HANEKAWA_SUBAGENT_MODEL_REVIEWER
+    else process.env.HANEKAWA_SUBAGENT_MODEL_REVIEWER = previous
   })
   for (const background of [false, true]) {
     const requests: ModelRequest[] = []
@@ -599,10 +599,10 @@ test('unknown explicit agent keys fail before starting a foreground or backgroun
 })
 
 test('agent description reports defaults from environment, definition, routing and inheritance', async (t) => {
-  const previous = { generic: process.env.MYAGENT_SUBAGENT_MODEL, specific: process.env.MYAGENT_SUBAGENT_MODEL_GENERAL }
-  delete process.env.MYAGENT_SUBAGENT_MODEL
+  const previous = { generic: process.env.HANEKAWA_SUBAGENT_MODEL, specific: process.env.HANEKAWA_SUBAGENT_MODEL_GENERAL }
+  delete process.env.HANEKAWA_SUBAGENT_MODEL
   t.after(() => {
-    for (const [key, value] of [['MYAGENT_SUBAGENT_MODEL', previous.generic], ['MYAGENT_SUBAGENT_MODEL_GENERAL', previous.specific]] as const) {
+    for (const [key, value] of [['HANEKAWA_SUBAGENT_MODEL', previous.generic], ['HANEKAWA_SUBAGENT_MODEL_GENERAL', previous.specific]] as const) {
       if (value === undefined) delete process.env[key]
       else process.env[key] = value
     }
@@ -616,8 +616,8 @@ test('agent description reports defaults from environment, definition, routing a
     { env: undefined, definition: undefined, route: 'main', expected: 'main' },
   ]
   for (const entry of cases) {
-    if (entry.env === undefined) delete process.env.MYAGENT_SUBAGENT_MODEL_GENERAL
-    else process.env.MYAGENT_SUBAGENT_MODEL_GENERAL = entry.env
+    if (entry.env === undefined) delete process.env.HANEKAWA_SUBAGENT_MODEL_GENERAL
+    else process.env.HANEKAWA_SUBAGENT_MODEL_GENERAL = entry.env
     const tool = createAgentTool({
       provider: { name: 'unused', async createMessage() { throw new Error('must not run') } },
       model: 'main-model', modelKey: 'main', cwd: testCwd, tools: () => [], permissionPrompt: async () => true,
@@ -1822,13 +1822,13 @@ test('custom agent reload can refresh a runtime Agent tool', async () => {
   })
 
   try {
-    await mkdir(path.join(cwd, '.myagent', 'agents'), { recursive: true })
+    await mkdir(path.join(cwd, '.hanekawa', 'agents'), { recursive: true })
     const beforeReload = createRuntimeAgentTool()
     const missing = await beforeReload.execute({ task: 'hello', subagent_type: 'foo' }, toolContext())
     assert.equal(missing.ok, false)
     assert.match(missing.content, /Unknown subagent_type "foo"/)
 
-    await writeFile(path.join(cwd, '.myagent', 'agents', 'foo.md'), agentFile({
+    await writeFile(path.join(cwd, '.hanekawa', 'agents', 'foo.md'), agentFile({
       name: 'foo',
       description: 'Reloaded foo agent.',
       tools: [],
@@ -1913,15 +1913,15 @@ test('AgentDefinitionLoader merges global, project, and local agent definitions 
   const home = path.join(root, 'home')
   const cwd = path.join(root, 'project')
   try {
-    await mkdir(path.join(home, '.myagent', 'agents'), { recursive: true })
-    await mkdir(path.join(cwd, '.myagent', 'agents'), { recursive: true })
+    await mkdir(path.join(home, '.hanekawa', 'agents'), { recursive: true })
+    await mkdir(path.join(cwd, '.hanekawa', 'agents'), { recursive: true })
     await mkdir(getLocalAgentsDir(cwd), { recursive: true })
-    await writeFile(path.join(home, '.myagent', 'agents', 'review.md'), agentFile({
+    await writeFile(path.join(home, '.hanekawa', 'agents', 'review.md'), agentFile({
       name: 'reviewer',
       description: 'global definition',
       body: 'global prompt',
     }))
-    await writeFile(path.join(cwd, '.myagent', 'agents', 'review.md'), agentFile({
+    await writeFile(path.join(cwd, '.hanekawa', 'agents', 'review.md'), agentFile({
       name: 'reviewer',
       description: 'project definition',
       body: 'project prompt',
@@ -1947,8 +1947,8 @@ test('AgentDefinitionLoader parses extended custom agent frontmatter fields', as
   const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agents-'))
   const cwd = path.join(root, 'project')
   try {
-    await mkdir(path.join(cwd, '.myagent', 'agents'), { recursive: true })
-    await writeFile(path.join(cwd, '.myagent', 'agents', 'v2.md'), agentFile({
+    await mkdir(path.join(cwd, '.hanekawa', 'agents'), { recursive: true })
+    await writeFile(path.join(cwd, '.hanekawa', 'agents', 'v2.md'), agentFile({
       name: 'v2-agent',
       description: 'Uses v2 fields.',
       model: 'fast',
@@ -1981,7 +1981,7 @@ test('AgentDefinitionLoader parses CRLF frontmatter', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agents-'))
   const cwd = path.join(root, 'project')
   try {
-    const agentsDir = path.join(cwd, '.myagent', 'agents')
+    const agentsDir = path.join(cwd, '.hanekawa', 'agents')
     await mkdir(agentsDir, { recursive: true })
     await writeFile(
       path.join(agentsDir, 'windows.md'),
@@ -2007,7 +2007,7 @@ test('AgentDefinitionLoader repairs problematic top-level description scalars', 
   const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agents-'))
   const cwd = path.join(root, 'project')
   try {
-    const agentsDir = path.join(cwd, '.myagent', 'agents')
+    const agentsDir = path.join(cwd, '.hanekawa', 'agents')
     await mkdir(agentsDir, { recursive: true })
     await writeFile(
       path.join(agentsDir, 'compat.md'),
@@ -2037,9 +2037,9 @@ test('AgentDefinitionLoader overrides v2 fields when later directories override 
   const home = path.join(root, 'home')
   const cwd = path.join(root, 'project')
   try {
-    await mkdir(path.join(home, '.myagent', 'agents'), { recursive: true })
+    await mkdir(path.join(home, '.hanekawa', 'agents'), { recursive: true })
     await mkdir(getLocalAgentsDir(cwd), { recursive: true })
-    await writeFile(path.join(home, '.myagent', 'agents', 'review.md'), agentFile({
+    await writeFile(path.join(home, '.hanekawa', 'agents', 'review.md'), agentFile({
       name: 'reviewer',
       description: 'global definition',
       model: 'slow',
@@ -2072,8 +2072,8 @@ test('AgentDefinitionLoader honors explicit custom maxTurns over the default', a
   const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agents-'))
   const cwd = path.join(root, 'project')
   try {
-    await mkdir(path.join(cwd, '.myagent', 'agents'), { recursive: true })
-    await writeFile(path.join(cwd, '.myagent', 'agents', 'limited.md'), agentFile({
+    await mkdir(path.join(cwd, '.hanekawa', 'agents'), { recursive: true })
+    await writeFile(path.join(cwd, '.hanekawa', 'agents', 'limited.md'), agentFile({
       name: 'limited',
       description: 'Explicit max turns.',
       maxTurns: 7,
@@ -2263,7 +2263,7 @@ test('custom agent maxResultSizeChars controls its result budget', async () => {
 test('custom agent only receives Bash when frontmatter explicitly lists it', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agents-'))
   try {
-    const agentsDir = path.join(root, 'project', '.myagent', 'agents')
+    const agentsDir = path.join(root, 'project', '.hanekawa', 'agents')
     await mkdir(agentsDir, { recursive: true })
     await writeFile(path.join(agentsDir, 'readonly.md'), agentFile({
       name: 'readonly',
@@ -2297,7 +2297,7 @@ test('custom agent only receives Bash when frontmatter explicitly lists it', asy
 test('custom agent read-only inference treats write-like tools as non-concurrency-safe', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agents-'))
   try {
-    const agentsDir = path.join(root, 'project', '.myagent', 'agents')
+    const agentsDir = path.join(root, 'project', '.hanekawa', 'agents')
     await mkdir(agentsDir, { recursive: true })
     await writeFile(path.join(agentsDir, 'writer.md'), agentFile({
       name: 'writer',
@@ -2329,7 +2329,7 @@ test('custom agent read-only inference treats write-like tools as non-concurrenc
 test('AgentDefinitionLoader warns for risky custom agent definitions', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agents-'))
   try {
-    const agentsDir = path.join(root, 'project', '.myagent', 'agents')
+    const agentsDir = path.join(root, 'project', '.hanekawa', 'agents')
     await mkdir(agentsDir, { recursive: true })
     await writeFile(path.join(agentsDir, 'explore.md'), agentFile({
       name: 'explore',
@@ -2608,10 +2608,10 @@ test('parent bypass mode still takes precedence for background agents', async ()
 // Phase 2: Environment Variable Override for Subagent Model
 // ============================================================================
 
-test('MYAGENT_SUBAGENT_MODEL overrides default routing', async () => {
-  const originalEnv = process.env.MYAGENT_SUBAGENT_MODEL
+test('HANEKAWA_SUBAGENT_MODEL overrides default routing', async () => {
+  const originalEnv = process.env.HANEKAWA_SUBAGENT_MODEL
   try {
-    process.env.MYAGENT_SUBAGENT_MODEL = 'fast-model'
+    process.env.HANEKAWA_SUBAGENT_MODEL = 'fast-model'
     let requestedModelKey: string | undefined
     const routedProvider: ModelProvider = {
       name: 'routed',
@@ -2648,19 +2648,19 @@ test('MYAGENT_SUBAGENT_MODEL overrides default routing', async () => {
     assert.equal(requestedModelKey, 'fast-model')
   } finally {
     if (originalEnv === undefined) {
-      delete process.env.MYAGENT_SUBAGENT_MODEL
+      delete process.env.HANEKAWA_SUBAGENT_MODEL
     } else {
-      process.env.MYAGENT_SUBAGENT_MODEL = originalEnv
+      process.env.HANEKAWA_SUBAGENT_MODEL = originalEnv
     }
   }
 })
 
-test('MYAGENT_SUBAGENT_MODEL per-type override takes precedence', async () => {
-  const originalGeneric = process.env.MYAGENT_SUBAGENT_MODEL
-  const originalExplore = process.env.MYAGENT_SUBAGENT_MODEL_EXPLORE
+test('HANEKAWA_SUBAGENT_MODEL per-type override takes precedence', async () => {
+  const originalGeneric = process.env.HANEKAWA_SUBAGENT_MODEL
+  const originalExplore = process.env.HANEKAWA_SUBAGENT_MODEL_EXPLORE
   try {
-    process.env.MYAGENT_SUBAGENT_MODEL = 'generic-model'
-    process.env.MYAGENT_SUBAGENT_MODEL_EXPLORE = 'explore-specific-model'
+    process.env.HANEKAWA_SUBAGENT_MODEL = 'generic-model'
+    process.env.HANEKAWA_SUBAGENT_MODEL_EXPLORE = 'explore-specific-model'
     let requestedModelKey: string | undefined
     const routedProvider: ModelProvider = {
       name: 'routed',
@@ -2696,22 +2696,22 @@ test('MYAGENT_SUBAGENT_MODEL per-type override takes precedence', async () => {
     assert.equal(requestedModelKey, 'explore-specific-model')
   } finally {
     if (originalGeneric === undefined) {
-      delete process.env.MYAGENT_SUBAGENT_MODEL
+      delete process.env.HANEKAWA_SUBAGENT_MODEL
     } else {
-      process.env.MYAGENT_SUBAGENT_MODEL = originalGeneric
+      process.env.HANEKAWA_SUBAGENT_MODEL = originalGeneric
     }
     if (originalExplore === undefined) {
-      delete process.env.MYAGENT_SUBAGENT_MODEL_EXPLORE
+      delete process.env.HANEKAWA_SUBAGENT_MODEL_EXPLORE
     } else {
-      process.env.MYAGENT_SUBAGENT_MODEL_EXPLORE = originalExplore
+      process.env.HANEKAWA_SUBAGENT_MODEL_EXPLORE = originalExplore
     }
   }
 })
 
-test('an unresolvable MYAGENT_SUBAGENT_MODEL fails the run instead of switching models', async () => {
-  const originalEnv = process.env.MYAGENT_SUBAGENT_MODEL
+test('an unresolvable HANEKAWA_SUBAGENT_MODEL fails the run instead of switching models', async () => {
+  const originalEnv = process.env.HANEKAWA_SUBAGENT_MODEL
   try {
-    process.env.MYAGENT_SUBAGENT_MODEL = 'nonexistent-model'
+    process.env.HANEKAWA_SUBAGENT_MODEL = 'nonexistent-model'
     const provider: ModelProvider = {
       name: 'parent',
       async createMessage() {
@@ -2730,12 +2730,12 @@ test('an unresolvable MYAGENT_SUBAGENT_MODEL fails the run instead of switching 
     const result = await agentTool.execute({ task: 'map files', subagent_type: 'explore' }, toolContext())
 
     assert.equal(result.ok, false)
-    assert.match(result.content, /from MYAGENT_SUBAGENT_MODEL\): nonexistent-model/)
+    assert.match(result.content, /from HANEKAWA_SUBAGENT_MODEL\): nonexistent-model/)
   } finally {
     if (originalEnv === undefined) {
-      delete process.env.MYAGENT_SUBAGENT_MODEL
+      delete process.env.HANEKAWA_SUBAGENT_MODEL
     } else {
-      process.env.MYAGENT_SUBAGENT_MODEL = originalEnv
+      process.env.HANEKAWA_SUBAGENT_MODEL = originalEnv
     }
   }
 })
@@ -2748,7 +2748,7 @@ test('custom agents default to high effort and preserve explicit frontmatter eff
   const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agent-effort-'))
   t.after(() => rm(root, { recursive: true, force: true }))
   const cwd = path.join(root, 'project')
-  const agentDir = path.join(cwd, '.myagent', 'agents')
+  const agentDir = path.join(cwd, '.hanekawa', 'agents')
   await mkdir(agentDir, { recursive: true })
   const cases = [undefined, 'low', 'medium', 'high', 'xhigh', 'max'] as const
   for (const effort of cases) {
@@ -2786,8 +2786,8 @@ test('AgentDefinitionLoader rejects a numeric effort and reports it as a warning
   const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agents-'))
   const cwd = path.join(root, 'project')
   try {
-    await mkdir(path.join(cwd, '.myagent', 'agents'), { recursive: true })
-    await writeFile(path.join(cwd, '.myagent', 'agents', 'numeric.md'), '---\nname: numeric\ndescription: d\neffort: 3\n---\nbody\n')
+    await mkdir(path.join(cwd, '.hanekawa', 'agents'), { recursive: true })
+    await writeFile(path.join(cwd, '.hanekawa', 'agents', 'numeric.md'), '---\nname: numeric\ndescription: d\neffort: 3\n---\nbody\n')
 
     const loader = new AgentDefinitionLoader(cwd, path.join(root, 'home'))
     assert.equal((await loader.list()).length, 0)
@@ -2801,8 +2801,8 @@ test('AgentDefinitionLoader parses criticalSystemReminder from frontmatter', asy
   const root = await mkdtemp(path.join(tmpdir(), 'hanekawa-agents-'))
   const cwd = path.join(root, 'project')
   try {
-    await mkdir(path.join(cwd, '.myagent', 'agents'), { recursive: true })
-    await writeFile(path.join(cwd, '.myagent', 'agents', 'reminder.md'), agentFile({
+    await mkdir(path.join(cwd, '.hanekawa', 'agents'), { recursive: true })
+    await writeFile(path.join(cwd, '.hanekawa', 'agents', 'reminder.md'), agentFile({
       name: 'reminder-agent',
       description: 'Agent with critical reminder.',
       body: 'You are a reminder agent.',

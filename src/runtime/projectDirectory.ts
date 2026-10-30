@@ -71,7 +71,7 @@ export interface ProjectEntry<
  * `normalizeCaseForComparison` is `src/utils/paths.ts`'s, so this agrees with
  * the rest of the codebase about what "the same directory" means — the whole
  * point of a single key is that opening `C:\Repo` twice does not bootstrap a
- * second `ProjectRuntime` over the same `.myagent/`.
+ * second `ProjectRuntime` over the same `.hanekawa/`.
  */
 export function projectRootKey(cwd: string): string {
   return normalizeCaseForComparison(resolve(cwd))
@@ -151,7 +151,7 @@ export class ProjectDirectory<
    * Registers an already-bootstrapped project.
    *
    * Throws on a duplicate root instead of replacing: two `ProjectRuntime`s over
-   * one `.myagent/` means two `SessionStore`s appending to the same JSONL files
+   * one `.hanekawa/` means two `SessionStore`s appending to the same JSONL files
    * and two MCP connection sets. A caller that wants "open or focus" checks
    * {@link get} first — which is what makes the shell's dialog path idempotent.
    */

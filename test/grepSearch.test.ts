@@ -15,7 +15,7 @@ function context(cwd: string) {
 }
 
 async function withProject(run: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-grep-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-grep-'))
   try {
     await writeFile(path.join(dir, 'alpha.ts'), 'const target = 1\nconst other = 2\nconst target2 = 3\n', 'utf8')
     await writeFile(path.join(dir, 'beta.ts'), 'no hits here\n', 'utf8')
@@ -90,7 +90,7 @@ test('the type filter narrows the search the way glob does', async () => {
  * `.gitignore` filtering both backends share.
  */
 async function withoutRipgrep<T>(run: () => Promise<T>): Promise<T> {
-  const bin = await mkdtemp(path.join(os.tmpdir(), 'myagent-no-rg-'))
+  const bin = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-no-rg-'))
   const git = (process.env.PATH ?? '').split(path.delimiter)
     .filter(Boolean)
     .map((dir) => path.join(dir, process.platform === 'win32' ? 'git.exe' : 'git'))
@@ -107,7 +107,7 @@ async function withoutRipgrep<T>(run: () => Promise<T>): Promise<T> {
 }
 
 async function withTree(run: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-grep-tree-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-grep-tree-'))
   try {
     await mkdir(path.join(dir, 'sub', 'deep'), { recursive: true })
     await mkdir(path.join(dir, '.config'), { recursive: true })
@@ -190,8 +190,8 @@ test('a match set past the old 10 MiB stdout ceiling no longer fails', async () 
 
 test('a broad search from the workspace root skips Hanekawa\'s own runtime data', async () => {
   const home = userHome()
-  const data = path.join(home, '.myagent', 'projects', 'demo-key')
-  const worktree = path.join(home, '.myagent-worktrees', 'demo-key', 'thr_1')
+  const data = path.join(home, '.hanekawa', 'projects', 'demo-key')
+  const worktree = path.join(home, '.hanekawa-worktrees', 'demo-key', 'thr_1')
   const project = path.join(home, 'src', 'demo')
   try {
     await mkdir(path.join(data, 'sessions'), { recursive: true })
@@ -206,14 +206,14 @@ test('a broad search from the workspace root skips Hanekawa\'s own runtime data'
     const rows = result.content.split('\n').sort()
     assert.deepEqual(rows, ['src/demo/app.ts'])
   } finally {
-    await rm(path.join(home, '.myagent-worktrees'), { recursive: true, force: true })
-    await rm(path.join(home, '.myagent', 'projects', 'demo-key'), { recursive: true, force: true })
+    await rm(path.join(home, '.hanekawa-worktrees'), { recursive: true, force: true })
+    await rm(path.join(home, '.hanekawa', 'projects', 'demo-key'), { recursive: true, force: true })
     await rm(path.join(home, 'src'), { recursive: true, force: true })
   }
 })
 
 test('home aliases and both search backends exclude runtime data while explicit allowed roots remain searchable', async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'myagent-search-alias-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-search-alias-'))
   const home = path.join(root, 'home')
   const alias = path.join(root, 'home-link')
   const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
@@ -223,7 +223,7 @@ test('home aliases and both search backends exclude runtime data while explicit 
       assert.equal(grep.ok, true, grep.content)
       assert.match(grep.content, /source\.txt/)
       assert.doesNotMatch(grep.content, /private\.jsonl|thread\.txt/)
-      const glob = await globTool.execute({ pattern: '.myagent/**/*' }, context(cwd))
+      const glob = await globTool.execute({ pattern: '.hanekawa/**/*' }, context(cwd))
       assert.equal(glob.ok, true, glob.content)
       assert.match(glob.content, /settings\.json/)
       assert.doesNotMatch(glob.content, /private\.jsonl/)
@@ -233,7 +233,7 @@ test('home aliases and both search backends exclude runtime data while explicit 
       const internalGlob = await globTool.execute({ pattern: '**/*.md', path: explicit }, ownContext)
       assert.match(internalGrep.content, /plan\.md/)
       assert.match(internalGlob.content, /plan\.md/)
-      const sessions = path.join(cwd, '.myagent', 'projects', 'demo', 'sessions')
+      const sessions = path.join(cwd, '.hanekawa', 'projects', 'demo', 'sessions')
       assert.match((await grepTool.execute({ pattern: 'alias-needle', path: sessions }, ownContext)).content, /private\.jsonl/)
       assert.match((await globTool.execute({ pattern: '**/*', path: sessions }, ownContext)).content, /private\.jsonl/)
     }
@@ -241,12 +241,12 @@ test('home aliases and both search backends exclude runtime data while explicit 
   try {
     process.env.HOME = home
     process.env.USERPROFILE = home
-    await mkdir(path.join(home, '.myagent', 'projects', 'demo', 'sessions'), { recursive: true })
-    await mkdir(path.join(home, '.myagent-worktrees', 'demo'), { recursive: true })
+    await mkdir(path.join(home, '.hanekawa', 'projects', 'demo', 'sessions'), { recursive: true })
+    await mkdir(path.join(home, '.hanekawa-worktrees', 'demo'), { recursive: true })
     await writeFile(path.join(home, 'source.txt'), 'alias-needle')
-    await writeFile(path.join(home, '.myagent', 'settings.json'), '{}')
-    await writeFile(path.join(home, '.myagent', 'projects', 'demo', 'sessions', 'private.jsonl'), 'alias-needle')
-    await writeFile(path.join(home, '.myagent-worktrees', 'demo', 'thread.txt'), 'alias-needle')
+    await writeFile(path.join(home, '.hanekawa', 'settings.json'), '{}')
+    await writeFile(path.join(home, '.hanekawa', 'projects', 'demo', 'sessions', 'private.jsonl'), 'alias-needle')
+    await writeFile(path.join(home, '.hanekawa-worktrees', 'demo', 'thread.txt'), 'alias-needle')
     await mkdir(getProjectPlansDir(home), { recursive: true })
     await writeFile(path.join(getProjectPlansDir(home), 'plan.md'), 'alias-needle')
     await symlink(home, alias, 'junction')
@@ -276,7 +276,7 @@ test('Glob narrows with the pattern before the cap, and reports the real count',
 })
 
 test('Glob caps at 200 rows but still counts every match', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-glob-cap-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-glob-cap-'))
   try {
     await Promise.all(Array.from({ length: 205 }, (_, index) =>
       writeFile(path.join(dir, `f${String(index).padStart(3, '0')}.ts`), '', 'utf8')))

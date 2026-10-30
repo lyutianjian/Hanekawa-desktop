@@ -233,7 +233,7 @@ export function buildOpenAIPromptCacheKey(request: ModelRequest): string {
     .digest('hex')
     .slice(0, 32)
 
-  return `myagent:${hash}`
+  return `hanekawa:${hash}`
 }
 
 export function getOpenAICacheScope(request: ModelRequest): string {

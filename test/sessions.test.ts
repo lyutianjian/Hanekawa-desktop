@@ -33,7 +33,7 @@ test('a session creation whose index write fails leaves no unindexed transcript'
 })
 
 test('SessionStore creates, lists, resolves, renames, and deletes sessions', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -70,7 +70,7 @@ test('SessionStore creates, lists, resolves, renames, and deletes sessions', asy
 })
 
 test('SessionStore appends and loads records while updating metadata', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -99,7 +99,7 @@ test('SessionStore appends and loads records while updating metadata', async () 
 })
 
 test('SessionStore drafts stay in memory until the first chat message', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -144,7 +144,7 @@ test('SessionStore drafts stay in memory until the first chat message', async ()
 })
 
 test('SessionStore discards drafts without creating session files', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -159,7 +159,7 @@ test('SessionStore discards drafts without creating session files', async () => 
 })
 
 test('SessionStore derives title from displayContent when present', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -184,7 +184,7 @@ test('SessionStore derives title from displayContent when present', async () => 
 })
 
 test('SessionStore truncateBeforeMessage removes the target message and later records', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -245,7 +245,7 @@ test('SessionStore truncateBeforeMessage removes the target message and later re
 })
 
 test('rollbackInterruptedPromptIfSynthetic removes interrupted prompt bookkeeping only', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -290,7 +290,7 @@ test('rollbackInterruptedPromptIfSynthetic removes interrupted prompt bookkeepin
 })
 
 test('rollbackInterruptedPromptIfSynthetic preserves meaningful assistant output', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -325,7 +325,7 @@ test('rollbackInterruptedPromptIfSynthetic preserves meaningful assistant output
 })
 
 test('SessionStore appendRecord updates metadata without rereading JSONL history', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   const originalReadFileSync = fs.readFileSync
   try {
     const store = new SessionStore(dir)
@@ -377,7 +377,7 @@ test('SessionStore appendRecord updates metadata without rereading JSONL history
 })
 
 test('SessionStore appends metrics next to session records', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -423,7 +423,7 @@ test('SessionStore appends metrics next to session records', async () => {
 })
 
 test('SessionStore totals add compactions and subagent runs, with their recorded costs', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -465,7 +465,7 @@ test('SessionStore totals add compactions and subagent runs, with their recorded
 })
 
 test('SessionStore reads back both the last request and the session totals', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -521,7 +521,7 @@ test('SessionStore reads back both the last request and the session totals', asy
 })
 
 test('SessionStore recovery ignores metrics JSONL files and removes polluted index entries', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -559,7 +559,7 @@ test('SessionStore recovery ignores metrics JSONL files and removes polluted ind
 })
 
 test('SessionStore init removes empty sessions older than ten minutes but preserves recent ones', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const firstStore = new SessionStore(dir)
     await firstStore.init()
@@ -601,7 +601,7 @@ test('SessionStore init removes empty sessions older than ten minutes but preser
 })
 
 test('SessionStore summarizes cache break causes in metrics', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -640,7 +640,7 @@ test('SessionStore summarizes cache break causes in metrics', async () => {
 })
 
 test('SessionStore restores cache summary before first metric append', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -692,7 +692,7 @@ test('SessionStore restores cache summary before first metric append', async () 
 })
 
 test('SessionStore loads cache and compact metrics summary', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -737,7 +737,7 @@ test('SessionStore loads cache and compact metrics summary', async () => {
 })
 
 test('SessionStore returns null metrics summary when no metrics exist', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -750,7 +750,7 @@ test('SessionStore returns null metrics summary when no metrics exist', async ()
 })
 
 test('SessionStore persists and clears compact failure count in metadata', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -767,7 +767,7 @@ test('SessionStore persists and clears compact failure count in metadata', async
 })
 
 test('SessionStore marks a session whose last turn failed until a newer message is sent', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -812,7 +812,7 @@ test('SessionStore marks a session whose last turn failed until a newer message 
 })
 
 test('SessionStore repairs orphan tool protocol records in JSONL sessions', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()
@@ -850,7 +850,7 @@ test('SessionStore repairs orphan tool protocol records in JSONL sessions', asyn
 })
 
 test('SessionStore round-trips image refs beside text records without migrating old ones', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-sessions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-sessions-'))
   try {
     const store = new SessionStore(dir)
     await store.init()

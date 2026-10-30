@@ -20,7 +20,7 @@ import {
 
 /**
  * S10: the Read tool's image branch. Every test gets its own scratch project
- * so the real `ImageAttachmentService` stores under `<project>/.myagent` —
+ * so the real `ImageAttachmentService` stores under `<project>/.hanekawa` —
  * the same shape `createRuntime` hands the session's toolContext.
  */
 const SESSION_ID = 'session-read'

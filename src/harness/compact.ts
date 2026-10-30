@@ -252,7 +252,7 @@ async function summarizeForAutoCompact(
       sharedUsage = response.usage
     } catch (error) {
       if (isCancelled(input.signal, error)) throw error
-      if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
+      if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
         console.error('[compact] shared-prefix summary failed; falling back to text:', error)
       }
     }
@@ -279,7 +279,7 @@ async function runBeforeCompactHook(input: CompactCheckInput, event: CompactHook
     await input.onBeforeCompact?.(event)
   } catch (hookError) {
     if (isCancelled(input.signal, hookError)) throw hookError
-    if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
+    if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
       console.error('[compact] preCompact hook failed:', hookError)
     }
   }
@@ -292,7 +292,7 @@ async function runAfterCompactHook(
   try {
     await input.onAfterCompact?.(event)
   } catch (hookError) {
-    if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
+    if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
       console.error('[compact] postCompact hook failed:', hookError)
     }
   }

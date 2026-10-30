@@ -3,7 +3,7 @@
  *
  * These live under `config/` rather than beside the thread lifecycle because the
  * values are account-level configuration: every project reads the same group out
- * of `~/.myagent/config.json`. `services/coordination/lifecycle.ts` re-exports
+ * of `~/.hanekawa/config.json`. `services/coordination/lifecycle.ts` re-exports
  * the day defaults for the callers that only need them there.
  */
 

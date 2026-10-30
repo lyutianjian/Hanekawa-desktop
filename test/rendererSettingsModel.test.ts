@@ -43,7 +43,7 @@ function snapshotOf(overrides: Partial<WireSettingsSnapshot> = {}): WireSettings
   return {
     projectRoot: 'C:\\repo\\alpha',
     projectName: 'alpha',
-    saveTarget: 'C:\\repo\\alpha\\.myagent\\config.json',
+    saveTarget: 'C:\\repo\\alpha\\.hanekawa\\config.json',
     endpoints: [
       { name: 'main', provider: 'anthropic', baseUrl: 'https://api.example', apiKey: 'sk-abcdefghijkl' },
     ],
@@ -64,7 +64,7 @@ function snapshotOf(overrides: Partial<WireSettingsSnapshot> = {}): WireSettings
     providers: ['anthropic', 'openai'],
     subagentTypes: ['general', 'explore'],
     permissions: {
-      localPath: 'C:\\repo\\alpha\\.myagent\\settings.local.json',
+      localPath: 'C:\\repo\\alpha\\.hanekawa\\settings.local.json',
       mode: 'default',
       groups: [
         { behavior: 'allow', local: ['Bash(git status:*)'], inherited: ['Read'] },
@@ -80,9 +80,9 @@ function snapshotOf(overrides: Partial<WireSettingsSnapshot> = {}): WireSettings
         scope: 'project',
         inclusion: 'manual',
         hasHooks: false,
-        dir: 'C:\\repo\\alpha\\.myagent\\skills\\release',
-        file: 'C:\\repo\\alpha\\.myagent\\skills\\release\\SKILL.md',
-        rootLabel: '.myagent/skills',
+        dir: 'C:\\repo\\alpha\\.hanekawa\\skills\\release',
+        file: 'C:\\repo\\alpha\\.hanekawa\\skills\\release\\SKILL.md',
+        rootLabel: '.hanekawa/skills',
         origin: 'managed',
         removable: true,
         risk: 'low',
@@ -111,7 +111,7 @@ function snapshotOf(overrides: Partial<WireSettingsSnapshot> = {}): WireSettings
         content: 'Reviews a diff.',
       },
     ],
-    skillsDir: 'C:\\repo\\alpha\\.myagent\\skills',
+    skillsDir: 'C:\\repo\\alpha\\.hanekawa\\skills',
     sharedSkillsDir: 'C:\\Users\\me\\.agents\\skills',
     mcpServers: [
       {
@@ -150,7 +150,7 @@ function snapshotOf(overrides: Partial<WireSettingsSnapshot> = {}): WireSettings
       microCompactThresholdRatio: 0.9,
     },
     coordination: { quietDays: 7, autoResolveDays: 14 },
-    general: { localPath: 'C:\\repo\\alpha\\.myagent\\settings.local.json' },
+    general: { localPath: 'C:\\repo\\alpha\\.hanekawa\\settings.local.json' },
     userInstructions: '',
     ...overrides,
   }
@@ -1012,7 +1012,7 @@ test('the view says where it saves in words, and keeps the path for the hover', 
 test('no card note spells out a file path or an internal value', () => {
   for (const category of ['provider', 'extensions', 'permissions', 'general'] as const) {
     for (const card of settingsView(openState({ category })).cards) {
-      assert.doesNotMatch(card.note ?? '', /[\\/]\.myagent|\.json|inherit|MYAGENT_|主循环/, `${category}/${card.id}`)
+      assert.doesNotMatch(card.note ?? '', /[\\/]\.hanekawa|\.json|inherit|HANEKAWA_|主循环/, `${category}/${card.id}`)
     }
   }
 })
@@ -1196,7 +1196,7 @@ test('removing a rule drops one copy, not every match', () => {
     category: 'permissions',
     snapshot: snapshotOf({
       permissions: {
-        localPath: 'C:\\repo\\alpha\\.myagent\\settings.local.json',
+        localPath: 'C:\\repo\\alpha\\.hanekawa\\settings.local.json',
         mode: 'default',
         groups: [
           { behavior: 'allow', local: ['Read', 'Read', 'Write'], inherited: [] },
@@ -1248,7 +1248,7 @@ test('an unset cache toggle reads as the on-by-default it is', () => {
   // Unset is not the same as false: the 1h TTL is the default, and the row's
   // hover names the environment variable that turns it off.
   assert.match(row.detail ?? '', /默认开启/)
-  assert.match(row.detailHint ?? '', /MYAGENT_PROMPT_CACHE_1H/)
+  assert.match(row.detailHint ?? '', /HANEKAWA_PROMPT_CACHE_1H/)
   assert.deepEqual(row.control.intentOnChange(true), { kind: 'set-cache-ttl', enabled: true })
 })
 
@@ -1264,7 +1264,7 @@ test('the thinking toggle reads unset as on and off as a real off', () => {
   const off = settingsView(openState({
     category: 'general',
     snapshot: snapshotOf({
-      general: { localPath: 'C:\\repo\\alpha\\.myagent\\settings.local.json', thinking: false },
+      general: { localPath: 'C:\\repo\\alpha\\.hanekawa\\settings.local.json', thinking: false },
     }),
   }))
     .cards.find((card) => card.id === 'general')
@@ -1318,7 +1318,7 @@ test('the skills card lists every skill, switched-off ones included', () => {
   const card = settingsView(openState({ category: 'extensions' })).cards.find(
     (card) => card.id === 'skills',
   )
-  assert.match(card?.noteHint ?? '', /\.myagent\\skills/)
+  assert.match(card?.noteHint ?? '', /\.hanekawa\\skills/)
   assert.deepEqual(card?.rows.map((row) => row.id), ['skill:release', 'skill:review'])
   assert.equal(card?.rows[0]?.label, 'release')
   // A row is a name and a gist; the rest of the definition is its hover text.

@@ -3,7 +3,7 @@ import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readJsonFile } from '../utils/json.js'
-import { getMyAgentDir, getSessionsDir, userHome } from '../utils/paths.js'
+import { getHanekawaDir, getSessionsDir, userHome } from '../utils/paths.js'
 import { projectRootKey } from '../runtime/projectDirectory.js'
 
 /**
@@ -41,7 +41,7 @@ interface ProjectsFile {
 }
 
 function registryPath(home: string): string {
-  return join(home, '.myagent', 'projects.json')
+  return join(home, '.hanekawa', 'projects.json')
 }
 
 /** The registry as written, unfiltered: strings only, order preserved. */
@@ -75,7 +75,7 @@ export async function recordProjectOpen(cwd: string, home = userHome()): Promise
 /**
  * Drops `cwd` from the registry — the sidebar's "从侧边栏移除".
  *
- * Only the registry: the project's `.myagent/` and every session in it stay on
+ * Only the registry: the project's `.hanekawa/` and every session in it stay on
  * disk, so re-adding the directory brings its history straight back. Idempotent,
  * and unlike `recordProjectOpen` it does **not** prune roots that no longer
  * exist — forgetting one project should not silently forget others.
@@ -92,7 +92,7 @@ export async function forgetRecentProject(
 /**
  * Temp-then-rename, the `sessions` module's discipline, so a crash mid-write
  * cannot leave the registry truncated. `mkdir` because a first run may not have
- * a `~/.myagent` yet.
+ * a `~/.hanekawa` yet.
  */
 async function writeProjects(next: readonly string[], home: string): Promise<readonly string[]> {
   const filePath = registryPath(home)
@@ -125,12 +125,12 @@ interface IndexEntry {
  * "no sessions here".
  */
 /**
- * A project not opened since runtime data moved out of `<root>/.myagent/` still
+ * A project not opened since runtime data moved out of `<root>/.hanekawa/` still
  * has its index there; `SessionStore.init()` migrates it on the next open.
  */
 async function readSessionIndex(root: string): Promise<{ sessions?: unknown }> {
   const current = join(getSessionsDir(root), 'index.json')
-  const path = existsSync(current) ? current : join(getMyAgentDir(root), 'sessions', 'index.json')
+  const path = existsSync(current) ? current : join(getHanekawaDir(root), 'sessions', 'index.json')
   return readJsonFile<{ sessions?: unknown }>(path, {})
 }
 

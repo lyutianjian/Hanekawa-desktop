@@ -26,7 +26,7 @@ export interface SkillImportPrompt {
 }
 
 export interface ImportSkillOptions {
-  /** Defaults to `project`: the copy lands in `<cwd>/.myagent/skills/`. `personal` uses `~/.agents/skills`. */
+  /** Defaults to `project`: the copy lands in `<cwd>/.hanekawa/skills/`. `personal` uses `~/.agents/skills`. */
   target?: SkillImportTarget
   /**
    * Asked for a `medium` or `high` skill, after inspection and before the copy.
@@ -47,7 +47,7 @@ export interface ImportSkillResult {
 
 /**
  * Copies a skill folder into a skills folder Hanekawa manages — this project's
- * `.myagent/skills/` by default, or `~/.agents/skills/` for a personal skill
+ * `.hanekawa/skills/` by default, or `~/.agents/skills/` for a personal skill
  * that every project sees — graded by what the folder can do.
  *
  * A skill on disk *is* a directory with a `SKILL.md` in it, so importing one is

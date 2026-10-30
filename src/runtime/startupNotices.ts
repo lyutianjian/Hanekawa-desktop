@@ -49,6 +49,6 @@ export function resolveInitialQueuedPrompt(
   hasRecoverableInterruption: boolean,
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
-  if (!env.MYAGENT_RESUME_INTERRUPTED_TURN) return undefined
+  if (!env.HANEKAWA_RESUME_INTERRUPTED_TURN) return undefined
   return hasRecoverableInterruption ? 'continue' : undefined
 }

@@ -27,13 +27,13 @@ const SESSION = '00000000-0000-4000-8000-000000000000'
 const OTHER = '11111111-1111-4111-8111-111111111111'
 
 async function makeCwd(): Promise<string> {
-  return mkdtemp(path.join(os.tmpdir(), 'myagent-delete-session-'))
+  return mkdtemp(path.join(os.tmpdir(), 'hanekawa-delete-session-'))
 }
 
 /**
  * Every project-local artifact for one session, so a removal can be checked to
  * be complete. The file history is deliberately absent: it lives under the
- * global `~/.myagent`, and `test/fileHistoryService.test.ts` covers it there.
+ * global `~/.hanekawa`, and `test/fileHistoryService.test.ts` covers it there.
  */
 async function seed(cwd: string, sessionId: string): Promise<string[]> {
   const subagents = getSubagentTranscriptDir(cwd, sessionId)
@@ -79,7 +79,7 @@ test('every artifact of a session is removed, not just the store files', async (
 })
 
 test('deleting a session removes its cached attachments but never the imported source file', async () => {
-  // Design §12.3, last row: the cached copies under `.myagent/attachments/`
+  // Design §12.3, last row: the cached copies under `.hanekawa/attachments/`
   // are the session's; the file the user pointed at is theirs.
   const cwd = await makeCwd()
   try {

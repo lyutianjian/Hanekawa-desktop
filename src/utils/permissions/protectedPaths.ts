@@ -1,13 +1,13 @@
 /**
  * Directories whose contents are always protected. Match anywhere in the path.
  * Aligned with Claude Code's DANGEROUS_DIRECTORIES (isDangerousFilePathToAutoEdit);
- * `.myagent` is this project's equivalent of `.claude`.
+ * `.hanekawa` is this project's equivalent of `.claude`.
  */
-export const PROTECTED_PATHS = ['.git', '.vscode', '.idea', '.myagent'] as const
+export const PROTECTED_PATHS = ['.git', '.vscode', '.idea', '.hanekawa'] as const
 
 /**
  * Files whose exact basename is always protected.
- * Aligned with Claude Code's DANGEROUS_FILES; `.myagent.json` is this
+ * Aligned with Claude Code's DANGEROUS_FILES; `.hanekawa.json` is this
  * project's equivalent of `.claude.json`.
  */
 export const PROTECTED_FILES = [
@@ -20,7 +20,7 @@ export const PROTECTED_FILES = [
   '.profile',
   '.ripgreprc',
   '.mcp.json',
-  '.myagent.json',
+  '.hanekawa.json',
 ] as const
 
 /**

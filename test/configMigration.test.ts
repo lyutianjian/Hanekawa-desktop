@@ -11,19 +11,19 @@ import type { Config } from '../src/config/service.js'
 // Legacy repository config is preserved for manual review, never imported.
 // Each test uses a disposable home and fake credentials.
 beforeEach(() => {
-  const testHome = mkdtempSync(path.join(tmpdir(), 'myagent-home-'))
+  const testHome = mkdtempSync(path.join(tmpdir(), 'hanekawa-home-'))
   process.env.USERPROFILE = testHome
   process.env.HOME = testHome
 })
 
 async function project(): Promise<string> {
-  const dir = await mkdtemp(path.join(tmpdir(), 'myagent-migrate-'))
-  await mkdir(path.join(dir, '.myagent'), { recursive: true })
+  const dir = await mkdtemp(path.join(tmpdir(), 'hanekawa-migrate-'))
+  await mkdir(path.join(dir, '.hanekawa'), { recursive: true })
   return dir
 }
 
 function globalPath(): string {
-  return path.join(process.env.USERPROFILE!, '.myagent', 'config.json')
+  return path.join(process.env.USERPROFILE!, '.hanekawa', 'config.json')
 }
 
 async function writeConfig(file: string, config: Partial<Config>): Promise<void> {
@@ -43,7 +43,7 @@ test('B06: startup never imports repository config or borrows its global endpoin
       models: { main: { model: 'trusted', endpoint: 'api' } },
       defaultModel: 'main',
     })
-    const projectFile = path.join(dir, '.myagent', 'config.json')
+    const projectFile = path.join(dir, '.hanekawa', 'config.json')
     await writeConfig(projectFile, {
       models: { stolen: { model: 'untrusted', endpoint: 'api', baseUrl: 'https://attacker.invalid' } },
       defaultModel: 'stolen',
@@ -53,7 +53,7 @@ test('B06: startup never imports repository config or borrows its global endpoin
     const findings = await migrateProjectConfig(dir)
     assert.equal(await readFile(globalPath(), 'utf8'), beforeGlobal)
     assert.equal(await readFile(projectFile, 'utf8'), beforeProject)
-    assert.equal(existsSync(path.join(dir, '.myagent', 'config.migrated.json')), false)
+    assert.equal(existsSync(path.join(dir, '.hanekawa', 'config.migrated.json')), false)
     assert.equal(findings.length, 1)
     assert.match(findings[0]!, /审阅/)
     assert.doesNotMatch(findings[0]!, /fake-trusted-key/)
@@ -68,7 +68,7 @@ test('B06: startup never imports repository config or borrows its global endpoin
 for (const layer of ['global', 'project'] as const) {
   test(`migration cannot overwrite or archive corrupted ${layer} config`, async () => {
     const dir = await project()
-    const projectFile = path.join(dir, '.myagent', 'config.json')
+    const projectFile = path.join(dir, '.hanekawa', 'config.json')
     const bytes = '{ "apiKey": "fake-secret-do-not-report", broken'
     try {
       await writeConfig(globalPath(), { models: {} })
@@ -83,7 +83,7 @@ for (const layer of ['global', 'project'] as const) {
       assert.doesNotMatch(findings[0]!, /fake-secret-do-not-report/)
       assert.equal(await readFile(globalPath(), 'utf8'), beforeGlobal)
       assert.equal(await readFile(projectFile, 'utf8'), beforeProject)
-      assert.equal(existsSync(path.join(dir, '.myagent', 'config.migrated.json')), false)
+      assert.equal(existsSync(path.join(dir, '.hanekawa', 'config.migrated.json')), false)
     } finally {
       await rm(dir, { recursive: true, force: true })
     }
@@ -93,10 +93,10 @@ for (const layer of ['global', 'project'] as const) {
 test('B06: repository config cannot initialize a missing global config', async () => {
   const dir = await project()
   try {
-    const file = path.join(dir, '.myagent', 'config.json')
+    const file = path.join(dir, '.hanekawa', 'config.json')
     const bytes = JSON.stringify({ models: { own: { provider: 'openai', model: 'untrusted', apiKey: 'fake-key' } } })
     await writeFile(file, bytes)
-    const archive = path.join(dir, '.myagent', 'config.migrated.json')
+    const archive = path.join(dir, '.hanekawa', 'config.migrated.json')
     await writeFile(archive, 'old archive')
     for (let index = 0; index < 2; index += 1) {
       const findings = await migrateProjectConfig(dir)
@@ -119,7 +119,7 @@ test('the global workspace has nothing to migrate — its cwd is the home direct
   assert.deepEqual(await migrateProjectConfig(home), [])
   const kept = await readConfig(globalPath())
   assert.deepEqual(Object.keys(kept.models ?? {}), ['only'], 'the one file is untouched')
-  assert.equal(existsSync(path.join(home, '.myagent', 'config.migrated.json')), false)
+  assert.equal(existsSync(path.join(home, '.hanekawa', 'config.migrated.json')), false)
 })
 
 test('a project without a config.json is left alone', async () => {
@@ -135,17 +135,17 @@ test('a project without a config.json is left alone', async () => {
 test('an ignored repository file is not parsed, even if corrupt', async () => {
   const dir = await project()
   try {
-    await writeFile(path.join(dir, '.myagent', 'config.json'), '{ not json', 'utf8')
+    await writeFile(path.join(dir, '.hanekawa', 'config.json'), '{ not json', 'utf8')
 
     const findings = await migrateProjectConfig(dir, {
       // No global read or write is attempted, even at an unusable path.
-      globalPath: path.join(dir, '.myagent'),
+      globalPath: path.join(dir, '.hanekawa'),
     })
 
     assert.equal(findings.length, 1)
     assert.match(findings[0]!, /审阅/)
     assert.equal(
-      existsSync(path.join(dir, '.myagent', 'config.json')),
+      existsSync(path.join(dir, '.hanekawa', 'config.json')),
       true,
       'the ignored project file stays put',
     )

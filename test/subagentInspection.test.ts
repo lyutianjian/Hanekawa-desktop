@@ -37,7 +37,7 @@ function task(overrides: Partial<Extract<SessionRecord, { type: 'subagent_task' 
 }
 
 async function seed(records: SessionRecord[]): Promise<{ store: SessionStore; sessionId: string; cwd: string }> {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-subagents-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-subagents-'))
   const store = new SessionStore(cwd)
   await store.init()
   const session = await store.create('inspection test')
@@ -104,7 +104,7 @@ test('listLatestSubagentTasks reads through the store', async () => {
 })
 
 test('getSubagentDetails loads the sidechain transcript when there is a path', async () => {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-sidechain-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-sidechain-'))
   const transcriptPath = path.join(cwd, 'agent.jsonl')
   await writeFile(
     transcriptPath,
@@ -135,7 +135,7 @@ test('getSubagentDetails yields an empty transcript when no path was recorded', 
 test('cleanup skips running agents and agents with no worktree', async () => {
   // Deliberately paths that were never created: `inspect` should report them
   // gone rather than throwing, and cleanup is skipped for anything absent.
-  const gone = path.join(tmpdir(), 'myagent-worktree-that-never-existed')
+  const gone = path.join(tmpdir(), 'hanekawa-worktree-that-never-existed')
   const { store, sessionId, cwd } = await seed([
     task({ agentId: 'running', status: 'running', worktreePath: `${gone}-running` }),
     task({ agentId: 'no-worktree', status: 'completed' }),

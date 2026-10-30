@@ -59,7 +59,7 @@ class FakeLane implements CoordinationLaneControl, WakeLaneController {
 }
 
 async function setup(threadCount = 2, options: { reseed?: (cwd: string, sessionId: string) => Promise<string> } = {}) {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-wake-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-wake-'))
   const store = new CoordinationStore(cwd)
   await store.setCoordinatorSessionId(COORD)
   const lanes = new Map<string, FakeLane>()

@@ -74,7 +74,7 @@ const COPY: Record<ImagePresentableErrorReason, ImageErrorCopy> = {
   },
   'store-write-failed': {
     label: '附件保存失败',
-    action: '确认项目的 .myagent 目录可写后重试。',
+    action: '确认项目的 .hanekawa 目录可写后重试。',
   },
 }
 

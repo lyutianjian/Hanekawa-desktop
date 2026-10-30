@@ -1,5 +1,5 @@
 {
-  "name": "myagent",
+  "name": "hanekawa",
   "version": "0.1.0",
   "type": "module",
   "main": "dist/desktop/main.js",

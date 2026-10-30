@@ -92,7 +92,7 @@ function withEnv(name: string, value: string | undefined, run: () => void): void
 }
 
 test('the description quotes the timeouts the tool actually enforces', () => {
-  withEnv('MYAGENT_BASH_DEFAULT_TIMEOUT_MS', undefined, () => {
+  withEnv('HANEKAWA_BASH_DEFAULT_TIMEOUT_MS', undefined, () => {
     withEnv('BASH_DEFAULT_TIMEOUT_MS', undefined, () => {
       const description = buildBashDescription()
       assert.match(description, new RegExp(`default ${resolveBashTimeoutMs()}`))
@@ -102,7 +102,7 @@ test('the description quotes the timeouts the tool actually enforces', () => {
 })
 
 test('an env override moves the quoted default with it', () => {
-  withEnv('MYAGENT_BASH_DEFAULT_TIMEOUT_MS', '45000', () => {
+  withEnv('HANEKAWA_BASH_DEFAULT_TIMEOUT_MS', '45000', () => {
     assert.match(buildBashDescription(), /default 45000/)
   })
 })

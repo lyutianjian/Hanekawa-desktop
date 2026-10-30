@@ -9,7 +9,7 @@ import { PermissionGate } from '../src/harness/permissions.js'
 import type { SessionRecord, ToolContext } from '../src/harness/types.js'
 
 test('complete toolcall workflow: grep -> read -> edit -> verify', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-integration-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-integration-'))
   try {
     // Setup test files
     await writeFile(path.join(dir, 'test.ts'), 'function hello() {\n  return "world"\n}\n', 'utf8')
@@ -47,7 +47,7 @@ test('complete toolcall workflow: grep -> read -> edit -> verify', async () => {
       { id: 'call3', name: 'Edit', input: {
         filePath: 'test.ts',
         oldString: '"world"',
-        newString: '"myagent"'
+        newString: '"hanekawa"'
       } },
       context
     )
@@ -56,7 +56,7 @@ test('complete toolcall workflow: grep -> read -> edit -> verify', async () => {
 
     // Step 4: Verify the change
     const content = await readFile(path.join(dir, 'test.ts'), 'utf8')
-    assert.match(content, /"myagent"/)
+    assert.match(content, /"hanekawa"/)
     assert.equal(content.includes('"world"'), false)
     console.log('✓ File content verified')
 
@@ -73,7 +73,7 @@ test('complete toolcall workflow: grep -> read -> edit -> verify', async () => {
 })
 
 test('toolcall permission system works correctly', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-permissions-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-permissions-'))
   try {
     await writeFile(path.join(dir, 'test.txt'), 'content', 'utf8')
 

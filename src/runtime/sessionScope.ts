@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import path from 'node:path'
 import type { EffortValue } from '../config/effort.js'
 import type { ConfigService } from '../config/service.js'
-import type { MyAgentSettings } from '../config/settings.js'
+import type { HanekawaSettings } from '../config/settings.js'
 import { persistPermissionRule } from '../config/settings.js'
 import type { ActiveModelRuntime } from '../harness/loop.js'
 import { PermissionGate, permissionRulesFromSettings } from '../harness/permissions.js'
@@ -35,7 +35,7 @@ export interface SessionScopeDeps {
   cwd: string
   config: ConfigService
   store: SessionStore
-  getSettings: () => MyAgentSettings
+  getSettings: () => HanekawaSettings
   getSkills: () => SkillDefinition[]
   getAgentDefinitions: () => BaseAgentDefinition[]
   getProjectEntries: () => readonly string[]

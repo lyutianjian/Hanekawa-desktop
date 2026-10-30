@@ -38,8 +38,8 @@ async function isGitAvailable(): Promise<boolean> {
 }
 
 async function makeTempCwd(): Promise<string> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-restore-flow-'))
-  await writeFile(path.join(dir, '.gitignore'), '.myagent/\n', 'utf8')
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-restore-flow-'))
+  await writeFile(path.join(dir, '.gitignore'), '.hanekawa/\n', 'utf8')
   return dir
 }
 
@@ -50,7 +50,7 @@ async function cleanup(dir: string): Promise<void> {
 const SESSION_ID = '11111111-1111-4111-8111-111111111111'
 
 /**
- * File history lands under the *global* `.myagent`, resolved through `homedir()`
+ * File history lands under the *global* `.hanekawa`, resolved through `homedir()`
  * on every call, so a fake home keeps this suite off the real one.
  */
 let home = ''
@@ -89,7 +89,7 @@ describe('Integration: full restore flow', () => {
 
   before(async () => {
     gitAvailable = await isGitAvailable()
-    home = await mkdtemp(path.join(os.tmpdir(), 'myagent-restore-flow-home-'))
+    home = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-restore-flow-home-'))
     process.env.HOME = home
     process.env.USERPROFILE = home
   })

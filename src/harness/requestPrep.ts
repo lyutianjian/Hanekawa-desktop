@@ -36,13 +36,6 @@ export interface PreparedRecordsResult {
 
 export interface RequestPrepOptions {
   repairToolPairing?: boolean
-  /**
-   * Drop every historical thinking block. Only for the case where the blocks
-   * became illegal — the active model changed, so their signatures no longer
-   * verify. History is otherwise left alone: rewriting it each turn would
-   * invalidate the cached prefix behind it (spec §4).
-   */
-  stripAllThinkingBlocks?: boolean
   /** Image-token strategy of the model serving this request (design §11.2). */
   imageTokenStrategy?: ImageTokenStrategy
   /**
@@ -84,11 +77,8 @@ export function prepareRecordsForRequestWithDiagnostics(
   // The media-count cap runs after the capability projection in the loop
   // (design §11.1: projection before budget), on the model actually serving
   // the request — see `loadPreparedRecords` and `mediaStrip.ts`.
-  const thinkingStripped = options.stripAllThinkingBlocks
-    ? stripThinkingBlocksFromAssistantMessages(recordsAfterCompact)
-    : recordsAfterCompact
   const prepared = applyToolResultTrims(
-    thinkingStripped,
+    recordsAfterCompact,
     options.trimState ?? new ToolResultTrimState(),
     getToolResultTokenLimit(contextManagement),
     options,
@@ -99,17 +89,6 @@ export function prepareRecordsForRequestWithDiagnostics(
   }
 
   return repairToolPairingForRequest(prepared)
-}
-
-export function stripThinkingBlocksFromAssistantMessages(records: SessionRecord[]): SessionRecord[] {
-  return records.map((record) => {
-    if (record.type !== 'message' || record.role !== 'assistant' || !record.thinkingBlocks) {
-      return record
-    }
-
-    const { thinkingBlocks: _thinkingBlocks, ...rest } = record
-    return rest
-  })
 }
 
 export function getRecordsAfterLastCompact(records: SessionRecord[]): SessionRecord[] {

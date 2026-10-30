@@ -83,7 +83,7 @@ test('a 30-turn plan-mode session injects the entry attachment once and nothing 
 })
 
 test('reminders contain expected anchor text', () => {
-  const planPath = '/abs/.myagent/plans/crimson-tiger-abc.md'
+  const planPath = '/abs/.hanekawa/plans/crimson-tiger-abc.md'
   const full = buildFullPlanModeReminder(planPath)
   // Aligned with Claude Code's getPlanModeV2Instructions wording.
   assert.match(full, /Plan mode is active/)

@@ -7,7 +7,7 @@ import { connectMcpServers } from '../src/runtime/mcp.js'
 import { ToolRegistry } from '../src/runtime/toolRegistry.js'
 import { wrapMcpTool } from '../src/services/mcp/index.js'
 import type { ManagedMcpClient, McpServerConfig } from '../src/services/mcp/index.js'
-import type { MyAgentSettings } from '../src/config/settings.js'
+import type { HanekawaSettings } from '../src/config/settings.js'
 
 /**
  * Startup ownership of MCP connections (B21).
@@ -24,7 +24,7 @@ const SERVERS: Record<string, McpServerConfig> = {
   beta: { transport: 'stdio', command: 'node', args: ['beta.js'] },
 }
 
-function settingsFor(names: string[]): MyAgentSettings {
+function settingsFor(names: string[]): HanekawaSettings {
   return {
     mcpServers: Object.fromEntries(names.map((name) => [name, SERVERS[name]!])),
     mcp: { trustedServers: names },
@@ -69,7 +69,7 @@ async function runStartup(
   connect: (config: McpServerConfig) => Promise<FakeManager>,
   options: { registry?: ToolRegistry } = {},
 ): Promise<Run & { registry: ToolRegistry }> {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-mcp-startup-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-mcp-startup-'))
   const registry = options.registry ?? new ToolRegistry([])
   const failures: Run['failures'] = []
   try {
@@ -174,7 +174,7 @@ test('a server that never connects is never closed', async () => {
 
 test('an untrusted server is refused before any connection', async () => {
   let attempted = 0
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-mcp-startup-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-mcp-startup-'))
   try {
     const result = await connectMcpServers({
       cwd,

@@ -4,7 +4,7 @@ import type { CommandDefinition } from './types.js'
  * The slash commands available in one project.
  *
  * An instance rather than a module-level `Map`: skill commands are read from
- * `<cwd>/.myagent/skills/`, so a shared registry means the second project
+ * `<cwd>/.hanekawa/skills/`, so a shared registry means the second project
  * bootstrapped in a process either leaks its skills into the first or is
  * refused as a duplicate name. `ProjectRuntime` owns one, alongside
  * `ToolRegistry` and `BackgroundTaskRegistry` — everything a `cwd` has exactly
@@ -13,7 +13,7 @@ import type { CommandDefinition } from './types.js'
 export class CommandRegistry {
   private readonly commands = new Map<string, CommandDefinition>()
   /**
-   * Which entries came from `.myagent/skills/`.
+   * Which entries came from `.hanekawa/skills/`.
    *
    * Skills are re-read on `/skills reload` (and on every `reloadSkills()`), so
    * the registration has to be *replaceable*: without this set the second pass

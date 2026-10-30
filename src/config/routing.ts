@@ -45,7 +45,7 @@ export interface SubagentRouting {
   general?: RoutedModel
   explore?: RoutedModel
   plan?: RoutedModel
-  /** Custom subagent types declared via `.myagent/agents/*.md`. */
+  /** Custom subagent types declared via `.hanekawa/agents/*.md`. */
   [type: string]: RoutedModel | undefined
 }
 

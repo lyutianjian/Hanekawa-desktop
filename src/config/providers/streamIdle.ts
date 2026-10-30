@@ -1,11 +1,11 @@
 import type { ModelStreamEvent } from '../../harness/types.js'
 
 export const STREAM_IDLE_TIMEOUT_MS =
-  parseInt(process.env.MYAGENT_STREAM_IDLE_HARD_TIMEOUT_MS || '', 10) || 10 * 60_000
+  parseInt(process.env.HANEKAWA_STREAM_IDLE_HARD_TIMEOUT_MS || '', 10) || 10 * 60_000
 export const STREAM_IDLE_WARNING_MS =
   parseInt(
-    process.env.MYAGENT_STREAM_IDLE_WARNING_MS
-      || process.env.MYAGENT_STREAM_IDLE_TIMEOUT_MS
+    process.env.HANEKAWA_STREAM_IDLE_WARNING_MS
+      || process.env.HANEKAWA_STREAM_IDLE_TIMEOUT_MS
       || '',
     10,
   ) || 90_000

@@ -343,10 +343,6 @@ export class AgentLoop {
   // concurrent run() and clobber shared state in the toolContext,
   // recordsCache, or recordStream.
   private inFlight: Promise<unknown> | null = null
-  // Sticky for the rest of the session after any model switch: thinking
-  // signatures are model/provider-bound, and prior primary/fallback thinking
-  // blocks should not be replayed across either side of a fallback boundary.
-  private stripAllThinkingBlocksFromRequests = false
   private activeRunOverrides: ActiveRunOverrides | undefined
   /** Last (capability x image set) state the loop notified about, for notice dedup. */
   private lastImageProjectionSignature: string | undefined
@@ -575,9 +571,6 @@ export class AgentLoop {
     const previous = this.activeRunOverrides
     const previousSkillInvocation = this.options.toolContext.skillInvocation
     this.activeRunOverrides = this.normalizeRunOverrides(userInput, overrides)
-    if (this.activeRunOverrides?.model && !this.isSameModel(this.activeRunOverrides.model, this.modelState.current)) {
-      this.stripAllThinkingBlocksFromRequests = true
-    }
     this.options.toolContext.skillInvocation = this.activeRunOverrides?.skillInvocation
     try {
       return await this.runInternal(userInput, signal, messageId)
@@ -1090,7 +1083,7 @@ export class AgentLoop {
         // Cache-break detection itself is owned by anthropicProvider via
         // checkResponseForCacheBreak (cause-aware). Loop only emits the
         // hit-rate summary for debug visibility on every provider.
-        if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
+        if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
           console.error(`[hanekawa][cache] ${formatCacheHitRate(response.usage)}`)
         }
       }
@@ -1325,7 +1318,7 @@ export class AgentLoop {
         }
       })
     } catch (error) {
-      if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
+      if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
         console.error(`[hanekawa][interrupt] failed to consume interruption ${recordId}:`, error)
       }
     }
@@ -1517,7 +1510,7 @@ export class AgentLoop {
       )
     }
 
-    if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
+    if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
       console.error(
         `[hanekawa][image-send] ${missingIds.size} historical image${missingIds.size === 1 ? '' : 's'} `
           + `could not be loaded and will be sent as file-missing placeholders`,
@@ -1588,7 +1581,6 @@ export class AgentLoop {
         trimState: this.trimState,
         spillDir: getToolResultSpillDir(this.dataRoot(), this.options.toolContext.sessionId),
         ...(turnId ? { turnId } : {}),
-        ...(this.stripAllThinkingBlocksFromRequests ? { stripAllThinkingBlocks: true } : {}),
       },
     )
     await this.appendPendingTrimRecords()
@@ -1627,7 +1619,7 @@ export class AgentLoop {
     // check measures the real serialized body.
     const byteStripped = this.stripExcessImageBytesForRequest(stripped.records, turnId, userMessageId)
     if (
-      process.env.MYAGENT_DEBUG_PROVIDER === '1'
+      process.env.HANEKAWA_DEBUG_PROVIDER === '1'
       && (stripped.keptImageCount + stripped.omittedImages.length > 0
         || byteStripped.omittedImages.length > 0)
     ) {
@@ -1791,7 +1783,7 @@ export class AgentLoop {
       }
     }).catch((error: unknown) => {
       entry.status = 'failed'
-      if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
+      if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
         console.error('[hanekawa][tool-summary] failed:', error)
       }
     })
@@ -2184,7 +2176,7 @@ export class AgentLoop {
         // state divergence between memory and disk.
         this.recordsCache = this.recordsCache?.map((record) => record.id === recordId ? consume(record) : record)
       } catch (error) {
-        if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
+        if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
           console.error(`[hanekawa][compact] failed to persist consumed restore record ${recordId}:`, error)
         }
       }
@@ -2558,7 +2550,6 @@ export class AgentLoop {
 
   private switchActiveModel(next: ActiveModelRuntime, cacheSource: ReturnType<typeof agentCacheSource>): void {
     this.modelState.current = next
-    this.stripAllThinkingBlocksFromRequests = true
     this.responseBaseline = undefined
     resetCacheBreakDetection(cacheSource)
     this.options.contextBuilder.clearCachedSections()

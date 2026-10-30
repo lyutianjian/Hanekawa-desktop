@@ -229,7 +229,7 @@ test('Integration E: subagent_exit routes identically; approve_auto_keep flips g
 })
 
 // Scenario G: Plan-file write exception via prefix match — main and
-// sub-agent paths both pass; non-matching .myagent/plans path falls
+// sub-agent paths both pass; non-matching .hanekawa/plans path falls
 // through to the prompt.
 test('Integration G: plan-file prefix match allows main + sub-agent paths; non-matching is denied', async () => {
   await withTempCwd(async (cwd) => {

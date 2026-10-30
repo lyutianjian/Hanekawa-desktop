@@ -10,7 +10,7 @@ import { getProjectDataDir } from '../src/utils/paths.js'
 import type { CoordinatorNote, ThreadRecord } from '../src/services/coordination/types.js'
 
 async function scratch(): Promise<{ cwd: string; store: CoordinationStore }> {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-coord-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-coord-'))
   return { cwd, store: new CoordinationStore(cwd) }
 }
 
@@ -153,7 +153,7 @@ test('currentBoard renders fresh', async () => {
 })
 
 test('onWrite fires once per update and on removeAll', async (t) => {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-coord-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-coord-'))
   t.after(() => rm(cwd, { recursive: true, force: true }))
   let writes = 0
   const store = new CoordinationStore(cwd, { onWrite: () => { writes++ } })

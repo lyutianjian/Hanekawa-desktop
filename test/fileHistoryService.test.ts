@@ -11,7 +11,7 @@ import {
 } from '../src/services/fileHistory/fileHistoryService.js'
 
 /**
- * Backups land under the *global* `.myagent`, which resolves through
+ * Backups land under the *global* `.hanekawa`, which resolves through
  * `homedir()` on every call — so a fake home keeps the suite off the real one.
  */
 let home = ''

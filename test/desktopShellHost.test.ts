@@ -1,4 +1,4 @@
-import { getGlobalMyAgentDir } from '../src/utils/paths.js'
+import { getGlobalHanekawaDir } from '../src/utils/paths.js'
 import test, { beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -37,7 +37,7 @@ import {
   type CoordinationRole,
   type ResolvedCoordinationConfig,
 } from '../src/config/coordination.js'
-import { loadMergedSettings, localSettingsPath, type MyAgentSettings } from '../src/config/settings.js'
+import { loadMergedSettings, localSettingsPath, type HanekawaSettings } from '../src/config/settings.js'
 import type { ContextManagementConfig } from '../src/prompts/budget.js'
 import type { McpConnectionStatus } from '../src/runtime/types.js'
 import { getDefaultWorkingDir, getSessionsDir, getSharedSkillsDir } from '../src/utils/paths.js'
@@ -79,10 +79,10 @@ function fixturePath(...segments: string[]): string {
 }
 
 // The settings cards read the *local* layer off disk and `loadMergedSettings`
-// layers `~/.myagent/settings.json` under it, so without its own home this file
+// layers `~/.hanekawa/settings.json` under it, so without its own home this file
 // would read the developer's settings and assert differently per machine.
 beforeEach(() => {
-  const testHome = mkdtempSync(path.join(os.tmpdir(), 'myagent-home-'))
+  const testHome = mkdtempSync(path.join(os.tmpdir(), 'hanekawa-home-'))
   process.env.USERPROFILE = testHome
   process.env.HOME = testHome
 })
@@ -279,7 +279,7 @@ class FakeConfig {
   }
 
   getSaveTarget(): string {
-    return `${this.cwdLabel}/.myagent/config.json`
+    return `${this.cwdLabel}/.hanekawa/config.json`
   }
 
   cwdLabel = 'project'
@@ -350,7 +350,7 @@ class FakeProject implements ShellLaneProject {
   skillReloads = 0
   mcpReloads = 0
   /** The merged settings, as the last load read them off disk. */
-  settings: MyAgentSettings = {}
+  settings: HanekawaSettings = {}
   readonly mcp: McpConnectionStatus = { connected: [], failed: [] }
 
   constructor(
@@ -380,7 +380,7 @@ class FakeProject implements ShellLaneProject {
     return { needsRuntimeRebuild: false }
   }
 
-  getSettings(): MyAgentSettings {
+  getSettings(): HanekawaSettings {
     return this.settings
   }
 
@@ -1274,7 +1274,7 @@ test('list-sessions lists a project with no lane open — history is not the top
 test('list-sessions covers the registry and the global workspace, not just open projects', async () => {
   // A real registered-but-never-opened project with a real index: the closed
   // half of the sidebar reads through the index peek, not a runtime.
-  const closedDir = await mkdtemp(path.join(os.tmpdir(), 'myagent-closed-'))
+  const closedDir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-closed-'))
   await mkdir(getSessionsDir(closedDir), { recursive: true })
   await writeFile(
     path.join(getSessionsDir(closedDir), 'index.json'),
@@ -1315,7 +1315,7 @@ test('list-sessions covers the registry and the global workspace, not just open 
 test('list-sessions keeps a registered project that has no sessions at all', async () => {
   // The row is how the user gets back to the project. Filtering it out on "no
   // history" meant deleting the last session deleted the way back.
-  const emptyDir = await mkdtemp(path.join(os.tmpdir(), 'myagent-empty-'))
+  const emptyDir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-empty-'))
   try {
     const h = createHarness({ knownProjects: () => Promise.resolve([emptyDir]) })
 
@@ -1344,7 +1344,7 @@ test('get-settings offers every project the sidebar lists, not only the open one
   // A project's runtime opens with its first session, so listing the open
   // entries left the screen's selector empty until the user had clicked into a
   // project — with the project the page was showing among the missing.
-  const closedDir = await mkdtemp(path.join(os.tmpdir(), 'myagent-settings-'))
+  const closedDir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-settings-'))
   try {
     const h = createHarness({ knownProjects: () => Promise.resolve([closedDir]) })
 
@@ -1363,7 +1363,7 @@ test('get-settings offers every project the sidebar lists, not only the open one
 })
 
 test('remove-project unregisters a closed project and deletes its history', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-forget-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-forget-'))
   // Real files: the sweep runs through a transient `SessionStore`, exactly like
   // deleting one session of a closed project does.
   const store = new SessionStore(dir)
@@ -1387,7 +1387,7 @@ test('remove-project unregisters a closed project and deletes its history', asyn
 
 test('remove-project releases the open project lanes before forgetting it', async () => {
   const h = createHarness()
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-forget-open-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-forget-open-'))
   try {
     const project = h.addProject(cwd)
     project.project.store.sessions.set('s1', sessionOf('s1', 'One'))
@@ -1423,7 +1423,7 @@ test('remove-project releases the open project lanes before forgetting it', asyn
 test('removing the window only project lands on the global workspace, not on quit', async () => {
   // The `deleteSession` lesson: detaching the last lane fires `onAllLanesClosed`,
   // which quits off darwin. "Take this off my sidebar" is not "I am done".
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-forget-last-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-forget-last-'))
   const home = process.env.USERPROFILE!
   try {
     let global: ReturnType<Harness['addProject']> | undefined
@@ -1477,7 +1477,7 @@ test('remove-project refuses the global workspace and roots it never saw', async
 })
 
 test('open-session bootstraps a registered project on demand, over the named session', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-ondemand-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-ondemand-'))
   try {
     const calls: Array<{ cwd: string; sessionId?: string }> = []
     const h = createHarness({
@@ -1579,7 +1579,7 @@ test('delete-session and rename-session reach 最近 with the global runtime clo
 })
 
 test('settings on a closed root bootstrap it and put it back down', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-settings-closed-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-settings-closed-'))
   try {
     const opened: string[] = []
     // A fresh project per call, like `main.ts`'s `ensureProject`: the previous
@@ -1618,7 +1618,7 @@ test('settings on a closed root bootstrap it and put it back down', async () => 
 
 test('delete-session and rename-session work on a registered project with no runtime', async () => {
   // Real files: the transient `SessionStore` resolves and rewrites a real index.
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-closed-delete-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-closed-delete-'))
   const store = new SessionStore(dir)
   await store.init()
   const created = await store.create('Transient target')
@@ -1639,7 +1639,7 @@ test('delete-session and rename-session work on a registered project with no run
 
 test('delete-session removes the files and the on-disk artifacts of a closed session', async () => {
   const h = createHarness()
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-shell-delete-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-shell-delete-'))
   try {
     const project = h.addProject(cwd)
     project.project.store.sessions.set('s1', sessionOf('s1', 'Closed'))
@@ -1658,7 +1658,7 @@ test('delete-session removes the files and the on-disk artifacts of a closed ses
 
 test('delete-session closes the open lane first, then deletes — no ghost row', async () => {
   const h = createHarness()
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-shell-delete-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-shell-delete-'))
   try {
     const project = h.addProject(cwd)
     project.project.store.sessions.set('s1', sessionOf('s1', 'Open'))
@@ -1694,7 +1694,7 @@ test('delete-session deletes by the resolved id, not the prefix it was given', a
   // Passing the raw wire string through would delete the right session and
   // leave (or worse, mis-target) everything else it wrote.
   const h = createHarness()
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-shell-delete-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-shell-delete-'))
   try {
     const project = h.addProject(cwd)
     project.project.store.resolvePrefixes = true
@@ -1731,7 +1731,7 @@ test('deleting a project last lane still reaches the store, and shuts that proje
   // multi-project side of the split: the window is not losing its last lane, so
   // "this project's last pane went away" means the same thing it always did.
   const h = createHarness()
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-shell-delete-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-shell-delete-'))
   try {
     await h.client.openSession({ projectRoot: h.entry.root })
     const project = h.addProject(cwd)
@@ -1760,7 +1760,7 @@ test('deleting the window last lane replaces it with a draft instead of quitting
   // was closed" as one event, and `onAllLanesClosed` quits the app off darwin —
   // so deleting the only open session took the window with it.
   const h = createHarness()
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-shell-delete-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-shell-delete-'))
   try {
     const project = h.addProject(cwd)
     project.project.store.sessions.set('s1', sessionOf('s1', 'Only one'))
@@ -1791,7 +1791,7 @@ test('the replacement draft is created after the artifacts are gone', async () =
   // Order, not just outcome: the sweep must only ever face the id being deleted,
   // so the draft cannot exist while `deleteSessionArtifacts` is running.
   const h = createHarness()
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-shell-delete-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-shell-delete-'))
   try {
     const project = h.addProject(cwd)
     project.project.store.sessions.set('s1', sessionOf('s1', 'Only one'))
@@ -1825,7 +1825,7 @@ test('a replacement that cannot be opened falls back to the exit path', async ()
   // sitting in the directory with no lanes and no shutdown — orphaned background
   // tasks nothing on screen can reach — so the deferred tail has to run after all.
   const h = createHarness()
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-shell-delete-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-shell-delete-'))
   try {
     const project = h.addProject(cwd)
     project.project.store.sessions.set('s1', sessionOf('s1', 'Only one'))
@@ -1852,7 +1852,7 @@ test('deleting a closed session leaves the topology untouched', async () => {
   // re-announcement of an identical list on purpose (identity stability). A
   // broadcast here would be dead weight that looked like a refresh signal.
   const h = createHarness()
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-shell-delete-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-shell-delete-'))
   try {
     const project = h.addProject(cwd)
     project.project.store.sessions.set('s1', sessionOf('s1'))
@@ -2236,11 +2236,11 @@ async function withSettingsDir(
   run: (h: Harness, cwd: string) => Promise<void>,
   options: Parameters<typeof createHarness>[0] = {},
 ): Promise<void> {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-shell-settings-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-shell-settings-'))
   try {
-    await mkdir(path.join(cwd, '.myagent'), { recursive: true })
+    await mkdir(path.join(cwd, '.hanekawa'), { recursive: true })
     await writeFile(
-      path.join(cwd, '.myagent', 'settings.json'),
+      path.join(cwd, '.hanekawa', 'settings.json'),
       JSON.stringify(projectSettings),
       'utf8',
     )
@@ -2264,11 +2264,11 @@ async function readLocalLayer(cwd: string): Promise<Record<string, unknown>> {
   }
 }
 
-/** The user layer — the global `~/.myagent/settings.json` under this test's temp home. */
+/** The user layer — the global `~/.hanekawa/settings.json` under this test's temp home. */
 async function readUserLayer(): Promise<Record<string, unknown>> {
   try {
     return JSON.parse(
-      await readFile(path.join(getGlobalMyAgentDir(), 'settings.json'), 'utf8'),
+      await readFile(path.join(getGlobalHanekawaDir(), 'settings.json'), 'utf8'),
     ) as Record<string, unknown>
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return {}
@@ -2532,7 +2532,7 @@ test('a trust that came from above is reported as not editable here', async () =
   await withSettingsDir(
     { mcpServers: { shared: { transport: 'sse', url: 'https://mcp.example' } } },
     async (h) => {
-      const userFile = path.join(getGlobalMyAgentDir(), 'settings.json')
+      const userFile = path.join(getGlobalHanekawaDir(), 'settings.json')
       await mkdir(path.dirname(userFile), { recursive: true })
       await writeFile(userFile, JSON.stringify({ mcp: { trustedServers: ['shared'] } }), 'utf8')
       await h.project.loadSettings()
@@ -2655,9 +2655,9 @@ test('a local server that overrides an inherited one says so', async () => {
   )
 })
 
-/** Writes `<cwd>/.myagent/skills/<name>/SKILL.md` with the frontmatter a skill needs. */
+/** Writes `<cwd>/.hanekawa/skills/<name>/SKILL.md` with the frontmatter a skill needs. */
 async function writeSkill(cwd: string, name: string, description: string): Promise<void> {
-  const dir = path.join(cwd, '.myagent', 'skills', name)
+  const dir = path.join(cwd, '.hanekawa', 'skills', name)
   await mkdir(dir, { recursive: true })
   await writeFile(
     path.join(dir, 'SKILL.md'),
@@ -2683,7 +2683,7 @@ test('the snapshot lists every skill on disk, switched-off ones included', async
     )
     assert.equal(settings.skills[0]?.inclusion, 'manual')
     assert.equal(settings.skills[0]?.description, 'The first skill')
-    assert.equal(settings.skillsDir, path.join(cwd, '.myagent', 'skills'))
+    assert.equal(settings.skillsDir, path.join(cwd, '.hanekawa', 'skills'))
   })
 })
 
@@ -2742,11 +2742,11 @@ test('read-skill answers the whole file, reveal-skill shows its folder, open-ski
     await writeSkill(cwd, 'demo', 'A demo skill')
 
     const read = await h.client.readSkill(h.entry.root, 'demo')
-    assert.equal(read.file, path.join(cwd, '.myagent', 'skills', 'demo', 'SKILL.md'))
+    assert.equal(read.file, path.join(cwd, '.hanekawa', 'skills', 'demo', 'SKILL.md'))
     assert.match(read.raw, /Body of demo/)
 
     await h.client.revealSkill(h.entry.root, 'demo')
-    assert.deepEqual(h.revealedPaths, [path.join(cwd, '.myagent', 'skills', 'demo')])
+    assert.deepEqual(h.revealedPaths, [path.join(cwd, '.hanekawa', 'skills', 'demo')])
 
     await h.client.openSkill(h.entry.root, 'demo')
     // The skill's own file, not the project directory: a personal skill lives
@@ -2754,7 +2754,7 @@ test('read-skill answers the whole file, reveal-skill shows its folder, open-ski
     assert.deepEqual(h.editorRequests, [
       {
         cwd: getDefaultWorkingDir(cwd),
-        target: { path: path.join(cwd, '.myagent', 'skills', 'demo', 'SKILL.md') },
+        target: { path: path.join(cwd, '.hanekawa', 'skills', 'demo', 'SKILL.md') },
       },
     ])
   })
@@ -2792,13 +2792,13 @@ test('personal skills ignore project shadows and overrides, and global switches 
     await h.client.changeSettings(h.entry.root, { scope: 'extensions', kind: 'set-skill-enabled', name: 'demo', enabled: true }, 'personal')
     assert.deepEqual((await readUserLayer()).skills, { disabled: [] })
     await h.client.changeSettings(h.entry.root, { scope: 'extensions', kind: 'remove-skill', name: 'demo' }, 'personal')
-    assert.ok(existsSync(path.join(cwd, '.myagent', 'skills', 'demo', 'SKILL.md')), 'uninstall leaves the project copy alone')
+    assert.ok(existsSync(path.join(cwd, '.hanekawa', 'skills', 'demo', 'SKILL.md')), 'uninstall leaves the project copy alone')
     assert.equal(existsSync(path.join(getSharedSkillsDir(), 'demo')), false)
   })
 })
 
 test('import-skill with a personal target copies into ~/.agents/skills', async () => {
-  const source = await mkdtemp(path.join(os.tmpdir(), 'myagent-skill-source-'))
+  const source = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skill-source-'))
   const shared = path.join(getSharedSkillsDir(), 'personal-demo')
   try {
     await writeFile(
@@ -2919,11 +2919,11 @@ test('open-in-editor hands over the project cwd, not the normalized root', async
 })
 
 for (const open of [true, false]) {
-  test(`open-in-editor uses Documents/myagent for a ${open ? 'live' : 'closed'} global workspace`, async () => {
+  test(`open-in-editor uses Documents/hanekawa for a ${open ? 'live' : 'closed'} global workspace`, async () => {
     const home = os.homedir()
     const h = createHarness({ cwd: open ? home : fixturePath('repo', 'alpha') })
     const root = projectRootKey(home)
-    const workingDir = path.join(home, 'Documents', 'myagent')
+    const workingDir = path.join(home, 'Documents', 'hanekawa')
     assert.equal(existsSync(workingDir), false)
     await h.client.openInEditor(root)
     await h.client.openInEditor(root, { path: 'hello.txt', line: 3 })
@@ -3329,7 +3329,7 @@ test('the thread table commands project to the wire and fill the client cache', 
 })
 
 test('thread-transcript reads the thread from disk with no open lane, and answers unchanged until the file moves', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-thread-transcript-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-thread-transcript-'))
   const store = new SessionStore(dir)
   await store.init()
   const session = await store.create('Thread')
@@ -3443,7 +3443,7 @@ test('a root that is still closing resolves to no project, so a reopen must wait
   // `closeProject` drops the entry before the shutdown completes, so the window
   // and the registry disagree for its duration: the root is known, and there is
   // nothing to open yet. `whenClosed` is what a reopen awaits before it
-  // bootstraps, instead of racing a dying runtime over one `.myagent/`.
+  // bootstraps, instead of racing a dying runtime over one `.hanekawa/`.
   assert.equal(h.directory.get(h.entry.cwd), undefined)
   await assert.rejects(h.client.openSession({ projectRoot: h.entry.root }), /No project is open/)
   await h.directory.whenClosed(h.entry.cwd)

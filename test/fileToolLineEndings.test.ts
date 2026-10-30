@@ -17,7 +17,7 @@ function context(cwd: string) {
 }
 
 async function withTempDir(run: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-eol-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-eol-'))
   try {
     await run(dir)
   } finally {

@@ -364,7 +364,7 @@ test('/plan in plan mode reports empty draft path', async () => {
   let output = ''
   await planCommand.run('', createContext({
     getPermissionMode: () => 'plan',
-    readPlanFile: async () => ({ path: '/tmp/project/.myagent/plans/test.md', content: null }),
+    readPlanFile: async () => ({ path: '/tmp/project/.hanekawa/plans/test.md', content: null }),
     writeLine: (message) => { output = message },
   }))
 
@@ -377,16 +377,16 @@ test('/plan open in plan mode opens only after content exists', async () => {
   let opened = false
   await planCommand.run('open', createContext({
     getPermissionMode: () => 'plan',
-    readPlanFile: async () => ({ path: '/tmp/project/.myagent/plans/test.md', content: '# Plan\n' }),
+    readPlanFile: async () => ({ path: '/tmp/project/.hanekawa/plans/test.md', content: '# Plan\n' }),
     openPlanFile: async () => {
       opened = true
-      return { message: 'Opened plan in editor: /tmp/project/.myagent/plans/test.md' }
+      return { message: 'Opened plan in editor: /tmp/project/.hanekawa/plans/test.md' }
     },
     writeLine: (message) => { events.push(message) },
   }))
 
   assert.equal(opened, true)
-  assert.deepEqual(events, ['Opened plan in editor: /tmp/project/.myagent/plans/test.md'])
+  assert.deepEqual(events, ['Opened plan in editor: /tmp/project/.hanekawa/plans/test.md'])
 })
 
 test('/repair runs session repair and invalidates caches', async () => {

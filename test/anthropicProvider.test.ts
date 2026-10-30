@@ -11,7 +11,7 @@ import type { ChatMessage, ModelContextItem, ModelRequest, RequestImageBytes, To
 import type { ImageAttachmentRef, ImageMimeType } from '../src/media/types.js'
 
 const cacheEnvironment = new Map(
-  ['MYAGENT_DISABLE_PROMPT_CACHING', 'MYAGENT_DEBUG_PROVIDER'].map((key) => [key, process.env[key]]),
+  ['HANEKAWA_DISABLE_PROMPT_CACHING', 'HANEKAWA_DEBUG_PROVIDER'].map((key) => [key, process.env[key]]),
 )
 
 beforeEach(() => {
@@ -532,6 +532,55 @@ test('a resumed or forked same-name model replays thinking only through its orig
   assert.deepEqual(history.thinkingBlocks, [signed, redacted], 'changing the request never rewrites history')
 })
 
+test('a signature-less thinking block is replayed as text unless the model opts in', async () => {
+  const unsigned = { type: 'thinking' as const, thinking: 'plain reasoning', signature: '' }
+  const create = (allowEmptySignature?: boolean) => {
+    const payloads: Record<string, unknown>[] = []
+    const provider = new AnthropicProvider({
+      provider: 'anthropic',
+      model: 'compatible-model',
+      apiKey: 'test-key',
+      baseUrl: 'https://compatible.example',
+      ...(allowEmptySignature === undefined ? {} : { allowEmptySignature }),
+    })
+    ;(provider as unknown as { client: { messages: { stream: (payload: Record<string, unknown>) => FakeAnthropicStream } } }).client = {
+      messages: { stream: (payload) => {
+        payloads.push(payload)
+        const stream = new FakeAnthropicStream()
+        stream.finishWithContent([unsigned, { type: 'text', text: 'answer' }])
+        return stream
+      } },
+    }
+    return { provider, payloads }
+  }
+
+  const first = create()
+  const response = await first.provider.createMessage(cacheRequest({ model: 'compatible-model' }))
+  const history: ChatMessage = JSON.parse(JSON.stringify({
+    id: 'from-compatible', role: 'assistant', content: response.content, model: 'compatible-model', createdAt: 'now',
+    thinkingBlocks: response.thinkingBlocks, thinkingSource: response.thinkingSource,
+  }))
+
+  const replay = async (allowEmptySignature?: boolean) => {
+    const { provider, payloads } = create(allowEmptySignature)
+    await provider.createMessage(cacheRequest({
+      model: 'compatible-model',
+      messages: [history],
+      thinkingSource: response.thinkingSource,
+      contextItems: [{ kind: 'message', message: history }],
+    }))
+    return (payloads[0]!.messages as Array<{ role: string; content: Array<Record<string, unknown>> }>)
+      .flatMap((message) => message.content)
+  }
+
+  const converted = await replay()
+  assert.ok(converted.some((block) => block.type === 'text' && block.text === 'plain reasoning'))
+  assert.equal(converted.some((block) => block.type === 'thinking'), false)
+
+  const kept = await replay(true)
+  assert.deepEqual(kept.find((block) => block.type === 'thinking'), unsigned)
+})
+
 function cacheRequest(overrides: Partial<ModelRequest> = {}): ModelRequest {
   return {
     model: 'claude-sonnet',
@@ -675,7 +724,7 @@ test('explicit off and the global kill switch omit cache markers', async () => {
   await off.createMessage(cacheRequest())
   assert.equal(collectCacheControlTelemetry(offRequests[0]!.payload).total, 0)
 
-  process.env.MYAGENT_DISABLE_PROMPT_CACHING = '1'
+  process.env.HANEKAWA_DISABLE_PROMPT_CACHING = '1'
   const on = new AnthropicProvider({ model: 'claude-sonnet', apiKey: 'test-key', promptCaching: 'on' })
   const onRequests = captureRequests(on, () => ({ input_tokens: 10, output_tokens: 1 }))
   await on.createMessage(cacheRequest())
@@ -774,7 +823,7 @@ function payloadMessagesOf(request: ModelRequest): Array<{ role: string; content
 
 test('user messages map to text and base64 image blocks; pure-image messages survive the empty-text filter', () => {
   // Isolate block shape from the last-message cache breakpoint marker.
-  process.env.MYAGENT_DISABLE_PROMPT_CACHING = '1'
+  process.env.HANEKAWA_DISABLE_PROMPT_CACHING = '1'
   const shot = imageRef('img-shot', { name: 'shot.png' })
   const diagram = imageRef('img-diagram', { name: 'diagram.jpg', mimeType: 'image/jpeg' })
   const silent = imageRef('img-silent', { name: 'silent.png' })
@@ -831,7 +880,7 @@ test('user messages map to text and base64 image blocks; pure-image messages sur
 
 test('tool results carry image blocks with their tool_use_id and is_error; text-only results stay strings', () => {
   // Isolate block shape from the last-message cache breakpoint marker.
-  process.env.MYAGENT_DISABLE_PROMPT_CACHING = '1'
+  process.env.HANEKAWA_DISABLE_PROMPT_CACHING = '1'
   const saw = imageRef('img-saw')
   const failed = imageRef('img-failed', { name: 'failed.png' })
 
@@ -884,7 +933,7 @@ test('tool results carry image blocks with their tool_use_id and is_error; text-
 
 test('a pure-image tool result sends an image-only content array', () => {
   // Isolate block shape from the last-message cache breakpoint marker.
-  process.env.MYAGENT_DISABLE_PROMPT_CACHING = '1'
+  process.env.HANEKAWA_DISABLE_PROMPT_CACHING = '1'
   const ref = imageRef('img-only')
   const bytes = new Uint8Array([7, 7, 7])
 
@@ -931,7 +980,7 @@ test('an image ref without loaded bytes fails the payload build instead of silen
 test('pre-mapped apiResultBlock tool results keep their priority shape untouched', () => {
   // Isolate the branch's shape from the last-message cache breakpoint, which
   // decorates whichever block happens to be last.
-  process.env.MYAGENT_DISABLE_PROMPT_CACHING = '1'
+  process.env.HANEKAWA_DISABLE_PROMPT_CACHING = '1'
   const messages = payloadMessagesOf({
     model: 'claude-sonnet',
     messages: [],
@@ -998,7 +1047,7 @@ test('image blocks leave the cache_control marker count and distribution unchang
 })
 
 test('the provider sends base64 image blocks built from the request byte map', async () => {
-  process.env.MYAGENT_DISABLE_PROMPT_CACHING = '1'
+  process.env.HANEKAWA_DISABLE_PROMPT_CACHING = '1'
   const provider = new AnthropicProvider({ model: 'claude-sonnet', apiKey: 'test-key', supportsImageInput: true })
   const requests = captureRequests(provider, () => ({ input_tokens: 10, output_tokens: 1 }))
   const ref = imageRef('img-e2e', { name: 'e2e.png' })

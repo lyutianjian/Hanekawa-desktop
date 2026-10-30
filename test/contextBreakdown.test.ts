@@ -11,14 +11,14 @@ function tool(name: string, description: string, isMcp = false): Tool {
 
 const INSTRUCTIONS = [
   'Codebase and user instructions are shown below.',
-  'Contents of /home/u/.myagent/AGENTS.md (user\'s private global instructions for all projects):\n\nbe brief',
+  'Contents of /home/u/.hanekawa/AGENTS.md (user\'s private global instructions for all projects):\n\nbe brief',
   'Contents of /repo/AGENTS.md (project instructions, checked into the codebase):\n\n' + 'x'.repeat(300),
   'Contents of /data/memory/MEMORY.md (user\'s auto-memory, persists across conversations):\n\n- [a](a.md)',
 ].join('\n\n')
 
 test('the instruction files are split by their Contents-of headers', () => {
   const files = splitInstructionFiles(INSTRUCTIONS)
-  assert.deepEqual(files.map((file) => file.path), ['/home/u/.myagent/AGENTS.md', '/repo/AGENTS.md', '/data/memory/MEMORY.md'])
+  assert.deepEqual(files.map((file) => file.path), ['/home/u/.hanekawa/AGENTS.md', '/repo/AGENTS.md', '/data/memory/MEMORY.md'])
   assert.match(files[1]!.text, /^Contents of \/repo\/AGENTS\.md/)
   assert.doesNotMatch(files[1]!.text, /MEMORY/)
   assert.deepEqual(splitInstructionFiles(''), [])

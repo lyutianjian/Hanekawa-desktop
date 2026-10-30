@@ -37,7 +37,7 @@ class MessageNotFoundError extends Error {
  *
  * Nothing writes these any more: a restore is addressed by `messageId` through
  * `services/fileHistory/`, whose snapshots live in their own append-only log
- * under `~/.myagent/file-history/`. The field and its reader stay so an index
+ * under `~/.hanekawa/file-history/`. The field and its reader stay so an index
  * written by an older build still parses (and so truncation keeps pruning it),
  * and the commits they name are gone — the shadow repos are deleted on startup.
  */
@@ -201,7 +201,7 @@ export class SessionStore {
 
   async init(): Promise<void> {
     // Before anything reads the index: a project last opened before runtime
-    // data moved out of `<cwd>/.myagent/` still has its sessions there.
+    // data moved out of `<cwd>/.hanekawa/` still has its sessions there.
     this.migrationFindings.push(...await migrateLegacyProjectData(this.cwd))
     await mkdir(this.sessionsDir, { recursive: true })
     await this.cleanupStaleEmptySessions()
@@ -698,7 +698,7 @@ export class SessionStore {
   /**
    * Removes a session's three files and its index entry.
    *
-   * **Not** its file history — `~/.myagent/file-history/<id>` belongs to
+   * **Not** its file history — `~/.hanekawa/file-history/<id>` belongs to
    * `services/fileHistory/`, which sits above `sessions/` in the layering, so
    * "delete a session" is a composition the caller performs (see
    * `deleteSessionArtifacts`). Calling this one alone leaks the snapshots.

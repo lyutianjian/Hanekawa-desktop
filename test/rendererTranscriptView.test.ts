@@ -789,7 +789,7 @@ test('a memory save names the memory and trails its description', (t) => {
   const save: TranscriptItem = {
     ...read!,
     toolName: 'Write',
-    tool: { ...read!.tool!, displayName: 'Write', useSummary: '/home/.myagent/projects/p/memory/user-role.md', memory: true, memoryNote: '用户是后端工程师' },
+    tool: { ...read!.tool!, displayName: 'Write', useSummary: '/home/.hanekawa/projects/p/memory/user-role.md', memory: true, memoryNote: '用户是后端工程师' },
   }
   view.render(transcript([user!, save]), NO_DISCLOSURE)
   const head = rowOf(view).children[0]

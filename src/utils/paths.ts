@@ -3,12 +3,12 @@ import { createHash } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 
-export function getMyAgentDir(cwd: string): string {
-  return path.join(cwd, '.myagent')
+export function getHanekawaDir(cwd: string): string {
+  return path.join(cwd, '.hanekawa')
 }
 
 /**
- * The home directory whose `.myagent/` holds the user's config and sessions.
+ * The home directory whose `.hanekawa/` holds the user's config and sessions.
  *
  * Refused to a test run that did not come through `scripts/test.mjs`: a bare
  * `tsx --test` keeps the real HOME, and a test writing its fixture config there
@@ -23,24 +23,24 @@ export function userHome(): string {
 }
 
 /**
- * User-level `.myagent`, shared by every project. Resolved lazily so tests can
+ * User-level `.hanekawa`, shared by every project. Resolved lazily so tests can
  * redirect it via USERPROFILE/HOME.
  */
-export function getGlobalMyAgentDir(): string {
-  return path.join(userHome(), '.myagent')
+export function getGlobalHanekawaDir(): string {
+  return path.join(userHome(), '.hanekawa')
 }
 
 /**
  * Where a project's runtime data lives: sessions, spilled tool output, image
- * attachments, plans. Under the user's `~/.myagent/projects/` rather than the
- * project's own `.myagent/`, so opening a folder leaves nothing behind in it —
- * `<cwd>/.myagent/` is for the configuration a user put there themselves.
+ * attachments, plans. Under the user's `~/.hanekawa/projects/` rather than the
+ * project's own `.hanekawa/`, so opening a folder leaves nothing behind in it —
+ * `<cwd>/.hanekawa/` is for the configuration a user put there themselves.
  *
  * Keyed by the resolved path, so a renamed or moved project starts with an
  * empty history; its old data stays under the old key.
  */
 export function getProjectDataDir(cwd: string): string {
-  return path.join(getGlobalMyAgentDir(), 'projects', projectDataKey(cwd))
+  return path.join(getGlobalHanekawaDir(), 'projects', projectDataKey(cwd))
 }
 
 /**
@@ -59,7 +59,7 @@ export function projectDataKey(cwd: string): string {
 /**
  * Whether `cwd` is the user's home directory — the workspace sessions fall
  * back to when no project is open (the 全局/「最近」 workspace, whose records
- * are keyed by the home directory under `~/.myagent/projects/`).
+ * are keyed by the home directory under `~/.hanekawa/projects/`).
  *
  * Case-insensitive on the platforms whose filesystems are, the same discipline
  * `projectRootKey` compares roots with: a home directory reached through a
@@ -71,7 +71,7 @@ export function isGlobalWorkspaceRoot(cwd: string): boolean {
 
 /** The global workspace keeps its home-keyed data, but tools run in Documents. */
 export function getDefaultWorkingDir(projectDir: string): string {
-  return isGlobalWorkspaceRoot(projectDir) ? path.join(userHome(), 'Documents', 'myagent') : projectDir
+  return isGlobalWorkspaceRoot(projectDir) ? path.join(userHome(), 'Documents', 'hanekawa') : projectDir
 }
 
 const MAX_PATH_DEPTH = 50
@@ -156,21 +156,21 @@ export function assertInsideCwd(cwd: string, filePath: string): string {
 }
 
 export function getConfigPath(cwd: string): string {
-  return path.join(getMyAgentDir(cwd), 'config.json')
+  return path.join(getHanekawaDir(cwd), 'config.json')
 }
 
 /** Base config layer shared across projects; `getConfigPath` overrides it. */
 export function getGlobalConfigPath(): string {
-  return path.join(getGlobalMyAgentDir(), 'config.json')
+  return path.join(getGlobalHanekawaDir(), 'config.json')
 }
 
 /** The user-wide instructions, read ahead of every project's own. */
 export function getUserInstructionsPath(): string {
-  return path.join(getGlobalMyAgentDir(), 'AGENTS.md')
+  return path.join(getGlobalHanekawaDir(), 'AGENTS.md')
 }
 
 export function getMcpConfigPath(cwd: string): string {
-  return path.join(getMyAgentDir(cwd), 'mcp.json')
+  return path.join(getHanekawaDir(cwd), 'mcp.json')
 }
 
 export function getSessionsDir(cwd: string): string {
@@ -201,12 +201,12 @@ export function getCoordinationNotesDir(projectDir: string): string {
 }
 
 /**
- * Where a coordination thread's git worktree lives. Outside `~/.myagent` (the
+ * Where a coordination thread's git worktree lives. Outside `~/.hanekawa` (the
  * file tools' hard wall), outside the project, and not in tmpdir (swept while a
  * thread is still alive).
  */
 export function getThreadWorktreeDir(projectDir: string, threadId: string): string {
-  return path.join(userHome(), '.myagent-worktrees', projectDataKey(projectDir), threadId)
+  return path.join(userHome(), '.hanekawa-worktrees', projectDataKey(projectDir), threadId)
 }
 
 /** Resolve file-tool paths; access is decided by the shared permission gate. */
@@ -215,7 +215,7 @@ export function resolveToolPath(context: { cwd: string; projectDir?: string; ses
 }
 
 export function getSkillsDir(cwd: string): string {
-  return path.join(getMyAgentDir(cwd), 'skills')
+  return path.join(getHanekawaDir(cwd), 'skills')
 }
 
 /** Cross-tool skills folder (`~/.agents/skills`), read alongside the project's own. */
@@ -224,7 +224,7 @@ export function getSharedSkillsDir(): string {
 }
 
 export function getAgentsDir(cwd: string): string {
-  return path.join(getMyAgentDir(cwd), 'agents')
+  return path.join(getHanekawaDir(cwd), 'agents')
 }
 
 /** Personal agent definitions: this user's, not the project's, so not in the project. */

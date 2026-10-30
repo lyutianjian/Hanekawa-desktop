@@ -164,7 +164,7 @@ interface PromptState {
   /**
    * The outbound message array. Fingerprinted per message so a break caused by
    * a rewrite inside the history reports *where* it happened instead of landing
-   * in `server_side`. Only hashed under `MYAGENT_DEBUG_PROVIDER=1` — the normal
+   * in `server_side`. Only hashed under `HANEKAWA_DEBUG_PROVIDER=1` — the normal
    * path must not pay a full serialization of the history per request.
    */
   messages?: readonly unknown[]
@@ -271,7 +271,7 @@ export function recordPromptState(
 }
 
 function fingerprintMessages(messages: readonly unknown[] | undefined): string[] | undefined {
-  if (!messages || process.env.MYAGENT_DEBUG_PROVIDER !== '1') return undefined
+  if (!messages || process.env.HANEKAWA_DEBUG_PROVIDER !== '1') return undefined
   return messages.map((message) => hashString(JSON.stringify(message ?? null)))
 }
 
@@ -370,10 +370,10 @@ export function checkResponseForCacheBreak(
     result.reasons.push('server_side')
   }
 
-  if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
+  if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
     const diagnosticsPath = writeCacheBreakDiagnostic(result)
     console.error(
-      `[myagent][cache-break] source=${displayCacheSource(source)} drop=${tokenDrop} tokens prev=${prevCacheRead} current=${cacheReadTokens} reasons=${result.reasons.join(',')}${diagnosticsPath ? ` diagnostics=${diagnosticsPath}` : ''}`,
+      `[hanekawa][cache-break] source=${displayCacheSource(source)} drop=${tokenDrop} tokens prev=${prevCacheRead} current=${cacheReadTokens} reasons=${result.reasons.join(',')}${diagnosticsPath ? ` diagnostics=${diagnosticsPath}` : ''}`,
     )
   }
 

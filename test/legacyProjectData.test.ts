@@ -14,7 +14,7 @@ const OLD = '00000000-0000-4000-8000-000000000001'
 const NEW = '00000000-0000-4000-8000-000000000002'
 
 async function makeProject(): Promise<string> {
-  return mkdtemp(path.join(os.tmpdir(), 'myagent-legacy-data-'))
+  return mkdtemp(path.join(os.tmpdir(), 'hanekawa-legacy-data-'))
 }
 
 function row(id: string, title: string) {
@@ -22,9 +22,9 @@ function row(id: string, title: string) {
   return { id, title, createdAt: at, updatedAt: at, messageCount: 1 }
 }
 
-/** What a project looked like when runtime data still lived in `<cwd>/.myagent/`. */
+/** What a project looked like when runtime data still lived in `<cwd>/.hanekawa/`. */
 async function seedLegacy(cwd: string): Promise<string> {
-  const legacy = path.join(cwd, '.myagent')
+  const legacy = path.join(cwd, '.hanekawa')
   await mkdir(path.join(legacy, 'sessions', 'subagents', OLD), { recursive: true })
   await writeFile(path.join(legacy, 'sessions', `${OLD}.jsonl`), '{"type":"message","id":"m1","role":"user","content":"old hello"}\n')
   await writeFile(path.join(legacy, 'sessions', `${OLD}.metrics.jsonl`), '')
@@ -38,14 +38,14 @@ async function seedLegacy(cwd: string): Promise<string> {
   return legacy
 }
 
-test('opening a legacy project moves its data out and removes the emptied .myagent', async () => {
+test('opening a legacy project moves its data out and removes the emptied .hanekawa', async () => {
   const cwd = await makeProject()
   try {
     await seedLegacy(cwd)
     const store = new SessionStore(cwd)
     await store.init()
 
-    assert.equal(existsSync(path.join(cwd, '.myagent')), false)
+    assert.equal(existsSync(path.join(cwd, '.hanekawa')), false)
     assert.deepEqual((await store.list()).map((s) => s.title), ['old one'])
     assert.equal(existsSync(path.join(getSessionsDir(cwd), 'subagents', OLD, 'agent-1.jsonl')), true)
     assert.equal(existsSync(path.join(getSessionsDir(cwd), 'index.json.lock')), false)
@@ -61,7 +61,7 @@ test('opening a legacy project moves its data out and removes the emptied .myage
 test('personal settings move with the data and still apply', async () => {
   const cwd = await makeProject()
   try {
-    const legacy = path.join(cwd, '.myagent')
+    const legacy = path.join(cwd, '.hanekawa')
     await mkdir(path.join(legacy, 'agents.local'), { recursive: true })
     await writeFile(path.join(legacy, 'agents.local', 'mine.md'), '---\nname: mine\n---\n')
     await writeFile(path.join(legacy, 'settings.local.json'), JSON.stringify({ permissions: { allow: ['Bash(ls:*)'] } }))
@@ -137,17 +137,17 @@ test('a file that cannot be moved leaves the original data in place and says so'
   }
 })
 
-test('the global workspace moves ~/.myagent/sessions but keeps ~/.myagent', async () => {
+test('the global workspace moves ~/.hanekawa/sessions but keeps ~/.hanekawa', async () => {
   // `userHome()`, not `os.homedir()`: it refuses the real home to a run that skipped `npm test`.
   const home = userHome()
-  await mkdir(path.join(home, '.myagent', 'sessions'), { recursive: true })
-  await writeFile(path.join(home, '.myagent', 'config.json'), '{}')
-  await writeFile(path.join(home, '.myagent', 'sessions', `${OLD}.jsonl`), '{"type":"message","id":"m1","role":"user","content":"hi"}\n')
+  await mkdir(path.join(home, '.hanekawa', 'sessions'), { recursive: true })
+  await writeFile(path.join(home, '.hanekawa', 'config.json'), '{}')
+  await writeFile(path.join(home, '.hanekawa', 'sessions', `${OLD}.jsonl`), '{"type":"message","id":"m1","role":"user","content":"hi"}\n')
 
   await migrateLegacyProjectData(home)
 
-  assert.equal(existsSync(path.join(home, '.myagent', 'sessions')), false)
-  assert.equal(existsSync(path.join(home, '.myagent', 'config.json')), true)
+  assert.equal(existsSync(path.join(home, '.hanekawa', 'sessions')), false)
+  assert.equal(existsSync(path.join(home, '.hanekawa', 'config.json')), true)
   assert.equal(existsSync(path.join(getSessionsDir(home), `${OLD}.jsonl`)), true)
 })
 
@@ -155,7 +155,7 @@ test('a project with nothing to migrate is left alone', async () => {
   const cwd = await makeProject()
   try {
     assert.deepEqual(await migrateLegacyProjectData(cwd), [])
-    assert.equal(existsSync(path.join(cwd, '.myagent')), false)
+    assert.equal(existsSync(path.join(cwd, '.hanekawa')), false)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }

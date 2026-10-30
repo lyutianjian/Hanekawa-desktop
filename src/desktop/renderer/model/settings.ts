@@ -1142,7 +1142,7 @@ export function settingsView(state: SettingsState): SettingsViewModel {
       ...base,
       title: '自定义指令',
       subtitle: '为 Hanekawa 提供适用于所有聊天的额外指令和背景信息。代码仓库指令也可能适用。',
-      subtitleHint: '~/.myagent/AGENTS.md',
+      subtitleHint: '~/.hanekawa/AGENTS.md',
       cards: [],
       editor: {
         value,
@@ -1380,7 +1380,7 @@ function confirmAnchor(target: RemoveTarget): SettingsAnchor {
 
 /**
  * Where a card saves, in words. The path itself goes in the hover text: a full
- * `/Users/…/.myagent/settings.local.json` in every card header is noise to
+ * `/Users/…/.hanekawa/settings.local.json` in every card header is noise to
  * anyone who is not about to open that file.
  */
 const SAVED_GLOBAL = '保存在全局配置，所有项目共用。'
@@ -1801,7 +1801,7 @@ function cacheCard(snapshot: WireSettingsSnapshot): SettingsCard {
             ? '未设置：默认开启。'
             : '缓存的命中窗口更长，代价是写入更贵。',
         ...(general.cacheTtl1h === undefined
-          ? { detailHint: '也可以用环境变量 MYAGENT_PROMPT_CACHE_1H=0 关闭。' }
+          ? { detailHint: '也可以用环境变量 HANEKAWA_PROMPT_CACHE_1H=0 关闭。' }
           : {}),
         control: {
           kind: 'toggle',
@@ -1842,8 +1842,8 @@ function skillsCard(snapshot: WireSettingsSnapshot): SettingsCard {
       ? '管理个人技能，开关作为所有项目的默认设置；项目单独设置优先。'
       : `管理可用技能，点击查看说明。开关${SAVED_LOCAL}`,
     noteHint: snapshot.skillsScope === 'personal'
-      ? `个人技能：${snapshot.sharedSkillsDir}\n也会读取其他工具的个人技能文件夹（只读，不能在这里卸载）：${COMPAT_SKILL_FOLDER_LABELS.filter((label) => label.startsWith('~/')).join('、')}\n开关：~/.myagent/settings.json；项目自有的 skills.disabled 列表优先。`
-      : `项目技能：${snapshot.skillsDir}\n个人技能：${snapshot.sharedSkillsDir}\n也会读取其他工具的技能文件夹（只读，不能在这里卸载）：${COMPAT_SKILL_FOLDER_LABELS.join('、')}\n开关：本项目的 settings.local.json（在 ~/.myagent/projects/ 下）`,
+      ? `个人技能：${snapshot.sharedSkillsDir}\n也会读取其他工具的个人技能文件夹（只读，不能在这里卸载）：${COMPAT_SKILL_FOLDER_LABELS.filter((label) => label.startsWith('~/')).join('、')}\n开关：~/.hanekawa/settings.json；项目自有的 skills.disabled 列表优先。`
+      : `项目技能：${snapshot.skillsDir}\n个人技能：${snapshot.sharedSkillsDir}\n也会读取其他工具的技能文件夹（只读，不能在这里卸载）：${COMPAT_SKILL_FOLDER_LABELS.join('、')}\n开关：本项目的 settings.local.json（在 ~/.hanekawa/projects/ 下）`,
     empty: '还没有技能。可以从别处导入一个技能文件夹。',
     rows: snapshot.skills.map((skill) => ({
       id: `skill:${skill.name}`,
@@ -1868,7 +1868,7 @@ function skillsCard(snapshot: WireSettingsSnapshot): SettingsCard {
     headerButtons: [
       ...(snapshot.skillsScope === 'personal' ? [] : [{
         label: '导入',
-        title: '选择一个含 SKILL.md 的文件夹，复制进这个项目的 .myagent/skills/。带脚本或 hooks 的会先询问，带 hooks 的导入后默认关闭',
+        title: '选择一个含 SKILL.md 的文件夹，复制进这个项目的 .hanekawa/skills/。带脚本或 hooks 的会先询问，带 hooks 的导入后默认关闭',
         icon: 'folder' as const,
         intent: { kind: 'import-skill', target: 'project' } as const,
         changeKind: 'import-skill' as const,
@@ -2050,7 +2050,7 @@ function mcpCard(snapshot: WireSettingsSnapshot): SettingsCard {
     id: 'mcp',
     title: 'MCP 服务器',
     note: `信任${SAVED_LOCAL}上层设置里已经信任的服务器，在这里关不掉。`,
-    noteHint: '信任写入本项目的 settings.local.json（在 ~/.myagent/projects/ 下）。各层的信任列表会合并，所以只能在授予信任的那一层撤销。',
+    noteHint: '信任写入本项目的 settings.local.json（在 ~/.hanekawa/projects/ 下）。各层的信任列表会合并，所以只能在授予信任的那一层撤销。',
     empty: '没有配置 MCP 服务器',
     rows: snapshot.mcpServers.map((server) => {
       const toggle = {

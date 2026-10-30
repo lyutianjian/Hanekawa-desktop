@@ -40,7 +40,7 @@ test('NotebookEdit tool is registered with correct properties', () => {
 // ── Extension validation ───────────────────────────────────────────────────────
 
 test('NotebookEdit rejects non-.ipynb files', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     await writeFile(path.join(dir, 'test.txt'), 'hello', 'utf8')
     const result = await notebookEditTool.execute(
@@ -58,7 +58,7 @@ test('NotebookEdit rejects non-.ipynb files', async () => {
 // ── Read-before-edit enforcement ───────────────────────────────────────────────
 
 test('NotebookEdit refuses to edit unread notebook', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'print("hello")', id: 'abc' }])
     await writeFile(path.join(dir, 'test.ipynb'), JSON.stringify(nb), 'utf8')
@@ -78,7 +78,7 @@ test('NotebookEdit refuses to edit unread notebook', async () => {
 // ── REPLACE mode ──────────────────────────────────────────────────────────────
 
 test('NotebookEdit replace updates cell source', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'print("hello")', id: 'cell-0' }])
     const nbPath = path.join(dir, 'test.ipynb')
@@ -115,7 +115,7 @@ test('NotebookEdit replace updates cell source', async () => {
 })
 
 test('NotebookEdit replace resets execution_count and outputs for code cells', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'x = 1', id: 'abc' }])
     nb.cells[0].execution_count = 42
@@ -139,7 +139,7 @@ test('NotebookEdit replace resets execution_count and outputs for code cells', a
 })
 
 test('NotebookEdit replace by cell-N index', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([
       { cell_type: 'code', source: 'a = 1', id: 'id-a' },
@@ -168,7 +168,7 @@ test('NotebookEdit replace by cell-N index', async () => {
 // ── INSERT mode ───────────────────────────────────────────────────────────────
 
 test('NotebookEdit insert creates new cell after referenced cell', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const nbPath = path.join(dir, 'test.ipynb')
@@ -203,7 +203,7 @@ test('NotebookEdit insert creates new cell after referenced cell', async () => {
 })
 
 test('NotebookEdit insert at position 0 when no cell_id', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const nbPath = path.join(dir, 'test.ipynb')
@@ -229,7 +229,7 @@ test('NotebookEdit insert at position 0 when no cell_id', async () => {
 })
 
 test('NotebookEdit insert requires cell_type', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const nbPath = path.join(dir, 'test.ipynb')
@@ -250,7 +250,7 @@ test('NotebookEdit insert requires cell_type', async () => {
 })
 
 test('NotebookEdit insert generates cell ID for nbformat >= 4.5', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }], 4, 5)
     const nbPath = path.join(dir, 'test.ipynb')
@@ -276,7 +276,7 @@ test('NotebookEdit insert generates cell ID for nbformat >= 4.5', async () => {
 // ── DELETE mode ───────────────────────────────────────────────────────────────
 
 test('NotebookEdit delete removes cell', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([
       { cell_type: 'code', source: 'a = 1', id: 'id-a' },
@@ -313,7 +313,7 @@ test('NotebookEdit delete removes cell', async () => {
 })
 
 test('NotebookEdit delete requires cell_id', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const nbPath = path.join(dir, 'test.ipynb')
@@ -336,7 +336,7 @@ test('NotebookEdit delete requires cell_id', async () => {
 // ── Error cases ───────────────────────────────────────────────────────────────
 
 test('NotebookEdit rejects non-existent cell', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const nbPath = path.join(dir, 'test.ipynb')
@@ -357,7 +357,7 @@ test('NotebookEdit rejects non-existent cell', async () => {
 })
 
 test('NotebookEdit rejects invalid JSON', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nbPath = path.join(dir, 'test.ipynb')
     await writeFile(nbPath, 'not json{', 'utf8')
@@ -379,7 +379,7 @@ test('NotebookEdit rejects invalid JSON', async () => {
 // ── Preserves notebook metadata ───────────────────────────────────────────────
 
 test('NotebookEdit preserves notebook metadata', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     nb.metadata = { language_info: { name: 'python', version: '3.11' }, kernelspec: { name: 'python3' } }
@@ -406,7 +406,7 @@ test('NotebookEdit preserves notebook metadata', async () => {
 // ── Append when replace targets past-end index ────────────────────────────────
 
 test('NotebookEdit replace at past-end index converts to append', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const nbPath = path.join(dir, 'test.ipynb')
@@ -432,7 +432,7 @@ test('NotebookEdit replace at past-end index converts to append', async () => {
 // ── Edit/MultiEdit .ipynb guard ───────────────────────────────────────────────
 
 test('Edit tool rejects .ipynb files', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const nbPath = path.join(dir, 'test.ipynb')
@@ -453,7 +453,7 @@ test('Edit tool rejects .ipynb files', async () => {
 })
 
 test('MultiEdit tool rejects .ipynb files', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const nbPath = path.join(dir, 'test.ipynb')
@@ -476,7 +476,7 @@ test('MultiEdit tool rejects .ipynb files', async () => {
 // ── The notebook's own encoding, line endings and trailing newline ─────────────
 
 test('NotebookEdit preserves BOM, CRLF, the trailing newline and the file mode', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const body = JSON.stringify(nb, null, 1).replaceAll('\n', '\r\n')
@@ -509,7 +509,7 @@ test('NotebookEdit preserves BOM, CRLF, the trailing newline and the file mode',
 })
 
 test('NotebookEdit keeps CRLF and a trailing newline', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const body = JSON.stringify(nb, null, 1).replaceAll('\n', '\r\n')
@@ -533,7 +533,7 @@ test('NotebookEdit keeps CRLF and a trailing newline', async () => {
 })
 
 test('NotebookEdit keeps LF and no trailing newline when the notebook had none', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const nbPath = path.join(dir, 'test.ipynb')
@@ -557,7 +557,7 @@ test('NotebookEdit keeps LF and no trailing newline when the notebook had none',
 
 test('a failed notebook write leaves the file and its directory clean', async () => {
   if (process.getuid?.() === 0) return
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-nb-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-nb-'))
   try {
     const nb = makeNotebook([{ cell_type: 'code', source: 'a = 1', id: 'abc' }])
     const nbPath = path.join(dir, 'test.ipynb')

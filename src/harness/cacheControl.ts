@@ -27,7 +27,7 @@ let latchedTtl1h: boolean | undefined
  * On by default (spec §6.1). A tool loop routinely goes quiet for longer than
  * five minutes — one full test run, one long build — and a 5m TTL then charges
  * a fresh cache write for the entire prefix on the very next turn. Opting out
- * takes `cache.ttl1h === false` or `MYAGENT_PROMPT_CACHE_1H=0`.
+ * takes `cache.ttl1h === false` or `HANEKAWA_PROMPT_CACHE_1H=0`.
  */
 export function should1hCacheTTL(runtime?: CacheRuntime): boolean {
   if (latchedTtl1h !== undefined) return latchedTtl1h
@@ -38,7 +38,7 @@ export function should1hCacheTTL(runtime?: CacheRuntime): boolean {
 function evaluate1hCacheTTL(runtime?: CacheRuntime): boolean {
   return typeof runtime?.settings?.cache?.ttl1h === 'boolean'
     ? runtime.settings.cache.ttl1h
-    : (runtime?.env ?? process.env).MYAGENT_PROMPT_CACHE_1H !== '0'
+    : (runtime?.env ?? process.env).HANEKAWA_PROMPT_CACHE_1H !== '0'
 }
 
 /**
@@ -57,7 +57,7 @@ export function resetCacheTTLEvaluation(): void {
 }
 
 export function getPromptCachingEnabled(): boolean {
-  if (process.env.MYAGENT_DISABLE_PROMPT_CACHING === '1') return false
+  if (process.env.HANEKAWA_DISABLE_PROMPT_CACHING === '1') return false
 
   return true
 }
@@ -103,7 +103,7 @@ function findBreakpointBlock(
  * stripped before the payload leaves this function — the API rejects unknown
  * message fields.
  */
-export const TRANSIENT_MESSAGE_KEY = '__myagentTransient'
+export const TRANSIENT_MESSAGE_KEY = '__hanekawaTransient'
 
 /**
  * The last message the next turn will still have in the same position.
@@ -192,7 +192,7 @@ export function addCacheControlToLastSystemBlock(
   return result
 }
 
-export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__MYAGENT_SYSTEM_PROMPT_DYNAMIC_BOUNDARY__'
+export const SYSTEM_PROMPT_DYNAMIC_BOUNDARY = '__HANEKAWA_SYSTEM_PROMPT_DYNAMIC_BOUNDARY__'
 
 export function splitSystemForCaching(systemBlocks: string[]): {
   staticBlocks: string[]

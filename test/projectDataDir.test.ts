@@ -11,7 +11,7 @@ import {
   getProjectMemoryDir,
   getProjectPlansDir,
   getCoordinationNotesDir,
-  getGlobalMyAgentDir,
+  getGlobalHanekawaDir,
   getSessionsDir,
   getToolResultSpillDir,
   getUserInstructionsPath,
@@ -20,19 +20,19 @@ import {
 } from '../src/utils/paths.js'
 
 /**
- * Runtime data lives under `~/.myagent/projects/<key>/`, never in the project:
+ * Runtime data lives under `~/.hanekawa/projects/<key>/`, never in the project:
  * opening a folder and talking in it must leave the folder as it was.
  */
 
 async function makeProject(): Promise<string> {
-  return mkdtemp(path.join(os.tmpdir(), 'myagent-data-dir-'))
+  return mkdtemp(path.join(os.tmpdir(), 'hanekawa-data-dir-'))
 }
 
 test('the key is readable and still tells apart paths that flatten alike', () => {
   const key = projectDataKey('/Users/me/code/foo')
   assert.match(key, /Users-me-code-foo-[0-9a-f]{8}$/i)
   assert.notEqual(projectDataKey('/a/b-c'), projectDataKey('/a/b/c'))
-  assert.equal(path.dirname(getProjectDataDir('/a/b')), path.join(os.homedir(), '.myagent', 'projects'))
+  assert.equal(path.dirname(getProjectDataDir('/a/b')), path.join(os.homedir(), '.hanekawa', 'projects'))
 })
 
 test('resolveToolPath resolves against cwd without restricting global data paths', async () => {
@@ -46,7 +46,7 @@ test('resolveToolPath resolves against cwd without restricting global data paths
       path.join(getCoordinationNotesDir(projectDir), 't.md'),
       path.join(getToolResultSpillDir(projectDir, 'session-a'), 'x.txt'),
       getUserInstructionsPath(),
-      path.join(getGlobalMyAgentDir(), 'settings.json'),
+      path.join(getGlobalHanekawaDir(), 'settings.json'),
       path.join(getProjectPlansDir(worktree), 'p.md'),
       path.join(getProjectMemoryDir(worktree), 'n.md'),
       path.join(getToolResultSpillDir(worktree, 'session-a'), 'x.txt'),
@@ -59,7 +59,7 @@ test('resolveToolPath resolves against cwd without restricting global data paths
   }
 })
 
-test('a session with records leaves no .myagent in the project', async () => {
+test('a session with records leaves no .hanekawa in the project', async () => {
   const cwd = await makeProject()
   try {
     const store = new SessionStore(cwd)
@@ -72,20 +72,20 @@ test('a session with records leaves no .myagent in the project', async () => {
       message: { role: 'user', content: 'hi' },
     } as never)
 
-    assert.equal(existsSync(path.join(cwd, '.myagent')), false)
+    assert.equal(existsSync(path.join(cwd, '.hanekawa')), false)
     assert.equal(existsSync(path.join(getSessionsDir(cwd), `${session.id}.jsonl`)), true)
   } finally {
     await rm(cwd, { recursive: true, force: true })
   }
 })
 
-test('an "always allow" or an MCP trust decision leaves no .myagent in the project', async () => {
+test('an "always allow" or an MCP trust decision leaves no .hanekawa in the project', async () => {
   const cwd = await makeProject()
   try {
     await updateLocalSettings(cwd, { permissions: { allow: ['Bash(ls:*)'] } })
     await trustMcpServerLocally(cwd, 'filesystem')
 
-    assert.equal(existsSync(path.join(cwd, '.myagent')), false)
+    assert.equal(existsSync(path.join(cwd, '.hanekawa')), false)
     assert.equal(existsSync(localSettingsPath(cwd)), true)
   } finally {
     await rm(cwd, { recursive: true, force: true })

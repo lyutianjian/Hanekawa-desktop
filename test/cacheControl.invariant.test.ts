@@ -88,7 +88,7 @@ function request(overrides: Partial<ModelRequest> = {}): ModelRequest {
     tools,
     cacheRuntime: {
       env: {
-        MYAGENT_PROMPT_CACHE_1H: '0',
+        HANEKAWA_PROMPT_CACHE_1H: '0',
       },
     },
     ...overrides,

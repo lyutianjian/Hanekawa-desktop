@@ -1,11 +1,11 @@
 import path from 'node:path'
 import { REDACTED_API_KEY, redactApiKeyFields } from '../config/apiKeys.js'
-import { getGlobalMyAgentDir, normalizeCaseForComparison, resolveExistingPrefix } from '../utils/paths.js'
+import { getGlobalHanekawaDir, normalizeCaseForComparison, resolveExistingPrefix } from '../utils/paths.js'
 
 function isGlobalConfig(file: string): boolean {
   const target = normalizeCaseForComparison(resolveExistingPrefix(file))
   return ['config.json', 'settings.json'].some((name) =>
-    target === normalizeCaseForComparison(resolveExistingPrefix(path.join(getGlobalMyAgentDir(), name))))
+    target === normalizeCaseForComparison(resolveExistingPrefix(path.join(getGlobalHanekawaDir(), name))))
 }
 
 export function configFileView(file: string, content: string): string {

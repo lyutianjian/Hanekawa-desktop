@@ -256,7 +256,7 @@ test('the status waits only while a real permission card is pending, never durin
   const record = (record: SessionRecord): void => remote.deliver({ type: 'session-event', event: { type: 'record', record } })
   const label = (): string => pane.paneEl.querySelector('.run')?.querySelector('.line-text')?.textContent ?? ''
   record({ type: 'message', id: 'user', role: 'user', content: 'go', turnId: 't1', createdAt: new Date().toISOString() })
-  record({ type: 'tool_use', id: 'automatic', tool: 'Bash', input: { command: 'npm test', description: '跑测试' }, turnId: 't1', createdAt: new Date().toISOString() })
+  record({ type: 'tool_use', id: 'automatic', tool: 'Bash', input: { command: 'npm test', description: '跑测试' }, riskLevel: 'safe', turnId: 't1', createdAt: new Date().toISOString() })
   t.mock.timers.tick(40)
   assert.doesNotMatch(label(), /等待你确认/, 'the first tool paint, before any approval record')
   record({ type: 'tool_approval', id: 'approved', tool: 'Bash', input: {}, approved: true, riskLevel: 'confirm', turnId: 't1', createdAt: new Date().toISOString() })
@@ -265,7 +265,7 @@ test('the status waits only while a real permission card is pending, never durin
   assert.equal(label(), '跑测试')
   assert.equal(pane.shellState().hasOverlay, false)
 
-  record({ type: 'tool_use', id: 'manual', tool: 'Bash', input: { command: 'npm run build', description: '构建' }, turnId: 't1', createdAt: new Date().toISOString() })
+  record({ type: 'tool_use', id: 'manual', tool: 'Bash', input: { command: 'npm run build', description: '构建' }, riskLevel: 'confirm', turnId: 't1', createdAt: new Date().toISOString() })
   await tick()
   remote.deliver({ type: 'ui-request', request: { kind: 'permission', requestId: 'request-manual', payload: {
     toolName: 'Bash', toolUseId: 'manual', input: { command: 'npm run build' }, riskLevel: 'confirm',

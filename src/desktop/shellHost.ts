@@ -24,7 +24,7 @@ import {
   setSkillEnabledLocally,
   setSkillEnabledForUser,
   disabledSkillNames,
-  type MyAgentSettings,
+  type HanekawaSettings,
   type StartupPermissionMode,
 } from '../config/settings.js'
 import { DEFAULT_CONTEXT_MANAGEMENT, type ContextManagementConfig } from '../prompts/budget.js'
@@ -193,8 +193,8 @@ export interface ShellLaneProject extends DirectoryProject {
    * second merge can differ from the loop's, and a screen showing rules the gate
    * is not enforcing is worse than a screen showing none.
    */
-  getSettings(): MyAgentSettings
-  /** Re-reads `.myagent/skills/` and re-registers their slash commands. */
+  getSettings(): HanekawaSettings
+  /** Re-reads `.hanekawa/skills/` and re-registers their slash commands. */
   reloadSkills(): Promise<number>
   /** As it stands now. Mutated in place by `reloadMcpServers`, never replaced. */
   readonly mcp: McpConnectionStatus
@@ -1634,7 +1634,7 @@ export class ShellHost<
    * leaves behind (JSONL, file history, subagent transcripts),
    * and duplicating the list here is how the other three got leaked once before.
    * Once every session is gone, the rest of the project's data dir (index,
-   * plans) goes with it. The project's own `.myagent/` is never touched:
+   * plans) goes with it. The project's own `.hanekawa/` is never touched:
    * settings, skills and rules are not history.
    *
    * The lane teardown borrows `deleteSession`'s deferral (below): detaching the
@@ -2142,7 +2142,7 @@ export class ShellHost<
     })
 
     // The built-ins unioned with whatever routing already names, so a
-    // custom `.myagent/agents/*.md` type that has been routed keeps its row.
+    // custom `.hanekawa/agents/*.md` type that has been routed keeps its row.
     const subagentTypes = [...new Set([...BUILTIN_SUBAGENT_TYPES, ...Object.keys(routing.subagent ?? {})])]
 
     const permissions: WirePermissionsInfo = {
@@ -2401,7 +2401,7 @@ function summarize(session: {
 
 /**
  * The subagent types that always get a routing row, whether or not the config
- * has spoken about them. Mirrors the built-ins `.myagent/agents/` may override.
+ * has spoken about them. Mirrors the built-ins `.hanekawa/agents/` may override.
  */
 const BUILTIN_SUBAGENT_TYPES = ['general', 'explore', 'plan'] as const
 
@@ -2428,8 +2428,8 @@ function startupMode(mode: StartupPermissionMode | undefined): WirePermissionsIn
  */
 function splitPermissionGroup(
   behavior: 'allow' | 'deny' | 'ask',
-  merged: MyAgentSettings,
-  local: MyAgentSettings,
+  merged: HanekawaSettings,
+  local: HanekawaSettings,
 ): WirePermissionGroup {
   const localEntries = [...(local.permissions?.[behavior] ?? [])]
   const unmatched = [...localEntries]

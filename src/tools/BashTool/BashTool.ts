@@ -105,7 +105,7 @@ function detectShell(): ShellInfo {
   }
 
   // 0. Explicit override always wins on every platform.
-  const overridePath = process.env.MYAGENT_BASH_PATH
+  const overridePath = process.env.HANEKAWA_BASH_PATH
   if (overridePath && existsSync(overridePath)) {
     return { shell: overridePath, args: (cmd) => ['-c', cmd] }
   }

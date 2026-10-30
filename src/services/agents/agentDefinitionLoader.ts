@@ -67,7 +67,7 @@ export class AgentDefinitionLoader {
 
   private agentDirs(): string[] {
     return [
-      path.join(this.homeDir, '.myagent', 'agents'),
+      path.join(this.homeDir, '.hanekawa', 'agents'),
       getAgentsDir(this.cwd),
       getLocalAgentsDir(this.cwd),
     ]

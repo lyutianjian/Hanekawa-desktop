@@ -16,17 +16,17 @@ import {
   collectCacheControlTelemetry,
 } from './cacheControlTelemetry.js'
 
-const MAX_OUTPUT_TOKENS_DEFAULT = 64_000
-const MAX_OUTPUT_TOKENS_UPPER_LIMIT = 128_000
+const MAX_OUTPUT_TOKENS_DEFAULT = 128_000
+const MAX_OUTPUT_TOKENS_UPPER_LIMIT = 1_000_000
 const TOOL_SEARCH_BETA = 'advanced-tool-use-2025-11-20'
 
 /**
- * Output limits come from configuration only — `MYAGENT_MAX_OUTPUT_TOKENS`,
+ * Output limits come from configuration only — `HANEKAWA_MAX_OUTPUT_TOKENS`,
  * then `ModelConfig.maxOutputTokens`, then a flat default. Requests truncated
  * at this default get one retry at `ESCALATED_MAX_TOKENS`.
  */
 export function getMaxOutputTokens(configValue?: number): number {
-  const envValue = process.env.MYAGENT_MAX_OUTPUT_TOKENS
+  const envValue = process.env.HANEKAWA_MAX_OUTPUT_TOKENS
   if (envValue) {
     const parsed = parseInt(envValue, 10)
     if (Number.isFinite(parsed) && parsed > 0) {
@@ -125,7 +125,7 @@ function eligibleThinkingBlocks(message: ChatMessage, request: ModelRequest): Th
   return blocks
 }
 
-export function buildAnthropicMessages(request: ModelRequest) {
+export function buildAnthropicMessages(request: ModelRequest, allowEmptySignature = false) {
   const contextItems = request.contextItems ?? request.messages.map((message) => ({ kind: 'message', message }) satisfies ModelContextItem)
   const messages: Array<Record<string, unknown>> = []
   let pendingToolResults: Array<Record<string, unknown>> = []
@@ -149,11 +149,21 @@ export function buildAnthropicMessages(request: ModelRequest) {
         ? eligibleThinkingBlocks(item.message, request)
         : []
       if (replayableThinkingBlocks.length > 0) {
-        const thinkingBlocks = replayableThinkingBlocks.map((block) => {
+        const thinkingBlocks = replayableThinkingBlocks.flatMap((block): Array<Record<string, unknown>> => {
           if (block.type === 'redacted_thinking') {
-            return { type: 'redacted_thinking', data: block.data }
+            return [{ type: 'redacted_thinking', data: block.data }]
           }
-          return { type: 'thinking', thinking: block.thinking ?? '', signature: block.signature ?? '' }
+          const thinking = block.thinking ?? ''
+          if ((block.signature ?? '').trim() !== '') {
+            return [{ type: 'thinking', thinking, signature: block.signature }]
+          }
+          // A signature-less block is rejected by a strict Anthropic endpoint.
+          // Replay its text as ordinary assistant content instead; compatible
+          // endpoints that emit and accept empty signatures opt in.
+          if (allowEmptySignature) {
+            return [{ type: 'thinking', thinking, signature: '' }]
+          }
+          return thinking.trim() === '' ? [] : [{ type: 'text', text: thinking }]
         })
         const merged = [...thinkingBlocks, ...content] as Array<Record<string, unknown>>
         if (merged.length === 0) continue
@@ -284,6 +294,8 @@ export function buildAnthropicTools(
 export interface AnthropicPayloadOptions {
   promptCaching?: boolean
   dynamicToolSearch?: boolean
+  /** Replay virtual `thinking` blocks with an empty signature for endpoints that emit them. */
+  allowEmptySignature?: boolean
 }
 
 export function buildAnthropicPayload(request: ModelRequest, maxOutputTokens?: number, options: AnthropicPayloadOptions = {}) {
@@ -298,7 +310,7 @@ export function buildAnthropicPayload(request: ModelRequest, maxOutputTokens?: n
   // ALL deferred tool names from the full (unfiltered) tool list for <available-deferred-tools>.
   const allDeferredNames = request.allDeferredToolNames
   const tools = buildAnthropicTools(request.tools, enableCaching, request.cacheRuntime, deferLoadingNames)
-  let messages: Array<Record<string, unknown>> = buildAnthropicMessages(request)
+  let messages: Array<Record<string, unknown>> = buildAnthropicMessages(request, options.allowEmptySignature === true)
   const systemBlocks = request.systemBlocks ?? (request.system ? [request.system] : [])
 
   // Announce ALL deferred tool names (not just discovered ones) so the model
@@ -397,8 +409,8 @@ export function enforceAnthropicCacheControlLimit<T extends Record<string, unkno
 function finalizeAnthropicCacheControl<T extends Record<string, unknown>>(payload: T): T {
   enforceAnthropicCacheControlLimit(payload)
   const telemetry = assertAnthropicCacheControlLimit(payload)
-  if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
-    console.error(`[myagent][prompt-cache] cache_control markers ${JSON.stringify(telemetry)}`)
+  if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
+    console.error(`[hanekawa][prompt-cache] cache_control markers ${JSON.stringify(telemetry)}`)
   }
   return payload
 }

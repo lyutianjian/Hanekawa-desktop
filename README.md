@@ -1,6 +1,6 @@
-# Hanekawa / MyAgent
+# Hanekawa
 
-Hanekawa（包名 `myagent`）是一个轻量的自托管编程 agent，带 Electron 桌面应用。支持 Anthropic 与 OpenAI 兼容 API、会话持久化、自动上下文压缩、技能（skills）、子代理、MCP、钩子（hooks）、按权限放行的工具、图片输入、项目调度和内置浏览器。
+Hanekawa 是一个轻量的自托管编程 agent，带 Electron 桌面应用。支持 Anthropic 与 OpenAI 兼容 API、会话持久化、自动上下文压缩、技能（skills）、子代理、MCP、钩子（hooks）、按权限放行的工具、图片输入、项目调度和内置浏览器。
 
 ## 环境要求
 
@@ -20,6 +20,16 @@ npm run start:desktop
 
 回合进行时，状态行优先显示最近仍在执行的工具描述；普通切换过滤 150 毫秒的短暂变化，工具描述保留约 650 毫秒，工具结束后切回「处理中」前缓冲 650 毫秒（两段等待重叠计算）。空档中来了下一条工具描述就接上，极短的中间步骤可能略过，文字切换轻淡入，动画和计时继续。思考、正文输出、真实的人工审批请求、重试和错误立即更新；自动审批不显示「等待你确认」，回合结束立即收起状态行。缓冲只影响状态文字，执行结果和计时照常更新。
 
+### 从旧名称升级
+
+升级前请先退出旧版应用，避免两个版本同时写旧目录。首次启动会把这些旧位置迁到新名称，之后旧位置不再读取：
+
+- `~/.myagent/` → `~/.hanekawa/`
+- `~/Documents/myagent/` → `~/Documents/hanekawa/`
+- Electron 的窗口位置、主题和侧栏宽度从旧的 `myagent` 配置目录复制到 `hanekawa`。
+
+如果新旧目录同时存在，不会合并，旧目录保持原样（启动日志里会说明）。项目里的 `.myagent/` 不会自动迁移，需要手动 `mv .myagent .hanekawa`；旧调度线程的 worktree 会留在 `~/.myagent-worktrees/` 直到线程结束。环境变量从 `MYAGENT_*` 改为 `HANEKAWA_*`，旧名不再生效。旧会话里已经写进对话的绝对路径（例如超长工具输出的临时文件路径）不会改写，回看时可能指向旧位置。
+
 ## 配置
 
 ### 模型与服务商
@@ -30,9 +40,9 @@ npm run start:desktop
 
 默认模型在「路由」卡顶部选择；未选默认模型时，第一个保存成功、可解析的模型会成为默认模型。手写配置里没有归属到已配置服务商的模型，列在「未归属服务商的模型」一行里，只能编辑模型本身。配置无需重启即可生效：所有已打开的项目都会收到全局服务商变更，正在运行的回合结束后才替换运行时。删掉最后一个模型会让应用回到待配置状态。配置完成前尝试发送的消息会保留草稿和附件。
 
-应用会创建并保存 `~/.myagent/config.json`，所有项目共用。缺少模型、模型引用失效或服务商配置不完整时，配置入口始终可用。启动时不测试网络连通性或远端鉴权，请求出错会在使用模型时报告。
+应用会创建并保存 `~/.hanekawa/config.json`，所有项目共用。缺少模型、模型引用失效或服务商配置不完整时，配置入口始终可用。启动时不测试网络连通性或远端鉴权，请求出错会在使用模型时报告。
 
-也可以手动编辑 `~/.myagent/config.json`：
+也可以手动编辑 `~/.hanekawa/config.json`：
 
 ```json
 {
@@ -59,9 +69,9 @@ npm run start:desktop
 
 `provider` 有三种：`anthropic`（Anthropic Messages）、`openai`（OpenAI Chat Completions，各家兼容服务通用）和 `openai-responses`（OpenAI Responses，OpenAI 官方推荐；GPT-6 Astra、GPT-6.1 Sol 只能在 Responses 下调用工具）。
 
-`config.json` 只有全局一份。项目和本地 settings 中的 `models`、`endpoints`、`routing`、`defaultModel`、`fallbackModel`、`compactModel` 及 `agent.*` 会被忽略，不能借用全局服务商凭证或写入全局配置。旧的用户层 `~/.myagent/settings.json` 仍兼容这些字段，`config.json` 优先。
+`config.json` 只有全局一份。项目和本地 settings 中的 `models`、`endpoints`、`routing`、`defaultModel`、`fallbackModel`、`compactModel` 及 `agent.*` 会被忽略，不能借用全局服务商凭证或写入全局配置。旧的用户层 `~/.hanekawa/settings.json` 仍兼容这些字段，`config.json` 优先。
 
-旧版项目里的 `.myagent/config.json` 不会自动导入或归档，应用会提示并保留原文件。确需导入时，请亲自审阅服务商地址、模型覆盖和凭证，先备份 `~/.myagent/config.json`（例如复制为 `config.before-import.json`），再手动把确认可信的字段合入全局配置并重新加载。仅有本地文件或未被 Git 跟踪，不能证明它来自你本人。
+项目里的 `.hanekawa/config.json` 不会自动导入或归档，应用会提示并保留原文件。确需导入时，请亲自审阅服务商地址、模型覆盖和凭证，先备份 `~/.hanekawa/config.json`（例如复制为 `config.before-import.json`），再手动把确认可信的字段合入全局配置并重新加载。仅有本地文件或未被 Git 跟踪，不能证明它来自你本人。
 
 ### 设置文件的层级
 
@@ -69,9 +79,9 @@ npm run start:desktop
 
 | 层 | 位置 | 说明 |
 |---|---|---|
-| 用户 | `~/.myagent/settings.json` | 对所有项目生效 |
-| 项目 | `<项目>/.myagent/settings.json` | 随仓库共享；其中的 `permissions.mode` 和 `mcp.trustedServers` 会被忽略并给出提示 |
-| 本地 | `~/.myagent/projects/<key>/settings.local.json` | 个人的每项目设置，不放在项目目录里 |
+| 用户 | `~/.hanekawa/settings.json` | 对所有项目生效 |
+| 项目 | `<项目>/.hanekawa/settings.json` | 随仓库共享；其中的 `permissions.mode` 和 `mcp.trustedServers` 会被忽略并给出提示 |
+| 本地 | `~/.hanekawa/projects/<key>/settings.local.json` | 个人的每项目设置，不放在项目目录里 |
 
 权限规则、钩子等按层拼接，MCP 信任取并集；`skills.disabled` 例外，按层整体替换。
 
@@ -79,22 +89,22 @@ npm run start:desktop
 
 多个项目同时修改全局 `config.json` 时，过期的配置副本会拒绝保存，并提示重新加载。请加载最新配置后重新应用本次修改，以免覆盖另一个项目刚保存的设置。
 
-项目里的 `.myagent/` 只存放你手动放进去的共享配置（设置、技能、agent 定义、规则、MCP）。会话及其他运行时数据（溢出的工具输出、图片附件、计划文件）以及个人的每项目设置（`settings.local.json`、`agents.local/`）都在 `~/.myagent/projects/<key>/` 下，`<key>` 由项目路径推导，所以应用自己写的东西永远不会出现在项目里。重命名或移动项目会得到新 key 和空历史，旧历史留在旧 key 下。如果旧版本把会话或本地设置留在了项目的 `.myagent/` 里，下次打开时会被迁走：每个文件先复制、校验，再删除原件；清空的 `.myagent/` 会被删除；搬不走的保持原样，并在启动时警告。
+项目里的 `.hanekawa/` 只存放你手动放进去的共享配置（设置、技能、agent 定义、规则、MCP）。会话及其他运行时数据（溢出的工具输出、图片附件、计划文件）以及个人的每项目设置（`settings.local.json`、`agents.local/`）都在 `~/.hanekawa/projects/<key>/` 下，`<key>` 由项目路径推导，所以应用自己写的东西永远不会出现在项目里。重命名或移动项目会得到新 key 和空历史，旧历史留在旧 key 下。如果项目的 `.hanekawa/` 里还留着会话或本地设置（例如从旧的 `.myagent/` 手动改名过来），下次打开时会被迁走：每个文件先复制、校验，再删除原件；清空的 `.hanekawa/` 会被删除；搬不走的保持原样，并在启动时警告。
 
 ### 指令文件
 
 Hanekawa 每次请求都会把指令文件放在对话开头的一条 `<system-reminder>` 里（和记忆索引在一起），而不是系统提示：仓库里的指令文件是用户层面的内容，不该拿到 harness 规则的权威。
 
-1. `~/.myagent/AGENTS.md`：你对所有项目的个人指令，可在设置的「个性化 › 自定义指令」里编辑。系统提示总会写明这个文件的位置（为空时也写），你让模型改它时，它可以直接改：主对话中，在 `default`、`auto`、`bypass` 模式下读、写、编辑这个文件都不弹询问；plan 模式和只读模式照常拒绝，删除照常询问，子代理照常走权限判定；这个文件本身是符号链接时不豁免。deny 规则照样生效，ask 规则照样询问（`bypass` 除外）。
+1. `~/.hanekawa/AGENTS.md`：你对所有项目的个人指令，可在设置的「个性化 › 自定义指令」里编辑。系统提示总会写明这个文件的位置（为空时也写），你让模型改它时，它可以直接改：主对话中，在 `default`、`auto`、`bypass` 模式下读、写、编辑这个文件都不弹询问；plan 模式和只读模式照常拒绝，删除照常询问，子代理照常走权限判定；这个文件本身是符号链接时不豁免。deny 规则照样生效，ask 规则照样询问（`bypass` 除外）。
 2. 从工作目录向上走到文件系统根目录，每一级取 `CLAUDE.md`，没有时用 `AGENTS.md`。
 
 每一级目录只取两个指令文件中的**一个**：同时维护 `AGENTS.md` 和 `CLAUDE.md` 的仓库，否则每次请求都会重复发送同一份指南。文件按从外到内读取，越近的越靠后、优先级越高。
 
-这些文件在项目打开时读一次，会话运行时构建时固定下来，和钩子一样。会话中途修改它们，会在下次重新加载设置时生效——在设置页保存任意内容就会触发一次，指令变了就重建运行时。例外是 `~/.myagent/AGENTS.md`：每个会话开始时（新会话、`/clear`、`/resume`）各读一次，所以无论是模型改的、在「自定义指令」里保存的还是你在编辑器里改的，下一个新会话就能看到；已打开的会话保持开始时那一份，重新加载设置也不变。
+这些文件在项目打开时读一次，会话运行时构建时固定下来，和钩子一样。会话中途修改它们，会在下次重新加载设置时生效——在设置页保存任意内容就会触发一次，指令变了就重建运行时。例外是 `~/.hanekawa/AGENTS.md`：每个会话开始时（新会话、`/clear`、`/resume`）各读一次，所以无论是模型改的、在「自定义指令」里保存的还是你在编辑器里改的，下一个新会话就能看到；已打开的会话保持开始时那一份，重新加载设置也不变。
 
 ### 自动记忆
 
-模型可以记下跨会话保留的笔记：你的纠正和偏好、代码里看不出的项目背景、外部资料的位置。它们是普通 Markdown 文件，存放在 `~/.myagent/projects/<key>/memory/`（每个工作目录一份，主目录单独一份），每个文件带一小段 frontmatter，另有索引 `MEMORY.md`，每条笔记一行。可以用任何编辑器打开或修改，也可以让模型忘掉某条。
+模型可以记下跨会话保留的笔记：你的纠正和偏好、代码里看不出的项目背景、外部资料的位置。它们是普通 Markdown 文件，存放在 `~/.hanekawa/projects/<key>/memory/`（每个工作目录一份，主目录单独一份），每个文件带一小段 frontmatter，另有索引 `MEMORY.md`，每条笔记一行。可以用任何编辑器打开或修改，也可以让模型忘掉某条。
 
 - **加载**：会话运行时首次构建时读取索引，放进对话开头那条指令 `<system-reminder>`（记忆的用法说明在系统提示里）；`/clear` 和 `/resume` 会重新读取，切换模型或重载设置不会。会话中途写下的笔记在下一个会话可见。索引截断在 200 行或 25,000 字节。
 - **审批**：主对话中，直接读写、删除记忆目录里的 `*.md` 在任何权限模式下（包括 plan）都不弹询问。deny 规则照样生效，ask 规则照样询问（`bypass` 除外）。该目录也算工作区，所以对它执行只读 shell 命令（`ls`、`cat`、`grep`）无需询问；在里面写入或删除的 shell 命令照常询问。
@@ -177,16 +187,16 @@ Anthropic 回复中的签名思考只会回传给产生它的同一模型和服�
 
 | 内容 | 写入位置 |
 |---|---|
-| 模型与服务商、子代理路由、上下文管理、线程调度（协调者／线程的模型与思考强度、安静天数、自动结案天数） | `~/.myagent/config.json` |
-| 权限规则、默认权限模式、扩展思考、1 小时提示词缓存、MCP 服务器与信任、技能开关 | `~/.myagent/projects/<key>/settings.local.json`（每项目一份，不在项目目录里） |
-| 个性化 › 自定义指令 | `~/.myagent/AGENTS.md` |
-| 技能和 MCP › 导入技能 | 复制到 `<项目>/.myagent/skills/`；「导入到个人」复制到 `~/.agents/skills/` |
-| 技能 ›「个人」范围的技能开关 | `~/.myagent/settings.json`（所有项目的默认值，项目自有的 `skills.disabled` 列表优先） |
+| 模型与服务商、子代理路由、上下文管理、线程调度（协调者／线程的模型与思考强度、安静天数、自动结案天数） | `~/.hanekawa/config.json` |
+| 权限规则、默认权限模式、扩展思考、1 小时提示词缓存、MCP 服务器与信任、技能开关 | `~/.hanekawa/projects/<key>/settings.local.json`（每项目一份，不在项目目录里） |
+| 个性化 › 自定义指令 | `~/.hanekawa/AGENTS.md` |
+| 技能和 MCP › 导入技能 | 复制到 `<项目>/.hanekawa/skills/`；「导入到个人」复制到 `~/.agents/skills/` |
+| 技能 ›「个人」范围的技能开关 | `~/.hanekawa/settings.json`（所有项目的默认值，项目自有的 `skills.disabled` 列表优先） |
 | 外观 › 界面主题 | 只存在应用本地 |
 
 需要知道的几点：
 
-- 权限规则跨层**拼接**、MCP 信任取**并集**，所以设置页只能编辑 `settings.local.json` 里的条目。继承自 `~/.myagent/settings.json` 或项目 `settings.json` 的规则以只读方式列出；在 `~/.myagent/settings.json` 授予的 MCP 信任无法在页面上撤销，要去那个文件里删。
+- 权限规则跨层**拼接**、MCP 信任取**并集**，所以设置页只能编辑 `settings.local.json` 里的条目。继承自 `~/.hanekawa/settings.json` 或项目 `settings.json` 的规则以只读方式列出；在 `~/.hanekawa/settings.json` 授予的 MCP 信任无法在页面上撤销，要去那个文件里删。
 - 「技能和 MCP」是两个横向标签页，技能在前、MCP 在后，标签上带数量；搜索框会同时过滤两页并显示命中数。技能行在悬停时显示圆角底色，点击打开详情弹窗：顶部可以启停技能，中间显示渲染后的完整 `SKILL.md`，来源、加载方式与风险提示收在「技能信息」中，底部可以「打开」「在 Finder 中显示」「复制 Markdown」，Hanekawa 管理的技能还有「卸载」。点击遮罩、关闭按钮或按 Esc 返回列表，原搜索与滚动位置保留。带 hooks 的技能导入后默认关闭，读过详情再打开。
 - 技能页右上角可以选择项目，查看该项目可用的项目技能与个人技能。点击项目旁的 × 取消选择后显示「个人」，只管理个人技能；开关写入全局默认，已打开的项目同步重新加载。项目已有的独立开关设置保持优先。个人范围中的文件操作和卸载指向个人副本，即使项目里有同名技能也不会改动它。
 - 六个上下文管理数值在项目启动时读取一次，修改后重启生效。
@@ -202,7 +212,7 @@ Anthropic 回复中的签名思考只会回传给产生它的同一模型和服�
 
 空会话的首页可以切换 git 分支（「切换分支」），并显示用量卡片（概览/模型，全部 / 30 天 / 7 天）。会话标题栏可以重命名、删除会话，或「在 VS Code 中打开」项目。
 
-「最近」中的会话共享 `~/Documents/myagent` 作为工作目录，打开时自动创建。相对路径的文件写入、Bash 命令和「在 VS Code 中打开」都从这个目录开始，首页不显示工作区目录按钮。旧会话重新打开后同样使用这个目录；历史、记忆和配置保留原来的存储位置，之前生成的文件留在原处。
+「最近」中的会话共享 `~/Documents/hanekawa` 作为工作目录，打开时自动创建。相对路径的文件写入、Bash 命令和「在 VS Code 中打开」都从这个目录开始，首页不显示工作区目录按钮。从旧版本升级时，`~/Documents/myagent` 会自动改名为 `~/Documents/hanekawa`，之前生成的文件跟着目录一起移动；旧会话重新打开后同样使用这个目录，历史、记忆和配置仍在原来的存储位置。
 
 | 操作 | macOS | Windows / Linux |
 |---|---|---|
@@ -265,7 +275,7 @@ macOS 上标题栏为原生红绿灯按钮预留位置（缩放、全屏切换�
 
 当前模型不支持图片时，发送**新**图片会在回合开始前被拦下——草稿保留，提示指向 `/model`。对话中已有的图片变成带文件路径的文字占位符，每次切换只提示一次，而不是每步一次。原图仍保存在会话里，切回支持图片的模型会再次发送。压缩时图片总是被总结成文字（压缩模型不需要支持图片），但保留最新一条用户消息的图片；被压缩的图片可以从缓存路径重新读取。单次请求最多携带 100 张图片，优先丢弃最旧的历史图片；当前输入的图片不会被悄悄丢弃。
 
-附件存放在 `~/.myagent/projects/<key>/attachments/<session-id>/`。导入时复制图片——无论发送、移除草稿附件还是删除会话，都不会修改或删除你的源文件。删除会话会删除它存储的附件；关闭面板或重启会保留；不再被引用的文件在 24 小时保留期过后清理。
+附件存放在 `~/.hanekawa/projects/<key>/attachments/<session-id>/`。导入时复制图片——无论发送、移除草稿附件还是删除会话，都不会修改或删除你的源文件。删除会话会删除它存储的附件；关闭面板或重启会保留；不再被引用的文件在 24 小时保留期过后清理。
 
 ### 内置浏览器
 
@@ -279,7 +289,7 @@ agent 通过 `Browser` 工具使用同一组标签页：打开、导航、后退
 
 ### 项目调度
 
-从侧栏的「项目调度」入口打开调度页，可以「新建调度」（选择一个文件夹），每个项目一张卡片，点开进入该项目的**协调者**：每个项目一个长期存在的会话。新协调者不会自动行动；项目还没有线程时，欢迎语里有「读取项目」按钮，点击后派一个只读线程阅读项目并给出几条建议。协调者只读加调度（权限模式锁定为 `readonly`）：它能阅读和搜索代码，并启动、发消息给、停止、完成**线程**——线程是干活的普通会话。线程默认 `auto` 权限模式，不能再启动线程。需要写代码的线程有自己的 git worktree，位于 `~/.myagent-worktrees/<key>/<threadId>`，分支 `hanekawa/<slug>-<threadId>`；只读线程共用项目目录。
+从侧栏的「项目调度」入口打开调度页，可以「新建调度」（选择一个文件夹），每个项目一张卡片，点开进入该项目的**协调者**：每个项目一个长期存在的会话。新协调者不会自动行动；项目还没有线程时，欢迎语里有「读取项目」按钮，点击后派一个只读线程阅读项目并给出几条建议。协调者只读加调度（权限模式锁定为 `readonly`）：它能阅读和搜索代码，并启动、发消息给、停止、完成**线程**——线程是干活的普通会话。线程默认 `auto` 权限模式，不能再启动线程。需要写代码的线程有自己的 git worktree，位于 `~/.hanekawa-worktrees/<key>/<threadId>`，分支 `hanekawa/<slug>-<threadId>`；只读线程共用项目目录。
 
 - **侧栏**：顶部的「项目」区为每个项目显示一行协调者，带「N 运行中 · N 需要你」计数；线程本身不在侧栏列出。
 - **线程视图**：标题栏显示「← 协调 · 线程名 [状态] [停止]」。右侧「线程」页顶部显示线程计数和「全部停止」，标题栏的「线程」按钮带阻塞线程数角标。线程列表按阻塞、运行中、空闲、安静、已完成分组（后两组默认折叠），每个线程一行，有新动静未查看的显示圆点；行尾「⋯」菜单可在主画布打开、停止或「标为完成」。
@@ -294,7 +304,7 @@ agent 通过 `Browser` 工具使用同一组标签页：打开、导航、后退
 
 恢复对话时，所选提示及图片会回到输入框一次；如果它来自排队消息，也不会自动重发。其他尚未发送的排队消息会保留原顺序、优先级和图片；摘要回退同样保留待发送队列。
 
-恢复代码只恢复 **agent 的写入工具改过的文件**（`Edit`、`Write`、`MultiEdit`、`NotebookEdit`、`Delete`）。每次这类写入之前，原内容会被复制到 `~/.myagent/file-history/<session-id>/`，撤回时把这些副本放回去——并删除 agent 在所选位置之后新建的文件。
+恢复代码只恢复 **agent 的写入工具改过的文件**（`Edit`、`Write`、`MultiEdit`、`NotebookEdit`、`Delete`）。每次这类写入之前，原内容会被复制到 `~/.hanekawa/file-history/<session-id>/`，撤回时把这些副本放回去——并删除 agent 在所选位置之后新建的文件。
 
 `Bash` 只在命令文本能明确看出目标时才被覆盖：输出重定向（`> f`、`>> f`、`2> f`、`&> f`）、`tee`，以及非递归的 `cp`/`mv`。用变量、通配符或命令替换拼出目标的命令，以及脚本间接写入的任何内容，都不会被捕获。
 
@@ -304,7 +314,7 @@ agent 通过 `Browser` 工具使用同一组标签页：打开、导航、后退
 
 每次工具调用先由风险分级器（`src/harness/risk/`）定级，再由权限闸门把等级与你的规则和会话模式结合起来判断。
 
-全局 `~/.myagent/` 可以读取、搜索和编辑，不再按目录整体封锁。读取普通全局文件无需询问，协调者和只读子代理也可读取；写入仍遵守权限模式，修改 `config.json` 等权限配置仍按 `critical` 处理，deny 规则照常生效。从主目录做宽泛搜索时仍跳过项目运行数据，明确指定会话或数据目录即可搜索。
+全局 `~/.hanekawa/` 可以读取、搜索和编辑，不再按目录整体封锁。读取普通全局文件无需询问，协调者和只读子代理也可读取；写入仍遵守权限模式，修改 `config.json` 等权限配置仍按 `critical` 处理，deny 规则照常生效。从主目录做宽泛搜索时仍跳过项目运行数据，明确指定会话或数据目录即可搜索。
 
 模型收到的工具结果（包括 Read、Grep、Bash、后台通知和子代理结果）会把已加载配置中的 API 密钥及 JSON `apiKey` 字段替换为 `[REDACTED]`，模型 key、服务地址等普通配置保持可见。应用发请求时仍使用真实密钥。全局 `config.json` 和兼容的 `settings.json` 可按脱敏视图编辑；Edit、MultiEdit、Write 保存时恢复原位置的密钥，整文件覆盖时也会保留仍存在的端点／模型中省略的密钥。新增或改名后无法对应的占位符会拒绝保存，请在设置页配置对应密钥。这是正常文本输出的脱敏，不是对任意脚本编码、拆分密钥行为的凭据隔离。
 
@@ -336,13 +346,13 @@ agent 通过 `Browser` 工具使用同一组标签页：打开、导航、后退
 
 文件规则匹配解析后的绝对路径。以 `/` 或 `~` 开头的模式是绝对路径，其他都相对于项目根目录，所以 `Read(.env)` 只匹配根目录的 `.env`——要匹配所有的请写 `Read(**/.env)`。`Read`/`Edit` 的 deny 规则也会尽力应用到从 Bash 命令中提取出的路径。`Bash(...)` 的 deny/ask 规则会逐个检查命令里实际会运行的每条命令：`while`/`for`/`if` 循环体、子 shell 与 `{ }` 分组、`$(...)` 替换、`sudo`/`timeout`/`xargs` 等包装以及 `sh -c`/`eval` 的内容都算在内，所以 `Bash(curl:*)` 也拦得住 `while true; do curl …; done`。规则名有家族别名：`Bash` 涵盖 `Monitor`，`Edit` 涵盖所有写入工具，`Read` 涵盖 `Grep`/`Glob`。
 
-项目 `.myagent/settings.json` 里的 `permissions.mode` 和 `mcp.trustedServers` 会被忽略并给出诊断，请在用户或本地设置中设置。`Config` 工具不能修改权限模式。`WebFetch` 只跟随同一主机内的重定向；跨主机重定向不算失败，会把目标地址返回给模型，它的下一次请求重新经过权限闸门。
+项目 `.hanekawa/settings.json` 里的 `permissions.mode` 和 `mcp.trustedServers` 会被忽略并给出诊断，请在用户或本地设置中设置。`Config` 工具不能修改权限模式。`WebFetch` 只跟随同一主机内的重定向；跨主机重定向不算失败，会把目标地址返回给模型，它的下一次请求重新经过权限闸门。
 
 ## 扩展
 
 ### 技能
 
-技能放在 `<项目>/.myagent/skills/<name>/SKILL.md`，或所有项目共享的 `~/.agents/skills/<name>/SKILL.md`（同名时项目内的优先），带 YAML frontmatter：
+技能放在 `<项目>/.hanekawa/skills/<name>/SKILL.md`，或所有项目共享的 `~/.agents/skills/<name>/SKILL.md`（同名时项目内的优先），带 YAML frontmatter：
 
 除了这两个文件夹，还会读取其他工具的技能目录，写好的技能不改动就能用：项目里的 `.claude/skills/`、`.agents/skills/`，以及个人目录下的 `~/.claude/skills/`、`~/.codex/skills/`、`~/.gemini/skills/`。这些目录只读——可以在设置里关掉某个技能，但不能在 Hanekawa 里卸载，删除要去原工具里做。
 
@@ -376,7 +386,7 @@ hooks:
 
 ### 子代理
 
-模型通过 `Agent` 工具派出子代理。内置类型有 `general`、`explore` 和 `plan`（后两者为 `readonly`）。所有子代理默认使用 `high` 思考强度，自定义 agent 可通过 frontmatter 的 `effort` 显式覆盖。自定义 agent 定义从 `~/.myagent/agents/`、`<项目>/.myagent/agents/` 和 `~/.myagent/projects/<key>/agents.local/` 读取，`/agents` 可以查看和管理。子代理使用的模型由 `routing.subagent` 决定，也可以用环境变量 `MYAGENT_SUBAGENT_MODEL` 或 `MYAGENT_SUBAGENT_MODEL_<TYPE>` 覆盖。
+模型通过 `Agent` 工具派出子代理。内置类型有 `general`、`explore` 和 `plan`（后两者为 `readonly`）。所有子代理默认使用 `high` 思考强度，自定义 agent 可通过 frontmatter 的 `effort` 显式覆盖。自定义 agent 定义从 `~/.hanekawa/agents/`、`<项目>/.hanekawa/agents/` 和 `~/.hanekawa/projects/<key>/agents.local/` 读取，`/agents` 可以查看和管理。子代理使用的模型由 `routing.subagent` 决定，也可以用环境变量 `HANEKAWA_SUBAGENT_MODEL` 或 `HANEKAWA_SUBAGENT_MODEL_<TYPE>` 覆盖。
 
 旧的 `routing.subagent.fork` 配置不再生效，保存配置时会移除。
 
@@ -401,7 +411,7 @@ hooks:
 
 `mcp.trustedServers` 只能在用户设置或本地设置中授予。MCP 工具默认延迟加载，由模型通过 `ToolSearch` 按需取用。
 
-仓库根目录的 `.mcp.json`（Claude Code 的项目文件）也会被读取，不需要改动就能用；同名时 `.myagent/mcp.json` 与各设置层里的条目优先。两处的服务器都要先信任：启动时会逐个弹窗询问，拒绝的服务器记为 `not trusted`，接受后写进本地设置的信任列表，设置页里来自 `.mcp.json` 的行会标出来源。
+仓库根目录的 `.mcp.json`（Claude Code 的项目文件）也会被读取，不需要改动就能用；同名时 `.hanekawa/mcp.json` 与各设置层里的条目优先。两处的服务器都要先信任：启动时会逐个弹窗询问，拒绝的服务器记为 `not trusted`，接受后写进本地设置的信任列表，设置页里来自 `.mcp.json` 的行会标出来源。
 
 ### 钩子
 
@@ -457,9 +467,11 @@ Anthropic 提示词缓存在所有 Anthropic 兼容端点（包括代理）上�
 
 如果端点以 HTTP 400/422 明确拒绝提示词缓存或 `cache_control`，Hanekawa 会去掉缓存标记重试一次该请求。只有不带缓存的重试成功后才记录这次拒绝，同一进程中相同端点 URL 和模型的所有服务商实例共享这一结果；新会话、切换模型和子代理都复用它，重启进程后清除。结果记录前发出的并发请求可能各自探测并回退。无关的错误走正常重试策略；缓存命中为零不会关闭缓存。
 
-在 `~/.myagent/config.json` 的端点或模型上把 `promptCaching` 设为 `"auto"`、`"on"`（不做兼容回退）或 `"off"`，模型上的值覆盖端点默认值。`"on"` 即使之前记录过拒绝也会发送缓存标记。`MYAGENT_DISABLE_PROMPT_CACHING=1` 无视该设置，直接关闭 Anthropic 缓存标记。
+在 `~/.hanekawa/config.json` 的端点或模型上把 `promptCaching` 设为 `"auto"`、`"on"`（不做兼容回退）或 `"off"`，模型上的值覆盖端点默认值。`"on"` 即使之前记录过拒绝也会发送缓存标记。`HANEKAWA_DISABLE_PROMPT_CACHING=1` 无视该设置，直接关闭 Anthropic 缓存标记。
 
-缓存 TTL 默认 1 小时（设置页「1 小时提示词缓存」，或 `cache.ttl1h: false` / `MYAGENT_PROMPT_CACHE_1H=0` 改回 5 分钟），兼容端点同样适用；普通缓存不发送 beta 请求头。缓存用量统计和缓存失效诊断在兼容端点上同样运行。缺失的缓存用量不会被当成零命中；服务商调试输出把未缓存输入、缓存写入和缓存读取分开报告。
+Anthropic 兼容端点返回的思考块连同签名原样回传给产生它的模型和端点；换成别的模型或端点后不再发送，换回原模型/端点后恢复。端点不返回签名时，这段明文思考默认作为普通 assistant 文本回传（严格端点会拒绝空签名块）；确认端点接受空签名时，在 `config.json` 的模型上写 `"allowEmptySignature": true`，改为带 `signature: ""` 的 thinking 块回传。
+
+缓存 TTL 默认 1 小时（设置页「1 小时提示词缓存」，或 `cache.ttl1h: false` / `HANEKAWA_PROMPT_CACHE_1H=0` 改回 5 分钟），兼容端点同样适用；普通缓存不发送 beta 请求头。缓存用量统计和缓存失效诊断在兼容端点上同样运行。缺失的缓存用量不会被当成零命中；服务商调试输出把未缓存输入、缓存写入和缓存读取分开报告。
 
 OpenAI 官方端点（`api.openai.com`）的 Chat Completions 请求带上基于模型、系统提示和工具生成的稳定 `prompt_cache_key`；兼容服务不发，因为部分服务会拒绝不认识的参数。缓存读取数兼容 `prompt_tokens_details.cached_tokens`、DeepSeek 的 `prompt_cache_hit_tokens` 和 Kimi 的顶层 `cached_tokens`；报告了 `cache_write_tokens` 的服务会单独计入缓存写入。
 
@@ -543,7 +555,7 @@ Responses 的加密推理本地计数沿用 Codex 的估算：从编码长度回
 
 ### 会话
 
-会话存放在 `~/.myagent/projects/<key>/sessions/`，由元数据和只追加的 JSONL 记录组成，记录包括消息、工具调用、工具结果、审批和压缩边界。每个会话旁边还有一个 `<id>.metrics.jsonl` 用量文件，目录里有 `index.json` 索引。
+会话存放在 `~/.hanekawa/projects/<key>/sessions/`，由元数据和只追加的 JSONL 记录组成，记录包括消息、工具调用、工具结果、审批和压缩边界。每个会话旁边还有一个 `<id>.metrics.jsonl` 用量文件，目录里有 `index.json` 索引。
 
 ## 测试
 
@@ -554,18 +566,18 @@ npm test -- test/config.test.ts
 npm test -- test/config.test.ts test/cacheBreakDetection.test.ts
 ```
 
-`npm test` 给子进程一个一次性的 home 和临时目录，无论成功、失败还是中断都会删除。跑单个测试也请用这个入口，不要直接用 `tsx --test`，否则会读写你真实的 `~/.myagent`。
+`npm test` 给子进程一个一次性的 home 和临时目录，无论成功、失败还是中断都会删除。跑单个测试也请用这个入口，不要直接用 `tsx --test`，否则会读写你真实的 `~/.hanekawa`。
 
 ## 环境变量
 
-- `MYAGENT_DEBUG_PROVIDER=1`：记录服务商请求和响应内容
-- `MYAGENT_PROMPT_CACHE_1H=0`：把 Anthropic 提示词缓存 TTL 从默认的 1 小时改为 5 分钟
-- `MYAGENT_DISABLE_PROMPT_CACHING=1`：关闭提示词缓存
-- `MYAGENT_MAX_OUTPUT_TOKENS=N`：覆盖最大输出 token 数（上限 128,000）
-- `MYAGENT_STREAM_IDLE_WARNING_MS=N`：流空闲多久发出警告（默认 90 秒；旧名 `MYAGENT_STREAM_IDLE_TIMEOUT_MS` 仍可用）
-- `MYAGENT_STREAM_IDLE_HARD_TIMEOUT_MS=N`：流空闲多久中止请求（默认 10 分钟）
-- `MYAGENT_SUBAGENT_MODEL` / `MYAGENT_SUBAGENT_MODEL_<TYPE>`：覆盖子代理使用的模型
+- `HANEKAWA_DEBUG_PROVIDER=1`：记录服务商请求和响应内容
+- `HANEKAWA_PROMPT_CACHE_1H=0`：把 Anthropic 提示词缓存 TTL 从默认的 1 小时改为 5 分钟
+- `HANEKAWA_DISABLE_PROMPT_CACHING=1`：关闭提示词缓存
+- `HANEKAWA_MAX_OUTPUT_TOKENS=N`：覆盖最大输出 token 数（上限 1,000,000）
+- `HANEKAWA_STREAM_IDLE_WARNING_MS=N`：流空闲多久发出警告（默认 90 秒；旧名 `HANEKAWA_STREAM_IDLE_TIMEOUT_MS` 仍可用）
+- `HANEKAWA_STREAM_IDLE_HARD_TIMEOUT_MS=N`：流空闲多久中止请求（默认 10 分钟）
+- `HANEKAWA_SUBAGENT_MODEL` / `HANEKAWA_SUBAGENT_MODEL_<TYPE>`：覆盖子代理使用的模型
 - `HANEKAWA_SEARCH_URL`：`WebSearch` 优先使用的 SearXNG 地址（JSON API 关闭时会退回解析它的 HTML）。自建实例是唯一能自己控制的检索源，在网络封锁了内置引擎时最有用
 - `HANEKAWA_BRAVE_API_KEY`（或 `BRAVE_API_KEY`）：设置后 Brave Search 排在引擎链最前
-- `MYAGENT_BASH_PATH`：指定 Bash 可执行文件（仅 Windows 生效）
+- `HANEKAWA_BASH_PATH`：指定 Bash 可执行文件（仅 Windows 生效）
 - ToolSearch 相关变量见上文「ToolSearch」

@@ -32,7 +32,7 @@ function snapshotOf(): WireSettingsSnapshot {
   return {
     projectRoot: 'C:\\repo\\alpha',
     projectName: 'alpha',
-    saveTarget: 'C:\\repo\\alpha\\.myagent\\config.json',
+    saveTarget: 'C:\\repo\\alpha\\.hanekawa\\config.json',
     endpoints: [{ name: 'main', provider: 'anthropic' }],
     models: [{ key: 'big', model: 'claude-big', endpoint: 'main', resolves: true }],
     routing: { main: 'big', plan: 'inherit', compact: 'inherit', subagent: [] },
@@ -40,7 +40,7 @@ function snapshotOf(): WireSettingsSnapshot {
     providers: ['anthropic'],
     subagentTypes: [],
     permissions: {
-      localPath: 'C:\\repo\\alpha\\.myagent\\settings.local.json',
+      localPath: 'C:\\repo\\alpha\\.hanekawa\\settings.local.json',
       mode: 'default',
       groups: [
         { behavior: 'allow', local: [], inherited: [] },
@@ -49,7 +49,7 @@ function snapshotOf(): WireSettingsSnapshot {
       ],
     },
     skills: [],
-    skillsDir: 'C:\\repo\\alpha\\.myagent\\skills',
+    skillsDir: 'C:\\repo\\alpha\\.hanekawa\\skills',
     sharedSkillsDir: 'C:\\Users\\me\\.agents\\skills',
     mcpServers: [],
     contextManagement: {
@@ -60,7 +60,7 @@ function snapshotOf(): WireSettingsSnapshot {
       microCompactThresholdRatio: 0.9,
     },
     coordination: { quietDays: 7, autoResolveDays: 14 },
-    general: { localPath: 'C:\\repo\\alpha\\.myagent\\settings.local.json' },
+    general: { localPath: 'C:\\repo\\alpha\\.hanekawa\\settings.local.json' },
     userInstructions: '',
   }
 }
@@ -82,8 +82,8 @@ function stateOf(overrides: Partial<SettingsState> = {}): SettingsState {
 function skillSnapshot(): WireSettingsSnapshot {
   return { ...snapshotOf(), skills: [{
     name: 'release', description: 'Cuts a release.', enabled: true, scope: 'project', inclusion: 'manual', hasHooks: false,
-    dir: 'C:\\repo\\alpha\\.myagent\\skills\\release', file: 'C:\\repo\\alpha\\.myagent\\skills\\release\\SKILL.md',
-    rootLabel: '.myagent/skills', origin: 'managed', removable: true, risk: 'low', riskNotes: [], content: '# Release\n\nCuts a **release**.\n\n- Review changes\n- Publish notes',
+    dir: 'C:\\repo\\alpha\\.hanekawa\\skills\\release', file: 'C:\\repo\\alpha\\.hanekawa\\skills\\release\\SKILL.md',
+    rootLabel: '.hanekawa/skills', origin: 'managed', removable: true, risk: 'low', riskNotes: [], content: '# Release\n\nCuts a **release**.\n\n- Review changes\n- Publish notes',
   }] }
 }
 
@@ -412,6 +412,12 @@ test('a model row opens to its switches, and the effort levels are one switch ea
   apply({ kind: 'toggle-model-row', rowId: 'saved-0' })
   const switches = findAll(findOne(item(), 'settings-model-detail'), 'settings-model-switch')
   assert.deepEqual(switches.map((line) => line.text), ['支持扩展思考', '支持图片输入'])
+  const numbers = findAll(findOne(item(), 'settings-model-detail'), 'settings-model-number')
+  assert.deepEqual(
+    numbers.map((box) => (child(box, 'settings-input').node as HTMLInputElement).placeholder),
+    ['默认 272K', '默认 128K'],
+    'an empty limit names the value the request actually uses',
+  )
   stub.click(findOne(switches[1]!, 'settings-toggle').node)
   assert.deepEqual(intents.at(-1), { kind: 'model-row-switch', rowId: 'saved-0', field: 'imageInput', value: true })
 
@@ -1155,9 +1161,9 @@ test('a skill dialog renders Markdown above the list and preserves its file acti
       scope: 'project',
       inclusion: 'manual',
       hasHooks: false,
-      dir: 'C:\\repo\\alpha\\.myagent\\skills\\release',
-      file: 'C:\\repo\\alpha\\.myagent\\skills\\release\\SKILL.md',
-      rootLabel: '.myagent/skills',
+      dir: 'C:\\repo\\alpha\\.hanekawa\\skills\\release',
+      file: 'C:\\repo\\alpha\\.hanekawa\\skills\\release\\SKILL.md',
+      rootLabel: '.hanekawa/skills',
       origin: 'managed',
       removable: true,
       risk: 'low',

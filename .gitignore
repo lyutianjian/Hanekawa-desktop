@@ -9,7 +9,7 @@ dist/
 .env.local
 
 # Agent data (session history, config, etc.)
-.myagent/
+.hanekawa/
 .agents/
 .test-home/
 

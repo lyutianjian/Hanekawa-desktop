@@ -9,7 +9,7 @@ import { parseJsonLines } from '../src/utils/json.js'
 import type { SessionRecord } from '../src/harness/types.js'
 
 async function makeTempCwd(): Promise<string> {
-  return mkdtemp(path.join(os.tmpdir(), 'myagent-session-replace-'))
+  return mkdtemp(path.join(os.tmpdir(), 'hanekawa-session-replace-'))
 }
 
 async function cleanup(dir: string): Promise<void> {

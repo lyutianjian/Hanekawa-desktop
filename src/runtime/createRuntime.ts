@@ -5,7 +5,7 @@ import { composeProjectContext, readUserInstructions } from '../services/context
 import type { ConfigService, ModelConfig, ThinkingConfig } from '../config/service.js'
 import type { EffortLevel, EffortValue } from '../config/effort.js'
 import type { RoutingRole } from '../config/routing.js'
-import { validateSettings, type MyAgentSettings } from '../config/settings.js'
+import { validateSettings, type HanekawaSettings } from '../config/settings.js'
 import { COORDINATOR_ROLE_PROMPT } from '../prompts/coordinatorPrompt.js'
 import { CoordinationStore } from '../services/coordination/threadStore.js'
 import { formatCoordinationUpdate, formatCoordinatorRestore, formatThreadTaskRestore } from './coordination/messages.js'
@@ -118,7 +118,7 @@ export interface CreateRuntimeDeps {
    * because it was already a getter; settings and skills were captured by value
    * and silently stayed at their startup contents for the life of the process.
    */
-  getSettings: () => MyAgentSettings
+  getSettings: () => HanekawaSettings
   getSkills: () => SkillDefinition[]
   getAgentDefinitions: () => BaseAgentDefinition[]
   /**

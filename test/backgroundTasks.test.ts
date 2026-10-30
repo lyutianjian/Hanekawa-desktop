@@ -92,7 +92,7 @@ test('an explicit background timeout terminates the task as failed', async () =>
 })
 
 test('an output file past its cap keeps the head and the newest tail', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-bg-output-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-bg-output-'))
   const registry = new BackgroundTaskRegistry()
   const proc = Object.assign(new EventEmitter(), {
     pid: undefined,

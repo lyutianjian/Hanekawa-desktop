@@ -332,7 +332,7 @@ test('planModeBridge is visible to a tool execute() call on the main ToolContext
     planModeBridge: {
       parentSessionId: 's-bridge-1',
       parentAppendRecord: async (record) => { parentRecords.push(record) },
-      activePlanFilePath: '/abs/.myagent/plans/crimson-tiger-abc.md',
+      activePlanFilePath: '/abs/.hanekawa/plans/crimson-tiger-abc.md',
     },
   }
   const { loop } = makeLoop({ tools: [tool], toolContext, mainRecords })
@@ -340,7 +340,7 @@ test('planModeBridge is visible to a tool execute() call on the main ToolContext
   await loop.runTool({ id: 'b1', name: 'inspect', input: {} })
 
   assert.equal(observedBridge?.parentSessionId, 's-bridge-1')
-  assert.equal(observedBridge?.activePlanFilePath, '/abs/.myagent/plans/crimson-tiger-abc.md')
+  assert.equal(observedBridge?.activePlanFilePath, '/abs/.hanekawa/plans/crimson-tiger-abc.md')
 })
 
 test('planModeBridge.parentAppendRecord routes to the parent stream, bypassing tool runner emit', async () => {
@@ -403,7 +403,7 @@ test('ToolRunner preserves a parent-supplied planModeBridge verbatim (regression
   const bridge = {
     parentSessionId: 's-pres',
     parentAppendRecord: async () => {},
-    activePlanFilePath: '/x/.myagent/plans/pres.md',
+    activePlanFilePath: '/x/.hanekawa/plans/pres.md',
   } as const
   const toolContext: ToolContext = {
     cwd: process.cwd(),
@@ -421,5 +421,5 @@ test('ToolRunner preserves a parent-supplied planModeBridge verbatim (regression
   // Identity check: tool received the SAME bridge object the parent set.
   assert.equal(observedBridge, bridge)
   assert.equal(observedBridge?.parentSessionId, 's-pres')
-  assert.equal(observedBridge?.activePlanFilePath, '/x/.myagent/plans/pres.md')
+  assert.equal(observedBridge?.activePlanFilePath, '/x/.hanekawa/plans/pres.md')
 })

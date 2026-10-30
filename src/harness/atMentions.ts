@@ -74,7 +74,7 @@ export const CODE_TEXT_EXTENSIONS = new Set([
 const MAX_AT_MENTION_FILES = 5
 const MAX_ATTACHMENT_LINES = 2_000
 const MAX_ATTACHMENT_BYTES = 80 * 1024
-const IGNORED_DIR_NAMES = ['.git', '.myagent', 'node_modules', 'build', 'coverage']
+const IGNORED_DIR_NAMES = ['.git', '.hanekawa', 'node_modules', 'build', 'coverage']
 
 /**
  * Raster extensions that make a mention an *image* candidate. Single-sourced

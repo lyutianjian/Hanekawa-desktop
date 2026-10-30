@@ -12,7 +12,7 @@ export interface TokenCount {
 
 export const MODEL_CONTEXT_WINDOW_DEFAULT = 272_000
 /** One-shot escalation when a response is truncated by `max_tokens`. */
-export const ESCALATED_MAX_TOKENS = 128_000
+export const ESCALATED_MAX_TOKENS = 1_000_000
 export const MAX_OUTPUT_TOKENS_FOR_SUMMARY = 20_000
 export const AUTOCOMPACT_RESERVE_RATIO = 0.083
 /** Room for the compact prompt itself, on top of the summary's output. */

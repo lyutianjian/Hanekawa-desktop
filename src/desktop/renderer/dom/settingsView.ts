@@ -546,8 +546,8 @@ export function createSettingsView(
       detail = node(`${key}:detail`, 'div', 'settings-model-detail')
       const numbers = node(`${key}:numbers`, 'div', 'settings-model-numbers')
       reconcile(numbers, [
-        labelled('context', '上下文长度', field('contextWindow', row.contextWindow, '上下文长度', '默认（支持 k/M）')),
-        labelled('output', '最大输出 Token', field('maxOutputTokens', row.maxOutputTokens, '最大输出 Token', '默认（支持 k/M）')),
+        labelled('context', '上下文长度', field('contextWindow', row.contextWindow, '上下文长度', '默认 272K')),
+        labelled('output', '最大输出 Token', field('maxOutputTokens', row.maxOutputTokens, '最大输出 Token', '默认 128K')),
       ])
       let levels: HTMLElement | null = null
       if (row.thinking) {

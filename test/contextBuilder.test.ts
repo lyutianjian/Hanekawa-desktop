@@ -54,7 +54,7 @@ test('ContextBuilder injects layered system and user context', async () => {
     '# Using your tools\n - Prefer dedicated t',
     '# Tone and style\n - Only use emojis if t',
     '# Text output (does not apply to tool ca',
-    '__MYAGENT_SYSTEM_PROMPT_DYNAMIC_BOUNDARY',
+    '__HANEKAWA_SYSTEM_PROMPT_DYNAMIC_BOUNDAR',
     'custom system',
   ])
   // The turn-varying block sits at the tail, behind the history it must not
@@ -361,7 +361,7 @@ test('ContextBuilder invalidates cached skills section when skills change', asyn
 })
 
 test('ContextBuilder activates file-matched skills from read files', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-context-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-context-'))
   const builder = new ContextBuilder(undefined, contextWindow(5000))
   try {
     const file = path.join(dir, 'src', 'App.tsx')
@@ -649,7 +649,7 @@ test('ContextBuilder uses latest compact boundary as prior context summary', asy
 })
 
 test('ContextBuilder builds the post-compact restore from recent files and skills', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-context-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-context-'))
   const builder = new ContextBuilder(undefined, contextWindow(50_000))
   try {
     const file = path.join(dir, 'a.ts')
@@ -679,7 +679,7 @@ test('ContextBuilder builds the post-compact restore from recent files and skill
 })
 
 test('ContextBuilder renders a boundary\'s stored restore without rebuilding it', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-context-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-context-'))
   const builder = new ContextBuilder(undefined, contextWindow(50_000))
   try {
     const file = path.join(dir, 'a.ts')
@@ -718,7 +718,7 @@ test('ContextBuilder renders a boundary\'s stored restore without rebuilding it'
 })
 
 test('ContextBuilder limits restored files by recency and budget', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-context-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-context-'))
   const builder = new ContextBuilder(undefined, contextWindow(50_000))
   try {
     const readFileState = new Map<string, ReadFileState>()
@@ -750,7 +750,7 @@ test('ContextBuilder limits restored files by recency and budget', async () => {
 })
 
 test('ContextBuilder applies restore file budget after refreshing from disk', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-context-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-context-'))
   const builder = new ContextBuilder(undefined, contextWindow(50_000))
   try {
     const file = path.join(dir, 'large.ts')
@@ -773,7 +773,7 @@ test('ContextBuilder applies restore file budget after refreshing from disk', as
 })
 
 test('ContextBuilder notes restored files that are no longer accessible', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-context-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-context-'))
   const builder = new ContextBuilder(undefined, contextWindow(50_000))
   try {
     const file = path.join(dir, 'missing.ts')
@@ -872,7 +872,7 @@ test('project context reads AGENTS.md and CLAUDE.md, nearest last', async () => 
   const { loadProjectContext, clearProjectContextCache } =
     await import('../src/services/context/projectContext.js')
 
-  const parent = await mkdtemp(path.join(os.tmpdir(), 'myagent-ctx-parent-'))
+  const parent = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-ctx-parent-'))
   const child = path.join(parent, 'child')
   clearProjectContextCache()
 
@@ -880,12 +880,12 @@ test('project context reads AGENTS.md and CLAUDE.md, nearest last', async () => 
     await mkdir(child, { recursive: true })
     await writeFile(path.join(parent, 'CLAUDE.md'), 'from the parent', 'utf8')
     await writeFile(path.join(child, 'AGENTS.md'), 'from the child', 'utf8')
-    // The name Hanekawa used to invent for itself; nothing writes it any more.
-    await writeFile(path.join(child, 'MYAGENT.md'), 'from a name we dropped', 'utf8')
+    // An unrelated instructions file name; nothing reads it.
+    await writeFile(path.join(child, 'HANEKAWA.md'), 'from a name we dropped', 'utf8')
     // Local files and rules directories are not instruction sources.
     await writeFile(path.join(child, 'AGENTS.local.md'), 'from the local layer', 'utf8')
-    await mkdir(path.join(child, '.myagent', 'rules'), { recursive: true })
-    await writeFile(path.join(child, '.myagent', 'rules', 'style.md'), 'from a rules file', 'utf8')
+    await mkdir(path.join(child, '.hanekawa', 'rules'), { recursive: true })
+    await writeFile(path.join(child, '.hanekawa', 'rules', 'style.md'), 'from a rules file', 'utf8')
 
     const context = await loadProjectContext(child)
 
@@ -904,7 +904,7 @@ test('one directory contributes one instruction file, CLAUDE.md first', async ()
   const { loadProjectContext, clearProjectContextCache } =
     await import('../src/services/context/projectContext.js')
 
-  const project = await mkdtemp(path.join(os.tmpdir(), 'myagent-ctx-pair-'))
+  const project = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-ctx-pair-'))
   clearProjectContextCache()
 
   try {
@@ -926,8 +926,8 @@ test('project context is cached per cwd and invalidated per cwd', async () => {
   const { getProjectEntries, clearProjectContextCache } =
     await import('../src/services/context/projectContext.js')
 
-  const projectA = await mkdtemp(path.join(os.tmpdir(), 'myagent-ctx-a-'))
-  const projectB = await mkdtemp(path.join(os.tmpdir(), 'myagent-ctx-b-'))
+  const projectA = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-ctx-a-'))
+  const projectB = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-ctx-b-'))
   clearProjectContextCache()
 
   try {

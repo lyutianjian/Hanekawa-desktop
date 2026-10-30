@@ -25,7 +25,7 @@ function thread(threadId: string, sessionId: string, extra: Partial<ThreadRecord
 const noopStore = { delete: async () => {} }
 
 async function withCwd(fn: (cwd: string) => Promise<void>): Promise<void> {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-coord-delete-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-coord-delete-'))
   try {
     await fn(cwd)
   } finally {

@@ -130,7 +130,7 @@ const allUiRequestVariants: UiRequest[] = [
   {
     kind: 'exit-plan',
     requestId: 'r5',
-    payload: { planContent: 'do the thing', planFilePath: '.myagent/plans/p.md' },
+    payload: { planContent: 'do the thing', planFilePath: '.hanekawa/plans/p.md' },
   },
 ]
 

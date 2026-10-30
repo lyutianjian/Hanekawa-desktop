@@ -190,7 +190,7 @@ interface Child {
 }
 
 async function startChild(): Promise<Child> {
-  const dir = await mkdtemp(path.join(tmpdir(), 'myagent-ipc-'))
+  const dir = await mkdtemp(path.join(tmpdir(), 'hanekawa-ipc-'))
   const entry = path.join(dir, 'host-child.mjs')
   await writeFile(entry, childSource(), 'utf8')
 

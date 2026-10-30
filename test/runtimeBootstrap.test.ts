@@ -25,10 +25,10 @@ import { AnthropicProvider } from '../src/config/providers/anthropicProvider.js'
 import { getProjectMemoryDir, getSessionsDir } from '../src/utils/paths.js'
 import { writeFileTool } from '../src/tools/FileWriteTool/FileWriteTool.js'
 
-// `config.json` lives in `~/.myagent` alone and `loadMergedSettings` layers a
-// shared `~/.myagent` beneath the project one, so every test needs its own home.
+// `config.json` lives in `~/.hanekawa` alone and `loadMergedSettings` layers a
+// shared `~/.hanekawa` beneath the project one, so every test needs its own home.
 beforeEach(() => {
-  const testHome = mkdtempSync(path.join(tmpdir(), 'myagent-home-'))
+  const testHome = mkdtempSync(path.join(tmpdir(), 'hanekawa-home-'))
   process.env.USERPROFILE = testHome
   process.env.HOME = testHome
   delete process.env.OPENAI_API_KEY
@@ -45,22 +45,22 @@ async function createProject(options: {
   config?: Record<string, unknown> | null
   settings?: Record<string, unknown>
 } = {}): Promise<{ cwd: string; store: SessionStore; session: SessionMeta }> {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-bootstrap-'))
-  await mkdir(path.join(cwd, '.myagent'), { recursive: true })
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-bootstrap-'))
+  await mkdir(path.join(cwd, '.hanekawa'), { recursive: true })
   // The config the project will read is the *home* one — there is no project
   // layer, and writing one here would exercise the migration instead.
   const home = process.env.USERPROFILE!
-  await mkdir(path.join(home, '.myagent'), { recursive: true })
+  await mkdir(path.join(home, '.hanekawa'), { recursive: true })
   if (options.config !== null) {
     await writeFile(
-      path.join(home, '.myagent', 'config.json'),
+      path.join(home, '.hanekawa', 'config.json'),
       JSON.stringify(options.config ?? MODEL_CONFIG),
       'utf8',
     )
   }
   if (options.settings) {
     await writeFile(
-      path.join(cwd, '.myagent', 'settings.json'),
+      path.join(cwd, '.hanekawa', 'settings.json'),
       JSON.stringify(options.settings),
       'utf8',
     )
@@ -286,10 +286,10 @@ test('B06: bootstrap and reload keep repository settings and legacy config out o
     },
     settings: attack,
   })
-  const legacyPath = path.join(cwd, '.myagent', 'config.json')
+  const legacyPath = path.join(cwd, '.hanekawa', 'config.json')
   const legacyBytes = JSON.stringify(attack)
   await writeFile(legacyPath, legacyBytes)
-  const globalPath = path.join(process.env.HOME!, '.myagent', 'config.json')
+  const globalPath = path.join(process.env.HOME!, '.hanekawa', 'config.json')
   const globalBytes = await readFile(globalPath, 'utf8')
   const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
   try {
@@ -392,7 +392,7 @@ test('an incomplete model in legacy settings can be corrected through global con
   const { cwd, store, session } = await createProject({
     config: null,
   })
-  await writeFile(path.join(process.env.HOME!, '.myagent', 'settings.json'), JSON.stringify({
+  await writeFile(path.join(process.env.HOME!, '.hanekawa', 'settings.json'), JSON.stringify({
     models: { legacy: { model: 'old-model' } }, defaultModel: 'legacy',
   }))
   const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
@@ -429,14 +429,14 @@ test('bootstrap assembles a runtime bound to the configured model', async () => 
   await host.shutdown('test over')
 })
 
-test('global sessions run in Documents/myagent while keeping their home-keyed history and memory', async () => {
+test('global sessions run in Documents/hanekawa while keeping their home-keyed history and memory', async () => {
   // Keep home beside the test temp root, so temp-file permissions cannot mask
   // an accidentally home-wide workspace boundary.
-  const home = await mkdtemp(path.join(path.dirname(tmpdir()), 'myagent-recent-home-'))
+  const home = await mkdtemp(path.join(path.dirname(tmpdir()), 'hanekawa-recent-home-'))
   process.env.HOME = home
   process.env.USERPROFILE = home
-  await mkdir(path.join(home, '.myagent'))
-  await writeFile(path.join(home, '.myagent', 'config.json'), JSON.stringify(MODEL_CONFIG))
+  await mkdir(path.join(home, '.hanekawa'))
+  await writeFile(path.join(home, '.hanekawa', 'config.json'), JSON.stringify(MODEL_CONFIG))
   await writeFile(path.join(home, 'older.txt'), 'previous output')
   const memoryDir = getProjectMemoryDir(home)
   await mkdir(memoryDir, { recursive: true })
@@ -446,7 +446,7 @@ test('global sessions run in Documents/myagent while keeping their home-keyed hi
   const session = await store.create('old recent session')
   const oldMessage: SessionRecord = { type: 'message', id: 'old-user', role: 'user', content: 'previous conversation', createdAt: 'now' }
   await store.appendRecord(session.id, oldMessage)
-  const workingDir = path.join(home, 'Documents', 'myagent')
+  const workingDir = path.join(home, 'Documents', 'hanekawa')
   assert.equal(existsSync(workingDir), false)
 
   const host = await bootstrap({ cwd: home, store, session, confirmMcpTrust: denyTrust })
@@ -473,7 +473,7 @@ test('global sessions run in Documents/myagent while keeping their home-keyed hi
     assert.ok(pwd.content.includes(workingDir.replaceAll('\\', '/')), pwd.content)
     assert.equal(await readFile(path.join(home, 'older.txt'), 'utf8'), 'previous output')
     assert.equal(await readFile(path.join(memoryDir, 'MEMORY.md'), 'utf8'), '- retained memory')
-    assert.equal(existsSync(path.join(workingDir, '.myagent')), false)
+    assert.equal(existsSync(path.join(workingDir, '.hanekawa')), false)
 
     await writeFile(path.join(workingDir, 'AGENTS.md'), 'instructions in the recent workspace')
     assert.equal((await host.reloadSettings()).needsRuntimeRebuild, true)
@@ -497,7 +497,7 @@ test('a blocked recent workspace fails to open instead of using the home directo
   await createProject()
   const home = process.env.HOME!
   await mkdir(path.join(home, 'Documents'))
-  await writeFile(path.join(home, 'Documents', 'myagent'), 'not a directory')
+  await writeFile(path.join(home, 'Documents', 'hanekawa'), 'not a directory')
   const store = new SessionStore(home)
   await store.init()
   await assert.rejects(
@@ -540,7 +540,7 @@ test('runtime tools expose model catalogs, apply Agent.model and refresh their d
     t.mock.method(AnthropicProvider.prototype, 'createMessage', async (request: ModelRequest) => {
       requests.push(request.model)
       if (requests.length === 1) return {
-        content: '', toolCalls: [{ id: 'read-config', name: 'Read', input: { filePath: path.join(process.env.USERPROFILE!, '.myagent', 'config.json') } }],
+        content: '', toolCalls: [{ id: 'read-config', name: 'Read', input: { filePath: path.join(process.env.USERPROFILE!, '.hanekawa', 'config.json') } }],
       }
       const readResult = request.contextItems?.find((item) => item.kind === 'tool_result' && item.toolUseId === 'read-config')
       assert.ok(readResult?.kind === 'tool_result' && readResult.ok)
@@ -558,7 +558,7 @@ test('runtime tools expose model catalogs, apply Agent.model and refresh their d
     config.models.worker.model = 'worker-v2'
     config.routing.thread = 'main'
     config.routing.subagent.general = 'main'
-    await writeFile(path.join(process.env.USERPROFILE!, '.myagent', 'config.json'), JSON.stringify(config))
+    await writeFile(path.join(process.env.USERPROFILE!, '.hanekawa', 'config.json'), JSON.stringify(config))
     assert.equal((await host.reloadSettings()).needsRuntimeRebuild, true)
     refreshRuntimeSlot({ config: host.config, runtimeSlot: pane.runtimeSlot, createRuntime: host.createRuntime, modelKey: 'main', session: coordinator })
     assert.match(find('Agent').description, /model: "worker-v2"/)
@@ -775,9 +775,9 @@ test('skills added after startup are picked up by a reload', async () => {
   const before = host.createRuntime(host.initialModelKey, session)
   before.dispose()
 
-  await mkdir(path.join(cwd, '.myagent', 'skills', 'greet'), { recursive: true })
+  await mkdir(path.join(cwd, '.hanekawa', 'skills', 'greet'), { recursive: true })
   await writeFile(
-    path.join(cwd, '.myagent', 'skills', 'greet', 'SKILL.md'),
+    path.join(cwd, '.hanekawa', 'skills', 'greet', 'SKILL.md'),
     '---\nname: greet\ndescription: Say hello\n---\n\nSay hello.\n',
     'utf8',
   )
@@ -788,7 +788,7 @@ test('skills added after startup are picked up by a reload', async () => {
 
 test('settings edited after startup take effect on reload', async () => {
   // Settings used to be captured by value and passed into the runtime factory,
-  // so editing .myagent/settings.json mid-session changed nothing at all.
+  // so editing .hanekawa/settings.json mid-session changed nothing at all.
   const { cwd, store, session } = await createProject({
     settings: { permissions: { deny: ['Bash(rm *)'] } },
   })
@@ -797,7 +797,7 @@ test('settings edited after startup take effect on reload', async () => {
   assert.equal(host.permissionGate.getConfigRules().length, 1)
 
   await writeFile(
-    path.join(cwd, '.myagent', 'settings.json'),
+    path.join(cwd, '.hanekawa', 'settings.json'),
     JSON.stringify({ permissions: { deny: ['Bash(rm *)', 'Bash(curl *)'] } }),
     'utf8',
   )
@@ -813,7 +813,7 @@ test('a hooks change reports that the runtime has to be rebuilt', async () => {
   const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
 
   await writeFile(
-    path.join(cwd, '.myagent', 'settings.json'),
+    path.join(cwd, '.hanekawa', 'settings.json'),
     JSON.stringify({ hooks: { preToolUse: [{ matcher: 'Bash', command: 'true' }] } }),
     'utf8',
   )
@@ -880,7 +880,7 @@ test('invalid settings on reload are rejected without clobbering the live ones',
   const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
 
   await writeFile(
-    path.join(cwd, '.myagent', 'settings.json'),
+    path.join(cwd, '.hanekawa', 'settings.json'),
     JSON.stringify({ effortLevel: 'turbo' }),
     'utf8',
   )
@@ -899,10 +899,10 @@ for (const layer of ['config', 'settings'] as const) {
     const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
     const beforeSettings = structuredClone(host.getSettings())
     const beforeConfig = structuredClone(host.config.get())
-    const file = layer === 'config' ? host.config.getSaveTarget() : path.join(cwd, '.myagent', 'settings.json')
+    const file = layer === 'config' ? host.config.getSaveTarget() : path.join(cwd, '.hanekawa', 'settings.json')
     try {
       if (layer === 'config') {
-        await writeFile(path.join(cwd, '.myagent', 'settings.json'), JSON.stringify({ thinking: false }))
+        await writeFile(path.join(cwd, '.hanekawa', 'settings.json'), JSON.stringify({ thinking: false }))
       }
       await writeFile(file, '{ broken')
       await assert.rejects(() => host.reloadSettings())
@@ -950,9 +950,9 @@ test('listAgentDefinitions shows the built-ins, and a reload adds a new file to 
   assert.ok(builtIns.includes('general'), `expected the built-ins, got ${builtIns.join(', ')}`)
   assert.equal(builtIns.includes('reviewer'), false)
 
-  await mkdir(path.join(cwd, '.myagent', 'agents'), { recursive: true })
+  await mkdir(path.join(cwd, '.hanekawa', 'agents'), { recursive: true })
   await writeFile(
-    path.join(cwd, '.myagent', 'agents', 'reviewer.md'),
+    path.join(cwd, '.hanekawa', 'agents', 'reviewer.md'),
     '---\nname: reviewer\ndescription: Reviews a diff\ntools: [Read, Grep]\npermissionMode: plan\n---\n\nReview it.\n',
     'utf8',
   )
@@ -1019,7 +1019,7 @@ test('a server dropped from the settings loses its tools on reload', async () =>
   const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
   assert.deepEqual(host.mcp.failed.map((entry) => entry.name), ['gone'])
 
-  await writeFile(path.join(cwd, '.myagent', 'settings.json'), JSON.stringify({}), 'utf8')
+  await writeFile(path.join(cwd, '.hanekawa', 'settings.json'), JSON.stringify({}), 'utf8')
   await host.reloadSettings()
   await host.reloadMcpServers()
 

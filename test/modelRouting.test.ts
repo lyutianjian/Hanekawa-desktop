@@ -11,17 +11,17 @@ import {
 import { tmpdir } from 'node:os'
 import { mkdtempSync } from 'node:fs'
 
-// `config.json` is global-only: one `~/.myagent/config.json` for every project.
+// `config.json` is global-only: one `~/.hanekawa/config.json` for every project.
 // A fresh home per test keeps these off the developer's own config and stops a
 // save() in one test from leaking models into the next.
 beforeEach(() => {
-  const testHome = mkdtempSync(path.join(tmpdir(), 'myagent-home-'))
+  const testHome = mkdtempSync(path.join(tmpdir(), 'hanekawa-home-'))
   process.env.USERPROFILE = testHome
   process.env.HOME = testHome
 })
 
 function tmpDir(): Promise<string> {
-  return mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'myagent-routing-'))
+  return mkdtemp(path.join(process.env.TEMP ?? '/tmp', 'hanekawa-routing-'))
 }
 
 test('selectable model catalog contains only public fields and resolvable keys in config order', async (t) => {
@@ -72,8 +72,8 @@ test('general routing reaches built-in types while explicit inherit survives sav
  */
 async function writeConfig(_dir: string, content: object): Promise<void> {
   const home = process.env.USERPROFILE!
-  await mkdir(path.join(home, '.myagent'), { recursive: true })
-  await writeFile(path.join(home, '.myagent', 'config.json'), JSON.stringify(content))
+  await mkdir(path.join(home, '.hanekawa'), { recursive: true })
+  await writeFile(path.join(home, '.hanekawa', 'config.json'), JSON.stringify(content))
 }
 
 test('mergeRouting: every role inherits by default', () => {
@@ -109,7 +109,7 @@ test('retired fork routing is removed on load, updates, save and reload', async 
     defaultModel: 'main',
     routing: { subagent: { fork: 'main', explore: 'main', custom: 'main' } },
   })
-  await writeFile(path.join(process.env.USERPROFILE!, '.myagent', 'settings.json'), JSON.stringify({
+  await writeFile(path.join(process.env.USERPROFILE!, '.hanekawa', 'settings.json'), JSON.stringify({
     routing: { subagent: { fork: 'legacy', plan: 'main' } },
   }))
 

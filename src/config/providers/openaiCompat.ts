@@ -113,8 +113,8 @@ async function sendWithFallback<T>(
     if (request.retry?.signal?.aborted || !isRequestRejection(error) || !isRejection(error)) throw error
     const response = await send(false)
     rejected.add(key)
-    if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
-      console.error(`[myagent][${label}] ${request.model} rejected ${label} fields; sending without them`)
+    if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
+      console.error(`[hanekawa][${label}] ${request.model} rejected ${label} fields; sending without them`)
     }
     return response
   }

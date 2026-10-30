@@ -140,7 +140,7 @@ function transportFactories(config: McpServerConfig): (() => Transport)[] {
 
 /** One client, wired to the caller's callbacks. */
 function newClient(options: ManagedMcpClientOptions): Client {
-  const client: Client = new Client({ name: 'myagent', version: '0.1.0' }, {
+  const client: Client = new Client({ name: 'hanekawa', version: '0.1.0' }, {
     listChanged: options.onToolsChanged
       ? {
           tools: {

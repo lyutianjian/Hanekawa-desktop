@@ -1,16 +1,16 @@
 import path from 'node:path'
-import { getGlobalMyAgentDir, normalizeCaseForComparison, resolveExistingPrefix, userHome } from '../utils/paths.js'
+import { getGlobalHanekawaDir, normalizeCaseForComparison, resolveExistingPrefix, userHome } from '../utils/paths.js'
 
 /**
  * Directories Hanekawa owns rather than the user wrote: every project's
  * sessions, spilled tool output, plans, coordination notes and diagnostics
- * (`~/.myagent/projects`), plus the coordination thread worktrees. A search
+ * (`~/.hanekawa/projects`), plus the coordination thread worktrees. A search
  * from the home directory must not walk into them — the transcripts are the
  * user's own conversation history, and matching them makes a broad Grep slow
  * for no reason.
  */
 export function runtimeDataRoots(): string[] {
-  return [path.join(getGlobalMyAgentDir(), 'projects'), path.join(userHome(), '.myagent-worktrees')]
+  return [path.join(getGlobalHanekawaDir(), 'projects'), path.join(userHome(), '.hanekawa-worktrees')]
 }
 
 /**
@@ -18,7 +18,7 @@ export function runtimeDataRoots(): string[] {
  * both backends take exclusions: relative to `target` with `/` separators.
  *
  * Only a broad search gets these. A search the user pointed somewhere else
- * inside `~/.myagent` — including a session directory — keeps every file there.
+ * inside `~/.hanekawa` — including a session directory — keeps every file there.
  */
 export function runtimeDataExclusions(target: string): string[] {
   const result: string[] = []

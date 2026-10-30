@@ -1369,7 +1369,7 @@ test('agent loop escalates default max output tokens before persisting a max_tok
         assert.equal(request.maxOutputTokens, undefined)
         return { content: 'discarded retry candidate', toolCalls: [], stopReason: 'max_tokens' }
       }
-      assert.equal(request.maxOutputTokens, 128_000)
+      assert.equal(request.maxOutputTokens, 1_000_000)
       return { content: 'complete after escalation', toolCalls: [] }
     },
   }
@@ -3546,9 +3546,11 @@ test('agent loop switches to fallback model after overload fallback trigger', as
     name: 'fallback',
     async createMessage(request) {
       assert.equal(request.model, 'fallback-model')
+      // Source gating lives in the payload builder, not request prep: the block
+      // stays in history, so switching back to the primary model can replay it.
       assert.equal(request.contextItems?.some(
         (item) => item.kind === 'message' && item.message.thinkingBlocks && item.message.thinkingBlocks.length > 0,
-      ), false)
+      ), true)
       recordPromptState({ system: 'system', toolsJson: '[]', model: request.model }, request.cacheSource)
       assert.equal(checkResponseForCacheBreak(0, 10_000, request.cacheSource), null)
       return {

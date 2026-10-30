@@ -12,7 +12,7 @@ export interface RemoveSkillResult {
 /**
  * Uninstalls a skill by deleting its folder.
  *
- * Only from the two folders Hanekawa manages (`<project>/.myagent/skills` and
+ * Only from the two folders Hanekawa manages (`<project>/.hanekawa/skills` and
  * `~/.agents/skills`). A skill found in another tool's folder is that tool's
  * file: it can be switched off here but never deleted, so this refuses it
  * rather than reaching into a directory Hanekawa does not own.

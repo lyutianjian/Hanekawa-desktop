@@ -117,7 +117,7 @@ describe('oversized files are never read', () => {
   async function withOversizedFile(
     run: (cwd: string, fileName: string) => void,
   ): Promise<void> {
-    const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-preview-'))
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-preview-'))
     try {
       const fileName = 'huge.txt'
       await writeFile(path.join(dir, fileName), 'x'.repeat(PREVIEW_MAX_FILE_BYTES + 1))

@@ -20,7 +20,7 @@ test('personal discovery at the home workspace retains personal compatibility ro
 })
 
 test('SkillsService.list() returns empty array when directory does not exist', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
     const service = new SkillsService(dir)
     const skills = await service.list()
@@ -31,9 +31,9 @@ test('SkillsService.list() returns empty array when directory does not exist', a
 })
 
 test('SkillsService.list() returns skills from directory', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'debugging'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'debugging', 'SKILL.md'),
@@ -65,9 +65,9 @@ test('SkillsService.list() returns skills from directory', async () => {
 })
 
 test('SkillsService.list() parses CRLF frontmatter', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillDir = path.join(dir, '.myagent', 'skills', 'windows-skill')
+    const skillDir = path.join(dir, '.hanekawa', 'skills', 'windows-skill')
     await mkdir(skillDir, { recursive: true })
     await writeFile(
       path.join(skillDir, 'SKILL.md'),
@@ -87,9 +87,9 @@ test('SkillsService.list() parses CRLF frontmatter', async () => {
 })
 
 test('SkillsService.list() repairs problematic top-level description scalars', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillDir = path.join(dir, '.myagent', 'skills', 'firecrawl-build')
+    const skillDir = path.join(dir, '.hanekawa', 'skills', 'firecrawl-build')
     await mkdir(skillDir, { recursive: true })
     const description = 'Integrate application data: web search, "scrape", and `interact`.'
     await writeFile(
@@ -110,9 +110,9 @@ test('SkillsService.list() repairs problematic top-level description scalars', a
 })
 
 test('SkillsService.list() parses conditional activation frontmatter', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'react'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'react', 'SKILL.md'),
@@ -143,9 +143,9 @@ test('SkillsService.list() parses conditional activation frontmatter', async () 
 })
 
 test('SkillsService.list() parses slash command execution frontmatter', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'rich'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'rich', 'SKILL.md'),
@@ -192,9 +192,9 @@ test('SkillsService.list() parses slash command execution frontmatter', async ()
 })
 
 test('SkillsService.list() skips skills with invalid execution frontmatter', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'bad-effort'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'bad-effort', 'SKILL.md'),
@@ -211,9 +211,9 @@ test('SkillsService.list() skips skills with invalid execution frontmatter', asy
 })
 
 test('SkillsService.load() loads specific skill', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'debugging'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'debugging', 'SKILL.md'),
@@ -233,7 +233,7 @@ test('SkillsService.load() loads specific skill', async () => {
 })
 
 test('SkillsService.load() throws when skill not found', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
     const service = new SkillsService(dir)
     await assert.rejects(
@@ -249,17 +249,17 @@ test('SkillsService.load() throws when skill not found', async () => {
  * A project with two skills, one of which `settings.local.json` switches off.
  *
  * `HOME`/`USERPROFILE` are redirected because `loadMergedSettings` layers
- * `~/.myagent/settings.json` under the project's — without this the assertions
+ * `~/.hanekawa/settings.json` under the project's — without this the assertions
  * would depend on whose machine ran them.
  */
 async function withDisabledSkill(run: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
-  const home = await mkdtemp(path.join(os.tmpdir(), 'myagent-home-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
+  const home = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-home-'))
   const previous = { home: process.env.HOME, profile: process.env.USERPROFILE }
   process.env.HOME = home
   process.env.USERPROFILE = home
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     for (const name of ['kept', 'gone']) {
       await mkdir(path.join(skillsDir, name), { recursive: true })
       await writeFile(
@@ -316,9 +316,9 @@ test('listAll() still reports the disabled skill, which is what the settings scr
 })
 
 test('SkillsService skips skills with missing SKILL.md', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'valid'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'valid', 'SKILL.md'),
@@ -340,9 +340,9 @@ test('SkillsService skips skills with missing SKILL.md', async () => {
 })
 
 test('SkillsService throws on invalid YAML frontmatter', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'broken'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'broken', 'SKILL.md'),
@@ -361,9 +361,9 @@ test('SkillsService throws on invalid YAML frontmatter', async () => {
 })
 
 test('SkillsService throws on missing required fields', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'incomplete'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'incomplete', 'SKILL.md'),
@@ -382,9 +382,9 @@ test('SkillsService throws on missing required fields', async () => {
 })
 
 test('SkillsService throws on missing frontmatter', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'nofrontmatter'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'nofrontmatter', 'SKILL.md'),
@@ -427,9 +427,9 @@ test('createSkillTool() generates Skill tool object', () => {
 })
 
 test('createSkillTool() execute returns skill content', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skills-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skills-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'debugging'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'debugging', 'SKILL.md'),
@@ -486,7 +486,7 @@ test('buildSkillPrompt does not append empty arguments', () => {
 })
 
 test('buildSkillCommandPrompt appends text attachments in stable order', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skill-attachments-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skill-attachments-'))
   try {
     await writeFile(path.join(dir, 'a.txt'), 'alpha', 'utf8')
     await writeFile(path.join(dir, 'b.txt'), 'beta', 'utf8')
@@ -509,7 +509,7 @@ test('buildSkillCommandPrompt appends text attachments in stable order', async (
 })
 
 test('buildSkillCommandPrompt rejects attachment path escape', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skill-attachments-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skill-attachments-'))
   try {
     await assert.rejects(
       () => buildSkillCommandPrompt({
@@ -559,9 +559,9 @@ test('buildSkillCommandPrompt rejects failed inline shell and does not continue'
 })
 
 test('registerSkillCommands registers disk skills as slash commands', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skill-command-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skill-command-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'slash-runner'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'slash-runner', 'SKILL.md'),
@@ -602,9 +602,9 @@ test('registerSkillCommands registers disk skills as slash commands', async () =
 })
 
 test('registered skill command display input omits trailing space without args', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skill-command-display-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skill-command-display-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'slash-display'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'slash-display', 'SKILL.md'),
@@ -642,9 +642,9 @@ test('registered skill command display input omits trailing space without args',
 })
 
 test('registered skill command submits rich execution options', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skill-command-rich-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skill-command-rich-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'slash-rich'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'slash-rich', 'SKILL.md'),
@@ -703,9 +703,9 @@ test('registered skill command submits rich execution options', async () => {
 })
 
 test('registered skill command requires shell helper for inline shell', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skill-command-shell-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skill-command-shell-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'slash-shell'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'slash-shell', 'SKILL.md'),
@@ -736,7 +736,7 @@ test('registered skill command requires shell helper for inline shell', async ()
 })
 
 test('registerSkillCommands skips commands whose names are already registered', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skill-command-conflict-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skill-command-conflict-'))
   try {
     // Registered explicitly rather than leaning on whatever the rest of the
     // suite left in a shared map: the registry is per-project now, so the
@@ -748,7 +748,7 @@ test('registerSkillCommands skips commands whose names are already registered', 
       run: async () => {},
     })
 
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'slash-conflict-target'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'slash-conflict-target', 'SKILL.md'),
@@ -772,9 +772,9 @@ test('registerSkillCommands skips commands whose names are already registered', 
  * `has()`, logged "command name is already in use" and kept the stale copy.
  */
 test('registerSkillCommands replaces its own previous entries on reload', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skill-command-reload-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skill-command-reload-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     const skillFile = path.join(skillsDir, 'slash-reload', 'SKILL.md')
     await mkdir(path.join(skillsDir, 'slash-reload'), { recursive: true })
     await writeFile(
@@ -821,9 +821,9 @@ test('registerSkillCommands replaces its own previous entries on reload', async 
   }
 })
 
-test('skill slash command reports missing query submission support', async () => {  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-skill-command-submit-'))
+test('skill slash command reports missing query submission support', async () => {  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-skill-command-submit-'))
   try {
-    const skillsDir = path.join(dir, '.myagent', 'skills')
+    const skillsDir = path.join(dir, '.hanekawa', 'skills')
     await mkdir(path.join(skillsDir, 'slash-requires-submit'), { recursive: true })
     await writeFile(
       path.join(skillsDir, 'slash-requires-submit', 'SKILL.md'),
@@ -854,7 +854,7 @@ test('skill slash command reports missing query submission support', async () =>
 
 /** A folder shaped like a skill, somewhere outside the project. */
 async function sourceSkill(name: string, body = 'Do the thing.'): Promise<string> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-import-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-import-'))
   const source = path.join(dir, `${name}-folder`)
   await mkdir(source, { recursive: true })
   await writeFile(
@@ -866,7 +866,7 @@ async function sourceSkill(name: string, body = 'Do the thing.'): Promise<string
 }
 
 test('importSkill copies the folder in, and the service picks it up', async () => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-project-'))
   const source = await sourceSkill('imported')
   try {
     // An attachment beside the markdown: a skill is a folder, so it comes too.
@@ -877,7 +877,7 @@ test('importSkill copies the folder in, and the service picks it up', async () =
 
     const skills = await new SkillsService(cwd).listAll()
     assert.deepEqual(skills.map((skill) => skill.name), ['imported'])
-    const copied = await readFile(path.join(cwd, '.myagent', 'skills', 'imported', 'reference.md'), 'utf8')
+    const copied = await readFile(path.join(cwd, '.hanekawa', 'skills', 'imported', 'reference.md'), 'utf8')
     assert.equal(copied, 'more')
   } finally {
     await rm(cwd, { recursive: true, force: true })
@@ -886,8 +886,8 @@ test('importSkill copies the folder in, and the service picks it up', async () =
 })
 
 test('importSkill refuses a folder that is not a skill', async () => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
-  const source = await mkdtemp(path.join(os.tmpdir(), 'myagent-notaskill-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-project-'))
+  const source = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-notaskill-'))
   try {
     await assert.rejects(() => importSkill(cwd, source), /SKILL\.md/)
   } finally {
@@ -897,13 +897,13 @@ test('importSkill refuses a folder that is not a skill', async () => {
 })
 
 test('importSkill refuses to overwrite a skill of the same name', async () => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-project-'))
   const source = await sourceSkill('twice')
   try {
     await importSkill(cwd, source)
     await assert.rejects(() => importSkill(cwd, source), /已经有一个叫 twice 的技能/)
     // The first copy is intact: a refused import must not half-replace it.
-    const raw = await readFile(path.join(cwd, '.myagent', 'skills', 'twice', 'SKILL.md'), 'utf8')
+    const raw = await readFile(path.join(cwd, '.hanekawa', 'skills', 'twice', 'SKILL.md'), 'utf8')
     assert.ok(raw.includes('Do the thing.'))
   } finally {
     await rm(cwd, { recursive: true, force: true })
@@ -912,7 +912,7 @@ test('importSkill refuses to overwrite a skill of the same name', async () => {
 })
 
 test('importSkill refuses a frontmatter name that escapes the skills directory', async () => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-project-'))
   const source = await sourceSkill('../escaped')
   try {
     await assert.rejects(() => importSkill(cwd, source), /不能作为文件夹名/)
@@ -923,20 +923,20 @@ test('importSkill refuses a frontmatter name that escapes the skills directory',
 })
 
 test('importSkill can copy into the personal folder, which every project reads', async () => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-project-'))
   const source = await sourceSkill('shared-import')
   try {
     const { name, disabled } = await importSkill(cwd, source, { target: 'personal' })
     assert.equal(name, 'shared-import')
     assert.equal(disabled, false)
 
-    // The copy is the user's, not the project's: the repo gets no `.myagent/`.
+    // The copy is the user's, not the project's: the repo gets no `.hanekawa/`.
     const imported = (await new SkillsService(cwd).listAll()).find((skill) => skill.name === 'shared-import')
     assert.ok(imported, 'the shared folder is read alongside the project one')
     assert.equal(imported.source, 'shared')
     assert.equal(imported.root?.label, '~/.agents/skills')
     await assert.rejects(
-      () => readFile(path.join(cwd, '.myagent', 'skills', 'shared-import', 'SKILL.md'), 'utf8'),
+      () => readFile(path.join(cwd, '.hanekawa', 'skills', 'shared-import', 'SKILL.md'), 'utf8'),
       /ENOENT/,
     )
   } finally {
@@ -947,7 +947,7 @@ test('importSkill can copy into the personal folder, which every project reads',
 })
 
 test('a high-risk personal import lands switched off for every project', async () => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-project-'))
   const source = await sourceSkill('hooked-personal')
   try {
     await writeFile(
@@ -993,9 +993,9 @@ async function readLocalLayer(cwd: string): Promise<Record<string, unknown>> {
 }
 
 test('removeSkill deletes a managed folder and clears its local switch', async () => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-project-'))
   try {
-    const skillDir = path.join(cwd, '.myagent', 'skills', 'gone')
+    const skillDir = path.join(cwd, '.hanekawa', 'skills', 'gone')
     await mkdir(skillDir, { recursive: true })
     await writeFile(path.join(skillDir, 'SKILL.md'), '---\nname: gone\ndescription: Gone\n---\n\nBody.\n', 'utf8')
     await updateLocalSettings(cwd, { skills: { disabled: ['gone'] } })
@@ -1010,7 +1010,7 @@ test('removeSkill deletes a managed folder and clears its local switch', async (
 })
 
 test("removeSkill refuses another tool's folder and leaves it alone", async () => {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-project-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-project-'))
   try {
     const compatDir = path.join(cwd, '.claude', 'skills', 'theirs')
     await mkdir(compatDir, { recursive: true })

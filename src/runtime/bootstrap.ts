@@ -6,7 +6,7 @@ import { migrateProjectConfig } from '../config/migrateProjectConfig.js'
 import {
   loadMergedSettings,
   validateSettings,
-  type MyAgentSettings,
+  type HanekawaSettings,
 } from '../config/settings.js'
 import { clampEffort, type EffortLevel, type EffortValue } from '../config/effort.js'
 import { permissionRulesFromSettings } from '../harness/permissions.js'
@@ -45,7 +45,7 @@ function mergeAgentDefinitions<T extends { type: string }>(base: readonly T[], o
  * Legacy settings declarations must not prevent opening the editor that can
  * override them in global config.json. Other settings still fail validation.
  */
-function validateShellSettings(settings: MyAgentSettings) {
+function validateShellSettings(settings: HanekawaSettings) {
   return validateSettings({ ...settings, models: undefined })
 }
 
@@ -115,7 +115,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
   void removeLegacyShadowGit(cwd)
 
   // One per project, like `toolRegistry` below: `registerSkillCommands` reads
-  // `<cwd>/.myagent/skills/`, so a process-wide registry would let a second
+  // `<cwd>/.hanekawa/skills/`, so a process-wide registry would let a second
   // project's skills answer this one's slash commands.
   const commands = new CommandRegistry()
 
@@ -193,7 +193,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
   }
 
   /**
-   * Re-reads `.myagent/skills/` and re-registers the slash commands they define.
+   * Re-reads `.hanekawa/skills/` and re-registers the slash commands they define.
    *
    * The prompt side needs no help: `ContextBuilder` fingerprints its
    * `# Available skills` section and drops the cached copy when it changes.
@@ -217,7 +217,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
    * they are not a settings layer, but they are captured per runtime the same
    * way, and this is the one reload every host already calls, so an edited
    * file reaches the next runtime instead of waiting for a restart. The global
-   * `~/.myagent/AGENTS.md` is not here: each session snapshots it when it
+   * `~/.hanekawa/AGENTS.md` is not here: each session snapshots it when it
    * starts (`createRuntimeFactory`), and an open session keeps its snapshot.
    *
    * Every open scope gets the new rules, not just the newest one: each holds
@@ -348,7 +348,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
       // Session unreachable; the last good settings stay in force, and the
       // screen that edits those files reports the same error where it can be
       // fixed.
-      console.error(`[myagent] Warning: settings could not be reloaded for a new session: ${error instanceof Error ? error.message : String(error)}`)
+      console.error(`[hanekawa] Warning: settings could not be reloaded for a new session: ${error instanceof Error ? error.message : String(error)}`)
     }
     const created = await createSessionScope(scopeDeps, target)
     // Wrapped rather than handed a deregister callback: the scope has no reason

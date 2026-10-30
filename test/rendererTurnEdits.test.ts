@@ -103,7 +103,7 @@ test('memory edits are not file changes: no card for them, the code beside them 
   const memory = (id: string, detail: string): ActivityStep => ({
     kind: 'tool', id, text: '', toolName: 'Edit', status: 'done', tool: { displayName: 'Edit', useSummary: '', detail, memory: true },
   })
-  const NOTE = patch('/home/.myagent/projects/p/memory/user-role.md', ['@@ -1,1 +1,1 @@', '-a', '+b'])
+  const NOTE = patch('/home/.hanekawa/projects/p/memory/user-role.md', ['@@ -1,1 +1,1 @@', '-a', '+b'])
   assert.equal(collectTurnEdits([run(memory('m1', NOTE)), answer('a1')], new Set([1])).size, 0)
   const mixed = collectTurnEdits([run(memory('m1', NOTE), edit('e1', LOOP)), answer('a1')], new Set([1])).get(1)!
   assert.deepEqual(mixed.files.map((file) => file.name), ['loop.ts'])

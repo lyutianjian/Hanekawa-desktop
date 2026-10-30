@@ -42,7 +42,7 @@ import { getPlansDir } from '../src/utils/plans.js'
 
 // Account configuration is global; every test needs its own home.
 beforeEach(() => {
-  const testHome = mkdtempSync(path.join(tmpdir(), 'myagent-home-'))
+  const testHome = mkdtempSync(path.join(tmpdir(), 'hanekawa-home-'))
   process.env.USERPROFILE = testHome
   process.env.HOME = testHome
 })
@@ -56,17 +56,17 @@ async function createProject(options: {
   config?: Record<string, unknown>
   settings?: Record<string, unknown>
 } = {}): Promise<{ cwd: string; store: SessionStore; session: SessionMeta }> {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-scope-'))
-  await mkdir(path.join(cwd, '.myagent'), { recursive: true })
-  await mkdir(path.join(process.env.HOME!, '.myagent'), { recursive: true })
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-scope-'))
+  await mkdir(path.join(cwd, '.hanekawa'), { recursive: true })
+  await mkdir(path.join(process.env.HOME!, '.hanekawa'), { recursive: true })
   await writeFile(
-    path.join(process.env.HOME!, '.myagent', 'config.json'),
+    path.join(process.env.HOME!, '.hanekawa', 'config.json'),
     JSON.stringify(options.config ?? MODEL_CONFIG),
     'utf8',
   )
   if (options.settings) {
     await writeFile(
-      path.join(cwd, '.myagent', 'settings.json'),
+      path.join(cwd, '.hanekawa', 'settings.json'),
       JSON.stringify(options.settings),
       'utf8',
     )
@@ -152,7 +152,7 @@ test('reloading settings reaches every open scope, not just the newest', async (
   assert.equal(second.permissionGate.getConfigRules().length, 1)
 
   await writeFile(
-    path.join(cwd, '.myagent', 'settings.json'),
+    path.join(cwd, '.hanekawa', 'settings.json'),
     JSON.stringify({ permissions: { deny: ['Bash(rm *)', 'Bash(curl *)'] } }),
     'utf8',
   )
@@ -319,7 +319,7 @@ function contextProbe(): { tool: Tool; seen: ToolContext[] } {
 
 test('a thread scope runs tools in its worktree but keys data dirs off the project', async () => {
   const { cwd, store, session } = await createProject()
-  const worktree = await mkdtemp(path.join(tmpdir(), 'myagent-worktree-'))
+  const worktree = await mkdtemp(path.join(tmpdir(), 'hanekawa-worktree-'))
   const probe = contextProbe()
   const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust, extraTools: [probe.tool] })
   const thread = await host.openScope(await coordinationSession(store, cwd, { role: 'thread', threadId: 't1', workingDir: worktree }))
@@ -438,7 +438,7 @@ test('a thread scope starts in auto whatever the global mode is', async () => {
 test('coordination scopes reach the shared notes dir; a normal scope does not', async () => {
   const { cwd, store, session } = await createProject()
   const host = await bootstrap({ cwd, store, session, confirmMcpTrust: denyTrust })
-  const worktree = await mkdtemp(path.join(tmpdir(), 'myagent-worktree-'))
+  const worktree = await mkdtemp(path.join(tmpdir(), 'hanekawa-worktree-'))
   const thread = await host.openScope(await coordinationSession(store, cwd, { role: 'thread', threadId: 't1', workingDir: worktree }))
   const coordinator = await host.openScope(await coordinationSession(store, cwd, { role: 'coordinator' }))
   const notesDir = getCoordinationNotesDir(cwd)

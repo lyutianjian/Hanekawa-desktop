@@ -24,7 +24,7 @@ function turn(at: Date, over: Record<string, unknown> = {}): string {
 }
 
 async function scratchRoot(): Promise<{ root: string; dir: string; history: string; cleanup: () => Promise<void> }> {
-  const root = await mkdtemp(path.join(os.tmpdir(), 'myagent-usage-'))
+  const root = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-usage-'))
   const dir = getSessionsDir(root)
   await mkdir(dir, { recursive: true })
   return { root, dir, history: path.join(root, 'usage-history.json'), cleanup: () => rm(root, { recursive: true, force: true }) }

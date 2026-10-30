@@ -2,14 +2,14 @@ import { existsSync } from 'node:fs'
 import { copyFile, mkdir, readFile, readdir, rm, rmdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { readJsonFile, writeJsonFile } from '../utils/json.js'
-import { getMyAgentDir, getProjectDataDir } from '../utils/paths.js'
+import { getHanekawaDir, getProjectDataDir } from '../utils/paths.js'
 import { withFileLock } from './fileLock.js'
 
 /**
- * Moves a project's runtime data out of `<cwd>/.myagent/` into its data dir.
+ * Moves a project's runtime data out of `<cwd>/.hanekawa/` into its data dir.
  *
  * Runtime data used to live inside the project; it now lives under
- * `~/.myagent/projects/<key>/` (`getProjectDataDir`). A project opened for the
+ * `~/.hanekawa/projects/<key>/` (`getProjectDataDir`). A project opened for the
  * first time since then still has its sessions, attachments and plans in the
  * old place, and this is what brings them along.
  *
@@ -22,14 +22,14 @@ import { withFileLock } from './fileLock.js'
  *
  * Personal settings (`settings.local.json`, `agents.local/`) move too: they
  * belong to this user, not the project. Once everything moved, an emptied
- * `<cwd>/.myagent/` is removed. One that still holds shared configuration
+ * `<cwd>/.hanekawa/` is removed. One that still holds shared configuration
  * (settings, skills, rules) stays.
  *
  * Reports rather than throws, like `migrateProjectConfig`: a failure is a
  * startup warning naming what stayed behind, never a project that won't open.
  */
 
-/** What `<cwd>/.myagent/` used to hold that is not the project's to keep. Shared configuration is not among them. */
+/** What `<cwd>/.hanekawa/` used to hold that is not the project's to keep. Shared configuration is not among them. */
 export const LEGACY_ENTRIES = [
   'sessions',
   'tool-results',
@@ -43,13 +43,13 @@ export const LEGACY_ENTRIES = [
 ] as const
 
 export interface LegacyDataFinding {
-  /** `failed` means data stayed behind in `<cwd>/.myagent/` and the user should hear about it. */
+  /** `failed` means data stayed behind in `<cwd>/.hanekawa/` and the user should hear about it. */
   kind: 'moved' | 'failed'
   message: string
 }
 
 export async function migrateLegacyProjectData(cwd: string): Promise<LegacyDataFinding[]> {
-  const legacyDir = getMyAgentDir(cwd)
+  const legacyDir = getHanekawaDir(cwd)
   const pending = LEGACY_ENTRIES.filter((entry) => existsSync(path.join(legacyDir, entry)))
   if (pending.length === 0) return []
 

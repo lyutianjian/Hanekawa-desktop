@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { readConfigurationFile, updateConfigurationFile } from './file.js'
-import { getGlobalMyAgentDir, getProjectDataDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
+import { getGlobalHanekawaDir, getProjectDataDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
 import type { AgentConfig, ModelConfig } from './service.js'
 import type { Endpoint, Routing } from './routing.js'
 import { type EffortLevel } from './effort.js'
@@ -15,7 +15,7 @@ export type StartupPermissionMode = 'default' | 'auto' | 'bypass'
 
 const STARTUP_PERMISSION_MODES: readonly StartupPermissionMode[] = ['default', 'auto', 'bypass']
 
-export interface MyAgentSettings {
+export interface HanekawaSettings {
   permissions?: {
     mode?: StartupPermissionMode
     allow?: string[]
@@ -74,15 +74,15 @@ interface LegacyMcpSettings {
   mcpServers?: Record<string, McpServerConfig>
 }
 
-async function loadSettingsFile(filePath: string): Promise<MyAgentSettings> {
-  const settings = await readConfigurationFile<MyAgentSettings>(filePath) ?? {}
+async function loadSettingsFile(filePath: string): Promise<HanekawaSettings> {
+  const settings = await readConfigurationFile<HanekawaSettings>(filePath) ?? {}
   if ((settings.permissions?.mode as string | undefined) === 'acceptEdits') settings.permissions!.mode = 'auto'
   return settings
 }
 
 /** The trusted settings source for account-level configuration. */
-export async function loadUserSettings(): Promise<MyAgentSettings> {
-  return loadSettingsFile(join(getGlobalMyAgentDir(), 'settings.json'))
+export async function loadUserSettings(): Promise<HanekawaSettings> {
+  return loadSettingsFile(join(getGlobalHanekawaDir(), 'settings.json'))
 }
 
 /**
@@ -104,7 +104,7 @@ async function readMcpServersFile(filePath: string): Promise<Record<string, McpS
     const config = JSON.parse(content) as LegacyMcpSettings
     return config.mcpServers
   } catch (error) {
-    console.error(`[myagent] Warning: corrupted MCP settings file ${filePath}: ${error instanceof Error ? error.message : String(error)}`)
+    console.error(`[hanekawa] Warning: corrupted MCP settings file ${filePath}: ${error instanceof Error ? error.message : String(error)}`)
     return undefined
   }
 }
@@ -112,7 +112,7 @@ async function readMcpServersFile(filePath: string): Promise<Record<string, McpS
 /**
  * The two on-disk MCP files, as one layer.
  *
- * `.myagent/mcp.json` is Hanekawa's own file. `.mcp.json` at the repository root
+ * `.hanekawa/mcp.json` is Hanekawa's own file. `.mcp.json` at the repository root
  * is Claude Code's, read so a project that already declares its servers there
  * works unchanged — the same compat rule the skill folders follow. The foreign
  * file is read *under* the owned one: a name both declare means the user meant
@@ -126,14 +126,14 @@ async function readMcpServersFile(filePath: string): Promise<Record<string, McpS
 async function loadLegacyMcpSettings(
   cwd: string,
   compat: Record<string, McpServerConfig> | undefined,
-): Promise<MyAgentSettings> {
-  const owned = await readMcpServersFile(join(cwd, '.myagent', 'mcp.json'))
+): Promise<HanekawaSettings> {
+  const owned = await readMcpServersFile(join(cwd, '.hanekawa', 'mcp.json'))
   const mcpServers = { ...compat, ...owned }
   return Object.keys(mcpServers).length > 0 ? { mcpServers } : {}
 }
 
-function mergeSettings(...sources: MyAgentSettings[]): MyAgentSettings {
-  const result: MyAgentSettings = {}
+function mergeSettings(...sources: HanekawaSettings[]): HanekawaSettings {
+  const result: HanekawaSettings = {}
 
   for (const source of sources) {
     if (source.defaultModel !== undefined) {
@@ -327,10 +327,10 @@ function mergeSettings(...sources: MyAgentSettings[]): MyAgentSettings {
  * it one a caller should re-derive by guessing the layer order.
  */
 export interface SettingsLayers {
-  user: MyAgentSettings
-  project: MyAgentSettings
-  legacyMcp: MyAgentSettings
-  local: MyAgentSettings
+  user: HanekawaSettings
+  project: HanekawaSettings
+  legacyMcp: HanekawaSettings
+  local: HanekawaSettings
   /** Server names that came from the repository's `.mcp.json`, so the screen can say where they live. */
   compatMcp: ReadonlySet<string>
 }
@@ -344,7 +344,7 @@ export interface SettingsLayers {
  * dropped silently rather than warned about: it was a legitimate write until
  * the control moved, and nothing on screen offers it any more.
  */
-function withoutStartupPermissionMode(settings: MyAgentSettings): MyAgentSettings {
+function withoutStartupPermissionMode(settings: HanekawaSettings): HanekawaSettings {
   if (settings.permissions?.mode === undefined) return settings
   const { mode: _mode, ...permissions } = settings.permissions
   return { ...settings, permissions }
@@ -355,7 +355,7 @@ function withoutStartupPermissionMode(settings: MyAgentSettings): MyAgentSetting
  * the startup permission mode or pre-trust MCP servers. The mode belongs to the
  * user layer; MCP trust stays settable from it and from the local layer.
  */
-function withoutProjectTrustGrants(settings: MyAgentSettings): MyAgentSettings {
+function withoutProjectTrustGrants(settings: HanekawaSettings): HanekawaSettings {
   const ignored: string[] = []
   if (settings.permissions?.mode !== undefined) {
     settings = withoutStartupPermissionMode(settings)
@@ -371,19 +371,19 @@ function withoutProjectTrustGrants(settings: MyAgentSettings): MyAgentSettings {
     // the user layer, while MCP trust can also be granted per project.
     const hints = [
       ...(ignored.includes('permissions.mode')
-        ? ['permissions.mode belongs in ~/.myagent/settings.json']
+        ? ['permissions.mode belongs in ~/.hanekawa/settings.json']
         : []),
       ...(ignored.includes('mcp.trustedServers')
-        ? ['mcp.trustedServers belongs in ~/.myagent/settings.json or settings.local.json']
+        ? ['mcp.trustedServers belongs in ~/.hanekawa/settings.json or settings.local.json']
         : []),
     ]
-    console.error(`[myagent] Warning: .myagent/settings.json cannot set ${ignored.join(' or ')}; ignored. ${hints.join('; ')}.`)
+    console.error(`[hanekawa] Warning: .hanekawa/settings.json cannot set ${ignored.join(' or ')}; ignored. ${hints.join('; ')}.`)
   }
   return settings
 }
 
 /** Personal per-project settings are still not a source of global config. */
-function withoutOwnedConfig(settings: MyAgentSettings, filePath: string): MyAgentSettings {
+function withoutOwnedConfig(settings: HanekawaSettings, filePath: string): HanekawaSettings {
   const filtered = { ...settings }
   const ignored: string[] = []
   for (const key of ['models', 'endpoints', 'routing', 'defaultModel', 'fallbackModel', 'compactModel', 'agent'] as const) {
@@ -393,7 +393,7 @@ function withoutOwnedConfig(settings: MyAgentSettings, filePath: string): MyAgen
     }
   }
   if (ignored.length > 0) {
-    console.error(`[myagent] Warning: ${filePath} cannot set global config fields ${ignored.join(', ')}; ignored. Set them in ~/.myagent/config.json.`)
+    console.error(`[hanekawa] Warning: ${filePath} cannot set global config fields ${ignored.join(', ')}; ignored. Set them in ~/.hanekawa/config.json.`)
   }
   return filtered
 }
@@ -407,8 +407,8 @@ export async function loadSettingsLayers(cwd: string): Promise<SettingsLayers> {
   const project = isGlobalWorkspaceRoot(cwd)
     ? {}
     : withoutProjectTrustGrants(withoutOwnedConfig(
-        await loadSettingsFile(join(cwd, '.myagent', 'settings.json')),
-        join(cwd, '.myagent', 'settings.json'),
+        await loadSettingsFile(join(cwd, '.hanekawa', 'settings.json')),
+        join(cwd, '.hanekawa', 'settings.json'),
       ))
   const compatMcpServers = await readMcpServersFile(join(cwd, '.mcp.json'))
   const legacyMcp = await loadLegacyMcpSettings(cwd, compatMcpServers)
@@ -418,7 +418,7 @@ export async function loadSettingsLayers(cwd: string): Promise<SettingsLayers> {
   return { user, project, legacyMcp, local, compatMcp: new Set(Object.keys(compatMcpServers ?? {})) }
 }
 
-export async function loadMergedSettings(cwd: string): Promise<MyAgentSettings> {
+export async function loadMergedSettings(cwd: string): Promise<HanekawaSettings> {
   const { user, project, legacyMcp, local } = await loadSettingsLayers(cwd)
   return mergeSettings(user, project, legacyMcp, local)
 }
@@ -430,8 +430,8 @@ export class SettingsValidationError extends Error {
   }
 }
 
-async function updateSettingsFile(filePath: string, mutate: (settings: MyAgentSettings) => void): Promise<void> {
-  await updateConfigurationFile<MyAgentSettings>(filePath, (settings) => {
+async function updateSettingsFile(filePath: string, mutate: (settings: HanekawaSettings) => void): Promise<void> {
+  await updateConfigurationFile<HanekawaSettings>(filePath, (settings) => {
     if ((settings.permissions?.mode as string | undefined) === 'acceptEdits') settings.permissions!.mode = 'auto'
     mutate(settings)
     const validation = validateSettings(settings)
@@ -440,8 +440,8 @@ async function updateSettingsFile(filePath: string, mutate: (settings: MyAgentSe
   })
 }
 
-export async function updateUserSettings(mutate: (settings: MyAgentSettings) => void): Promise<void> {
-  await updateSettingsFile(join(getGlobalMyAgentDir(), 'settings.json'), mutate)
+export async function updateUserSettings(mutate: (settings: HanekawaSettings) => void): Promise<void> {
+  await updateSettingsFile(join(getGlobalHanekawaDir(), 'settings.json'), mutate)
 }
 
 /**
@@ -450,8 +450,8 @@ export async function updateUserSettings(mutate: (settings: MyAgentSettings) => 
  * `config.json`.
  *
  * Per project but personal, so it lives in the project's data dir under
- * `~/.myagent/projects/`, not in the project: clicking "always allow" must not
- * make a `.myagent/` appear in someone's repository.
+ * `~/.hanekawa/projects/`, not in the project: clicking "always allow" must not
+ * make a `.hanekawa/` appear in someone's repository.
  */
 export function localSettingsPath(cwd: string): string {
   return join(getProjectDataDir(cwd), 'settings.local.json')
@@ -465,13 +465,13 @@ export function localSettingsPath(cwd: string): string {
  * `mcp.trustedServers`, so the merged view cannot say which file an entry came
  * from — and only the entries in this one can be edited by rewriting it.
  */
-export async function loadLocalSettings(cwd: string): Promise<MyAgentSettings> {
+export async function loadLocalSettings(cwd: string): Promise<HanekawaSettings> {
   return loadSettingsFile(localSettingsPath(cwd))
 }
 
 /** The keys {@link updateLocalSettings} is allowed to rewrite. */
 export type LocalSettingsPatch = {
-  [K in 'permissions' | 'mcp' | 'skills' | 'cache' | 'thinking' | 'mcpServers']?: MyAgentSettings[K]
+  [K in 'permissions' | 'mcp' | 'skills' | 'cache' | 'thinking' | 'mcpServers']?: HanekawaSettings[K]
 }
 
 const LOCAL_PATCH_KEYS = ['permissions', 'mcp', 'skills', 'cache', 'thinking', 'mcpServers'] as const
@@ -591,7 +591,7 @@ export async function setMcpServerLocally(
  *
  * Trust is keyed by name only, so a left-behind entry would silently pre-trust
  * the *next* server to take this name — one arriving through a pulled
- * `.myagent/settings.json`, say, which would then register its tools without the
+ * `.hanekawa/settings.json`, say, which would then register its tools without the
  * prompt in `runtime/mcp.ts` ever firing.
  */
 export async function removeMcpServerLocally(
@@ -634,8 +634,8 @@ export async function setSkillEnabledLocally(
   })
 }
 
-/** The names {@link MyAgentSettings.skills} switches off, as a set. */
-export function disabledSkillNames(settings: MyAgentSettings): Set<string> {
+/** The names {@link HanekawaSettings.skills} switches off, as a set. */
+export function disabledSkillNames(settings: HanekawaSettings): Set<string> {
   return new Set(settings.skills?.disabled ?? [])
 }
 
@@ -698,7 +698,7 @@ export async function saveEffortLevel(level: EffortLevel): Promise<void> {
   await updateUserSettings((settings) => { settings.effortLevel = level })
 }
 
-export function validateSettings(settings: MyAgentSettings): { valid: boolean; errors: string[] } {
+export function validateSettings(settings: HanekawaSettings): { valid: boolean; errors: string[] } {
   const errors: string[] = []
 
   if (settings.models) {
@@ -720,6 +720,9 @@ export function validateSettings(settings: MyAgentSettings): { valid: boolean; e
       }
       if (model.supportsImageInput !== undefined && typeof model.supportsImageInput !== 'boolean') {
         errors.push(`models.${name}.supportsImageInput must be a boolean`)
+      }
+      if (model.allowEmptySignature !== undefined && typeof model.allowEmptySignature !== 'boolean') {
+        errors.push(`models.${name}.allowEmptySignature must be a boolean`)
       }
     }
   }

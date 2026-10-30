@@ -21,11 +21,11 @@ function isValidDoubleTapWindow(value: unknown): value is number {
 }
 
 /**
- * Loads keybindings configuration from `.myagent/keybindings.json`.
+ * Loads keybindings configuration from `.hanekawa/keybindings.json`.
  * Returns default values if the file is missing, malformed, or contains invalid values.
  */
 export function loadKeybindingsConfig(cwd: string): KeybindingsConfig {
-  const filePath = path.join(cwd, '.myagent', 'keybindings.json')
+  const filePath = path.join(cwd, '.hanekawa', 'keybindings.json')
 
   try {
     const raw = readFileSync(filePath, 'utf8')

@@ -24,16 +24,16 @@ function parsePositiveInt(value: string | undefined): number | undefined {
 /**
  * Resolve the effective foreground timeout.
  * - explicit tool input wins
- * - else MYAGENT_BASH_DEFAULT_TIMEOUT_MS / BASH_DEFAULT_TIMEOUT_MS
+ * - else HANEKAWA_BASH_DEFAULT_TIMEOUT_MS / BASH_DEFAULT_TIMEOUT_MS
  * - else 60s
- * No max unless MYAGENT_BASH_MAX_TIMEOUT_MS / BASH_MAX_TIMEOUT_MS sets one (at least default).
+ * No max unless HANEKAWA_BASH_MAX_TIMEOUT_MS / BASH_MAX_TIMEOUT_MS sets one (at least default).
  */
 export function resolveBashTimeoutMs(requested?: number, env: NodeJS.ProcessEnv = process.env): number {
   const envDefault =
-    parsePositiveInt(env.MYAGENT_BASH_DEFAULT_TIMEOUT_MS)
+    parsePositiveInt(env.HANEKAWA_BASH_DEFAULT_TIMEOUT_MS)
     ?? parsePositiveInt(env.BASH_DEFAULT_TIMEOUT_MS)
   const envMax =
-    parsePositiveInt(env.MYAGENT_BASH_MAX_TIMEOUT_MS)
+    parsePositiveInt(env.HANEKAWA_BASH_MAX_TIMEOUT_MS)
     ?? parsePositiveInt(env.BASH_MAX_TIMEOUT_MS)
 
   const defaultMs = envDefault ?? DEFAULT_BASH_TIMEOUT_MS

@@ -16,7 +16,7 @@ const baseRequest: ModelRequest = {
 
 async function scratchProject(): Promise<string> {
   const cwd = await mkdtemp(join(tmpdir(), 'thinking-'))
-  await mkdir(join(cwd, '.myagent'), { recursive: true })
+  await mkdir(join(cwd, '.hanekawa'), { recursive: true })
   return cwd
 }
 
@@ -38,7 +38,7 @@ test('thinking is a boolean setting that merges and validates', async () => {
 
   const cwd = await scratchProject()
   await writeFile(
-    join(cwd, '.myagent', 'settings.json'),
+    join(cwd, '.hanekawa', 'settings.json'),
     JSON.stringify({ thinking: true }),
     'utf-8',
   )

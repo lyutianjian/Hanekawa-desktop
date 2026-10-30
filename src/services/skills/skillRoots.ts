@@ -34,7 +34,7 @@ export const COMPAT_SKILL_FOLDERS: ReadonlyArray<{ kind: 'compat-project' | 'com
 
 export function skillRoots(cwd: string, scope?: 'personal'): SkillRoot[] {
   const roots: SkillRoot[] = [
-    ...(scope === 'personal' ? [] : [{ dir: getSkillsDir(cwd), kind: 'project' as const, managed: true, label: '.myagent/skills' }]),
+    ...(scope === 'personal' ? [] : [{ dir: getSkillsDir(cwd), kind: 'project' as const, managed: true, label: '.hanekawa/skills' }]),
     { dir: getSharedSkillsDir(), kind: 'shared', managed: true, label: '~/.agents/skills' },
   ]
   const home = userHome()

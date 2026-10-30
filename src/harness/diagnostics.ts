@@ -9,7 +9,7 @@ export function formatDiagnostic(diagnostic: RuntimeDiagnostic): string {
 }
 
 export function logDiagnostics(diagnostics: RuntimeDiagnostic[]): void {
-  if (diagnostics.length === 0 || process.env.MYAGENT_DEBUG_PROVIDER !== '1') return
+  if (diagnostics.length === 0 || process.env.HANEKAWA_DEBUG_PROVIDER !== '1') return
   for (const diagnostic of diagnostics) {
     console.error(`[hanekawa][diagnostic] ${formatDiagnostic(diagnostic)}`)
   }

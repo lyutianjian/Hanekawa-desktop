@@ -4,7 +4,7 @@ import type { Stats } from 'node:fs'
 import path from 'node:path'
 import { diffLines } from 'diff'
 import { SessionStore, assertSafeSessionId } from '../../sessions/service.js'
-import { getGlobalMyAgentDir } from '../../utils/paths.js'
+import { getGlobalHanekawaDir } from '../../utils/paths.js'
 import type { CheckpointDiffSummary, CheckpointWithDiff } from './types.js'
 
 export type { Checkpoint, CheckpointDiffSummary, CheckpointWithDiff } from './types.js'
@@ -46,12 +46,12 @@ export const DEFAULT_FILE_HISTORY_LIMITS: FileHistoryLimits = {
 }
 
 /**
- * Where a session's backups live. Global rather than `<cwd>/.myagent/` so the
+ * Where a session's backups live. Global rather than `<cwd>/.hanekawa/` so the
  * history never sits inside the tree it describes — the shadow-git predecessor
  * did, and grew recursively.
  */
 export function fileHistoryDir(sessionId: string): string {
-  return path.join(getGlobalMyAgentDir(), 'file-history', sessionId)
+  return path.join(getGlobalHanekawaDir(), 'file-history', sessionId)
 }
 
 /** The name of the append-only log inside a session's history directory. */
@@ -63,7 +63,7 @@ const SNAPSHOTS_LOG = 'snapshots.jsonl'
  *
  * The guard is load-bearing, not defensive: `sessionId` comes off the wire
  * (`delete-session`) and becomes a whole directory component of an `rm` with
- * `recursive: true` — one bad argument away from `~/.myagent/file-history`
+ * `recursive: true` — one bad argument away from `~/.hanekawa/file-history`
  * itself. It is `SessionStore`'s own validator so the two cannot drift.
  */
 export async function removeFileHistory(sessionId: string): Promise<void> {

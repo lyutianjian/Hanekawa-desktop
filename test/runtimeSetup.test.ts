@@ -34,8 +34,8 @@ async function until(check: () => boolean): Promise<void> {
 }
 
 async function setup(t: TestContext, queued = false) {
-  const testHome = await mkdtemp(path.join(tmpdir(), 'myagent-setup-home-'))
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-setup-project-'))
+  const testHome = await mkdtemp(path.join(tmpdir(), 'hanekawa-setup-home-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-setup-project-'))
   const previous = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE }
   process.env.HOME = testHome
   process.env.USERPROFILE = testHome

@@ -28,7 +28,7 @@ function context(cwd: string, tracked: string[], onTrack?: () => void): ToolCont
 }
 
 async function withTempDir(run: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-track-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-track-'))
   try {
     await run(dir)
   } finally {

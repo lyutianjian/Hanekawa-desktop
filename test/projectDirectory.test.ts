@@ -92,7 +92,7 @@ test('on a case-insensitive filesystem, case does not mint a second project', ()
 })
 
 test('adding the same root twice throws instead of replacing', () => {
-  // Two `ProjectRuntime`s over one `.myagent/` means two `SessionStore`s
+  // Two `ProjectRuntime`s over one `.hanekawa/` means two `SessionStore`s
   // appending to the same JSONL files; the shell is expected to `get()` first.
   const dir = directory()
   const root = process.cwd()

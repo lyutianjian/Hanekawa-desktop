@@ -74,7 +74,7 @@ export function generateWordSlug(): string {
 }
 
 /**
- * Resolve the plans directory, `~/.myagent/projects/<key>/plans`. Creates it on
+ * Resolve the plans directory, `~/.hanekawa/projects/<key>/plans`. Creates it on
  * first call (mkdir recursive). Idempotent.
  */
 export function getPlansDir(cwd: string): string {

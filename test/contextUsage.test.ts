@@ -17,7 +17,7 @@ import type { FileHistoryService } from '../src/services/fileHistory/fileHistory
  */
 
 async function createHarness(existingRecords: readonly SessionRecord[] = [], system?: string) {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-context-usage-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-context-usage-'))
   const store = new SessionStore(cwd)
   await store.init()
   const session = await store.create('context usage')

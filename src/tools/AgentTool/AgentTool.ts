@@ -965,8 +965,8 @@ function subagentModelOverride(
   explicitModel?: string,
 ): { key?: string; envSource?: string } {
   if (explicitModel) return { key: explicitModel }
-  const typeEnv = `MYAGENT_SUBAGENT_MODEL_${subagentType.toUpperCase()}`
-  const envSource = process.env[typeEnv]?.trim() ? typeEnv : process.env.MYAGENT_SUBAGENT_MODEL?.trim() ? 'MYAGENT_SUBAGENT_MODEL' : undefined
+  const typeEnv = `HANEKAWA_SUBAGENT_MODEL_${subagentType.toUpperCase()}`
+  const envSource = process.env[typeEnv]?.trim() ? typeEnv : process.env.HANEKAWA_SUBAGENT_MODEL?.trim() ? 'HANEKAWA_SUBAGENT_MODEL' : undefined
   return { key: envSource ? process.env[envSource]!.trim() : definition.model?.trim(), envSource }
 }
 

@@ -3,7 +3,7 @@ import path from 'node:path'
 import { inferTurnInputTokens } from '../sessions/service.js'
 import { promptTokens } from '../harness/usage.js'
 import type { SessionMetric } from '../harness/metrics.js'
-import { getGlobalMyAgentDir, getSessionsDir } from '../utils/paths.js'
+import { getGlobalHanekawaDir, getSessionsDir } from '../utils/paths.js'
 import { parseJsonLines, readJsonFile, writeJsonFile } from '../utils/json.js'
 import type { WireShellUsageStatsResult, WireUsageDay } from './shellProtocol.js'
 
@@ -72,7 +72,7 @@ export class UsageScanner {
   private files = new Map<string, CachedFile>()
   private loaded: Promise<void> | undefined
 
-  constructor(private readonly historyPath = path.join(getGlobalMyAgentDir(), 'usage-history.json')) {}
+  constructor(private readonly historyPath = path.join(getGlobalHanekawaDir(), 'usage-history.json')) {}
 
   private load(): Promise<void> {
     this.loaded ??= readJsonFile<History | null>(this.historyPath, null)

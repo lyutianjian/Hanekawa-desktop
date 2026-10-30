@@ -5,12 +5,12 @@ import { syncBuiltinESMExports } from 'node:module'
 import { existsSync, mkdtempSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { getGlobalMyAgentDir, resolveExistingPrefix } from '../src/utils/paths.js'
+import { getGlobalHanekawaDir, resolveExistingPrefix } from '../src/utils/paths.js'
 import { withFileLock } from '../src/sessions/fileLock.js'
 import { ConfigService } from '../src/config/service.js'
 import {
   validateSettings,
-  type MyAgentSettings,
+  type HanekawaSettings,
   loadLocalSettings,
   loadMergedSettings,
   localSettingsPath,
@@ -36,13 +36,13 @@ import {
  *
  * A fresh temp home per test throughout: `config.json` is global-only now, so
  * without it these would read *and write* the developer's own
- * `~/.myagent/config.json` and the assertions would depend on whose machine ran
- * them. `loadMergedSettings` layers `~/.myagent/settings.json` under the project
+ * `~/.hanekawa/config.json` and the assertions would depend on whose machine ran
+ * them. `loadMergedSettings` layers `~/.hanekawa/settings.json` under the project
  * one, so the local-layer cases below need the same isolation.
  */
 
 test.beforeEach(() => {
-  const testHome = mkdtempSync(path.join(os.tmpdir(), 'myagent-home-'))
+  const testHome = mkdtempSync(path.join(os.tmpdir(), 'hanekawa-home-'))
   process.env.USERPROFILE = testHome
   process.env.HOME = testHome
 })
@@ -51,9 +51,9 @@ test.beforeEach(() => {
 async function withProject(
   run: (cwd: string, config: ConfigService) => Promise<void>,
 ): Promise<void> {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-settings-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-settings-'))
   try {
-    await mkdir(path.join(cwd, '.myagent'), { recursive: true })
+    await mkdir(path.join(cwd, '.hanekawa'), { recursive: true })
     const config = new ConfigService(cwd)
     await config.load()
     await run(cwd, config)
@@ -73,8 +73,8 @@ for (const layer of ['user', 'project', 'local'] as const) {
   test(`corrupted ${layer} settings fail loading without changing the original bytes`, async () => {
     await withProject(async (cwd) => {
       const file = layer === 'user'
-        ? path.join(getGlobalMyAgentDir(), 'settings.json')
-        : layer === 'project' ? path.join(cwd, '.myagent', 'settings.json') : localSettingsPath(cwd)
+        ? path.join(getGlobalHanekawaDir(), 'settings.json')
+        : layer === 'project' ? path.join(cwd, '.hanekawa', 'settings.json') : localSettingsPath(cwd)
       const bytes = '{ "apiKey": "fake-secret-do-not-report", broken'
       await mkdir(path.dirname(file), { recursive: true })
       await writeFile(file, bytes)
@@ -345,11 +345,11 @@ async function withLocalLayer(
   projectSettings: Record<string, unknown>,
   run: (cwd: string) => Promise<void>,
 ): Promise<void> {
-  const cwd = await mkdtemp(path.join(os.tmpdir(), 'myagent-local-'))
+  const cwd = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-local-'))
   try {
-    await mkdir(path.join(cwd, '.myagent'), { recursive: true })
+    await mkdir(path.join(cwd, '.hanekawa'), { recursive: true })
     await writeFile(
-      path.join(cwd, '.myagent', 'settings.json'),
+      path.join(cwd, '.hanekawa', 'settings.json'),
       JSON.stringify(projectSettings),
       'utf8',
     )
@@ -375,13 +375,13 @@ test('rewriting a permission group leaves the inherited entries in their own fil
 
 test('the home directory does not merge its user layer twice', async () => {
   // The home directory *is* the global workspace, so its "project" layer is
-  // `~/.myagent/settings.json` itself. `mergeSettings` concatenates permission
+  // `~/.hanekawa/settings.json` itself. `mergeSettings` concatenates permission
   // groups, so loading both copies would double every entry — and run every
   // hook twice.
   const home = process.env.USERPROFILE!
-  await mkdir(path.join(home, '.myagent'), { recursive: true })
+  await mkdir(path.join(home, '.hanekawa'), { recursive: true })
   await writeFile(
-    path.join(home, '.myagent', 'settings.json'),
+    path.join(home, '.hanekawa', 'settings.json'),
     JSON.stringify({ permissions: { allow: ['Read'] } }),
     'utf8',
   )
@@ -457,9 +457,9 @@ test('the startup permission mode is one global value, and project layers cannot
     await saveStartupPermissionMode('auto')
 
     assert.equal((await loadMergedSettings(cwd)).permissions?.mode, 'auto')
-    const userFile = path.join(getGlobalMyAgentDir(), 'settings.json')
+    const userFile = path.join(getGlobalHanekawaDir(), 'settings.json')
     assert.equal(
-      (JSON.parse(await readFile(userFile, 'utf8')) as MyAgentSettings).permissions?.mode,
+      (JSON.parse(await readFile(userFile, 'utf8')) as HanekawaSettings).permissions?.mode,
       'auto',
     )
     // The layers that tried to pin it are left exactly as written — merging
@@ -470,7 +470,7 @@ test('the startup permission mode is one global value, and project layers cannot
 
 test('untrusting an MCP server only reaches the local layer', async () => {
   await withLocalLayer({}, async (cwd) => {
-    const userFile = path.join(getGlobalMyAgentDir(), 'settings.json')
+    const userFile = path.join(getGlobalHanekawaDir(), 'settings.json')
     await mkdir(path.dirname(userFile), { recursive: true })
     await writeFile(userFile, JSON.stringify({ mcp: { trustedServers: ['shared'] } }), 'utf8')
     await setMcpServerTrustLocally(cwd, 'own', true)
@@ -535,7 +535,7 @@ test('a legacy acceptEdits mode loads as auto', async () => {
   await withLocalLayer({}, async (cwd) => {
     // The alias is still honoured where the mode is read — the user layer. A
     // lower layer naming it is ignored along with every other lower-layer mode.
-    const userFile = path.join(getGlobalMyAgentDir(), 'settings.json')
+    const userFile = path.join(getGlobalHanekawaDir(), 'settings.json')
     await mkdir(path.dirname(userFile), { recursive: true })
     await writeFile(userFile, JSON.stringify({ permissions: { mode: 'acceptEdits' } }), 'utf8')
     assert.equal((await loadMergedSettings(cwd)).permissions?.mode, 'auto')
@@ -556,9 +556,9 @@ test('the project layer cannot pick the startup mode or pre-trust MCP servers', 
 
 test('coordination: the retired project group is ignored at runtime', async () => {
   const home = process.env.USERPROFILE!
-  await mkdir(path.join(home, '.myagent'), { recursive: true })
+  await mkdir(path.join(home, '.hanekawa'), { recursive: true })
   await writeFile(
-    path.join(home, '.myagent', 'settings.json'),
+    path.join(home, '.hanekawa', 'settings.json'),
     JSON.stringify({ coordination: { quietDays: 5, threadModel: 'user-model' } }),
     'utf8',
   )

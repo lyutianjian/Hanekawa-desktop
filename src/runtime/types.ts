@@ -6,7 +6,7 @@ import type { AgentRunResult, CoordinationRole, SessionRecord, Tool } from '../h
 import type { RuntimeDiagnostic } from '../harness/diagnostics.js'
 import type { ConfigService, ModelConfig } from '../config/service.js'
 import type { EffortLevel } from '../config/effort.js'
-import type { MyAgentSettings } from '../config/settings.js'
+import type { HanekawaSettings } from '../config/settings.js'
 import type { SessionMeta, SessionStore } from '../sessions/service.js'
 import type { BackgroundTaskRegistry } from '../services/backgroundTasks/registry.js'
 import type { ImageAttachmentService } from '../services/imageAttachments/imageAttachmentService.js'
@@ -87,7 +87,7 @@ export interface ProjectRuntime {
   attachments: ImageAttachmentService
   /**
    * The slash commands for this project. Per-project rather than module-level
-   * because skill commands are read from `<cwd>/.myagent/skills/`, so a shared
+   * because skill commands are read from `<cwd>/.hanekawa/skills/`, so a shared
    * one leaks the second project's skills into the first.
    */
   commands: CommandRegistry
@@ -113,22 +113,22 @@ export interface ProjectRuntime {
    * the same object `reloadSettings()` replaces. Read it rather than re-reading
    * the layers off disk, or a caller sees a different merge than the loop does.
    */
-  getSettings(): MyAgentSettings
+  getSettings(): HanekawaSettings
   /**
    * The project instruction files the runtime is currently running on — the
    * labelled `AGENTS.md` / `CLAUDE.md` entries handed to `createRuntime`, which
-   * adds each session's own snapshot of `~/.myagent/AGENTS.md`. Read-only
+   * adds each session's own snapshot of `~/.hanekawa/AGENTS.md`. Read-only
    * inspection; `reloadSettings()` is what re-reads them.
    */
   getProjectEntries(): readonly string[]
   /**
    * The built-in agent definitions merged with the project's own, which is what
    * a runtime hands to its Agent tool. Read-only inspection; editing them means
-   * editing the files under `.myagent/agents/`.
+   * editing the files under `.hanekawa/agents/`.
    */
   listAgentDefinitions(): readonly BaseAgentDefinition[]
   reloadAgentDefinitions(): Promise<number>
-  /** Re-reads `.myagent/skills/` and re-registers their slash commands. */
+  /** Re-reads `.hanekawa/skills/` and re-registers their slash commands. */
   reloadSkills(): Promise<number>
   /**
    * Closes every MCP client, drops its tools, and connects the servers the

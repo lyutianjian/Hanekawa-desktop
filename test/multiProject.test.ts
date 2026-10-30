@@ -27,11 +27,11 @@ import type { CommandContext } from '../src/commands/types.js'
  * either one can see the other's state.
  */
 
-// `ConfigService` and `loadMergedSettings` both layer a shared `~/.myagent`
+// `ConfigService` and `loadMergedSettings` both layer a shared `~/.hanekawa`
 // beneath the project one, so without a per-test home the two projects would
 // share a config layer and prove nothing.
 beforeEach(() => {
-  const testHome = mkdtempSync(path.join(tmpdir(), 'myagent-home-'))
+  const testHome = mkdtempSync(path.join(tmpdir(), 'hanekawa-home-'))
   process.env.USERPROFILE = testHome
   process.env.HOME = testHome
 })
@@ -42,7 +42,7 @@ const MODEL_CONFIG = {
 }
 
 async function writeSkill(cwd: string, name: string, description: string): Promise<void> {
-  const dir = path.join(cwd, '.myagent', 'skills', name)
+  const dir = path.join(cwd, '.hanekawa', 'skills', name)
   await mkdir(dir, { recursive: true })
   await writeFile(
     path.join(dir, 'SKILL.md'),
@@ -53,14 +53,14 @@ async function writeSkill(cwd: string, name: string, description: string): Promi
 
 /** A project with one skill of its own, bootstrapped and ready. */
 async function createProject(skillName: string): Promise<{ cwd: string; host: RuntimeHost }> {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-multiproject-'))
-  await mkdir(path.join(cwd, '.myagent'), { recursive: true })
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-multiproject-'))
+  await mkdir(path.join(cwd, '.hanekawa'), { recursive: true })
   // One config for every project: the model lives in the test's home, not in
   // each project directory.
   const home = process.env.USERPROFILE!
-  await mkdir(path.join(home, '.myagent'), { recursive: true })
+  await mkdir(path.join(home, '.hanekawa'), { recursive: true })
   await writeFile(
-    path.join(home, '.myagent', 'config.json'),
+    path.join(home, '.hanekawa', 'config.json'),
     JSON.stringify(MODEL_CONFIG),
     'utf8',
   )
@@ -144,7 +144,7 @@ test('reloading one project\'s skills does not pull in another\'s', async () => 
 
   try {
     // A skill that appears on disk in B *after* both bootstrapped. Reloading A
-    // re-reads `<A>/.myagent/skills/`, so it must not find this one.
+    // re-reads `<A>/.hanekawa/skills/`, so it must not find this one.
     await writeSkill(b.cwd, 'added-to-b-later', 'Added after bootstrap')
 
     await a.host.reloadSkills()

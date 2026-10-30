@@ -42,7 +42,7 @@ function searchTestTool(name: string, options: Partial<Tool> = {}): Tool {
 }
 
 test('grep finds matching lines', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     await writeFile(path.join(dir, 'a.txt'), 'hello\nworld\n', 'utf8')
     const result = await grepTool.execute({ pattern: 'hello', glob: '**/*.txt' }, context(dir))
@@ -55,7 +55,7 @@ test('grep finds matching lines', async () => {
 })
 
 test('grep headLimit caps total matches across files', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     await writeFile(path.join(dir, 'a.txt'), 'hit a1\nhit a2\nhit a3\n', 'utf8')
     await writeFile(path.join(dir, 'b.txt'), 'hit b1\nhit b2\nhit b3\n', 'utf8')
@@ -74,7 +74,7 @@ test('grep headLimit caps total matches across files', async () => {
 })
 
 test('read and glob tools return structured TUI summaries', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     await writeFile(path.join(dir, 'a.txt'), 'one\ntwo\nthree\n', 'utf8')
     await writeFile(path.join(dir, 'b.txt'), 'other\n', 'utf8')
@@ -94,25 +94,25 @@ test('read and glob tools return structured TUI summaries', async () => {
 })
 
 test('glob skips gitignored trees, keeps dotfiles opt-in and caps results', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const glob = getBuiltinTools().find((tool) => tool.name === 'Glob')!
     await mkdir(path.join(dir, '.git'))
     await mkdir(path.join(dir, 'node_modules', 'pkg'), { recursive: true })
     await mkdir(path.join(dir, 'src'))
-    await mkdir(path.join(dir, '.myagent'))
+    await mkdir(path.join(dir, '.hanekawa'))
     await writeFile(path.join(dir, '.gitignore'), 'node_modules/\n', 'utf8')
     await writeFile(path.join(dir, 'node_modules', 'pkg', 'index.ts'), '', 'utf8')
     await writeFile(path.join(dir, 'src', 'a.ts'), '', 'utf8')
     await writeFile(path.join(dir, 'top.ts'), '', 'utf8')
-    await writeFile(path.join(dir, '.myagent', 'notes.md'), '', 'utf8')
+    await writeFile(path.join(dir, '.hanekawa', 'notes.md'), '', 'utf8')
 
     const all = await glob.execute({ pattern: '**/*.ts' }, context(dir))
     assert.deepEqual(all.content.split('\n').sort(), ['src/a.ts', 'top.ts'])
     const top = await glob.execute({ pattern: '*.ts' }, context(dir))
     assert.equal(top.content, 'top.ts')
     assert.equal((await glob.execute({ pattern: '**/*.md' }, context(dir))).content, 'No files found.')
-    assert.equal((await glob.execute({ pattern: '.myagent/**/*.md' }, context(dir))).content, '.myagent/notes.md')
+    assert.equal((await glob.execute({ pattern: '.hanekawa/**/*.md' }, context(dir))).content, '.hanekawa/notes.md')
 
     assert.equal((await glob.execute({ pattern: './src/*.ts' }, context(dir))).content, 'src/a.ts')
     assert.equal((await glob.execute({ pattern: 'missing/**/*.ts' }, context(dir))).content, 'No files found.')
@@ -130,7 +130,7 @@ test('glob skips gitignored trees, keeps dotfiles opt-in and caps results', asyn
 })
 
 test('bash reports nonzero exits as command_failed', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const result = await bashTool.execute({ command: 'exit 7' }, context(dir))
     assert.equal(result.ok, false)
@@ -145,8 +145,8 @@ test('resolveBashTimeoutMs defaults to 60s and has no max unless the environment
   assert.equal(resolveBashTimeoutMs(undefined, {}), DEFAULT_BASH_TIMEOUT_MS)
   assert.equal(resolveBashTimeoutMs(50, {}), 50)
   assert.equal(resolveBashTimeoutMs(3_600_000, {}), 3_600_000)
-  assert.equal(resolveBashTimeoutMs(undefined, { MYAGENT_BASH_DEFAULT_TIMEOUT_MS: '5000' }), 5_000)
-  assert.equal(resolveBashTimeoutMs(8000, { MYAGENT_BASH_MAX_TIMEOUT_MS: '6000', MYAGENT_BASH_DEFAULT_TIMEOUT_MS: '1000' }), 6_000)
+  assert.equal(resolveBashTimeoutMs(undefined, { HANEKAWA_BASH_DEFAULT_TIMEOUT_MS: '5000' }), 5_000)
+  assert.equal(resolveBashTimeoutMs(8000, { HANEKAWA_BASH_MAX_TIMEOUT_MS: '6000', HANEKAWA_BASH_DEFAULT_TIMEOUT_MS: '1000' }), 6_000)
 })
 
 test('isAutobackgroundingAllowed rejects leading sleep only', () => {
@@ -158,7 +158,7 @@ test('isAutobackgroundingAllowed rejects leading sleep only', () => {
 
 test('bash hard-timeouts leading sleep that is allowed to run', async () => {
   // sleep < 2s is not blocked by detectSleepPattern, but must not auto-background.
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const result = await bashTool.execute({
       command: 'sleep 1',
@@ -174,7 +174,7 @@ test('bash hard-timeouts leading sleep that is allowed to run', async () => {
 })
 
 test('bash timeout auto-backgrounds long non-sleep commands', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   const registry = new BackgroundTaskRegistry()
   const tool = createBashTool(registry)
   const ctx = { ...context(dir), sessionId: 'auto-bg-1' }
@@ -202,7 +202,7 @@ test('bash timeout auto-backgrounds long non-sleep commands', async () => {
 })
 
 test('bash timeout auto-background preserves process output', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   const registry = new BackgroundTaskRegistry()
   const tool = createBashTool(registry)
   const ctx = { ...context(dir), sessionId: 'auto-bg-out' }
@@ -228,7 +228,7 @@ test('bash timeout auto-background preserves process output', async () => {
 })
 
 test('bash nested sleep timeout auto-backgrounds promptly', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   const registry = new BackgroundTaskRegistry()
   const tool = createBashTool(registry)
   const ctx = { ...context(dir), sessionId: 'nested-bg' }
@@ -251,7 +251,7 @@ test('bash nested sleep timeout auto-backgrounds promptly', async () => {
 })
 
 test('bash subshell sleep timeout auto-backgrounds promptly', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   const registry = new BackgroundTaskRegistry()
   const tool = createBashTool(registry)
   const ctx = { ...context(dir), sessionId: 'subshell-bg' }
@@ -272,7 +272,7 @@ test('bash subshell sleep timeout auto-backgrounds promptly', async () => {
 })
 
 test('editFile uses text found by Grep without an extra Read', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     await writeFile(path.join(dir, 'a.txt'), 'hello\nkeep me\n', 'utf8')
@@ -291,7 +291,7 @@ test('editFile uses text found by Grep without an extra Read', async () => {
 })
 
 test('editFile edits after readFile', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = context(dir)
     await writeFile(path.join(dir, 'a.txt'), 'hello\n', 'utf8')
@@ -305,7 +305,7 @@ test('editFile edits after readFile', async () => {
 })
 
 test('readFile caps lines, long lines and tokens while Edit still reaches the whole file', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = context(dir)
     const lines = Array.from({ length: 3000 }, (_, i) => `line ${i + 1}`)
@@ -331,7 +331,7 @@ test('readFile caps lines, long lines and tokens while Edit still reaches the wh
 })
 
 test('editFile treats dollar sequences in replacement as literal text', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = context(dir)
     const file = path.join(dir, 'a.txt')
@@ -352,7 +352,7 @@ test('editFile treats dollar sequences in replacement as literal text', async ()
 })
 
 test('editFile reports nearby context when oldString matches multiple times', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = context(dir)
     await writeFile(path.join(dir, 'a.txt'), [
@@ -378,7 +378,7 @@ test('editFile reports nearby context when oldString matches multiple times', as
 })
 
 test('editFile truncates oldString match context after five matches', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = context(dir)
     await writeFile(path.join(dir, 'a.txt'), 'x\nx\nx\nx\nx\nx\n', 'utf8')
@@ -395,7 +395,7 @@ test('editFile truncates oldString match context after five matches', async () =
 })
 
 test('multiEdit applies multiple replacements atomically without Read', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'a.txt')
@@ -432,7 +432,7 @@ test('multiEdit applies multiple replacements atomically without Read', async ()
 })
 
 test('multiEdit treats dollar sequences in replacements as literal text', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = context(dir)
     const file = path.join(dir, 'a.txt')
@@ -455,7 +455,7 @@ test('multiEdit treats dollar sequences in replacements as literal text', async 
 })
 
 test('multiEdit does not write when any replacement is ambiguous', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = context(dir)
     const file = path.join(dir, 'a.txt')
@@ -478,7 +478,7 @@ test('multiEdit does not write when any replacement is ambiguous', async () => {
 })
 
 test('readFile tracks content for post-compact restoration', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'a.txt')
@@ -499,7 +499,7 @@ test('readFile tracks content for post-compact restoration', async () => {
 })
 
 test('readFile evicts read tracking and read state together', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const firstFile = path.join(dir, 'first.txt')
@@ -525,7 +525,7 @@ test('readFile evicts read tracking and read state together', async () => {
 })
 
 test('writeFile reports missing read state separately from unread files', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'a.txt')
@@ -544,7 +544,7 @@ test('writeFile reports missing read state separately from unread files', async 
 })
 
 test('readFile refreshes recency timestamp on repeated reads', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'a.txt')
@@ -562,7 +562,7 @@ test('readFile refreshes recency timestamp on repeated reads', async () => {
 })
 
 test('editFile matches the current content of a file replaced after Read', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'a.txt')
@@ -582,7 +582,7 @@ test('editFile matches the current content of a file replaced after Read', async
 })
 
 test('editFile accepts a file whose metadata changed but whose text did not', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'a.txt')
@@ -603,7 +603,7 @@ test('editFile accepts a file whose metadata changed but whose text did not', as
 })
 
 test('rememberShownFiles counts only files shown whole and unchanged as read', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const whole = path.join(dir, 'AGENTS.md')
@@ -628,7 +628,7 @@ test('rememberShownFiles counts only files shown whole and unchanged as read', a
 })
 
 test('editFile points a missed oldString at the most similar lines', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     await writeFile(path.join(dir, 'a.ts'), 'const a = 1\nfunction total(items) {\n  return items.reduce((sum, x) => sum + x, 0)\n}\nconst b = 2\n', 'utf8')
@@ -651,7 +651,7 @@ test('editFile points a missed oldString at the most similar lines', async () =>
 })
 
 test('editFile preserves changes outside the matched text without another Read', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'a.txt')
@@ -681,7 +681,7 @@ test('editFile preserves changes outside the matched text without another Read',
 })
 
 test('string edits refuse changed targets and leave the current file untouched', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     for (const tool of [editFileTool, multiEditTool]) {
       const ctx = context(dir)
@@ -704,7 +704,7 @@ test('string edits refuse changed targets and leave the current file untouched',
 })
 
 test('multiEdit preserves unrelated changes since the previous Read', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = context(dir)
     const file = path.join(dir, 'a.txt')
@@ -725,7 +725,7 @@ test('multiEdit preserves unrelated changes since the previous Read', async () =
 })
 
 test('writeFile creates parent directories', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const result = await writeFileTool.execute({ filePath: 'nested/a.txt', content: 'hello' }, context(dir))
     assert.equal(result.ok, true)
@@ -747,7 +747,7 @@ test('writeFile creates parent directories', async () => {
 })
 
 test('writeFile refuses new file when parent has a case-insensitive name collision', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     await writeFile(path.join(dir, 'Existing.txt'), 'hello', 'utf8')
     const result = await writeFileTool.execute({ filePath: 'existing.txt', content: 'updated' }, context(dir))
@@ -761,7 +761,7 @@ test('writeFile refuses new file when parent has a case-insensitive name collisi
 })
 
 test('writeFile refuses to overwrite unread existing files', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     await writeFile(path.join(dir, 'a.txt'), 'hello', 'utf8')
     const result = await writeFileTool.execute({ filePath: 'a.txt', content: 'updated' }, context(dir))
@@ -774,7 +774,7 @@ test('writeFile refuses to overwrite unread existing files', async () => {
 })
 
 test('writeFile overwrites fresh reads and updates read state', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'a.txt')
@@ -806,7 +806,7 @@ test('writeFile overwrites fresh reads and updates read state', async () => {
 })
 
 test('writeFile follows a legitimate symlink parent to its target', async (t) => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     await mkdir(path.join(dir, 'real'))
     try {
@@ -825,7 +825,7 @@ test('writeFile follows a legitimate symlink parent to its target', async (t) =>
 })
 
 test('editFile follows a legitimate symlink parent to its target', async (t) => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     await mkdir(path.join(dir, 'real'))
@@ -847,7 +847,7 @@ test('editFile follows a legitimate symlink parent to its target', async (t) => 
 })
 
 test('deleteFile removes files', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'a.txt')
@@ -865,7 +865,7 @@ test('deleteFile removes files', async () => {
 })
 
 test('deleteFile refuses unread files', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     await writeFile(path.join(dir, 'a.txt'), 'hello', 'utf8')
     const result = await deleteFileTool.execute({ filePath: 'a.txt' }, context(dir))
@@ -877,7 +877,7 @@ test('deleteFile refuses unread files', async () => {
 })
 
 test('deleteFile follows a legitimate symlink parent to its target', async (t) => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     await mkdir(path.join(dir, 'real'))
@@ -915,7 +915,7 @@ test('concurrency-safe builtin tools are read-only and write tools remain barrie
 // ── Edit fuzzy matching (quote normalization) ──────────────────────────
 
 test('editFile succeeds with straight quotes when file has curly quotes', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'quotes.txt')
@@ -936,7 +936,7 @@ test('editFile succeeds with straight quotes when file has curly quotes', async 
 })
 
 test('editFile preserves curly quotes in newString when matched via normalization', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'quotes.txt')
@@ -958,7 +958,7 @@ test('editFile preserves curly quotes in newString when matched via normalizatio
 })
 
 test('editFile handles apostrophe normalization (contractions)', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'contract.txt')
@@ -979,7 +979,7 @@ test('editFile handles apostrophe normalization (contractions)', async () => {
 })
 
 test('editFile exact match still works (no regression)', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const ctx = { ...context(dir), readFileState: new Map<string, ReadFileState>() }
     const file = path.join(dir, 'exact.txt')
@@ -1001,7 +1001,7 @@ test('editFile exact match still works (no regression)', async () => {
 // ── Grep pagination ────────────────────────────────────────────────────
 
 test('grep offset skips correct number of results', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     await writeFile(path.join(dir, 'a.txt'), 'line1\nline2\nline3\nline4\nline5\n', 'utf8')
     const result = await grepTool.execute({ pattern: 'line', path: dir, offset: 2 }, context(dir))
@@ -1018,7 +1018,7 @@ test('grep offset skips correct number of results', async () => {
 })
 
 test('grep headLimit caps total results', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     await writeFile(path.join(dir, 'a.txt'), 'line1\nline2\nline3\nline4\nline5\n', 'utf8')
     const result = await grepTool.execute({ pattern: 'line', path: dir, headLimit: 2 }, context(dir))
@@ -1031,7 +1031,7 @@ test('grep headLimit caps total results', async () => {
 })
 
 test('grep pagination notice appears when results are truncated', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     await writeFile(path.join(dir, 'a.txt'), 'line1\nline2\nline3\n', 'utf8')
     const result = await grepTool.execute({ pattern: 'line', path: dir, headLimit: 1, offset: 1 }, context(dir))
@@ -1286,7 +1286,7 @@ test('detectSleepPattern does not match non-sleep commands', () => {
 })
 
 test('bash blocks sleep without run_in_background', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const result = await bashTool.execute({ command: 'sleep 5' }, context(dir))
     assert.equal(result.ok, false)
@@ -1298,7 +1298,7 @@ test('bash blocks sleep without run_in_background', async () => {
 })
 
 test('bash blocks sleep with || operator', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const result = await bashTool.execute({ command: 'sleep 5 || echo fail' }, context(dir))
     assert.equal(result.ok, false)
@@ -1309,7 +1309,7 @@ test('bash blocks sleep with || operator', async () => {
 })
 
 test('bash blocks sleep with pipe operator', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const result = await bashTool.execute({ command: 'sleep 5 | cat' }, context(dir))
     assert.equal(result.ok, false)
@@ -1320,7 +1320,7 @@ test('bash blocks sleep with pipe operator', async () => {
 })
 
 test('bash allows sleep with run_in_background', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     // Use a very short background sleep to not slow down tests
     const result = await bashTool.execute({ command: 'sleep 0.1', run_in_background: true }, context(dir))
@@ -1332,7 +1332,7 @@ test('bash allows sleep with run_in_background', async () => {
 })
 
 test('bash allows short sleep without run_in_background', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const result = await bashTool.execute({ command: 'sleep 0.1' }, context(dir))
     assert.equal(result.ok, true)
@@ -1342,7 +1342,7 @@ test('bash allows short sleep without run_in_background', async () => {
 })
 
 test('bash allows non-sleep commands normally', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-tools-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-tools-'))
   try {
     const result = await bashTool.execute({ command: 'echo hello' }, context(dir))
     assert.equal(result.ok, true)

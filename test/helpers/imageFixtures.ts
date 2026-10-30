@@ -65,7 +65,7 @@ export function makeImageAttachmentRef(
 }
 
 export interface TempAttachmentArea {
-  /** Temp root standing in for a project's `<cwd>/.myagent` directory. */
+  /** Temp root standing in for a project's `<cwd>/.hanekawa` directory. */
   readonly root: string
   /** `<root>/attachments/<sessionId>`, already created (S05 storage layout). */
   readonly attachmentsDir: string

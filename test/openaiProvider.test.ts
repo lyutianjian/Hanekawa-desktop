@@ -890,7 +890,7 @@ test('each server gets its own request shape and thinking fields', async () => {
     const payload = payloads[0]!
     for (const [key, value] of Object.entries(entry.expect)) assert.deepEqual(payload[key], value, `${entry.url} ${key}`)
     for (const key of entry.absent) assert.equal(key in payload, false, `${entry.url} must not send ${key}`)
-    assert.match(String(payload.prompt_cache_key), /^myagent:/, `${entry.url} sends the cache key`)
+    assert.match(String(payload.prompt_cache_key), /^hanekawa:/, `${entry.url} sends the cache key`)
     assert.equal(payload.stream, true)
     assert.deepEqual(payload.stream_options, { include_usage: true })
     const instruction = (payload.messages as Array<{ role: string }>)[0]!.role

@@ -8,18 +8,18 @@ import path from 'node:path'
 import { ConfigService } from '../src/config/service.js'
 import { migrateCoordinationSettings } from '../src/config/coordinationMigration.js'
 import { localSettingsPath } from '../src/config/settings.js'
-import { getGlobalMyAgentDir } from '../src/utils/paths.js'
+import { getGlobalHanekawaDir } from '../src/utils/paths.js'
 
 // A throwaway home per test: `ConfigService`'s save target and every project's
 // personal layer are resolved under `HOME`.
 beforeEach(() => {
-  const testHome = mkdtempSync(path.join(tmpdir(), 'myagent-home-'))
+  const testHome = mkdtempSync(path.join(tmpdir(), 'hanekawa-home-'))
   process.env.USERPROFILE = testHome
   process.env.HOME = testHome
 })
 
 async function newConfig(): Promise<ConfigService> {
-  const cwd = await mkdtemp(path.join(tmpdir(), 'myagent-config-'))
+  const cwd = await mkdtemp(path.join(tmpdir(), 'hanekawa-config-'))
   const config = new ConfigService(cwd)
   await config.load()
   config.setModelConfig('big', { provider: 'openai', model: 'big' })
@@ -29,7 +29,7 @@ async function newConfig(): Promise<ConfigService> {
 }
 
 async function projectRoot(): Promise<string> {
-  return mkdtemp(path.join(tmpdir(), 'myagent-project-'))
+  return mkdtemp(path.join(tmpdir(), 'hanekawa-project-'))
 }
 
 async function writeSettings(file: string, value: unknown): Promise<void> {
@@ -128,10 +128,10 @@ test('one project migrates all six values into the global config and is cleaned 
 test('the global settings file is a source too; a repository file is not', async () => {
   const config = await newConfig()
   const root = await projectRoot()
-  await writeSettings(path.join(getGlobalMyAgentDir(), 'settings.json'), {
+  await writeSettings(path.join(getGlobalHanekawaDir(), 'settings.json'), {
     coordination: { quietDays: 1 },
   })
-  await writeSettings(path.join(root, '.myagent', 'settings.json'), {
+  await writeSettings(path.join(root, '.hanekawa', 'settings.json'), {
     coordination: { quietDays: 6 },
   })
 
@@ -139,7 +139,7 @@ test('the global settings file is a source too; a repository file is not', async
   assert.equal(config.getCoordination().quietDays, 1)
   // A checked-in project file is never a migration source and is left alone.
   assert.equal(
-    ((await readSettings(path.join(root, '.myagent', 'settings.json'))).coordination as { quietDays: number })
+    ((await readSettings(path.join(root, '.hanekawa', 'settings.json'))).coordination as { quietDays: number })
       .quietDays,
     6,
   )

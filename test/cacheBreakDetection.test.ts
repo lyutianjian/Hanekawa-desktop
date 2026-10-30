@@ -164,10 +164,10 @@ test('cache break detection reports beta header and cache scope changes', () => 
 
 test('debug cache break writes hash-only diagnostics', async () => {
   resetCacheBreakDetection()
-  const originalDebug = process.env.MYAGENT_DEBUG_PROVIDER
+  const originalDebug = process.env.HANEKAWA_DEBUG_PROVIDER
   const originalCwd = process.cwd()
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-cache-break-'))
-  process.env.MYAGENT_DEBUG_PROVIDER = '1'
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-cache-break-'))
+  process.env.HANEKAWA_DEBUG_PROVIDER = '1'
   process.chdir(dir)
   try {
     recordPromptState({ system: 'system-a', toolsJson: '[]', model: 'model-a' }, MAIN_SOURCE)
@@ -189,9 +189,9 @@ test('debug cache break writes hash-only diagnostics', async () => {
   } finally {
     process.chdir(originalCwd)
     if (originalDebug === undefined) {
-      delete process.env.MYAGENT_DEBUG_PROVIDER
+      delete process.env.HANEKAWA_DEBUG_PROVIDER
     } else {
-      process.env.MYAGENT_DEBUG_PROVIDER = originalDebug
+      process.env.HANEKAWA_DEBUG_PROVIDER = originalDebug
     }
     await rm(dir, { recursive: true, force: true })
   }
@@ -303,8 +303,8 @@ test('two project roots do not share a cache-read baseline', async () => {
 
 test('cache break diagnostics are written under the source\'s own project', async () => {
   resetCacheBreakDetection()
-  const originalDebug = process.env.MYAGENT_DEBUG_PROVIDER
-  process.env.MYAGENT_DEBUG_PROVIDER = '1'
+  const originalDebug = process.env.HANEKAWA_DEBUG_PROVIDER
+  process.env.HANEKAWA_DEBUG_PROVIDER = '1'
   const projectA = await mkdtemp(path.join(os.tmpdir(), 'cachebreak-diagA-'))
   const projectB = await mkdtemp(path.join(os.tmpdir(), 'cachebreak-diagB-'))
 
@@ -336,25 +336,25 @@ test('cache break diagnostics are written under the source\'s own project', asyn
     const bFiles = existsSync(bDiagnostics) ? readdirSync(bDiagnostics) : []
     assert.deepEqual(bFiles, [], 'project B never broke, so it gets no file')
   } finally {
-    if (originalDebug === undefined) delete process.env.MYAGENT_DEBUG_PROVIDER
-    else process.env.MYAGENT_DEBUG_PROVIDER = originalDebug
+    if (originalDebug === undefined) delete process.env.HANEKAWA_DEBUG_PROVIDER
+    else process.env.HANEKAWA_DEBUG_PROVIDER = originalDebug
     await rm(projectA, { recursive: true, force: true })
     await rm(projectB, { recursive: true, force: true })
   }
 })
 
 async function withDebugProvider(run: (dir: string) => void | Promise<void>): Promise<void> {
-  const originalDebug = process.env.MYAGENT_DEBUG_PROVIDER
+  const originalDebug = process.env.HANEKAWA_DEBUG_PROVIDER
   const originalCwd = process.cwd()
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-cache-messages-'))
-  process.env.MYAGENT_DEBUG_PROVIDER = '1'
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-cache-messages-'))
+  process.env.HANEKAWA_DEBUG_PROVIDER = '1'
   process.chdir(dir)
   try {
     await run(dir)
   } finally {
     process.chdir(originalCwd)
-    if (originalDebug === undefined) delete process.env.MYAGENT_DEBUG_PROVIDER
-    else process.env.MYAGENT_DEBUG_PROVIDER = originalDebug
+    if (originalDebug === undefined) delete process.env.HANEKAWA_DEBUG_PROVIDER
+    else process.env.HANEKAWA_DEBUG_PROVIDER = originalDebug
     await rm(dir, { recursive: true, force: true })
   }
 }
@@ -403,10 +403,10 @@ test('appending messages is not reported as a history change', async () => {
   })
 })
 
-test('message fingerprints are skipped without MYAGENT_DEBUG_PROVIDER', () => {
+test('message fingerprints are skipped without HANEKAWA_DEBUG_PROVIDER', () => {
   resetCacheBreakDetection()
-  const originalDebug = process.env.MYAGENT_DEBUG_PROVIDER
-  delete process.env.MYAGENT_DEBUG_PROVIDER
+  const originalDebug = process.env.HANEKAWA_DEBUG_PROVIDER
+  delete process.env.HANEKAWA_DEBUG_PROVIDER
   try {
     const state = { system: 'sys', toolsJson: '[]', model: 'm' }
     recordPromptState({ ...state, messages: [message('a'), message('b')] }, MAIN_SOURCE)
@@ -419,6 +419,6 @@ test('message fingerprints are skipped without MYAGENT_DEBUG_PROVIDER', () => {
     assert.equal(result.messagesChangedAt, undefined)
     assert.deepEqual(result.reasons, ['server_side'])
   } finally {
-    if (originalDebug !== undefined) process.env.MYAGENT_DEBUG_PROVIDER = originalDebug
+    if (originalDebug !== undefined) process.env.HANEKAWA_DEBUG_PROVIDER = originalDebug
   }
 })

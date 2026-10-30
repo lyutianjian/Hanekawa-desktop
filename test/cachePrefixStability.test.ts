@@ -77,7 +77,7 @@ async function payloadMessages(
     contextItems: built.contextItems,
     systemBlocks: built.systemBlocks,
     tools: [tool],
-    cacheRuntime: { env: { MYAGENT_PROMPT_CACHE_1H: '0' } },
+    cacheRuntime: { env: { HANEKAWA_PROMPT_CACHE_1H: '0' } },
   }) as unknown as { messages: Array<Record<string, unknown>> }
   return payload.messages
 }

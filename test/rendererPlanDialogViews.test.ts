@@ -16,7 +16,7 @@ import type { ExitDialogInput, ExitPlanDecision } from '../src/harness/planModeM
 function input(overrides: Partial<ExitDialogInput> = {}): ExitDialogInput {
   return {
     planContent: '# Plan\n- do the thing',
-    planFilePath: '.myagent/plans/plan.md',
+    planFilePath: '.hanekawa/plans/plan.md',
     ...overrides,
   }
 }
@@ -58,7 +58,7 @@ test('entry keys: Enter and 1 allow, Escape and 2 decline, modified keys do noth
 test('a proposed plan lays out 拒绝 / 修改… on the left and 接受 / 接受并自动执行 on the right', () => {
   const view = exitPlanViewModel(createExitPlanState(input()), 'darwin')
   assert.equal(view.title, '助手提出了一个计划')
-  assert.equal(view.planFilePath, '.myagent/plans/plan.md')
+  assert.equal(view.planFilePath, '.hanekawa/plans/plan.md')
   assert.deepEqual(view.buttons.map((button) => [button.label, button.side, button.shortcut]), [
     ['拒绝', 'start', undefined],
     ['修改…', 'start', 'Esc'],

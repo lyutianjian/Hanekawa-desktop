@@ -11,7 +11,7 @@ describe('filePathCompleter', () => {
   let tmpDir: string
 
   beforeEach(() => {
-    tmpDir = mkdtempSync(join(tmpdir(), 'myagent-completer-'))
+    tmpDir = mkdtempSync(join(tmpdir(), 'hanekawa-completer-'))
     mkdirSync(join(tmpDir, 'subdir'))
     writeFileSync(join(tmpDir, 'file-a.txt'), '')
     writeFileSync(join(tmpDir, 'file-b.txt'), '')

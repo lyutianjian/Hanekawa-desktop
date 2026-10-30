@@ -27,7 +27,7 @@ async function setup(t: TestContext) {
   process.env.HOME = root
   process.env.USERPROFILE = root
   const cwd = path.join(root, 'workspace')
-  const globalDir = path.join(root, '.myagent')
+  const globalDir = path.join(root, '.hanekawa')
   await mkdir(cwd)
   await mkdir(globalDir)
   const file = path.join(globalDir, 'config.json')

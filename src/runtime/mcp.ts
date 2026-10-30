@@ -6,13 +6,13 @@ import {
 } from '../services/mcp/index.js'
 import type { ManagedMcpClient, ManagedMcpClientOptions, McpServerConfig, McpTool } from '../services/mcp/index.js'
 import { trustMcpServerLocally } from '../config/settings.js'
-import type { MyAgentSettings } from '../config/settings.js'
+import type { HanekawaSettings } from '../config/settings.js'
 import type { ToolRegistry } from './toolRegistry.js'
 import type { McpConnectionStatus } from './types.js'
 
 export interface ConnectMcpServersOptions {
   cwd: string
-  settings: MyAgentSettings
+  settings: HanekawaSettings
   registry: ToolRegistry
   /** Asked once per untrusted server. Must run before any UI owns stdin. */
   confirmTrust: (name: string, server: McpServerConfig) => Promise<boolean>

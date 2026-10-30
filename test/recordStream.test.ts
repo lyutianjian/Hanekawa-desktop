@@ -41,7 +41,7 @@ test('MemoryRecordStream stores metrics separately from records', async () => {
 })
 
 test('JsonlRecordStream delegates records and metrics to SessionStore', async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-record-stream-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-record-stream-'))
   try {
     const store = new SessionStore(dir)
     await store.init()

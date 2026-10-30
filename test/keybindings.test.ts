@@ -9,7 +9,7 @@ import { loadKeybindingsConfig } from '../src/config/keybindings.js'
  * Unit tests for loadKeybindingsConfig.
  *
  * Each test creates an isolated temp directory and writes (or omits) a
- * `.myagent/keybindings.json` file inside it, then asserts the loader's
+ * `.hanekawa/keybindings.json` file inside it, then asserts the loader's
  * behavior. This keeps tests hermetic and independent of the user's
  * actual config.
  */
@@ -17,11 +17,11 @@ import { loadKeybindingsConfig } from '../src/config/keybindings.js'
 const DEFAULT = 300
 
 async function makeTempCwd(): Promise<string> {
-  return mkdtemp(path.join(os.tmpdir(), 'myagent-keybindings-'))
+  return mkdtemp(path.join(os.tmpdir(), 'hanekawa-keybindings-'))
 }
 
 async function writeKeybindings(cwd: string, body: string): Promise<void> {
-  const dir = path.join(cwd, '.myagent')
+  const dir = path.join(cwd, '.hanekawa')
   await mkdir(dir, { recursive: true })
   await writeFile(path.join(dir, 'keybindings.json'), body, 'utf8')
 }
@@ -63,7 +63,7 @@ describe('loadKeybindingsConfig', () => {
   it('returns the default (300) when the keybindings file is missing', async () => {
     const cwd = await makeTempCwd()
     try {
-      // No `.myagent/keybindings.json` is written.
+      // No `.hanekawa/keybindings.json` is written.
       const config = loadKeybindingsConfig(cwd)
       assert.equal(config.doubleTapWindow, DEFAULT)
     } finally {

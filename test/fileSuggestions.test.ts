@@ -16,7 +16,7 @@ import {
  * assertions about the extension/protected-path filters rather than about git.
  */
 async function withFixture(run: (dir: string) => Promise<void>): Promise<void> {
-  const dir = await mkdtemp(path.join(os.tmpdir(), 'myagent-filesuggest-'))
+  const dir = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-filesuggest-'))
   try {
     await mkdir(path.join(dir, 'src'))
     await mkdir(path.join(dir, 'docs'))
@@ -122,7 +122,7 @@ test('file suggestions refuse to escape the working directory', async () => {
 test('file suggestions refuse to descend into a protected path', async () => {
   await withFixture(async (dir) => {
     assert.deepEqual(await generateFileSuggestions('@.git/', 6, dir), [])
-    assert.deepEqual(await generateFileSuggestions('@.myagent/', 10, dir), [])
+    assert.deepEqual(await generateFileSuggestions('@.hanekawa/', 10, dir), [])
   })
 })
 

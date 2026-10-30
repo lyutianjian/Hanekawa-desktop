@@ -22,7 +22,7 @@
  *     history row of a not-yet-open project is clicked. Startup resolves the
  *     directory from the "added projects" registry (the project of the most
  *     recent session anywhere), falling back to the global workspace — the
- *     home directory, whose records land in `~/.myagent`. The registry keeps
+ *     home directory, whose records land in `~/.hanekawa`. The registry keeps
  *     *added* order and re-opening does not move an entry, because it is also
  *     the sidebar's group order.
  *  2. `ensureShell()` builds the one window there is, wires the transport,
@@ -98,6 +98,8 @@ import type { RuntimeHost } from '../runtime/types.js'
 import { ShellHost } from './shellHost.js'
 import { QuitCoordinator } from './quitCoordinator.js'
 import { explicitCwd, secondLaunchIntent } from './launchArgs.js'
+import { legacyUserDataPath, migrateLegacyUserData } from './userDataMigration.js'
+import { migrateLegacyGlobalData } from '../utils/legacyDataMigration.js'
 import {
   RendererRecovery,
   RENDERER_RECOVERY_ATTEMPTS,
@@ -356,6 +358,8 @@ const coordination = new CoordinationService(
 const coordinationTools = createCoordinationTools(coordination)
 /** Shown notifications, held until clicked or closed so a click is never collected away. */
 const liveNotifications = new Set<Notification>()
+/** Old-data moves that could not finish; the first window tells the user. */
+const startupWarnings: string[] = []
 
 if (!app.requestSingleInstanceLock()) {
   // `app.quit()` does not stop module evaluation, so everything below has to
@@ -363,6 +367,12 @@ if (!app.requestSingleInstanceLock()) {
   // `bootstrap()` (MCP connects, store init) on a process that is exiting.
   app.quit()
 } else {
+  // The lock lives in the new `userData`, so it is safe to read the old one
+  // here: no other instance of this version can be writing it.
+  if (migrateLegacyUserData(legacyUserDataPath(app.getPath('appData')), app.getPath('userData')) === 'failed') {
+    startupWarnings.push('旧窗口位置和主题偏好迁移失败，将使用默认窗口设置。')
+  }
+
   app.on('second-instance', (_event, argv) => {
     // Only `--cwd=` is intent — `launchArgs.ts` explains why the event's own
     // working directory is not, and is where the decision is tested. With a
@@ -403,6 +413,17 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   void app.whenReady().then(async () => {
+    const legacyData = migrateLegacyGlobalData(userHome())
+    startupWarnings.push(...legacyData.warnings)
+    if (startupWarnings.length > 0) {
+      await dialog.showMessageBox({
+        type: 'warning',
+        title: 'Hanekawa 数据迁移',
+        message: '部分旧数据没有自动迁移',
+        detail: startupWarnings.join('\n\n'),
+      })
+    }
+
     await startupEnv.ready()
     // Windows ties notifications and the taskbar button to this id; without
     // one a toast can be dropped or credited to "electron.app". A dev run has
@@ -651,7 +672,7 @@ function runMenuAction(action: WireMenuAction): void {
  * a fresh draft.
  *
  * Idempotent: `directory.add` refuses a duplicate root, since two
- * `ProjectRuntime`s over one `.myagent/` means two `SessionStore`s appending
+ * `ProjectRuntime`s over one `.hanekawa/` means two `SessionStore`s appending
  * to the same JSONL files, so an already-open project is handed back as-is —
  * which is also what makes repeated "open this project" requests safe.
  *
@@ -691,7 +712,7 @@ async function bootstrapProject(
 ): Promise<{ entry: ProjectEntry; session: SessionMeta }> {
   await startupEnv.ready()
   // A macOS Dock reopen can land while the last window's close is still
-  // shutting this root down; two runtimes over one `.myagent/` must not overlap.
+  // shutting this root down; two runtimes over one `.hanekawa/` must not overlap.
   await directory.whenClosed(cwd)
   const store = new SessionStore(cwd)
   await store.init()
@@ -1387,7 +1408,7 @@ async function promptSkillImport(prompt: SkillImportPrompt): Promise<boolean> {
  * “最近一次会话的目录”： the project whose newest session is the newest
  * anywhere, the most recently added project when nothing has sessions yet, or
  * the global workspace (the home directory) when no project has ever been
- * added — the welcome-screen state whose records land in `~/.myagent`.
+ * added — the welcome-screen state whose records land in `~/.hanekawa`.
  */
 async function resolveStartupProject(): Promise<string> {
   const explicit = explicitCwd()

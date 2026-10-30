@@ -5,7 +5,7 @@ import { drawnSteps, isMemoryIndex, memoryOp } from '../src/desktop/renderer/mod
 import { callParts, type CallStep } from '../src/desktop/renderer/model/toolPhrases.js'
 import { summarizeRun } from '../src/desktop/renderer/model/thinking.js'
 
-const DIR = '/home/me/.myagent/projects/p/memory'
+const DIR = '/home/me/.hanekawa/projects/p/memory'
 
 function step(id: string, toolName: string, useSummary: string, extra: { memory?: false; status?: ToolStepStatus; note?: string } = {}): CallStep {
   return {

@@ -26,7 +26,7 @@ import type { SessionRecord } from '../src/harness/types.js'
  */
 
 async function makeTempCwd(): Promise<string> {
-  return mkdtemp(path.join(os.tmpdir(), 'myagent-session-prop-'))
+  return mkdtemp(path.join(os.tmpdir(), 'hanekawa-session-prop-'))
 }
 
 async function cleanup(dir: string): Promise<void> {

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { MyAgentSettings } from '../../config/settings.js'
+import type { HanekawaSettings } from '../../config/settings.js'
 import type { McpServerConfig } from './types.js'
 
 interface McpConfig {
@@ -10,15 +10,15 @@ interface McpConfig {
 /**
  * The configured servers: the merged settings when a caller has them, and
  * otherwise the two files `loadSettingsLayers` reads as one layer —
- * `.myagent/mcp.json`, then `.mcp.json` (Claude Code's) underneath it.
+ * `.hanekawa/mcp.json`, then `.mcp.json` (Claude Code's) underneath it.
  */
-export async function loadMcpConfig(cwd: string, settings?: MyAgentSettings): Promise<Record<string, McpServerConfig>> {
+export async function loadMcpConfig(cwd: string, settings?: HanekawaSettings): Promise<Record<string, McpServerConfig>> {
   if (settings) return { ...(settings.mcpServers ?? {}) }
 
   // Legacy fallback for callers that have not loaded merged settings yet.
   const [compat, owned] = await Promise.all([
     readServersFile(join(cwd, '.mcp.json')),
-    readServersFile(join(cwd, '.myagent', 'mcp.json')),
+    readServersFile(join(cwd, '.hanekawa', 'mcp.json')),
   ])
   return { ...compat, ...owned }
 }

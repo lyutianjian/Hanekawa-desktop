@@ -141,7 +141,7 @@ export interface SessionControllerDeps {
   recordProxy: RecordProxy
   /** Read once per turn, so a mid-turn runtime swap cannot retarget the in-flight run. */
   getSession: () => AgentSession
-  /** Seam for tests; production backs up real files under `~/.myagent`. */
+  /** Seam for tests; production backs up real files under `~/.hanekawa`. */
   createFileHistoryService?: (cwd: string, sessionId: string) => FileHistoryService
   /** Seam for tests: how long the placeholder bar stands while the naming call is out. */
   titlePlaceholderMs?: number
@@ -1252,7 +1252,7 @@ function abortError(reason: unknown): Error {
 }
 
 function debugFileHistory(message: string): void {
-  if (process.env.MYAGENT_DEBUG_PROVIDER === '1') {
+  if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
     console.error(`[hanekawa][file-history] ${message}`)
   }
 }

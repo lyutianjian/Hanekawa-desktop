@@ -11,13 +11,13 @@ import {
 } from '../src/runtime/promptHistory.js'
 
 test('prompt history uses the user-level JSONL path and preserves duplicates and multiline text', async () => {
-  const home = await mkdtemp(path.join(tmpdir(), 'myagent-history-'))
+  const home = await mkdtemp(path.join(tmpdir(), 'hanekawa-history-'))
   try {
     const cwd = path.join(home, 'project')
     await appendPromptHistory('same\nmessage', cwd, { home, now: new Date('2026-01-01T00:00:00Z') })
     await appendPromptHistory('same\nmessage', cwd, { home, now: new Date('2026-01-01T00:00:01Z') })
 
-    assert.equal(getPromptHistoryPath(home), path.join(home, '.myagent', 'history.jsonl'))
+    assert.equal(getPromptHistoryPath(home), path.join(home, '.hanekawa', 'history.jsonl'))
     assert.deepEqual(promptHistoryTexts(await loadPromptHistory(cwd, { home })), [
       'same\nmessage',
       'same\nmessage',
@@ -28,7 +28,7 @@ test('prompt history uses the user-level JSONL path and preserves duplicates and
 })
 
 test('prompt history ignores malformed entries, limits recent records, and prioritizes current cwd', async () => {
-  const home = await mkdtemp(path.join(tmpdir(), 'myagent-history-'))
+  const home = await mkdtemp(path.join(tmpdir(), 'hanekawa-history-'))
   try {
     const current = path.join(home, 'current')
     const other = path.join(home, 'other')
@@ -54,7 +54,7 @@ test('prompt history ignores malformed entries, limits recent records, and prior
 })
 
 test('prompt history loads only the newest requested valid entries', async () => {
-  const home = await mkdtemp(path.join(tmpdir(), 'myagent-history-'))
+  const home = await mkdtemp(path.join(tmpdir(), 'hanekawa-history-'))
   try {
     const cwd = path.join(home, 'project')
     for (let index = 0; index < 5; index += 1) {
