@@ -1,5 +1,5 @@
 import type { SessionRecord, TaskDisplaySnapshot, TokenUsage } from '../harness/types.js'
-import { addUsageCost, cacheCreationTokens, costField, reportsCacheCreation, subtractUsageCost } from '../harness/usage.js'
+import { addUsageCost, cacheCreationTokens, costField, reportsCacheCreation } from '../harness/usage.js'
 import type { SessionStore } from '../sessions/service.js'
 
 /** Token accounting for a session: the last request plus the running total. */
@@ -29,26 +29,6 @@ export function addTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
     cacheReadInputTokens: a.cacheReadInputTokens + b.cacheReadInputTokens,
     outputTokens: a.outputTokens + b.outputTokens,
     ...costField(addUsageCost(a.cost, b.cost)),
-  }
-}
-
-/**
- * `a - b`, clamped at zero per field.
- *
- * Only one caller: `SessionController` adds each request's usage to the running
- * total the moment it lands, then settles the run by adding whatever the
- * end-of-run figure holds *beyond* what it already counted — compaction and
- * subagent transcripts, which never come through `onRequestUsage`. The clamp is
- * the safety net for a run whose total somehow trails its own requests; a
- * negative token count on screen would be worse than a stale one.
- */
-export function subtractTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
-  return {
-    inputTokens: Math.max(0, a.inputTokens - b.inputTokens),
-    ...combineCacheCreation(a, b, (left, right) => Math.max(0, left - right)),
-    cacheReadInputTokens: Math.max(0, a.cacheReadInputTokens - b.cacheReadInputTokens),
-    outputTokens: Math.max(0, a.outputTokens - b.outputTokens),
-    ...costField(subtractUsageCost(a.cost, b.cost)),
   }
 }
 

@@ -1880,7 +1880,11 @@ test('agent loop generates tool-use summary with compact model for the next requ
       summaryModelSeen = request.model
       assert.equal(displayCacheSource(request.cacheSource!), 'tool_use_summary')
       assert.match(request.messages[0]?.content ?? '', /"value":"hello"/)
-      return { content: 'echo returned hello', toolCalls: [] }
+      return {
+        content: 'echo returned hello',
+        toolCalls: [],
+        usage: { inputTokens: 30, cacheReadInputTokens: 40, outputTokens: 5 },
+      }
     },
   }
   const tools: Tool[] = [{
@@ -1895,6 +1899,7 @@ test('agent loop generates tool-use summary with compact model for the next requ
   const runner = new ToolRunner(tools, new PermissionGate(async () => true), {
     onRecord: async (record) => { records.push(record) },
   })
+  const auxReported: TokenUsage[] = []
   const loop = new AgentLoop({
     provider,
     model: 'fake-model',
@@ -1909,6 +1914,7 @@ test('agent loop generates tool-use summary with compact model for the next requ
       providerName: 'compact',
     },
     recordStream: recordStreamFor(records),
+    onAuxUsage: (usage) => { auxReported.push(usage) },
   })
 
   const response = await loop.run({ text: 'hello' })
@@ -1916,6 +1922,9 @@ test('agent loop generates tool-use summary with compact model for the next requ
   assert.equal(response.content, 'done')
   assert.equal(summaryModelSeen, 'cheap-model')
   assert.ok(records.some((record) => record.type === 'tool_use_summary' && record.summary === 'echo returned hello'))
+  // The summarizer is a model call of its own: real spend, not a foreground
+  // request, so it reaches the session total through the aux path.
+  assert.deepEqual(auxReported, [{ inputTokens: 30, cacheReadInputTokens: 40, outputTokens: 5 }])
 })
 
 test('agent loop includes sub-agent transcript usage in returned turn usage', async () => {
@@ -1957,6 +1966,7 @@ test('agent loop includes sub-agent transcript usage in returned turn usage', as
   const runner = new ToolRunner(runtimeTools, new PermissionGate(async () => true), {
     onRecord: async (record) => { records.push(record) },
   })
+  const auxReported: TokenUsage[] = []
   const loop = new AgentLoop({
     provider,
     model: 'fake-model',
@@ -1965,6 +1975,7 @@ test('agent loop includes sub-agent transcript usage in returned turn usage', as
     toolRunner: runner,
     toolContext: { cwd: process.cwd(), sessionId: 's1', readFiles: new Set() },
     recordStream: recordStreamFor(records),
+    onAuxUsage: (usage) => { auxReported.push(usage) },
   })
 
   const result = await loop.run({ text: 'start' })
@@ -1980,6 +1991,9 @@ test('agent loop includes sub-agent transcript usage in returned turn usage', as
     outputTokens: 6,
   })
   assert.ok(records.some((record) => record.type === 'subagent_transcript'))
+  // The subagent's spend is reported the moment its transcript lands, not left
+  // to the end-of-run figure that a failed turn would never reach.
+  assert.deepEqual(auxReported, [{ inputTokens: 10, cacheReadInputTokens: 20, outputTokens: 30 }])
 })
 
 test('general agents start with their own instructions, history and effort', async (t) => {
@@ -2078,6 +2092,7 @@ test('agent loop excludes compact summarizer usage from status usage', async () 
   const runner = new ToolRunner([], new PermissionGate(async () => true), {
     onRecord: async (record) => { records.push(record) },
   })
+  const auxReported: TokenUsage[] = []
   const loop = new AgentLoop({
     provider,
     model: 'fake-model',
@@ -2092,6 +2107,7 @@ test('agent loop excludes compact summarizer usage from status usage', async () 
       autoCompactReserveRatio: 0.5,
     },
     recordStream: recordStreamFor(records),
+    onAuxUsage: (usage) => { auxReported.push(usage) },
   })
 
   const result = await loop.run({ text: 'continue' })
@@ -2107,6 +2123,9 @@ test('agent loop excludes compact summarizer usage from status usage', async () 
     outputTokens: 3,
   })
   assert.ok(records.some((record) => record.type === 'compact_boundary'))
+  // The summary is spend of its own and is reported when it lands, so a turn
+  // the user aborts after compacting still counts it.
+  assert.deepEqual(auxReported, [{ inputTokens: 100, cacheReadInputTokens: 200, outputTokens: 300 }])
 })
 
 test('a provider count that still fits keeps the history whole and skips compaction', async () => {

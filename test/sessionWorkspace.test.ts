@@ -64,10 +64,15 @@ async function createHarness(): Promise<Harness> {
             invalidateRecordsCache: () => {},
             getActiveModel: () => ({ model: 'claude-test', modelKey }),
             assertImagesAllowedForSubmission: () => {},
-            run: async () => ({
-              content: 'ok',
-              usage: { inputTokens: 10, cacheReadInputTokens: 0, outputTokens: 5 },
-            }),
+            run: async () => {
+              // Mirror the loop's live report; the controller no longer settles
+              // the run's usage into the total after the fact.
+              bridges.record.onRequestUsage({ inputTokens: 10, cacheReadInputTokens: 0, outputTokens: 5 })
+              return {
+                content: 'ok',
+                usage: { inputTokens: 10, cacheReadInputTokens: 0, outputTokens: 5 },
+              }
+            },
           },
           run: async () => ({ content: 'ok' }),
           dispose: () => order.push(`disposeRuntime:${runtimeSession.id}`),

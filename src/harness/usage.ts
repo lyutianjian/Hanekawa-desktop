@@ -63,6 +63,16 @@ export function cacheHitRate(usage: TokenUsage): number | null {
   return usage.cacheReadInputTokens / total
 }
 
+/**
+ * Whether a side call spent anything worth accounting for.
+ *
+ * A response with no usage, or one that reported all zeros, has nothing to add
+ * to a session total and must not move the readout.
+ */
+export function hasTokenSpend(usage?: TokenUsage | null): usage is TokenUsage {
+  return !!usage && promptTokens(usage) + usage.outputTokens > 0
+}
+
 export function addTokenUsage(left: TokenUsage, right?: TokenUsage): TokenUsage {
   if (!right) return left
   return {
@@ -88,16 +98,6 @@ export function addUsageCost(left?: UsageCost, right?: UsageCost): UsageCost | u
     ...(left.unpriced || right.unpriced ? { unpriced: true as const } : {}),
     ...(left.legacy || right.legacy ? { legacy: true as const } : {}),
   }
-}
-
-/** `left - right` per currency, clamped at zero. The flags are `left`'s: it is the superset. */
-export function subtractUsageCost(left?: UsageCost, right?: UsageCost): UsageCost | undefined {
-  if (!left || !right) return left
-  const amounts: Record<string, number> = {}
-  for (const [currency, amount] of Object.entries(left.amounts)) {
-    amounts[currency] = Math.max(0, amount - (right.amounts[currency] ?? 0))
-  }
-  return { ...left, amounts }
 }
 
 type CompletePricing = ModelPricing & {

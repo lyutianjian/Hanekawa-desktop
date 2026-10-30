@@ -114,6 +114,7 @@ for (const replacement of ['another session', 'same session', 'disposed'] as con
       oldOptions.onRecord?.(record)
       oldOptions.onStreamEvent?.({ type: 'text_delta', text: 'old stream' })
       oldOptions.onRequestUsage?.({ inputTokens: 100, cacheReadInputTokens: 0, outputTokens: 7 }, record.id)
+      oldOptions.onAuxUsage?.({ inputTokens: 50, cacheReadInputTokens: 0, outputTokens: 3 })
       await (oldOptions.toolRunner as unknown as { events: ToolRunEvents }).events.onProgress?.({
         phase: 'started', call: { id: 'late-tool', name: 'Read', input: {} },
       })
@@ -129,6 +130,10 @@ for (const replacement of ['another session', 'same session', 'disposed'] as con
         const current = (pane.runtimeSlot.requireCurrent().loop as unknown as { options: AgentLoopOptions }).options
         current.onRequestUsage?.({ inputTokens: 20, cacheReadInputTokens: 0, outputTokens: 2 })
         assert.equal(pane.controller.getSnapshot().usage.lastRequest?.inputTokens, 20, 'the live runtime still publishes')
+        const totalBefore = pane.controller.getSnapshot().usage.total.inputTokens
+        current.onAuxUsage?.({ inputTokens: 5, cacheReadInputTokens: 0, outputTokens: 1 })
+        assert.equal(pane.controller.getSnapshot().usage.total.inputTokens, totalBefore + 5, 'aux spend joins the total')
+        assert.equal(pane.controller.getSnapshot().usage.lastRequest?.inputTokens, 20, 'and never moves the last request')
       }
     } finally {
       releaseAppend()

@@ -56,6 +56,18 @@ export type SessionMetric =
       usage: MetricUsage
     }
   | {
+      /**
+       * One model call made on the session's behalf outside its turns: a
+       * tool-use summary, a generated title or a rewind summary.
+       */
+      event: 'aux_usage'
+      created_at: string
+      session_id: string
+      model: string
+      source: AuxUsageSource
+      usage: MetricUsage
+    }
+  | {
       event: 'cache_break'
       created_at: string
       session_id: string
@@ -83,10 +95,13 @@ export type SessionMetric =
 
 type MetricInput<T extends SessionMetric> = Omit<T, 'created_at' | 'session_id'>
 
+export type AuxUsageSource = 'tool_summary' | 'session_title' | 'rewind_summary'
+
 export type SessionMetricInput =
   | MetricInput<Extract<SessionMetric, { event: 'turn' }>>
   | MetricInput<Extract<SessionMetric, { event: 'compact' }>>
   | MetricInput<Extract<SessionMetric, { event: 'subagent_usage' }>>
+  | MetricInput<Extract<SessionMetric, { event: 'aux_usage' }>>
   | MetricInput<Extract<SessionMetric, { event: 'cache_break' }>>
   | MetricInput<Extract<SessionMetric, { event: 'session_cache_summary' }>>
   | MetricInput<Extract<SessionMetric, { event: 'mcp_connect_failed' }>>

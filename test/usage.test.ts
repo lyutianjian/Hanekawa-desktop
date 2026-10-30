@@ -7,7 +7,6 @@ import {
   formatUsageLine,
   priceUsage,
   promptTokens,
-  subtractUsageCost,
 } from '../src/harness/usage.js'
 
 const usage = {
@@ -91,13 +90,6 @@ test('addTokenUsage sums the cost per currency and keeps either side\'s flags', 
   // A side that carries no cost leaves the other's untouched.
   assert.deepEqual(addTokenUsage(usage, usd).cost, { amounts: { USD: 1 } })
   assert.equal(addTokenUsage(usage, usage).cost, undefined)
-})
-
-test('subtractUsageCost clamps at zero per currency', () => {
-  assert.deepEqual(
-    subtractUsageCost({ amounts: { USD: 3, CNY: 1 }, legacy: true }, { amounts: { USD: 1, CNY: 4 } }),
-    { amounts: { USD: 2, CNY: 0 }, legacy: true },
-  )
 })
 
 /**

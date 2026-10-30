@@ -54,6 +54,13 @@ export interface RecordProxy {
    */
   onRequestUsage: (usage: TokenUsage, anchorRecordId?: string) => void
   setRequestUsageHandler: (fn: (usage: TokenUsage, anchorRecordId?: string) => void) => void
+  /**
+   * Usage spent outside the foreground requests — a compaction summary, a
+   * subagent transcript, a side call — pushed as it lands. It counts toward the
+   * session total and never toward the context readout's last request.
+   */
+  onAuxUsage: (usage: TokenUsage) => void
+  setAuxUsageHandler: (fn: (usage: TokenUsage) => void) => void
 }
 
 export function createRecordProxy(): RecordProxy {
@@ -61,6 +68,7 @@ export function createRecordProxy(): RecordProxy {
   let progressHandler: (event: ToolProgressEvent) => void = () => {}
   let streamEventHandler: (event: ModelStreamEvent) => void = () => {}
   let requestUsageHandler: (usage: TokenUsage, anchorRecordId?: string) => void = () => {}
+  let auxUsageHandler: (usage: TokenUsage) => void = () => {}
   return {
     onRecord: (record) => handler(record),
     setHandler: (fn) => { handler = fn },
@@ -70,6 +78,8 @@ export function createRecordProxy(): RecordProxy {
     setStreamEventHandler: (fn) => { streamEventHandler = fn },
     onRequestUsage: (usage, anchorRecordId) => requestUsageHandler(usage, anchorRecordId),
     setRequestUsageHandler: (fn) => { requestUsageHandler = fn },
+    onAuxUsage: (usage) => auxUsageHandler(usage),
+    setAuxUsageHandler: (fn) => { auxUsageHandler = fn },
   }
 }
 

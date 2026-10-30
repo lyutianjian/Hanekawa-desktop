@@ -12,6 +12,7 @@ import {
   cacheCreationTokens,
   cacheHitRate,
   costField,
+  hasTokenSpend,
   promptTokens,
   reportsCacheCreation,
 } from './usage.js'
@@ -255,6 +256,14 @@ export interface AgentLoopOptions {
    * readout.
    */
   onRequestUsage?(usage: TokenUsage, anchorRecordId?: string): void
+  /**
+   * Usage spent outside the foreground requests — a compaction summary, a
+   * subagent's transcript, a side call — reported as soon as it is known, so
+   * the session total counts it even when the turn aborts or the subagent
+   * finishes while the session is idle. It is not a request: the context
+   * readout's `onRequestUsage` figure must never move for it.
+   */
+  onAuxUsage?(usage: TokenUsage): void
   /** User-role messages appended verbatim at the start of each step; `midTurn` is false on a turn's first step. */
   consumePendingUserMessages?(midTurn: boolean): string[]
   /** The user's mid-turn messages, recorded into the running turn at each step. */
@@ -337,6 +346,12 @@ export class AgentLoop {
     recordId: string | undefined
   } | undefined
   private pendingSubagentTranscriptUsage: TokenUsage = { ...EMPTY_TOKEN_USAGE }
+  /**
+   * Side-call usage that has nowhere to be reported live, because this loop is a
+   * subagent's and only its `AgentRunResult.usage` reaches the parent. Folded
+   * into the run's usage at the next step or turn end.
+   */
+  private pendingSideUsage: TokenUsage = { ...EMPTY_TOKEN_USAGE }
   private readonly pendingToolUseSummaries: PendingToolUseSummary[] = []
   // Serializes run() and runTool() against each other. Both helpers funnel
   // through enqueue() so that a tool dispatched via runTool cannot race a
@@ -468,6 +483,9 @@ export class AgentLoop {
     this.recordsCache?.push(record)
     if (record.type === 'subagent_transcript') {
       this.pendingSubagentTranscriptUsage = addTokenUsage(this.pendingSubagentTranscriptUsage, record.usage)
+      // Counted the moment the transcript lands: a background agent finishes
+      // between turns, where the run's own accounting will never see it.
+      this.reportAuxUsage(record.usage)
       void this.emitMetric({ event: 'subagent_usage', model: record.model ?? '', usage: toMetricUsage(record.usage) })
     }
     if (record.type === 'tool_use' || record.type === 'tool_result') {
@@ -540,6 +558,15 @@ export class AgentLoop {
         cwd: this.dataRoot(),
         ...(this.options.compactPromptVariant ? { compactPromptVariant: this.options.compactPromptVariant } : {}),
       })
+      this.reportAuxUsage(result.usage)
+      if (hasTokenSpend(result.usage)) {
+        void this.emitMetric({
+          event: 'aux_usage',
+          model: this.activeModel.model,
+          source: 'rewind_summary',
+          usage: toMetricUsage(result.usage),
+        })
+      }
       return {
         summary: result.content,
         usage: result.usage,
@@ -879,6 +906,7 @@ export class AgentLoop {
           resetModelRequestState()
         }
         await this.flushReadyToolUseSummaries(turnId)
+        usage = addTokenUsage(usage, this.drainSideUsage())
         // Measured once per iteration and handed to every compaction attempt
         // below: the same number the request builder will subtract from the window.
         const fixedOverheadTokens = await this.fixedRequestOverheadTokens()
@@ -1232,7 +1260,7 @@ export class AgentLoop {
         if (!finished.continueLoop) return finished.result
         return finishResult({
           content,
-          usage,
+          usage: addTokenUsage(usage, this.drainSideUsage()),
           stopReason: 'max_turns',
           truncated: true,
           segments: content ? [content] : undefined,
@@ -1781,6 +1809,22 @@ export class AgentLoop {
         ...summary.record,
         turnId,
       }
+      // The summary request is spend of its own. A session loop reports it to
+      // the controller as it lands; a subagent loop has no such listener, so it
+      // rides on the run's usage and reaches the parent with its transcript.
+      if (hasTokenSpend(summary.usage)) {
+        if (this.options.onAuxUsage) {
+          this.reportAuxUsage(summary.usage)
+          void this.emitMetric({
+            event: 'aux_usage',
+            model: runtime.model,
+            source: 'tool_summary',
+            usage: toMetricUsage(summary.usage),
+          })
+        } else {
+          this.pendingSideUsage = addTokenUsage(this.pendingSideUsage, summary.usage)
+        }
+      }
     }).catch((error: unknown) => {
       entry.status = 'failed'
       if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
@@ -2072,6 +2116,9 @@ export class AgentLoop {
     if (result.compacted) {
       notifyCompaction(cacheSource)
       this.options.contextBuilder.clearCachedSections()
+      // The summary request was real spend whether or not the turn goes on to
+      // finish; the metric beside it is what a reopened session reads back.
+      this.reportAuxUsage(result.usage)
       if (result.metrics) {
         await this.emitMetric({
           event: 'compact',
@@ -2255,6 +2302,18 @@ export class AgentLoop {
     return usage
   }
 
+  /** Reports spend that is not a foreground request; see `onAuxUsage`. */
+  private reportAuxUsage(usage?: TokenUsage | null): void {
+    if (!hasTokenSpend(usage)) return
+    this.options.onAuxUsage?.(usage)
+  }
+
+  private drainSideUsage(): TokenUsage {
+    const usage = this.pendingSideUsage
+    this.pendingSideUsage = { ...EMPTY_TOKEN_USAGE }
+    return usage
+  }
+
   /**
    * Extract discovered tool names from ToolSearch results and add them to
    * toolContext.discoveredToolNames. This set survives compaction via the
@@ -2397,7 +2456,7 @@ export class AgentLoop {
     )
     await this.appendLifecycleHookMessages('stop', result.stdout, result.failures, input.turnId)
     if (result.preventContinuation) {
-      return { continueLoop: false, result: finishResult(input) }
+      return { continueLoop: false, result: finishResult({ ...input, usage: addTokenUsage(input.usage, this.drainSideUsage()) }) }
     }
     if (result.blockingErrors.length > 0) {
       await this.appendRecord({
@@ -2410,7 +2469,7 @@ export class AgentLoop {
       })
       return { continueLoop: true }
     }
-    return { continueLoop: false, result: finishResult(input) }
+    return { continueLoop: false, result: finishResult({ ...input, usage: addTokenUsage(input.usage, this.drainSideUsage()) }) }
   }
 
   private async appendLifecycleHookMessages(

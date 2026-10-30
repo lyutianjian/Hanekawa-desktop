@@ -13,7 +13,8 @@ import type {
   TurnOrigin,
 } from '../harness/types.js'
 import { getRecordsAfterLastCompact } from '../harness/requestPrep.js'
-import { promptTokens } from '../harness/usage.js'
+import { hasTokenSpend, promptTokens } from '../harness/usage.js'
+import { toMetricUsage } from '../harness/metrics.js'
 import { breakDownContext, fixedContextTokens, type ContextBreakdown } from '../harness/contextBreakdown.js'
 import { promptCacheTtlMs } from '../harness/cacheControl.js'
 import { shouldIdleCompact } from './coordination/contextPolicy.js'
@@ -29,11 +30,9 @@ import { SessionRecordLedger } from './recordLedger.js'
 import {
   addTokenUsage,
   createEmptySessionUsage,
-  createEmptyUsage,
   findLatestTaskSnapshot,
   formatInterruptMessage,
   isEmptyUsage,
-  subtractTokenUsage,
   type SessionUsage,
 } from './sessionUsage.js'
 import {
@@ -231,13 +230,6 @@ export class SessionController {
    */
   private switching = false
   private usage: SessionUsage = createEmptySessionUsage()
-  /**
-   * What the current run has already folded into `usage.total` request by
-   * request. Reset at the top of every run and subtracted from the end-of-run
-   * figure at the settle, so the live readout and the authoritative accounting
-   * agree instead of double-counting each other.
-   */
-  private runReportedUsage = createEmptyUsage()
   private turnOutputTokens: number | undefined
   private taskSnapshot: TaskDisplaySnapshot | undefined
   private spinnerSubText: string | undefined
@@ -284,6 +276,7 @@ export class SessionController {
     this.recordProxy.setProgressHandler(this.handleProgress)
     this.recordProxy.setStreamEventHandler(this.handleStreamEvent)
     this.recordProxy.setRequestUsageHandler(this.handleRequestUsage)
+    this.recordProxy.setAuxUsageHandler(this.handleAuxUsage)
     this.seedUsageFromMetrics(this.session.id)
     this.refreshFixedContext()
   }
@@ -519,10 +512,6 @@ export class SessionController {
       // finish instead of being abandoned into the next turn's history.
       if (ac.signal.aborted) throw abortError(ac.signal.reason)
 
-      // Zeroed before the first request of this run, not after the last one: an
-      // aborted or failed run never reaches the settle below, and a leftover
-      // accumulator would be subtracted from the *next* run's total.
-      this.runReportedUsage = createEmptyUsage()
       const result = await turn.run(ac.signal)
       completedResult = result
       // A retarget is refused while this turn runs, so this can only be true if
@@ -532,21 +521,17 @@ export class SessionController {
         this.publish()
         return
       }
+      // Every response and every side call reports as it happens, so the total
+      // is already complete — including a turn that aborts or fails, which
+      // never reaches this settle. The end-of-run figure only carries the
+      // context readout's last request, not more spend.
       this.usage = {
-        // Already live from `handleRequestUsage`; this is the settle, not the
-        // first sighting. Falling back to what is there rather than to null
-        // matters for a run that produced no response at all — the last request
-        // still describes the context, and dropping it would send the readout
-        // back to the record-only estimate.
+        // Falling back to what is there rather than to null matters for a run
+        // that produced no response at all — the last request still describes
+        // the context, and dropping it would send the readout back to the
+        // record-only estimate.
         lastRequest: result.statusUsage ?? this.usage.lastRequest,
-        // Only the part `handleRequestUsage` could not have seen: compaction
-        // (`loop.ts` folds `compactResult.usage` in) and subagent transcripts,
-        // neither of which is a foreground response. Adding `result.usage`
-        // whole would count every foreground request twice.
-        total: addTokenUsage(
-          this.usage.total,
-          subtractTokenUsage(result.usage, this.runReportedUsage),
-        ),
+        total: this.usage.total,
       }
       this.publish()
     } catch (err: unknown) {
@@ -651,7 +636,8 @@ export class SessionController {
     try {
       const result = await this.getSession().loop.compact(instructions, ac.signal)
       if (result.compacted) {
-        this.usage = { ...this.usage, total: addTokenUsage(this.usage.total, result.usage) }
+        // The summary's spend is already in the total: the loop reports it as
+        // `onAuxUsage` the moment the compaction finishes.
         this.usageAnchorRecordId = undefined
         this.publish()
       }
@@ -794,6 +780,7 @@ export class SessionController {
     this.recordProxy.setProgressHandler(() => {})
     this.recordProxy.setStreamEventHandler(() => {})
     this.recordProxy.setRequestUsageHandler(() => {})
+    this.recordProxy.setAuxUsageHandler(() => {})
     this.listeners.clear()
     this.eventListeners.clear()
   }
@@ -804,20 +791,27 @@ export class SessionController {
    * A provider request just settled: publish its size straight away.
    *
    * The total moves here too, so the readout under the composer counts up
-   * through a long turn instead of jumping once at the end. `runReportedUsage`
-   * remembers what this path contributed and `sendMessage`'s settle subtracts
-   * it, since `AgentRunResult.usage` is the sum of exactly these responses plus
-   * the compaction and subagent usage this path never sees.
-   *
-   * A run that aborts or throws keeps what was reported — those tokens were
-   * spent whether or not the turn finished.
+   * through a long turn instead of jumping once at the end. A run that aborts
+   * or throws keeps what was reported — those tokens were spent whether or not
+   * the turn finished.
    */
   private handleRequestUsage = (usage: TokenUsage, anchorRecordId?: string): void => {
-    this.runReportedUsage = addTokenUsage(this.runReportedUsage, usage)
     this.turnOutputTokens = (this.turnOutputTokens ?? 0) + usage.outputTokens
     this.usage = { lastRequest: usage, total: addTokenUsage(this.usage.total, usage) }
     this.usageAnchorRecordId = anchorRecordId
     this.lastRequestAt = Date.now()
+    this.publish()
+  }
+
+  /**
+   * Spend that is not a foreground response: a compaction summary, a subagent
+   * transcript, a side call. Counted when it happens rather than at the turn's
+   * end, so an aborted turn and a background agent that finishes while the
+   * session is idle both land in the total. It never moves `lastRequest`: that
+   * figure describes the context, and a compaction summary did not send one.
+   */
+  private handleAuxUsage = (usage: TokenUsage): void => {
+    this.usage = { ...this.usage, total: addTokenUsage(this.usage.total, usage) }
     this.publish()
   }
 
@@ -1088,15 +1082,27 @@ export class SessionController {
    */
   private async generateTitle(text: string, fallback: string): Promise<void> {
     const sessionId = this.session.id
+    const runtime = this.getSession().loop.getSideModel()
     // The bar gives up on its own, whether or not the call ever answers: an
     // absent title must not be what holds the row nameless.
     const placeholder = setTimeout(() => this.settleTitlePending(sessionId), this.titlePlaceholderMs)
     try {
-      const generated = await generateSessionTitle({
-        runtime: this.getSession().loop.getSideModel(),
+      const { title: generated, usage } = await generateSessionTitle({
+        runtime,
         text,
         cwd: this.cwd,
       })
+      // The naming call is real spend even when its answer is not the title
+      // that lands — and the sidecar keeps it, so a reopen reads the same total.
+      if (hasTokenSpend(usage)) {
+        void this.store.appendMetric(sessionId, {
+          event: 'aux_usage',
+          model: runtime.model,
+          source: 'session_title',
+          usage: toMetricUsage(usage),
+        })
+        if (this.session.id === sessionId && !this.disposed) this.handleAuxUsage(usage)
+      }
       if (!generated || generated === fallback) return
       if (this.disposed || this.session.id !== sessionId || this.session.title !== fallback) return
       await this.store.rename(sessionId, generated)

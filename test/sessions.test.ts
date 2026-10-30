@@ -496,12 +496,20 @@ test('SessionStore reads back both the last request and the session totals', asy
       tool_calls: 1,
       duration_ms: 12,
     })
+    // A side call is spend but not a request: it joins the total and never the
+    // last-request readout.
+    await store.appendMetric(session.id, {
+      event: 'aux_usage',
+      model: 'cheap-model',
+      source: 'tool_summary',
+      usage: { input_tokens: 40, cache_read_tokens: 60, response_tokens: 4 },
+    })
 
     assert.deepEqual(await store.loadSessionTotals(session.id), {
-      inputTokens: 1_200,
+      inputTokens: 1_240,
       cacheCreationInputTokens: 550,
-      cacheReadInputTokens: 1_500,
-      outputTokens: 160,
+      cacheReadInputTokens: 1_560,
+      outputTokens: 164,
       // Recorded before costs were: counted, never repriced.
       cost: { amounts: {}, legacy: true },
     })

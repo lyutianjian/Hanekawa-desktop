@@ -12,6 +12,7 @@ import type { CoordinationRole } from '../src/harness/types.js'
 import type {
   AgentRunResult,
   SessionRecord,
+  TokenUsage,
   ToolProgressEvent,
 } from '../src/harness/types.js'
 import type { AgentSession } from '../src/runtime/types.js'
@@ -69,6 +70,8 @@ async function createHarness(options: {
   usableContextWindow?: number
   /** What the side model answers when asked to name the session. */
   titleReply?: string
+  /** The usage the naming call reports, when a test needs it priced in. */
+  titleUsage?: TokenUsage
   /** The naming call never answers — what a provider that hung looks like from here. */
   titleHangs?: boolean
   /** How long the placeholder bar stands before the fallback name takes over. */
@@ -100,7 +103,10 @@ async function createHarness(options: {
         name: 'stub',
         createMessage: options.titleHangs
           ? () => new Promise<never>(() => {})
-          : async () => ({ content: options.titleReply ?? '' }),
+          : async () => ({
+              content: options.titleReply ?? '',
+              ...(options.titleUsage ? { usage: options.titleUsage } : {}),
+            }),
       },
     }),
     getActiveModel: () => ({
@@ -169,10 +175,14 @@ function types(events: SessionEvent[]): string[] {
 test('a successful turn emits turn-start before the loop runs and turn-end after', async () => {
   const order: string[] = []
   let seenMessageId: string | undefined
-  const harness = await createHarness({
+  let harness: Harness | undefined
+  harness = await createHarness({
     run: async (_input, _signal, messageId) => {
       order.push('loop.run')
       seenMessageId = messageId
+      // Every response reports as it lands; the total no longer waits for the
+      // end-of-run figure.
+      harness?.proxy.onRequestUsage(usage(10, 5))
       return okResult()
     },
   })
@@ -506,9 +516,11 @@ test('a user cancel that produced real work reports the interruption instead of 
 
 test('token usage accumulates across turns and resets when the session is retargeted', async () => {
   let call = 0
-  const harness = await createHarness({
+  let harness: Harness | undefined
+  harness = await createHarness({
     run: async () => {
       call += 1
+      harness?.proxy.onRequestUsage(usage(call * 100, call))
       return okResult({ usage: usage(call * 100, call), statusUsage: usage(call * 100, call) })
     },
   })
@@ -595,14 +607,14 @@ test('the turn output count adds up its requests, starts absent and clears on th
   assert.equal(harness.controller.getSnapshot().turnOutputTokens, undefined)
 })
 
-test('compaction and subagent usage still land on top of the reported requests', async () => {
-  // `AgentRunResult.usage` is the foreground responses *plus* compaction and
-  // subagent transcripts, which never come through `onRequestUsage` — the
-  // difference is exactly what the settle has left to add.
+test('compaction and subagent usage is counted when it is reported, not at the settle', async () => {
+  // The loop reports these through `onAuxUsage` the moment they are known, so
+  // the total is complete even for a run that never reaches its settle.
   let harness: Harness | undefined
   harness = await createHarness({
     run: async () => {
       harness?.proxy.onRequestUsage(usage(1000, 1))
+      harness?.proxy.onAuxUsage(usage(700, 4))
       return okResult({ usage: usage(1700, 5), statusUsage: usage(1000, 1) })
     },
   })
@@ -610,6 +622,27 @@ test('compaction and subagent usage still land on top of the reported requests',
   await harness.controller.submit({ text: 'hello' })
 
   assert.deepEqual(harness.controller.getSnapshot().usage.total, usage(1700, 5))
+  // An aux report is not a request: the context readout keeps the last one.
+  assert.deepEqual(harness.controller.getSnapshot().usage.lastRequest, usage(1000, 1))
+})
+
+test('aux usage lands between turns and is never counted twice by a later settle', async () => {
+  let harness: Harness | undefined
+  harness = await createHarness({
+    run: async () => {
+      harness?.proxy.onRequestUsage(usage(100, 1))
+      return okResult({ usage: usage(100, 1) })
+    },
+  })
+  await harness.controller.submit({ text: 'one' })
+  assert.deepEqual(harness.controller.getSnapshot().usage.total, usage(100, 1))
+
+  // A background agent finishing while the session sits idle.
+  harness.proxy.onAuxUsage(usage(50, 2))
+  assert.deepEqual(harness.controller.getSnapshot().usage.total, usage(150, 3))
+
+  await harness.controller.submit({ text: 'two' })
+  assert.deepEqual(harness.controller.getSnapshot().usage.total, usage(250, 4))
 })
 
 test('a failed run keeps the tokens its requests already spent', async () => {
@@ -617,7 +650,10 @@ test('a failed run keeps the tokens its requests already spent', async () => {
   let failing = true
   harness = await createHarness({
     run: async () => {
-      if (!failing) return okResult({ usage: usage(100, 1) })
+      if (!failing) {
+        harness?.proxy.onRequestUsage(usage(100, 1))
+        return okResult({ usage: usage(100, 1) })
+      }
       harness?.proxy.onRequestUsage(usage(900, 7))
       throw new Error('provider exploded')
     },
@@ -1404,6 +1440,33 @@ test('the fallback title is pending until generation settles, landed or not', as
   await waitUntil(() => !harness.controller.isTitlePending(), 'the pending title to settle')
   assert.equal(harness.controller.getSessionMeta().title, '帮我把登录页的按钮改成蓝色')
   assert.deepEqual(pendingAtMeta, [true, false], 'the fallback is announced as pending, then the settle')
+})
+
+test('the naming call’s own usage lands in the total and in the sidecar', async () => {
+  const titleUsage = { inputTokens: 900, cacheReadInputTokens: 300, outputTokens: 20 }
+  const harness = await createHarness({ untitled: true, titleReply: '修改登录按钮颜色', titleUsage })
+  const record: SessionRecord = {
+    id: randomUUID(),
+    type: 'message',
+    role: 'user',
+    content: '帮我把登录页的按钮改成蓝色',
+    createdAt: new Date().toISOString(),
+  }
+  await harness.store.appendRecord(harness.session.id, record)
+  harness.proxy.onRecord(record)
+  await waitUntil(() => harness.controller.getSessionMeta().title === '修改登录按钮颜色', 'the generated title')
+
+  assert.deepEqual(harness.controller.getSnapshot().usage.total, titleUsage)
+  // A reopen reads the same number back from the sidecar. (A sidecar entry
+  // without a recorded cost is marked legacy rather than repriced, so compare
+  // the counts rather than the object.)
+  const totals = await harness.store.loadSessionTotals(harness.session.id)
+  assert.equal(totals?.inputTokens, 900)
+  assert.equal(totals?.cacheReadInputTokens, 300)
+  assert.equal(totals?.outputTokens, 20)
+  // The event is not a turn: the cache summary does not count it.
+  const metrics = await harness.store.loadMetricsSummary(harness.session.id)
+  assert.equal(metrics?.totalTurns ?? 0, 0)
 })
 
 test('a naming call that never answers stops holding the placeholder bar', async () => {

@@ -591,7 +591,8 @@ export class SessionStore {
 
   /**
    * Everything this session ever spent, summed from the same sidecar: every
-   * foreground request, plus the compactions and subagent runs that are not one.
+   * foreground request, plus the compactions, subagent runs and side calls
+   * (tool summaries, generated titles, rewind summaries) that are not one.
    *
    * The running total is otherwise an in-process figure: reopening a session
    * restarted it at zero, so the cache hit rate beside it was computed over
@@ -1333,7 +1334,9 @@ const SESSION_TITLE_LENGTH = 60
 function metricTokenUsage(metric: SessionMetric): TokenUsage | undefined {
   const fields: MetricUsage | undefined = metric.event === 'turn'
     ? { ...metric, input_tokens: inferTurnInputTokens(metric) }
-    : metric.event === 'compact' || metric.event === 'subagent_usage' ? metric.usage : undefined
+    : metric.event === 'compact' || metric.event === 'subagent_usage' || metric.event === 'aux_usage'
+      ? metric.usage
+      : undefined
   if (!fields) return undefined
   const usage: TokenUsage = {
     inputTokens: Math.max(0, fields.input_tokens),

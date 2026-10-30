@@ -269,7 +269,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     // Disk writes use the runtime's fixed RecordStream. UI events must also
     // stay with that session when an append or background callback arrives late.
     const isCurrent = () => !disposed && activeSessionId === runtimeSession.id
-    const recordEvents: Pick<RecordProxy, 'onRecord' | 'onProgress' | 'onStreamEvent' | 'onRequestUsage'> = {
+    const recordEvents: Pick<RecordProxy, 'onRecord' | 'onProgress' | 'onStreamEvent' | 'onRequestUsage' | 'onAuxUsage'> = {
       onRecord: (record) => {
         if (isCurrent()) bridges.record.onRecord(record)
       },
@@ -281,6 +281,9 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       },
       onRequestUsage: (usage, anchorRecordId) => {
         if (isCurrent()) bridges.record.onRequestUsage(usage, anchorRecordId)
+      },
+      onAuxUsage: (usage) => {
+        if (isCurrent()) bridges.record.onAuxUsage(usage)
       },
     }
     const projectContext = composeProjectContext(snapshot.userInstructions, getProjectEntries())
@@ -495,6 +498,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       onRecord: recordEvents.onRecord,
       onStreamEvent: recordEvents.onStreamEvent,
       onRequestUsage: recordEvents.onRequestUsage,
+      onAuxUsage: recordEvents.onAuxUsage,
       consumePendingUserMessages: (midTurn) => backgroundTasks.consumeParentNotifications(runtimeSession.id, midTurn),
       steer: bridges.steer,
       ...(imageAttachments ? { imageAttachments } : {}),

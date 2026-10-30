@@ -79,6 +79,7 @@ const METRIC_NUMERIC_FIELDS: Record<SessionMetric['event'], ReadonlySet<string>>
     'cache_break_count',
   ]),
   subagent_usage: new Set(),
+  aux_usage: new Set(),
   mcp_connect_failed: new Set(),
 }
 
