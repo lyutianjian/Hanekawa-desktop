@@ -1,6 +1,9 @@
+import { installComposerEditor } from './composerEditor.js'
+import { insertSuggestion } from '../../../runtime/suggestions/insertSuggestion.js'
 import {
   composerChipView,
   insertMentionToken,
+  needsFullAccessConfirm,
   permissionPillView,
   submitButtonView,
 } from '../model/composer.js'
@@ -61,6 +64,9 @@ import { pathTileNode } from './pathTile.js'
  */
 
 export interface ComposerView {
+  placeCaretAtPoint?(x: number, y: number): void
+  insertText(text: string, trailingSpace?: boolean): void
+  editValue?(text: string, cursorPos: number): void
   value(): string
   /**
    * The caret offset. `applyFileSuggestion` splices over the `@…` token that
@@ -156,12 +162,19 @@ export function createComposerView(els: {
   /** The draft attachments' strip host, above the textarea in the capsule. */
   attachStrip: HTMLElement
 }, actions: {
+  onOpenSessionReference?: (ref: string) => void
+  onResolveSessionReference?: (ref: string) => Promise<{ title: string; projectName: string } | undefined>
   /** Asks the pane for the menu's rows; answered by `showRuntimeMenu`. */
   onOpenRuntimeMenu: () => void
   /** A row chosen in a flyout — the pane's `runSurfaceAction`. */
   onRuntimeAction: (action: SurfaceAction) => void
   /** Applies a permission mode to the *live* gate — see `permissionPillView`. */
   onSelectPermissionMode: (mode: PermissionMode) => void
+  /**
+   * Full access was picked and is not on yet: the window asks the user before
+   * applying it, so the pill never switches silently into the unguarded mode.
+   */
+  onRequestFullAccess: () => void
   /**
    * The attachment control. There is no host command behind a file dialog, so
    * it seeds an `@` and lets the existing mention completion take over — the
@@ -190,6 +203,7 @@ export function createComposerView(els: {
   /** The context indicator's breakdown, from the active pane's host. */
   onLoadContextBreakdown: () => Promise<WireContextBreakdownResult>
 }): ComposerView {
+  const richEditor = installComposerEditor(els.input, actions)
   let commands: readonly WireCommandInfo[] = []
   const highlight = el('div', 'composer-highlight')
   highlight.setAttribute('aria-hidden', 'true')
@@ -206,6 +220,11 @@ export function createComposerView(els: {
   }
 
   function renderInput(): void {
+    if (richEditor) {
+      richEditor.render(commands)
+      show(highlight, false)
+      return
+    }
     const text = els.input.value
     const match = matchInputCommand(text, commands)
     els.input.classList.toggle('decorated', match !== undefined)
@@ -578,6 +597,7 @@ export function createComposerView(els: {
       view.title,
       view.enabled ? '1' : '0',
       view.open ? '1' : '0',
+      view.danger ? 'd' : '-',
       permissionMenuOpen ? '1' : '0',
       view.open ? view.options.map((option) => `${option.mode}:${option.current ? '1' : '0'}`).join(',') : '',
     ].join(' ')
@@ -591,14 +611,14 @@ export function createComposerView(els: {
       return
     }
 
-    // The pill's own label lives in a span, so the chevron survives a repaint.
-    replace(els.chipPermission, el('span', 'btn-label', view.label), icon('chevron-down'))
+    replace(els.chipPermission, el('span', 'btn-label', view.label))
     els.chipPermission.title = view.title
     els.chipPermission.setAttribute('aria-label', view.title)
     els.chipPermission.setAttribute('aria-haspopup', 'listbox')
     els.chipPermission.setAttribute('aria-expanded', view.open ? 'true' : 'false')
     els.chipPermission.disabled = !view.enabled
     els.chipPermission.classList.toggle('open', view.open)
+    els.chipPermission.classList.toggle('danger', view.danger)
 
     if (!view.open) {
       // The model can refuse to open (no snapshot yet); the flag has to follow,
@@ -615,10 +635,12 @@ export function createComposerView(els: {
       permissionMenu.setAttribute('role', 'listbox')
       permissionMenu.setAttribute('aria-label', '权限模式')
       permissionItems = view.options.map((option) => {
-        const item = button('composer-menu-item', option.label, option.label, () => {
+        const item = button(`composer-menu-item${option.danger ? ' danger' : ''}`, option.label, option.label, () => {
           permissionMenuOpen = false
           renderPermission()
-          actions.onSelectPermissionMode(option.mode)
+          // Read live: the menu is built once and lives across mode changes.
+          if (needsFullAccessConfirm(runtimeSnapshot?.permissionMode, option.mode)) actions.onRequestFullAccess()
+          else actions.onSelectPermissionMode(option.mode)
           els.input.focus()
         })
         item.setAttribute('role', 'option')
@@ -984,6 +1006,27 @@ export function createComposerView(els: {
   renderInput()
 
   return {
+    editValue(text, cursorPos) {
+      if (richEditor) richEditor.editValue(text, cursorPos)
+      else { els.input.value = text; els.input.setSelectionRange(cursorPos, cursorPos) }
+      renderInput()
+      autosize()
+      applySubmitState()
+    },
+    placeCaretAtPoint(x, y) { richEditor?.placeCaretAtPoint(x, y) },
+    insertText(text, trailingSpace = false) {
+      const start = els.input.selectionStart ?? els.input.value.length
+      const end = els.input.selectionEnd ?? start
+      const next = insertSuggestion(els.input.value, start, end, text, trailingSpace)
+      if (richEditor) richEditor.editValue(next.text, next.cursorPos)
+      else {
+        els.input.value = next.text
+        els.input.setSelectionRange(next.cursorPos, next.cursorPos)
+      }
+      renderInput()
+      autosize()
+      applySubmitState()
+    },
     value: () => els.input.value,
     // `selectionStart` is null only for input types that have no selection;
     // a textarea always reports one, and the end of the text is the safe read.

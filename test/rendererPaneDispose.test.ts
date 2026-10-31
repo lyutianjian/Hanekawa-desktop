@@ -16,6 +16,7 @@ import type { SuggestionsView } from '../src/desktop/renderer/dom/suggestionsVie
 import type { PlanCardView } from '../src/desktop/renderer/dom/planCardView.js'
 import type { QuestionCardView } from '../src/desktop/renderer/dom/questionCardView.js'
 import type { ImageViewerView } from '../src/desktop/renderer/dom/imageViewerView.js'
+import { makeImageAttachmentRef } from './helpers/imageFixtures.js'
 
 /**
  * What closing a pane takes with it.
@@ -64,6 +65,98 @@ function fakeChannel(): {
     deliver: (message) => handler?.(message),
   }
 }
+
+function deliveryPane(t: { after(fn: () => void): void }) {
+  const stub = installDomStub()
+  const views = stubViews()
+  const remote = fakeChannel()
+  const errors: string[] = []
+  let text = ''
+  let attachments: Parameters<ComposerView['renderAttachments']>[0] | undefined
+  views.composer.value = () => text
+  views.composer.setValue = (value) => { text = value }
+  views.composer.clear = () => { text = '' }
+  views.composer.renderAttachments = (value) => { attachments = value }
+  const pane = createPaneSession(depsOf('delivery', remote.channel, stub.createContainer(), views, {
+    onActionError: (message) => errors.push(message),
+  }))
+  t.after(() => { pane.dispose(); stub.uninstall() })
+  pane.activate()
+  remote.deliver({ type: 'session-changed', session: { id: 's', shortId: 's', createdAt: 'now', updatedAt: 'now', messageCount: 0 } })
+  return { stub, views, remote, pane, errors, attachments: () => attachments,
+    draft: (value: string) => { text = value }, text: () => text }
+}
+
+test('withdrawing a queued message merges current text, paths and image refs after persistence succeeds', async (t) => {
+  const { stub, remote, pane, draft, text, attachments } = deliveryPane(t)
+  const images = [makeImageAttachmentRef({ ownerSessionId: 's' })]
+  const message = { id: 'q1', content: '  原文  \n\n<attached-paths>\nfile: /tmp/original.txt\n</attached-paths>',
+    priority: 'next', createdAt: new Date().toISOString(), images }
+  draft('新草稿')
+  pane.addDraftPaths([{ path: '/tmp/new.txt', kind: 'file' }])
+  remote.deliver({ type: 'queued-messages', messages: [message] })
+  const button = pane.paneEl.querySelector('.item-retract')!
+  assert.ok(button)
+  stub.click(button)
+  stub.click(button)
+  const commands = remote.posted.filter((entry) => entry.type === 'retract-message')
+  assert.equal(commands.length, 1, 'repeat clicks do not restore twice')
+  assert.equal(text(), '新草稿', 'the current draft stays intact until the host confirms')
+  draft('等待期间继续输入')
+  remote.deliver({ type: 'queued-messages', messages: [] })
+  remote.deliver({ type: 'reply', id: commands[0]!.id, result: { message } })
+  await tick()
+  assert.equal(text(), '等待期间继续输入\n\n  原文  ')
+  assert.deepEqual(pane.draftInput().paths.map((entry) => entry.path), ['/tmp/new.txt', '/tmp/original.txt'])
+  assert.deepEqual(attachments()?.rows.map((entry) => entry.imageId), [images[0]!.id])
+  assert.equal(pane.paneEl.querySelector('.item-retract'), null)
+})
+
+test('a refused withdrawal preserves both the queued message and current draft', async (t) => {
+  const { stub, remote, pane, draft, text, errors } = deliveryPane(t)
+  draft('保留草稿')
+  remote.deliver({ type: 'queued-messages', messages: [{ id: 'q1', content: 'queued', priority: 'next', createdAt: new Date().toISOString() }] })
+  stub.click(pane.paneEl.querySelector('.item-retract')!)
+  const command = remote.posted.find((entry) => entry.type === 'retract-message')!
+  remote.deliver({ type: 'fail', id: command.id, message: '消息正在发送，无法撤回。' })
+  await tick()
+  assert.equal(text(), '保留草稿')
+  assert.ok(pane.paneEl.querySelector('.item-retract'))
+  assert.match(errors[0]!, /消息正在发送/)
+})
+
+test('a staged image send can return to editing and a late import never sends it', async (t) => {
+  const { stub, remote, pane, draft, text, attachments } = deliveryPane(t)
+  draft('看这张图')
+  const importing = pane.importImagesFromPaths(['/tmp/picture.png'])
+  const command = remote.posted.find((entry) => entry.type === 'import-attachment')!
+  assert.ok(command)
+  await pane.queueMessage()
+  assert.equal(text(), '')
+  draft('正在输入')
+  stub.click(pane.paneEl.querySelector('.item-retract')!)
+  assert.equal(text(), '正在输入\n\n看这张图')
+  assert.equal(attachments()?.rows[0]?.state, 'importing')
+  remote.deliver({ type: 'reply', id: command.id, result: { ok: true, attachment: { ref: makeImageAttachmentRef({ ownerSessionId: 's' }) } } })
+  await importing
+  await tick()
+  assert.equal(attachments()?.rows[0]?.state, 'ready')
+  assert.equal(remote.posted.some((entry) => entry.type === 'submit' || entry.type === 'enqueue-message'), false)
+  assert.equal(pane.paneEl.querySelector('.item-retract'), null)
+})
+
+test('an image quota conflict leaves the queued message and existing drafts untouched', async (t) => {
+  const { stub, remote, pane, draft, text, attachments, errors } = deliveryPane(t)
+  draft('保留草稿')
+  void pane.importImagesFromPaths(Array.from({ length: 10 }, (_, index) => `/tmp/${index}.png`)).catch(() => {})
+  const message = { id: 'q1', content: '待发送', priority: 'next', createdAt: new Date().toISOString(), images: [makeImageAttachmentRef()] }
+  remote.deliver({ type: 'queued-messages', messages: [message] })
+  stub.click(pane.paneEl.querySelector('.item-retract')!)
+  assert.equal(remote.posted.some((entry) => entry.type === 'retract-message'), false)
+  assert.equal(text(), '保留草稿')
+  assert.equal(attachments()?.rows.length, 10)
+  assert.match(errors[0]!, /超过 10 张/)
+})
 
 test('slash routing preserves unknown messages, queues them mid-turn and keeps matched commands host-side', async (t) => {
   const stub = installDomStub()
@@ -172,6 +265,7 @@ function stubViews(): {
     calls: calls.composer,
     value: () => '',
     cursorPos: () => 0,
+    insertText: () => {},
     setValue: () => {},
     setCommands: () => {},
     clear: () => calls.composer.push('clear'),
@@ -258,7 +352,7 @@ test('the status waits only while a real permission card is pending, never durin
   pane.activate()
   remote.deliver({ type: 'snapshot', snapshot: { ...pane.client.getSnapshot(), isStreaming: true }, subagentProgress: [] })
   const record = (record: SessionRecord): void => remote.deliver({ type: 'session-event', event: { type: 'record', record } })
-  const label = (): string => pane.paneEl.querySelector('.waiting')?.querySelector('.line-text')?.textContent ?? ''
+  const label = (): string => (pane.paneEl.querySelector('.activity-line') ?? pane.paneEl.querySelector('.waiting'))?.querySelector('.line-text')?.textContent ?? ''
   record({ type: 'message', id: 'user', role: 'user', content: 'go', turnId: 't1', createdAt: new Date().toISOString() })
   record({ type: 'tool_use', id: 'automatic', tool: 'Bash', input: { command: 'npm test', description: '跑测试' }, riskLevel: 'safe', turnId: 't1', createdAt: new Date().toISOString() })
   t.mock.timers.tick(40)
@@ -290,9 +384,9 @@ test('the status waits only while a real permission card is pending, never durin
   remote.deliver({ type: 'ui-request', request: { kind: 'ask-user-question', requestId: 'request-question', payload: {
     questions: [{ question: '选哪个？', header: '选择', multiSelect: false, options: [{ label: 'A', description: '第一个' }] }],
   } } })
-  assert.equal(pane.paneEl.querySelector('.waiting-main'), statusButton)
-  stub.click(statusButton)
-  assert.equal(questionFocus, 1, 'the same status button now focuses the question card')
+  const questionButton = pane.paneEl.querySelector('.waiting-main')!
+  stub.click(questionButton)
+  assert.equal(questionFocus, 1, 'the current status button focuses the question card')
 })
 
 test('a newly attached background pane stays out of the canvas layout until activated', (t) => {
@@ -327,19 +421,19 @@ test('thought disclosure survives pane activation and stays with its session acr
   }
   const head = (): HTMLElement => pane.paneEl.querySelector('.thinking')!.querySelector<HTMLElement>('.run-line')!
   bind('session-a')
-  assert.equal(head().getAttribute('aria-expanded'), 'true')
-  stub.click(head())
   assert.equal(head().getAttribute('aria-expanded'), 'false')
-  assert.equal(head().getAttribute('aria-label'), '思考过程')
+  stub.click(head())
+  assert.equal(head().getAttribute('aria-expanded'), 'true')
+  assert.equal(head().getAttribute('aria-label'), '首句。')
   pane.deactivate()
   pane.activate()
-  assert.equal(head().getAttribute('aria-expanded'), 'false', 'switching away does not forget the manual fold')
+  assert.equal(head().getAttribute('aria-expanded'), 'true', 'switching away does not forget the manual expansion')
   bind('session-b')
-  assert.equal(head().getAttribute('aria-expanded'), 'true', 'reused thinking ids cannot inherit another session’s fold')
+  assert.equal(head().getAttribute('aria-expanded'), 'false', 'reused thinking ids cannot inherit another session’s expansion')
   bind('session-a')
-  assert.equal(head().getAttribute('aria-expanded'), 'false', 'returning restores that session’s answer')
+  assert.equal(head().getAttribute('aria-expanded'), 'true', 'returning restores that session’s answer')
   bind('session-b')
-  assert.equal(head().getAttribute('aria-expanded'), 'true', 'the other session keeps its own default')
+  assert.equal(head().getAttribute('aria-expanded'), 'false', 'the other session keeps its own default')
 })
 
 test('startup can be awaited again before revealing the initialized project and carried draft', async (t) => {

@@ -55,6 +55,7 @@ const SAMPLES = {
   'open-project': { type: 'open-project', id: '1' },
   'enqueue-message': { type: 'enqueue-message', id: '1', content: 'later, please' },
   'clear-queue': { type: 'clear-queue', id: '1' },
+  'retract-message': { type: 'retract-message', id: '1', messageId: 'q1' },
   'import-attachment': { type: 'import-attachment', id: '1', source: { kind: 'path', path: 'C:/pics/a.png' } },
   'remove-attachment': { type: 'remove-attachment', id: '1', imageId: 'img-1' },
   'get-attachment-preview': { type: 'get-attachment-preview', id: '1', imageId: 'img-1' },

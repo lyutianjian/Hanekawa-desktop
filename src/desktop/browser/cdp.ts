@@ -31,9 +31,9 @@ export type CdpSender = (method: string, params?: Record<string, unknown>) => Pr
  * decision is made above, by whoever looked the tab up.
  *
  * Both entry points also carry the caller's `CallBounds`: a page that never
- * answers — an `alert()`, a script looping in its own event loop, a renderer
- * that stopped replying — ends the call instead of holding the tab's queue and
- * its CDP lease forever. See `bounds.ts` for what that does and does not claim.
+ * answers — a script looping in its own event loop, a renderer that stopped
+ * replying — ends the call instead of holding the tab's queue and its CDP lease
+ * forever. See `bounds.ts` for what that does and does not claim.
  */
 export function pageEvaluator(page: BrowserPage, bounds?: CallBounds): PageEvaluator {
   return (script: string) => withinBounds(bounds, 'reading the page', async () => {

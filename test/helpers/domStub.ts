@@ -72,6 +72,11 @@ interface StubEvent {
   /** `wheel`'s vertical delta: negative scrolls up. */
   readonly deltaY: number
   /** `paste`'s payload, when the test supplies one through `dispatch`. */
+  readonly dataTransfer?: {
+    effectAllowed: string
+    setData(type: string, value: string): void
+    setDragImage(image: unknown, x: number, y: number): void
+  }
   readonly clipboardData: { readonly files: readonly unknown[] } | undefined
   defaultPrevented: boolean
   /** Set by `stopPropagation` or `stopImmediatePropagation`; there is no bubbling to cut, so tests read it. */
@@ -84,6 +89,7 @@ interface StubEvent {
 
 /** What `dispatch` may override on the synthetic event. */
 export interface StubEventInit {
+  readonly dataTransfer?: StubEvent['dataTransfer']
   readonly target?: unknown
   readonly relatedTarget?: unknown
   readonly key?: string
@@ -100,15 +106,25 @@ type Listener = (event: StubEvent) => void
 
 /** A text node. Kept separate so `nodes` can report the interleaving. */
 class StubText {
+  readonly nodeType = 3
   parent: StubElement | undefined
   constructor(public data: string) {}
   get parentNode(): StubElement | undefined { return this.parent }
+  get nextSibling(): StubChild | null {
+    return this.parent?.childNodes[this.parent.childNodes.indexOf(this) + 1] ?? null
+  }
   get textContent(): string { return this.data }
 }
 
 type StubChild = StubElement | StubText
 
 class StubElement {
+  static readonly TEXT_NODE = 3
+  readonly nodeType = 1
+  get nodeName(): string { return this.tagName }
+  get nextSibling(): StubChild | null {
+    return this.parent?.childNodes[this.parent.childNodes.indexOf(this) + 1] ?? null
+  }
   readonly attributes = new Map<string, string>()
   readonly childNodes: StubChild[] = []
   readonly listeners = new Map<string, Listener[]>()
@@ -175,6 +191,7 @@ class StubElement {
   }
   /** A textarea's caret. `setSelectionRange` moves it, as in the browser. */
   selectionStart = 0
+  selectionEnd = 0
   /**
    * `data-*` attributes, as a plain bag rather than a live view of
    * `attributes`. Nothing reads a `data-` attribute back through
@@ -182,8 +199,9 @@ class StubElement {
    */
   readonly dataset: Record<string, string> = {}
 
-  setSelectionRange(start: number, _end: number): void {
+  setSelectionRange(start: number, end: number): void {
     this.selectionStart = start
+    this.selectionEnd = end
   }
 
   /**
@@ -467,6 +485,7 @@ class StubElement {
       button: init.button ?? 0,
       deltaY: init.deltaY ?? 0,
       clipboardData: init.clipboardData,
+      dataTransfer: init.dataTransfer,
       defaultPrevented: false,
       propagationStopped: false,
       immediateStopped: false,

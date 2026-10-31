@@ -81,6 +81,7 @@ test('filterToolsForSubAgent applies specialist agent tool policies', () => {
     readOnlyTool('Glob'),
     readOnlyTool('Grep'),
     readOnlyTool('Read'),
+    readOnlyTool('ReadSession'),
     readOnlyTool('TaskCreate'),
     safeTool('Bash'),
     safeTool('Write'),
@@ -88,7 +89,7 @@ test('filterToolsForSubAgent applies specialist agent tool policies', () => {
   const explore = BUILT_IN_AGENT_DEFINITIONS.find((definition) => definition.type === 'explore')
 
   assert.ok(explore)
-  assert.deepEqual(filterToolsForSubAgent(tools, explore).map((tool) => tool.name), ['Glob', 'Grep', 'Read', 'Bash'])
+  assert.deepEqual(filterToolsForSubAgent(tools, explore).map((tool) => tool.name), ['Glob', 'Grep', 'Read', 'ReadSession', 'Bash'])
 })
 
 test('filterToolsForSubAgent limits MCP tools to configured servers', () => {
@@ -1857,7 +1858,7 @@ test('explore agent prompt enforces read-only fact finding', async () => {
   // by a prohibition banner; the prompt states the non-obvious Bash contract.
   assert.doesNotMatch(prompt ?? '', /READ-ONLY MODE/)
   assert.match(prompt ?? '', /read-only, and every other shell command is denied/)
-  assert.match(prompt ?? '', /Glob, Grep, Read, and Bash/)
+  assert.match(prompt ?? '', /Glob, Grep, Read, ReadSession/)
   assert.match(prompt ?? '', /Prefer parallel read-only searches/)
   assert.match(prompt ?? '', /file paths and line numbers/)
   assert.match(prompt ?? '', /high-signal findings/)

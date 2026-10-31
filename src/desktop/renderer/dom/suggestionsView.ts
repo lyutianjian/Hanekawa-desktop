@@ -1,4 +1,5 @@
 import { completionRows, type CompletionState } from '../model/completion.js'
+import { icon } from './icons.js'
 import { el, replace } from './dom.js'
 import { createPresence } from './presence.js'
 
@@ -60,7 +61,7 @@ export function createSuggestionsView(
         return
       }
       const selectedIndex = state.kind === 'none' ? -1 : state.selectedIndex
-      const signature = JSON.stringify(rows.map((row) => [row.displayText, row.description ?? '']))
+      const signature = JSON.stringify(rows.map((row) => [row.displayText, row.description ?? '', row.mention]))
       if (painted?.signature === signature) {
         const selected = highlight(painted.nodes, selectedIndex)
         point(selected?.id)
@@ -74,8 +75,21 @@ export function createSuggestionsView(
         if (index === selectedIndex) selected = node
         node.setAttribute('role', 'option')
         node.setAttribute('aria-selected', String(index === selectedIndex))
-        node.appendChild(el('span', 'name', row.displayText))
-        node.appendChild(el('span', 'description', row.description ?? ''))
+        if (row.mention) {
+          const mark = el('span', 'mention-icon')
+          mark.setAttribute('aria-hidden', 'true')
+          if (row.mention.icon === 'JS' || row.mention.icon === 'TS') mark.textContent = row.mention.icon
+          else mark.appendChild(icon(row.mention.icon))
+          node.appendChild(mark)
+          node.appendChild(el('span', 'name', row.mention.name))
+          node.appendChild(el('span', 'description', row.mention.detail))
+          node.title = row.mention.title
+          node.setAttribute('aria-label', row.mention.accessibleName)
+          node.classList.add('mention-suggestion')
+        } else {
+          node.appendChild(el('span', 'name', row.displayText))
+          node.appendChild(el('span', 'description', row.description ?? ''))
+        }
         // `mousedown` with the default prevented, not `click`: accepting a
         // suggestion splices over the `@…` token *at the caret*, and the browser's
         // default mousedown would take focus — and the caret — off the textarea

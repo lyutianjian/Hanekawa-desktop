@@ -221,6 +221,8 @@ export function createSteerProxy(): SteerProxy {
   let current: SteerSource | undefined
   return {
     pending: () => current?.pending() ?? [],
+    claim: (messageId) => current?.claim?.(messageId) ?? true,
+    release: (messageId) => current?.release?.(messageId),
     consume: async (messageId) => current?.consume(messageId),
     setSource: (source) => { current = source },
   }

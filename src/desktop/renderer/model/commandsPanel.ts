@@ -7,6 +7,7 @@ import type { BackgroundTaskSnapshot } from '../../../services/backgroundTasks/r
 
 export interface CommandRow {
   readonly id: string
+  readonly title: string
   readonly command: string
   /** The bead's colour, in the sub-agent panel's vocabulary. */
   readonly tone: 'running' | 'done' | 'failed'
@@ -33,8 +34,8 @@ export function commandRows(tasks: readonly BackgroundTaskSnapshot[]): CommandRo
       const exit = task.exitCode !== undefined && task.exitCode !== null ? `exit ${task.exitCode}` : undefined
       return {
         id: task.id,
-        // Of shell tasks only a monitor carries a description.
-        command: task.description !== undefined ? `监控 · ${task.description}` : task.command ?? task.id,
+        title: (task.description?.trim() || task.command || task.id).replace(/\s+/g, ' '),
+        command: task.command ?? task.id,
         tone: task.status === 'running' ? 'running' : task.status === 'completed' ? 'done' : 'failed',
         running: task.status === 'running',
         status: [STATUS_LABELS[task.status], exit].filter((part) => part !== undefined).join(' · '),

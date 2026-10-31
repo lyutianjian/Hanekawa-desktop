@@ -20,7 +20,8 @@ function context() {
 }
 
 test('background Bash writes its output to a file and notifies with the last lines', async () => {
-  const registry = new BackgroundTaskRegistry()
+  const records: SessionRecord[] = []
+  const registry = new BackgroundTaskRegistry(async (_sessionId, record) => { records.push(record) })
   const bash = createBashTool(registry)
   try {
     await bash.execute({ command: 'echo warmup' }, context())
@@ -31,6 +32,7 @@ test('background Bash writes its output to a file and notifies with the last lin
     const command = `${executable} -e "console.log('first'); setTimeout(() => console.log('second'), 400)"`
     const result = await bash.execute({
       command,
+      description: '打印测试输出',
       run_in_background: true,
     }, context())
     assert.equal(result.ok, true)
@@ -38,6 +40,7 @@ test('background Bash writes its output to a file and notifies with the last lin
     const taskId = result.content.match(/Task ID: (bash_\d+)/)?.[1]
     assert.ok(taskId)
     const outputPath = registry.getTask('session-1', taskId)?.outputPath
+    assert.equal(registry.getTask('session-1', taskId)?.description, '打印测试输出')
     assert.ok(outputPath)
     assert.ok(result.content.includes(`Output is being written to ${outputPath}`))
 
@@ -50,6 +53,11 @@ test('background Bash writes its output to a file and notifies with the last lin
     const read = await readFileTool.execute({ filePath: outputPath }, context())
     assert.equal(read.ok, true)
     assert.match(read.content, /second/)
+    await registry.flushPersistence()
+    const restored = new BackgroundTaskRegistry()
+    await restored.restoreSession('session-1', records)
+    assert.equal(restored.getTask('session-1', taskId)?.description, '打印测试输出')
+    assert.equal(restored.getTask('session-1', taskId)?.command, command)
   } finally {
     await registry.stopAll()
   }
@@ -256,7 +264,7 @@ test('a running Bash call released by a mid-turn message notifies the parent whe
   const ctx = { ...context(), sessionId: 'manual-bg' }
   try {
     const executable = process.platform === 'win32' ? 'node' : JSON.stringify(process.execPath)
-    const running = bash.execute({ command: `${executable} -e "setTimeout(() => {}, 300)"` }, ctx)
+    const running = bash.execute({ command: `${executable} -e "setTimeout(() => {}, 300)"`, description: '等待测试进程完成' }, ctx)
     await new Promise((resolve) => setTimeout(resolve, 50))
     assert.equal(registry.promoteForeground('manual-bg'), 1)
     const result = await running
@@ -265,6 +273,8 @@ test('a running Bash call released by a mid-turn message notifies the parent whe
     assert.equal(registry.promoteForeground('manual-bg'), 0)
 
     const taskId = result.content.match(/Task ID: (bash_\d+)/)?.[1]
+    assert.ok(taskId)
+    assert.equal(registry.getTask('manual-bg', taskId)?.description, '等待测试进程完成')
     for (let i = 0; i < 100 && !registry.hasParentNotifications('manual-bg'); i++) {
       await new Promise((resolve) => setTimeout(resolve, 20))
     }

@@ -265,8 +265,8 @@ export function typeText(deps: InputDeps, request: TypeRequest): Promise<ActionR
  *
  * With a target it is focused first, like `page.type`, and the focus is
  * re-checked right before the first key goes down. Without one the keys go
- * where the page already has them going, which is what Escape on a dialog or
- * PageDown on a document wants.
+ * where the page already has them going, which is what Escape on an open menu
+ * or PageDown on a document wants.
  */
 export function pressKeys(deps: InputDeps, request: PressKeyRequest): Promise<ActionResult> {
   const descriptions = describeKeys(request.keys, deps.platform)

@@ -42,6 +42,40 @@ describe('messageQueue', () => {
     assert.deepEqual(replayed.map((m) => m.id), [b.id])
   })
 
+  it('retracts only the named message with its images and persists removal for replay', async () => {
+    const images = [makeImageAttachmentRef()]
+    const first = await queue.enqueue({ text: 'first', images })
+    const second = await queue.enqueue({ text: 'second' })
+    assert.deepEqual(await queue.retract(first.id), first)
+    assert.deepEqual(queue.getSnapshot(), [second])
+    assert.deepEqual(replayMessageQueue(persisted.map(({ record }) => record)), [second])
+    await assert.rejects(queue.retract(first.id), /已发送/)
+  })
+
+  it('delivery claims and retractions exclude each other even with a stale pending snapshot', async () => {
+    const first = await queue.enqueue({ text: 'first' })
+    assert.equal(queue.claim(first.id), true)
+    await assert.rejects(queue.retract(first.id), /正在发送/)
+    queue.release(first.id)
+    const stale = queue.pending()[0]!
+    const withdrawal = queue.retract(first.id)
+    assert.equal(queue.claim(stale.id), false, 'a pending withdrawal wins before its disk write')
+    await withdrawal
+    assert.equal(queue.claim(stale.id), false, 'a removed message cannot be delivered from an old snapshot')
+  })
+
+  it('a failed retraction write keeps the original message available for delivery', async () => {
+    let failWrite = false
+    const held = new MessageQueue('s', [], async () => {
+      if (failWrite) throw new Error('disk full')
+    })
+    const message = await held.enqueue({ text: 'keep me' })
+    failWrite = true
+    await assert.rejects(held.retract(message.id), /disk full/)
+    assert.deepEqual(held.getSnapshot(), [message])
+    assert.equal(held.claim(message.id), true)
+  })
+
   it('keeps the snapshot stable and notifies only on changes', async () => {
     const initial = queue.getSnapshot()
     let notifications = 0

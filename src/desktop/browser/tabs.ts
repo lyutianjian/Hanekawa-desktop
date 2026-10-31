@@ -28,9 +28,11 @@
 import { BaseWindow, WebContentsView, session, type Session, type WebContents } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type { WireBrowserRect, WireBrowserTabInfo } from '../shellProtocol.js'
+import { ConsoleErrors } from './console.js'
 import { BrowserHostError } from './errors.js'
 import { faviconDataUrl } from './favicon.js'
 import { isInputActive } from './input.js'
+import { LocalFileServer } from './localServer.js'
 import { NetworkActivity, type NetworkState } from './network.js'
 
 export { BrowserHostError }
@@ -146,6 +148,8 @@ export class BrowserTabHost {
   private disposed = false
   private sessionWired = false
   private readonly network = new NetworkActivity()
+  private readonly consoleErrors = new ConsoleErrors()
+  private localServer: LocalFileServer | undefined
 
   // --- window lifetime -------------------------------------------------------
 
@@ -436,6 +440,18 @@ export class BrowserTabHost {
       : this.network.state(contents.id)
   }
 
+  /**
+   * The console errors the agent has not been shown yet, oldest first.
+   *
+   * Taking them is what keeps a page that throws on every render from repeating
+   * the same lines in every result; the panel never reads them, so the tab
+   * strip does not change when a page logs something.
+   */
+  takeConsoleErrors(tabId: string): string[] {
+    const contents = this.tabs.get(tabId)?.view?.webContents
+    return contents === undefined || contents.isDestroyed() ? [] : this.consoleErrors.take(contents.id)
+  }
+
   onChanged(listener: (tabs: WireBrowserTabInfo[]) => void): () => void {
     this.listeners.add(listener)
     return () => {
@@ -454,6 +470,19 @@ export class BrowserTabHost {
     this.inputListeners.clear()
     this.window = undefined
     this.destroyParking()
+    void this.localServer?.dispose()
+    this.localServer = undefined
+  }
+
+  /**
+   * A loopback URL for a page on disk, with `root` the directory its relative
+   * assets may read. See `localServer.ts`: the browser still only ever loads
+   * `http:`, and the app reads the bytes.
+   */
+  async localUrl(sessionId: string, root: string, file: string): Promise<string> {
+    if (this.disposed) throw new BrowserHostError('BROWSER_UNAVAILABLE', 'The browser is shut down.')
+    this.localServer ??= new LocalFileServer()
+    return this.localServer.urlFor(sessionId, root, file)
   }
 
   // --- internals -------------------------------------------------------------
@@ -488,6 +517,10 @@ export class BrowserTabHost {
     entry.loading = true
     entry.error = undefined
     entry.errorUrl = undefined
+    // These belong to the document that is leaving, exactly like the icon: the
+    // next page's console starts empty.
+    const contents = entry.view?.webContents
+    if (contents !== undefined && !contents.isDestroyed()) this.consoleErrors.forget(contents.id)
     // The icon belongs to the document that is leaving. Kept across a
     // navigation it would label the new page with the old site's mark for as
     // long as the load takes — and forever, on a page that declares none.
@@ -536,12 +569,18 @@ export class BrowserTabHost {
     const view = new WebContentsView({
       webPreferences: {
         session: this.browserSession(),
-        // No `preload`. The three flags below are the usual hardening; the
-        // absent fourth line is the one that actually keeps the automation
-        // surface out of reach of the page.
+        // No `preload`. The flags below are the usual hardening; the absent
+        // preload line is the one that actually keeps the automation surface
+        // out of reach of the page.
         sandbox: true,
         contextIsolation: true,
         nodeIntegration: false,
+        // `alert()` and `confirm()` would block the renderer until someone
+        // dismissed a dialog the view cannot even show properly. Electron
+        // auto-answers them instead: `alert` returns at once, `confirm` false,
+        // `prompt` null — what a dismissed dialog gives, minus the hang. A
+        // `beforeunload` refusal is a separate event and still reaches `stayed`.
+        disableDialogs: true,
         // A hidden tab must keep running: the agent reads and drives tabs the
         // panel is not showing, and a throttled timer would make those pages
         // behave differently from the one on screen.
@@ -715,6 +754,16 @@ export class BrowserTabHost {
       this.emitChange()
     })
 
+    // The page's own errors, kept for the agent: a handler that throws leaves
+    // the screen unchanged, which reads as a control that did nothing. Only
+    // `error` — a warning is usually a framework's advice. No `emitChange()`:
+    // the panel does not draw these, and a page in an error loop would repaint
+    // the strip for nothing.
+    contents.on('console-message', (details) => {
+      if (!alive() || details.level !== 'error') return
+      this.consoleErrors.record(contents.id, details.message, details.sourceId, details.lineNumber)
+    })
+
     contents.on('did-stop-loading', () => {
       if (!alive() || !entry.loading) return
       entry.loading = false
@@ -734,6 +783,7 @@ export class BrowserTabHost {
     const contentsId = contents.id
     contents.on('destroyed', () => {
       this.network.forget(contentsId)
+      this.consoleErrors.forget(contentsId)
       if (alive() && entry.view?.webContents === contents) entry.view = undefined
     })
   }
@@ -850,14 +900,22 @@ function isAbort(error: unknown): boolean {
 function isNavigable(url: string): boolean {
   try {
     const parsed = new URL(url)
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+    // Credentials in an address are refused everywhere a navigation is decided,
+    // popups and page-initiated redirects included: the URL is recorded, shown
+    // in the tab strip and handed to the model, so a password in it would be
+    // copied into the transcript. Log in on the page instead.
+    return (
+      (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+      parsed.username === '' &&
+      parsed.password === ''
+    )
   } catch {
     return false
   }
 }
 
 /**
- * `http:`/`https:` only.
+ * `http:`/`https:` only, and no credentials in the address.
  *
  * `file:` is the one worth refusing by name: this partition is the agent's
  * browsing context, and a `file://` document there would read the user's disk
@@ -865,7 +923,10 @@ function isNavigable(url: string): boolean {
  */
 function assertNavigable(url: string): string {
   if (!isNavigable(url)) {
-    throw new BrowserHostError('INVALID_REQUEST', `Only http and https URLs can be opened: ${url}`)
+    throw new BrowserHostError(
+      'INVALID_REQUEST',
+      `Only http and https URLs without a username or password can be opened: ${url}. To open a local file, serve its directory over http and open the loopback URL.`,
+    )
   }
   return url
 }

@@ -1,3 +1,4 @@
+import { parseSessionReferences } from '../../../runtime/sessionReferenceText.js'
 import { extractAtMentions } from '../../../runtime/suggestions/atToken.js'
 import type { WireCommandInfo } from '../../../runtime/protocol/wire.js'
 import { matchInputCommand } from './commandRouting.js'
@@ -28,6 +29,7 @@ import { matchInputCommand } from './commandRouting.js'
  */
 
 export type UserMessageSegment =
+  | { readonly kind: 'session-reference'; readonly text: string; readonly label: string; readonly uri: string; readonly sessionId: string }
   | { readonly kind: 'text'; readonly text: string }
   /** `text` is the source substring; `label` is what the pill shows. */
   | { readonly kind: 'file'; readonly text: string; readonly label: string }
@@ -65,12 +67,18 @@ export function splitUserMessage(
 function mentionSegments(input: string, from: number): UserMessageSegment[] {
   const segments: UserMessageSegment[] = []
   let at = from
-  for (const span of extractAtMentions(input)) {
+  const references = parseSessionReferences(input)
+  const spans = [
+    ...references.map((span) => ({ ...span, kind: 'session-reference' as const, label: span.title })),
+    ...extractAtMentions(input).filter((span) => !references.some((ref) => span.start < ref.end && span.end > ref.start))
+      .map((span) => ({ ...span, kind: 'file' as const, label: span.mention })),
+  ].sort((a, b) => a.start - b.start)
+  for (const span of spans) {
     if (span.start < from) continue
     if (span.start > at) segments.push({ kind: 'text', text: input.slice(at, span.start) })
-    // The label drops the `@` and the quotes: the file icon says what they said, and
-    // a pill reading `@"a b.ts"` is punctuation the user does not need to re-read.
-    segments.push({ kind: 'file', text: span.text, label: span.mention })
+    segments.push(span.kind === 'session-reference'
+      ? { kind: span.kind, text: span.text, label: span.label, uri: span.uri, sessionId: span.sessionId }
+      : { kind: 'file', text: span.text, label: span.label })
     at = span.end
   }
   if (at < input.length) segments.push({ kind: 'text', text: input.slice(at) })

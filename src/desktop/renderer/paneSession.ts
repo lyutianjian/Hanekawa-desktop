@@ -1,3 +1,7 @@
+import { sessionReferenceMarkdown } from '../../runtime/sessionReferenceText.js'
+import type { FileSuggestion } from '../../runtime/suggestions/atToken.js'
+import type { SessionSearchResult } from '../../runtime/protocol/sessionReferences.js'
+import { mergeMentionSuggestions } from './model/completion.js'
 /**
  * One lane's worth of renderer state.
  *
@@ -90,7 +94,7 @@ import {
   type CompletionState,
 } from './model/completion.js'
 import { completionAcceptMode, type ShellState } from './model/keymap.js'
-import { NO_DISCLOSURE, pruneDisclosure, toggleDisclosure, type DisclosureState } from './model/thinking.js'
+import { isExpanded, NO_DISCLOSURE, pruneDisclosure, toggleDisclosure, type DisclosureState } from './model/thinking.js'
 import { subagentEntries, type SubagentEntry } from './model/subagentPanel.js'
 import {
   applySessionEvent,
@@ -173,7 +177,7 @@ import {
   type RewindState,
 } from './model/rewindPanel.js'
 import {
-  attachmentDraftsFull,
+  MAX_DRAFT_IMAGES,
   attachmentSendGate,
   attachmentStripView,
   beginAttachmentImport,
@@ -285,6 +289,9 @@ export interface PaneSessionDeps {
    * shell command, and this pane owns only the click.
    */
   onOpenFile?: (path: string, line: number | undefined) => void
+  onOpenSessionReference?: (ref: string) => void
+  onResolveSessionReference?: (ref: string) => Promise<{ title: string; projectName: string } | undefined>
+  sessionSuggestions?: (query: string, projectRoot?: string, sessionId?: string) => Promise<SessionSearchResult>
   /** The home page's usage statistics; the host caches the scan. */
   loadUsage: () => Promise<readonly WireUsageDay[]>
   /** `/exit` was accepted by the host — close whatever this shell calls "this pane". */
@@ -531,6 +538,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   // placed inside the scroller would both be wiped by every repaint and anchor to
   // the bottom of the content instead of the viewport.
   const transcriptView: TranscriptView = createTranscriptView(transcriptEl, paneEl, {
+    onOpenSessionReference: (ref) => deps.onOpenSessionReference?.(ref),
+    onResolveSessionReference: deps.onResolveSessionReference,
     onToggle: (id, expanded) => toggleDisclosureAt(id, expanded),
     onOpenSubagent: (id) => deps.onOpenSubagent?.(id),
     ...(deps.onViewEdits ? { onViewEdits: deps.onViewEdits } : {}),
@@ -559,16 +568,22 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // The thumbnail the pane holds for that id, or nothing yet. The fetch is
     // `loadTranscriptThumbnails` below; this is only the lookup.
     imageThumbUrl: (imageId) => previewDataUrl(previewCache, imageId),
+    // A screenshot's screen-sized copy, once the row showing it has asked —
+    // `loadExpandedShots` is that ask. `undefined` until then, so the body falls
+    // back to the thumbnail rather than to a hole.
+    imageViewUrl: (imageId) => shotViews.get(imageId),
     // The registry this lane completes from, read live: a sent message's `/name`
     // is drawn in its bubble by the same rule the composer drew it by, and the
     // list arrives after the transcript's first paint.
     commands: () => commands,
+    cwd: () => workingDir,
     // The clipboard lives here rather than in the view: `navigator` is a host
     // object, and `dom/transcriptView.ts` is the half of this that runs against a
     // hand-written DOM stub in tests. A failure is the button's own cross; a
     // note in the conversation as well would report a click as an event.
     onCopy: (text) => copyText(text),
     onRewind: (messageId) => { void openRewindPanel(messageId) },
+    onEditPending: (itemId) => { void editPendingMessage(itemId) },
   })
   const welcome = createWelcomeView(welcomeEl, {
     onBranchIntent: (intent) => runBranchPickerIntent(intent),
@@ -628,6 +643,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   let shownTaskCount = 0
   let queue: UiQueueState = createUiQueue()
   let completions: CompletionState = NO_COMPLETIONS
+  let sessionSuggestionTimer: ReturnType<typeof setTimeout> | undefined
   let commands: WireCommandInfo[] = []
   let panes: readonly WirePaneInfo[] = Object.freeze([])
   let ownProjectRoot: string | undefined
@@ -636,6 +652,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   /** From `hello`: this pane runs in the global (home-rooted) workspace. */
   let projectGlobal = false
   let gitBranch: string | undefined
+  /** From `hello`: where this scope's tools run, for naming their files from it. */
+  let workingDir: string | undefined
   /**
    * The welcome screen's branch switcher. Per pane like every other `let` here:
    * the popover belongs to the pill it hangs off, and the branch it lists is
@@ -702,6 +720,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   let stagedSeq = 0
   /** Messages already shown as bubbles but still waiting on their pictures, oldest first. */
   let stagedSends: StagedSend[] = []
+  const retractingMessages = new Set<string>()
+  let reservedDraftImages = 0
   /** The imports still running, by draft id: a staged send awaits its own before it goes out. */
   const importJobs = new Map<string, Promise<void>>()
   /** How each finished import settled, readable after the draft left the strip. */
@@ -725,6 +745,18 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   let previewCache: AttachmentPreviewCache = new Map()
   /** In-flight preview loads, so a repaint before the settle does not fire a second request. */
   const previewLoads = new Set<string>()
+  /**
+   * The screenshots an opened browser row is showing, at screen size: the
+   * thumbnail is a 256px sliver made for a tile, and blown up to a card's width
+   * it is a blur. Fetched on the first paint that draws the row open, bounded so
+   * a long conversation cannot pile up data URLs, and never part of a snapshot.
+   */
+  let shotViews = new Map<string, string>()
+  /** Ids being fetched, and ids whose fetch failed — neither is asked twice. */
+  const shotLoads = new Set<string>()
+  const shotFailures = new Set<string>()
+  /** How many screen-sized copies this pane keeps: a card or two, not the conversation. */
+  const MAX_SHOT_VIEWS = 6
   /**
    * The fullscreen viewer's state, or `undefined` while it is shut. Per pane
    * like everything else here: a viewer opened in this conversation must not
@@ -981,6 +1013,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     // paint draws the boxes, then each uncached id asks once. Streaming makes
     // this run per chunk; `beginPreviewLoad` is what keeps that one request.
     void loadTranscriptThumbnails(shown)
+    void loadExpandedShots()
     deps.onSubagentsChanged?.()
   }
 
@@ -994,6 +1027,14 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   async function loadTranscriptThumbnails(shown: TranscriptState): Promise<void> {
     const ids: string[] = []
     for (const item of shown.items) {
+      if (item.kind === 'tool') {
+        // Only a browser row draws its result's pictures; a `Read` of an image
+        // keeps its caption rows, so its bytes would be a request nobody paints.
+        if (item.tool?.browser !== undefined) {
+          for (const image of item.tool.images ?? []) ids.push(image.id)
+        }
+        continue
+      }
       if (item.kind !== 'user') continue
       for (const image of item.images ?? []) ids.push(image.id)
       for (const image of item.pendingImages ?? []) {
@@ -1020,6 +1061,50 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     }
     // One repaint for the batch, and only when pixels actually arrived: the
     // node signatures carry the URLs, so a failed load changes nothing to draw.
+    if (arrived && active) renderTranscript()
+  }
+
+  /**
+   * The screen-sized copy behind every screenshot whose row is open, one request
+   * per id. Only an open row asks: folded, the sliver it draws is the thumbnail.
+   */
+  async function loadExpandedShots(): Promise<void> {
+    const ids = new Set<string>()
+    for (const entry of groupTranscript(transcript.items)) {
+      if (entry.kind !== 'run') continue
+      for (const step of entry.run.steps) {
+        if (step.kind !== 'tool' || step.tool.browser === undefined) continue
+        if (!isExpanded(disclosure, step.id)) continue
+        for (const image of step.tool.images ?? []) {
+          if (!shotViews.has(image.id)) ids.add(image.id)
+        }
+      }
+    }
+    if (ids.size === 0) return
+    let arrived = false
+    for (const id of ids) {
+      if (shotLoads.has(id) || shotFailures.has(id)) continue
+      shotLoads.add(id)
+      try {
+        const result = await client.getAttachmentView(id)
+        if (!result.ok) {
+          shotFailures.add(id)
+          continue
+        }
+        shotViews.set(id, result.dataUrl)
+        while (shotViews.size > MAX_SHOT_VIEWS) {
+          const oldest = shotViews.keys().next().value
+          if (oldest === undefined) break
+          shotViews.delete(oldest)
+        }
+        arrived = true
+      } catch {
+        // The thumbnail is still on screen; a second ask would only wait again.
+        shotFailures.add(id)
+      } finally {
+        shotLoads.delete(id)
+      }
+    }
     if (arrived && active) renderTranscript()
   }
 
@@ -1182,7 +1267,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    * in the strip, or the text goes out alone.
    */
   function beginImport(source: AttachmentImportSource): string | undefined {
-    if (attachmentDraftsFull(draftImages)) {
+    if (draftImages.length + reservedDraftImages >= MAX_DRAFT_IMAGES) {
       fail('已达到单次输入最多 10 张图片的上限；请先移除一些再继续。')
       return undefined
     }
@@ -2049,6 +2134,8 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
    * which is what the echoed `seq` decides. Nothing here awaits.
    */
   function refreshCompletions(): void {
+    if (sessionSuggestionTimer !== undefined) clearTimeout(sessionSuggestionTimer)
+    sessionSuggestionTimer = undefined
     const text = deps.composer.value()
     const query = fileCompletionQuery(text, deps.composer.cursorPos())
     if (!query) {
@@ -2059,18 +2146,36 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
     const started = beginFileRequest(completions)
     completions = started.state
-    void client.fileSuggestions(query.input, query.cursorPos)
-      .then((found) => {
-        completions = applyFileResponse(completions, started.seq, found)
-        renderSuggestions()
-      })
-      .catch(() => {
-        // Completion is a convenience; a failed lookup must not disturb the
-        // composer or clobber whatever the user has typed since.
-      })
+    let files: readonly FileSuggestion[] = []
+    let sessions: readonly FileSuggestion[] = []
+    const apply = (): void => {
+      completions = applyFileResponse(completions, started.seq, mergeMentionSuggestions(files, sessions))
+      renderSuggestions()
+    }
+    void client.fileSuggestions(query.input, query.cursorPos).then((found) => {
+      files = found
+      apply()
+    }).catch(() => {})
+    const at = query.input.slice(0, query.cursorPos).match(/(?:^|\s)@([^\s"/]*)$/)?.[1]
+    if (at !== undefined && !at.includes('\\') && deps.sessionSuggestions) {
+      sessionSuggestionTimer = setTimeout(() => {
+        sessionSuggestionTimer = undefined
+        if (completions.seq !== started.seq) return
+        void deps.sessionSuggestions!(at, ownProjectRoot, client.getSession()?.id).then((result) => {
+          sessions = result.results.map((hit) => ({
+            id: `session:${hit.sessionId}`,
+            displayText: hit.title,
+            metadata: { kind: 'session', path: hit.uri, replacementText: sessionReferenceMarkdown(hit), projectName: hit.projectIsGlobal ? '最近' : hit.projectName, updatedAt: hit.updatedAt, currentProject: hit.projectRoot === ownProjectRoot },
+          }))
+          apply()
+        }).catch(() => {})
+      }, 120)
+    }
   }
 
   function closeCompletions(): void {
+    if (sessionSuggestionTimer !== undefined) clearTimeout(sessionSuggestionTimer)
+    sessionSuggestionTimer = undefined
     completions = clearCompletions(completions)
     renderSuggestions()
   }
@@ -2275,11 +2380,12 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   }
 
   /** A staged send that fell through: the words, the paths and the drafts back where they were. */
-  function restoreStaged(entry: StagedSend): void {
+  function restoreStaged(entry: StagedSend, mergeText = false): void {
     // The conversation it was written for is gone: its refs cannot be submitted
     // here, so there is nothing to hand back to.
     if (entry.sessionId !== client.getSession()?.id) return
-    if (deps.composer.value() === '') deps.composer.setValue(entry.composerText, entry.composerText.length)
+    if (mergeText) mergeDraftText(entry.composerText)
+    else if (deps.composer.value() === '') deps.composer.setValue(entry.composerText, entry.composerText.length)
     const known = new Set(draftImages.map((draft) => draft.draftId))
     const restored = entry.drafts.filter((draft) => !known.has(draft.draftId))
     if (restored.length > 0) {
@@ -2288,6 +2394,57 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     }
     addDraftPaths(entry.paths)
     renderTranscript()
+  }
+
+  function mergeDraftText(text: string): void {
+    const current = active ? deps.composer.value() : draftText
+    const merged = current && text ? `${current}\n\n${text}` : current || text
+    if (active) deps.composer.setValue(merged, merged.length)
+    else draftText = merged
+  }
+
+  async function editPendingMessage(itemId: string): Promise<void> {
+    if (retractingMessages.has(itemId)) return
+    const staged = stagedSends.find((entry) => `sending:${entry.id}` === itemId)
+    const message = queued.find((entry) => `queued:${entry.id}` === itemId)
+    if (!staged && !message) return
+    const imageCount = staged ? staged.drafts.length : message?.images?.length ?? 0
+    if (draftImages.length + reservedDraftImages + imageCount > MAX_DRAFT_IMAGES) {
+      fail('撤回后会超过 10 张图片；请先移除输入框中的一些图片，再撤回。')
+      return
+    }
+    if (staged) {
+      // Completed imports belong to this draft again; unfinished ones settle in place.
+      for (const draft of staged.drafts) {
+        const outcome = importOutcomes.get(draft.draftId)
+        if (outcome) staged.drafts = settleAttachmentImport(staged.drafts, draft.draftId, outcome) ?? staged.drafts
+      }
+      stagedSends = stagedSends.filter((entry) => entry.id !== staged.id)
+      restoreStaged(staged, true)
+      if (active) deps.composer.focus()
+      return
+    }
+    if (!message) return
+    retractingMessages.add(itemId)
+    reservedDraftImages += imageCount
+    const sessionId = client.getSession()?.id
+    try {
+      const restored = await client.retractMessage(message.id)
+      if (sessionId !== client.getSession()?.id) return
+      const { text, paths } = splitAttachedPaths(restored.content)
+      mergeDraftText(text)
+      draftImages = [...draftImages, ...(restored.images ?? []).map((ref): AttachmentDraft => ({
+        kind: 'ready', draftId: `retracted-${lane}-${++draftSeq}`, ref,
+      }))]
+      addDraftPaths(paths)
+      renderAttachments()
+      if (active) deps.composer.focus()
+    } catch (error) {
+      fail(`撤回失败：${describe(error)}`)
+    } finally {
+      reservedDraftImages -= imageCount
+      retractingMessages.delete(itemId)
+    }
   }
 
   /** The local previews a settled send no longer needs. */
@@ -2508,6 +2665,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
 
   function deactivate(): void {
     if (!active) return
+    closeCompletions()
     draftText = deps.composer.value()
     // Shut while still active so the welcome page repaints them closed: a hidden
     // pane's popover still counts as open for `dom/dismiss.ts`.
@@ -2619,6 +2777,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
     projectName = hello.projectName
     projectGlobal = hello.projectIsGlobal
     gitBranch = hello.gitBranch
+    workingDir = hello.cwd
 
     transcript = createTranscriptState(hello.records, toolDisplays)
     for (const notice of hello.notices) {
@@ -2686,7 +2845,7 @@ export function createPaneSession(deps: PaneSessionDeps): PaneSession {
   async function acceptCompletion(mode: 'accept' | 'submit'): Promise<void> {
     const applied = applyCompletion(completions, deps.composer.value(), deps.composer.cursorPos())
     if (mode === 'accept') {
-      if (applied) deps.composer.setValue(applied.text, applied.cursorPos)
+      if (applied) (deps.composer.editValue ?? deps.composer.setValue)(applied.text, applied.cursorPos)
       closeCompletions()
       return
     }

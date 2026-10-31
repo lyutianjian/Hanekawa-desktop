@@ -256,6 +256,7 @@ export type HostCommand =
     priority?: MessageQueuePriority
   }
   | { type: 'clear-queue'; id: string }
+  | { type: 'retract-message'; id: string; messageId: string }
   // --- image attachments ----------------------------------------------------
   /**
    * Imports one image into the current session's attachment store.

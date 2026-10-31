@@ -256,7 +256,9 @@ test('every row carries one icon slot, whichever of the three things is in it', 
   assert.equal(slots.length, 3, 'a tab without an icon still holds the slot, so nothing shifts')
   assert.equal(slots[0]!.attributes.get('src'), 'data:image/png;base64,AA')
   assert.equal(slots[1]!.classes.includes('loading'), true)
-  // The placeholder is the bare slot: no source, and not the spinner.
+  // The page with no icon gets a globe rather than an empty square, which read
+  // as a favicon that failed to arrive.
+  assert.equal(slots[2]!.tagName, 'svg')
   assert.equal(slots[2]!.attributes.get('src'), undefined)
   assert.equal(slots[2]!.classes.includes('loading'), false)
 })
@@ -279,6 +281,7 @@ test('a tab that has never navigated says so, and the page stops painting under 
   const blank = r.stub.inspect(r.nodes.hole).children.find((child) => child.classes.includes('browser-blank'))!
   assert.equal(blank.hidden, false)
   assert.equal(blank.text, '在上方输入网址开始浏览')
+  assert.equal(blank.children[0]!.tagName, 'svg', 'the empty hole is not just a line of text in a large rectangle')
   // A WebContentsView is above this document: a hint drawn under a painting
   // page is a hint nobody sees.
   assert.equal(r.bounds.at(-1)?.visible, false)

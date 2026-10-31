@@ -124,9 +124,12 @@ export interface SessionControllerSnapshot {
    */
   readonly contextUsedTokens: number | undefined
   /**
-   * Output tokens the current turn's foreground requests have reported so far —
-   * no subagents, no compaction. Cleared when a turn starts and absent until its
-   * first response lands; an aborted or failed turn keeps what it reported.
+   * Output tokens the current turn's foreground requests have produced so far —
+   * no subagents, no compaction. The response in flight is estimated on top of
+   * what has been reported, so the count rises as the answer streams and snaps
+   * to the real one when its usage lands. Cleared when a turn starts and absent
+   * until the first text or response; an aborted or failed turn keeps what it
+   * reported.
    */
   readonly turnOutputTokens: number | undefined
 }
@@ -171,6 +174,12 @@ export interface SubagentActivity {
 
 /** A streaming response moves the context readout in steps of this many estimated tokens, not per chunk. */
 const STREAMED_PUBLISH_STEP_TOKENS = 1_000
+/**
+ * The turn's own count moves ten times finer: below a thousand tokens it reads
+ * as a number, and above as one decimal of a thousand, so a step of a hundred is
+ * the smallest one the status line can show.
+ */
+const STREAMED_OUTPUT_STEP_TOKENS = 100
 
 /**
  * How long the sidebar's placeholder bar stands for a name the model has not
@@ -241,6 +250,12 @@ export class SessionController {
   private lastRequestAt: number | undefined
   /** The response still streaming, estimated: context it adds before its records land. */
   private streamedTokens = 0
+  /**
+   * That same response's output, estimated. Reset when its usage lands rather
+   * than when its records do, so the count never dips back to the reported
+   * total between the two.
+   */
+  private streamedOutput = 0
   /**
    * System, tool schemas, skills and instructions as the loop would send them
    * now: the part of a request no record accounts for. Refreshed per turn.
@@ -562,6 +577,7 @@ export class SessionController {
       this.subagentActivity.clear()
       this.streaming = false
       this.streamedTokens = 0
+      this.streamedOutput = 0
       this.spinnerSubText = undefined
       this.publish()
 
@@ -797,6 +813,7 @@ export class SessionController {
    */
   private handleRequestUsage = (usage: TokenUsage, anchorRecordId?: string): void => {
     this.turnOutputTokens = (this.turnOutputTokens ?? 0) + usage.outputTokens
+    this.streamedOutput = 0
     this.usage = { lastRequest: usage, total: addTokenUsage(this.usage.total, usage) }
     this.usageAnchorRecordId = anchorRecordId
     this.lastRequestAt = Date.now()
@@ -1029,11 +1046,16 @@ export class SessionController {
         : event.type === 'thinking_delta' ? event.thinking
           : undefined
     if (text) {
-      const step = Math.floor(this.streamedTokens / STREAMED_PUBLISH_STEP_TOKENS)
-      this.streamedTokens += textTokenWeight(text)
-      if (Math.floor(this.streamedTokens / STREAMED_PUBLISH_STEP_TOKENS) !== step) this.publish()
+      const contextStep = Math.floor(this.streamedTokens / STREAMED_PUBLISH_STEP_TOKENS)
+      const outputStep = Math.floor(this.streamedOutput / STREAMED_OUTPUT_STEP_TOKENS)
+      const weight = textTokenWeight(text)
+      this.streamedTokens += weight
+      this.streamedOutput += weight
+      if (Math.floor(this.streamedTokens / STREAMED_PUBLISH_STEP_TOKENS) !== contextStep
+        || Math.floor(this.streamedOutput / STREAMED_OUTPUT_STEP_TOKENS) !== outputStep) this.publish()
     } else if (event.type === 'message_start' || event.type === 'retry') {
       this.streamedTokens = 0
+      this.streamedOutput = 0
     }
     this.emit({ type: 'stream', event })
   }
@@ -1223,8 +1245,18 @@ export class SessionController {
       taskSnapshot: this.taskSnapshot,
       spinnerSubText: this.spinnerSubText,
       contextUsedTokens: this.contextUsed(),
-      turnOutputTokens: this.turnOutputTokens,
+      turnOutputTokens: this.turnOutputLive(),
     })
+  }
+
+  /**
+   * What the turn has reported plus an estimate of the response in flight — the
+   * context readout's own trick, applied to the count beside the clock.
+   */
+  private turnOutputLive(): number | undefined {
+    const reported = this.turnOutputTokens
+    const live = (reported ?? 0) + this.streamedOutput
+    return live > 0 ? Math.ceil(live) : reported
   }
 
   /** Swaps in a new snapshot and notifies, but only when something actually changed. */

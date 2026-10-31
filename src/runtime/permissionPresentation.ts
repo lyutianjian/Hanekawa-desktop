@@ -419,7 +419,7 @@ const REASONS_ZH: readonly Translation[] = [
   [/^This action would normally be auto-denied \(protected path or deny rule\), but the model has now requested it (\d+) times in a row\. Confirm explicitly to proceed, or deny to keep blocking it\.$/, (count) =>
     `该操作通常会被自动拒绝（受保护路径或拒绝规则），但模型已连续请求 ${count} 次。确认则继续执行，拒绝则继续阻止。`],
   [/^Even in bypass mode, protected paths require explicit confirmation\.(?: Matched protected paths?: (.+)\.)?$/, (paths) =>
-    `即使在绕过模式下，受保护路径也需要你明确确认。${paths ? `匹配到：${paths}。` : ''}`],
+    `即使在完全访问权限模式下，受保护路径也需要你明确确认。${paths ? `匹配到：${paths}。` : ''}`],
   [/^Suspicious path: (.+)$/, (detail) => `可疑路径：${detail}`],
 ]
 

@@ -2117,6 +2117,28 @@ test('hello carries the messages already waiting', async () => {
   harness.dispose()
 })
 
+test('retract-message returns one waiting message and the pump only sends the remaining one', async (t) => {
+  const harness = await createHarness()
+  t.after(() => harness.dispose())
+  harness.setStreaming(true)
+  const enqueue = async (id: string, content: string) => {
+    harness.send({ type: 'enqueue-message', id, content })
+    const reply = await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === id), 'enqueue')
+    assert.ok(reply.type === 'reply')
+    return (reply.result as { message: { id: string; content: string } }).message
+  }
+  const first = await enqueue('q1', 'edit this')
+  await enqueue('q2', 'send this')
+  harness.send({ type: 'retract-message', id: 'r1', messageId: first.id })
+  const reply = await waitFor(() => harness.received.find((event) => event.type === 'reply' && event.id === 'r1'), 'retract')
+  assert.ok(reply.type === 'reply')
+  assert.deepEqual((reply.result as { message: unknown }).message, first)
+  assert.deepEqual(latestQueue(harness.received), ['send this'])
+  harness.setStreaming(false)
+  await waitFor(() => harness.calls.submits.length === 1 ? true : undefined, 'remaining delivery')
+  assert.deepEqual(harness.calls.submits, ['send this'])
+})
+
 test('clear-queue drops what is waiting without touching the running turn', async () => {
   const harness = await createHarness()
   harness.setStreaming(true)

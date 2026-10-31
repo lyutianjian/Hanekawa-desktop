@@ -1,7 +1,7 @@
 import { readdir } from 'node:fs/promises'
 import path from 'node:path'
 import Fuse, { type FuseResult } from 'fuse.js'
-import { isTextFileName } from '../../harness/atMentions.js'
+import { IMAGE_MENTION_EXTENSIONS, isTextFileName } from '../../harness/atMentions.js'
 import { assertInsideCwd } from '../../utils/paths.js'
 import { isProtectedPath } from '../../utils/permissions/protectedPaths.js'
 import { extractAtCompletionToken, type FileSuggestion } from './atToken.js'
@@ -134,7 +134,7 @@ async function loadFileSearchItems(cwd: string, dirPrefix: string): Promise<File
 
       if (!entry.isFile()) return []
       if (IGNORED_FILE_NAMES.has(entry.name.toLowerCase())) return []
-      if (!isTextFileName(entry.name)) return []
+      if (!isTextFileName(entry.name) && !IMAGE_MENTION_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) return []
       if (isProtectedPath(displayPath)) return []
       return [{
         path: displayPath,

@@ -266,8 +266,10 @@ export class ContextBuilder {
     const activeSkills = matchFileSkills(input.skills ?? [], input.toolContext)
     const ownContextItems = this.recordsToContextItems(input.records)
     const latestUserId = [...input.records].reverse().find((record) => record.type === 'message' && record.role === 'user')?.id
+    const latestReferenceIds = new Set(input.records.flatMap((record) =>
+      record.type === 'session_reference_context' && record.userMessageId === latestUserId ? [record.id] : []))
     for (const item of ownContextItems) {
-      if (item.kind === 'message' && item.message.id === latestUserId) item.pinned = true
+      if (item.kind === 'message' && (item.message.id === latestUserId || latestReferenceIds.has(item.message.id))) item.pinned = true
     }
     // Everything that can change between turns lives *after* the history
     // (spec §6.2). The date rolls over, a fileMatch skill activates from a
@@ -439,7 +441,7 @@ export class ContextBuilder {
         continue
       }
 
-      if (record.type === 'at_mention_context') {
+      if (record.type === 'at_mention_context' || record.type === 'session_reference_context') {
         contextItems.push({
           kind: 'message',
           message: {

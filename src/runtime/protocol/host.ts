@@ -690,13 +690,14 @@ export class SessionHost implements CoordinationLaneControl {
    */
   private pumpQueue(): void {
     if (this.disposed) return
+    const head = this.messages.peek()
     const state = {
       pending: this.messages.getSnapshot().length,
       running: this.pumping || this.queuePauseDepth > 0,
       // A switching or compacting lane is as unavailable as a streaming one:
       // a hand-off there would start a turn the retarget is about to move.
       turnActive: this.controller.busyKind() !== undefined,
-      uiBlocked: this.pendingKinds.size > 0 || !this.runtimeSlot.current,
+      uiBlocked: this.pendingKinds.size > 0 || !this.runtimeSlot.current || (head !== undefined && !this.messages.canClaim(head.id)),
       headMessageId: this.messages.peek()?.id,
       ...(this.queueBlock && this.queueBlock.session === this.runtimeSlot.current
         ? { blockedMessageId: this.queueBlock.messageId }
@@ -737,10 +738,16 @@ export class SessionHost implements CoordinationLaneControl {
     if (!canPumpQueue(state)) return
 
     this.pumping = true
+    let claimedMessageId: string | undefined
     void (async () => {
       try {
         const outcome = await handOffQueuedMessage({
-          peek: () => this.messages.peek(),
+          peek: () => {
+            const message = this.messages.peek()
+            if (!message || !this.messages.claim(message.id)) return undefined
+            claimedMessageId = message.id
+            return message
+          },
           consume: (messageId) => this.messages.consume(messageId),
           deliver: (input, context) => {
             // The race the old comment called the lesser evil: `dispose()` can
@@ -768,6 +775,7 @@ export class SessionHost implements CoordinationLaneControl {
         // shape `applySessionSwitch` posts for its startup notices.
         this.postQueueNotice(`排队的消息发送失败：${error instanceof Error ? error.message : String(error)}`)
       } finally {
+        if (claimedMessageId) this.messages.release(claimedMessageId)
         this.pumping = false
         // More may be waiting, and the turn that just ended already fired its
         // own `postSnapshot` while this flag was still set.
@@ -1219,6 +1227,13 @@ export class SessionHost implements CoordinationLaneControl {
       case 'clear-queue':
         await this.messages.clear()
         return { ok: true }
+
+      case 'retract-message':
+        try {
+          return { message: await this.messages.retract(command.messageId) } satisfies WireEnqueueResult
+        } finally {
+          this.pumpQueue()
+        }
 
       case 'import-attachment': {
         const attachments = this.requireAttachments()

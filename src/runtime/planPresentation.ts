@@ -58,7 +58,7 @@ const STRINGS = {
   zh: {
     enterYes: '好，进入计划模式',
     enterNo: '不用，现在就开始实现',
-    bypassKeep: '好，并绕过权限确认',
+    bypassKeep: '好，并开启完全访问权限',
     autoKeep: '好，必要时询问',
     restoreKeep: '好，逐条确认修改',
     reject: '不，继续规划',

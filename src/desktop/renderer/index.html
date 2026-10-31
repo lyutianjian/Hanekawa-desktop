@@ -131,7 +131,7 @@
               -->
               <div id="composer-attachments"></div>
               <div id="composer-editor">
-                <textarea id="input" spellcheck="false" aria-label="消息" aria-autocomplete="list" aria-controls="suggestions" placeholder="随心输入，/ 调用命令，@ 引用文件" rows="1"></textarea>
+                <div id="input" contenteditable="true" role="textbox" aria-multiline="true" spellcheck="false" aria-label="消息" aria-autocomplete="list" aria-controls="suggestions" data-placeholder="随心输入，/ 调用命令，@ 引用文件或会话"></div>
               </div>
               <div id="composer-bar">
                 <button id="composer-attach" type="button"></button>
@@ -190,6 +190,14 @@
         <div id="rewind" hidden role="dialog" aria-label="回退">
           <div id="rewind-panel"></div>
         </div>
+        <!--
+          The 完全访问权限 question, raised by the composer's permission pill. A
+          layer of its own rather than a row in the pill's menu: the mode it
+          turns on has no guard left to fall back on. Canvas-level like the
+          rewind panel, and for the same reason — it belongs to one lane, so the
+          sidebar stays usable and it carries no `aria-modal`.
+        -->
+        <div id="permission-confirm" hidden></div>
         <!--
           The toast stack, in the canvas rather than the window: the browser
           panel is a native view beside it, so nothing here can sit under that

@@ -10,6 +10,7 @@ import {
   extractAtCompletionToken,
   type FileSuggestion,
 } from '../../../runtime/suggestions/atToken.js'
+import { mentionPresentation, type MentionPresentation } from './mentionPresentation.js'
 import type { WireCommandInfo } from '../../../runtime/protocol/wire.js'
 
 /**
@@ -54,10 +55,12 @@ export const NO_COMPLETIONS: CompletionState = { kind: 'none', seq: 0 }
 export interface CompletionRow {
   readonly displayText: string
   readonly description?: string
+  readonly mention?: MentionPresentation
 }
 
 export function completionRows(state: CompletionState): readonly CompletionRow[] {
-  return state.kind === 'none' ? [] : state.items
+  if (state.kind === 'none') return []
+  return state.kind === 'file' ? state.items.map((item) => ({ ...item, mention: mentionPresentation(item) })) : state.items
 }
 
 export function isOpen(state: CompletionState): boolean {
@@ -195,4 +198,13 @@ export function acceptCompletion(
   }
   const suggestion = state.items[state.selectedIndex]
   return suggestion ? applyFileSuggestion(text, cursorPos, suggestion) : undefined
+}
+
+/** Both sources keep places; a slow title response cannot delay file rows. */
+export function mergeMentionSuggestions(files: readonly FileSuggestion[], sessions: readonly FileSuggestion[], limit = 15): FileSuggestion[] {
+  if (files.length === 0) return sessions.slice(0, limit)
+  if (sessions.length === 0) return files.slice(0, limit)
+  const reserved = Math.min(5, Math.floor(limit / 2))
+  const initial = [...sessions.slice(0, reserved), ...files.slice(0, reserved)]
+  return [...initial, ...sessions.slice(reserved), ...files.slice(reserved)].slice(0, limit)
 }

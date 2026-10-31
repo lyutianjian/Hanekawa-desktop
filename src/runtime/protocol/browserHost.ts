@@ -29,6 +29,12 @@ export interface BrowserTabState {
   takenOver?: boolean
   /** Downloads the page started, cancelled by the browser: their file names, oldest first. */
   blockedDownloads?: string[]
+  /**
+   * JavaScript errors this page logged that the caller has not been shown yet,
+   * oldest first; each is reported once. A page whose console says why a click
+   * did nothing is otherwise indistinguishable from one that ignored it.
+   */
+  consoleErrors?: string[]
   /** Only from `waitForLoad` until `networkidle`: whether the page then settled, in one line. */
   settle?: string
 }
@@ -41,6 +47,8 @@ export interface BrowserSnapshot {
   cursor?: string
   scanTruncated: boolean
   total: number
+  /** Console errors not yet reported; see `BrowserTabState.consoleErrors`. */
+  consoleErrors?: string[]
 }
 
 export interface BrowserScreenshot {
@@ -57,6 +65,8 @@ export interface BrowserScreenshot {
   cssHeight?: number
   /** Whether the page had stopped moving when it was captured, in one line; absent when not waited for. */
   settle?: string
+  /** Console errors not yet reported; see `BrowserTabState.consoleErrors`. */
+  consoleErrors?: string[]
 }
 
 export interface BrowserScreenshotRequest {
@@ -226,9 +236,26 @@ export interface BrowserCaller {
 /** The tab's own history buttons: the three navigations that need no URL. */
 export type BrowserHistoryAction = 'back' | 'forward' | 'reload'
 
+/**
+ * A page on disk, opened through the app's own loopback server.
+ *
+ * The tool never names a `file:` URL: the browser refuses those on purpose, so
+ * the host reads the bytes under `root` and hands the page plain http.
+ */
+export interface BrowserLocalPageRequest {
+  /** Absolute path of the document. */
+  path: string
+  /** The directory the document may read besides itself: its workspace, or its own directory. */
+  root: string
+  /** Replaces this tab's document; without it the page opens in a new tab. */
+  tabId?: string
+}
+
 export interface BrowserHost {
   listTabs(caller: BrowserCaller): Promise<BrowserTabState[]>
   createTab(caller: BrowserCaller, url?: string): Promise<BrowserTabState>
+  /** Opens a document on disk in its own tab, or in `tabId` when one is named. */
+  openLocal(caller: BrowserCaller, request: BrowserLocalPageRequest): Promise<BrowserTabState>
   closeTab(caller: BrowserCaller, tabId: string): Promise<void>
   navigate(caller: BrowserCaller, tabId: string, url: string): Promise<BrowserTabState>
   /** Refuses a back or forward with nowhere to go rather than doing nothing. */

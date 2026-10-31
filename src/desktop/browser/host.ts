@@ -27,6 +27,7 @@ import type {
   BrowserLoadState,
   BrowserHistoryAction,
   BrowserHost,
+  BrowserLocalPageRequest,
   BrowserPressKeyRequest,
   BrowserScreenshot,
   BrowserScreenshotRequest,
@@ -125,7 +126,10 @@ export class DesktopBrowserHost implements BrowserHost {
   async listTabs(caller: BrowserCaller): Promise<BrowserTabState[]> {
     this.enter(caller)
     const lane = this.requireLane(caller)
-    return this.deps.tabs.describe().filter((tab) => tab.lane === lane).map(toState)
+    return this.deps.tabs
+      .describe()
+      .filter((tab) => tab.lane === lane)
+      .map((tab) => toState(tab, this.deps.tabs.takeConsoleErrors(tab.tabId)))
   }
 
   async createTab(caller: BrowserCaller, url?: string): Promise<BrowserTabState> {
@@ -159,6 +163,26 @@ export class DesktopBrowserHost implements BrowserHost {
     // Cursors are keyed on the navigation generation and would be refused
     // anyway; dropping them here just frees the bytes a turn earlier.
     this.projection.dropTab(tabId)
+    return this.stateOf(tabId)
+  }
+
+  /**
+   * A document on disk. It becomes this app's own loopback URL rather than a
+   * `file:` one, because the tab has to stay an ordinary http page: that is
+   * what lets its relative assets, scripts and `fetch` behave normally.
+   */
+  async openLocal(caller: BrowserCaller, request: BrowserLocalPageRequest): Promise<BrowserTabState> {
+    this.enter(caller)
+    if (request.tabId !== undefined) this.requireTab(caller, request.tabId)
+    else this.requireLane(caller)
+    const url = await this.deps.tabs.localUrl(caller.sessionId, request.root, request.path)
+    if (request.tabId !== undefined) {
+      this.deps.tabs.navigate(request.tabId, url)
+      this.projection.dropTab(request.tabId)
+      return this.stateOf(request.tabId)
+    }
+    const tabId = this.deps.tabs.createTab(this.requireLane(caller), url)
+    this.claim(tabId, caller.sessionId)
     return this.stateOf(tabId)
   }
 
@@ -207,15 +231,15 @@ export class DesktopBrowserHost implements BrowserHost {
             `The page refused to be left (it may hold unsaved input), so the navigation did not happen and the tab still shows ${row.url || '(blank)'}. Ask the user before retrying.`,
           )
         }
-        if (until !== 'networkidle' || row.error !== undefined) return toState(row)
+        if (until !== 'networkidle' || row.error !== undefined) return this.stateOf(tabId)
         // The rest of the caller's budget, not a fresh cap: they asked for one timeout.
         const remaining = Math.max(WAIT_POLL_INTERVAL_MS, deadline - performance.now())
         const report = await this.settle(tabId, check, remaining, options.signal)
-        return { ...toState(this.requireTab(caller, tabId)), settle: describeSettle(report) }
+        return { ...this.stateOf(tabId), settle: describeSettle(report) }
       }
       // The DOM is parsed, and that is all a `domcontentloaded` wait asked:
       // images, fonts and iframes may still be arriving.
-      if (until === 'domcontentloaded' && this.deps.tabs.pageFor(tabId)?.domReady === true) return toState(row)
+      if (until === 'domcontentloaded' && this.deps.tabs.pageFor(tabId)?.domReady === true) return this.stateOf(tabId)
       if (performance.now() > deadline) {
         throw new BrowserHostError(
           'WAIT_TIMEOUT',
@@ -233,7 +257,7 @@ export class DesktopBrowserHost implements BrowserHost {
     // The page has live refs again, so the next idle touch has some to forget.
     this.forgotten.delete(tabId)
     this.ownership.assertAllowed(caller.sessionId, revision)
-    return snapshot
+    return this.reading(tabId, snapshot)
   }
 
   async text(caller: BrowserCaller, tabId: string, request: BrowserTextRequest): Promise<BrowserSnapshot> {
@@ -241,7 +265,7 @@ export class DesktopBrowserHost implements BrowserHost {
     const page = await this.emulatedPage(caller, tabId, revision)
     const snapshot = await this.projection.text(ownerOf(page), pageEvaluator(page), request)
     this.ownership.assertAllowed(caller.sessionId, revision)
-    return snapshot
+    return this.reading(tabId, snapshot)
   }
 
   async readSnapshot(caller: BrowserCaller, tabId: string, cursor: string, maxChars?: number): Promise<BrowserSnapshot> {
@@ -274,7 +298,7 @@ export class DesktopBrowserHost implements BrowserHost {
       shot.cssWidth = viewport.width
       shot.cssHeight = viewport.height
     }
-    return shot
+    return this.reading(tabId, shot)
   }
 
   async click(caller: BrowserCaller, tabId: string, request: BrowserClickRequest): Promise<BrowserActionResult> {
@@ -571,15 +595,26 @@ export class DesktopBrowserHost implements BrowserHost {
   private stateOf(tabId: string): BrowserTabState {
     const row = this.rowFor(tabId)
     if (row === undefined) throw new BrowserHostError('TAB_NOT_FOUND', `No such browser tab: ${tabId}`)
-    return toState(row)
+    return toState(row, this.deps.tabs.takeConsoleErrors(tabId))
+  }
+
+  /**
+   * The page's console errors ride along with whatever read the page: that is
+   * where "the click did nothing" gets its explanation. Taking them is what
+   * makes each one appear once, in whichever result got there first.
+   */
+  private reading<T extends object>(tabId: string, result: T): T {
+    const consoleErrors = this.deps.tabs.takeConsoleErrors(tabId)
+    return consoleErrors.length === 0 ? result : { ...result, consoleErrors }
   }
 }
 
-function toState(row: WireBrowserTabInfo): BrowserTabState {
+function toState(row: WireBrowserTabInfo, consoleErrors: readonly string[]): BrowserTabState {
   const state: BrowserTabState = { tabId: row.tabId, url: row.url, title: row.title, loading: row.loading }
   if (row.error !== undefined) state.error = row.error
   if (row.takenOver === true) state.takenOver = true
   if (row.blockedDownloads !== undefined) state.blockedDownloads = [...row.blockedDownloads]
+  if (consoleErrors.length > 0) state.consoleErrors = [...consoleErrors]
   return state
 }
 

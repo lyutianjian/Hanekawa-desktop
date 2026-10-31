@@ -8,6 +8,7 @@ import { AgentLoop, type AgentLoopOptions } from '../src/harness/loop.js'
 import { ContextBuilder } from '../src/harness/contextBuilder.js'
 import { PermissionGate } from '../src/harness/permissions.js'
 import { ToolRunner } from '../src/harness/toolRunner.js'
+import { MessageQueue } from '../src/runtime/messageQueue.js'
 import type { RecordStream } from '../src/harness/recordStream.js'
 import type { ModelProvider, PersistedQueuedMessage, SessionRecord, SteerSource, Tool } from '../src/harness/types.js'
 
@@ -116,6 +117,36 @@ test('a message sent mid-turn joins the turn at the next step', async () => {
   assert.ok(!requests[0]?.includes('also check the tests'))
   assert.ok(requests[1]?.includes('/tmp/notes'))
   assert.deepEqual(pending, [])
+})
+
+test('steering cannot accept a message withdrawn after it captured its pending snapshot', async () => {
+  const records: SessionRecord[] = []
+  const queue = new MessageQueue('s1', [], async (_sessionId, record) => { records.push(record) })
+  const first = await queue.enqueue({ text: 'first' })
+  const second = await queue.enqueue({ text: 'withdraw this' })
+  const requests: string[] = []
+  const provider: ModelProvider = {
+    name: 'fake',
+    async createMessage(request) {
+      requests.push(JSON.stringify(request.messages))
+      return { content: 'done', toolCalls: [] }
+    },
+  }
+  await loopFor(provider, records, queue, () => {}, {
+    recordStream: {
+      load: async () => records,
+      append: async (record) => {
+        if (record.type === 'message' && record.sourceQueuedMessageId === first.id) {
+          await assert.rejects(queue.retract(first.id), /正在发送/)
+          await queue.retract(second.id)
+        }
+        records.push(record)
+      },
+    },
+  }).run({ text: 'start' })
+  assert.deepEqual(userTexts(records), ['start', 'first'])
+  assert.ok(requests.every((request) => !request.includes('withdraw this')))
+  assert.equal(queue.getSnapshot().length, 0)
 })
 
 test('the queued message a turn started from is not steered into it again', async () => {

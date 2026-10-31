@@ -10,6 +10,7 @@ export interface BackgroundTaskRow {
   readonly id: string
   readonly kind: 'shell' | 'agent'
   readonly title: string
+  readonly command?: string
   readonly tone: ThreadTone
   readonly running: boolean
   readonly status: string
@@ -36,7 +37,8 @@ export function backgroundTaskGroups(tasks: readonly BackgroundTaskSnapshot[], a
   const rows: BackgroundTaskRow[] = commandRows(tasks).map((command) => ({
     id: command.id,
     kind: 'shell',
-    title: command.command,
+    title: command.title,
+    command: command.command,
     tone: command.tone === 'running' ? 'running' : command.tone === 'done' ? 'muted' : 'danger',
     running: command.running,
     status: command.status,

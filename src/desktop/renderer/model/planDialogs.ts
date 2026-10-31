@@ -157,7 +157,7 @@ export function exitPlanViewModel(state: ExitPlanState, platform: DesktopPlatfor
       entry('修改…', 'start', { kind: 'modify' }, { shortcut: 'Esc' }),
       entry('接受', 'end', { kind: 'approve', slot: 1 }, { shortcut: enterChordLabel(platform, { primary: true, shift: true }) }),
       entry(
-        elevated?.kind === 'approve_bypass_keep' ? '接受并绕过权限' : '接受并自动执行',
+        elevated?.kind === 'approve_bypass_keep' ? '接受并开启完全访问权限' : '接受并自动执行',
         'end',
         { kind: 'approve', slot: 0 },
         { shortcut: enterChordLabel(platform, { primary: true }), primary: true },

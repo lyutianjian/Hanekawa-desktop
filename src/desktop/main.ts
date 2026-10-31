@@ -744,6 +744,11 @@ async function bootstrapProject(
     store,
     session,
     confirmMcpTrust: promptTrustMcpServer,
+    listSessionProjectRoots: async () => [...await loadRecentProjects(), ...directory.entries().map((entry) => entry.cwd)],
+    getSessionLiveState: (sessionId) => {
+      const pane = directory.entries().flatMap((entry) => entry.workspace.list()).find((pane) => pane.getSession().id === sessionId)
+      return pane ? pane.controller.getSnapshot().isStreaming ? 'running' : 'idle' : 'unknown'
+    },
     // The one tool the shared registry cannot build: it needs this process's
     // window. The TUI's `bootstrap()` passes none, so `Browser` is desktop-only
     // by construction rather than by a runtime check.

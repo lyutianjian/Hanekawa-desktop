@@ -1391,8 +1391,13 @@ test('Anthropic payload replays signature-less thinking with an empty signature'
     { type: 'text', text: 'answer' },
   ])
 
-  const blank = build({ type: 'thinking', thinking: '   ', signature: '' })
-  assert.deepEqual(blank.messages[1]!.content, [{ type: 'text', text: 'answer' }])
+  // A progress-update block can carry empty text; the tool-use turn still needs
+  // it back unmodified, so it is replayed rather than dropped.
+  const blank = build({ type: 'thinking', thinking: '', signature: '' })
+  assert.deepEqual(blank.messages[1]!.content, [
+    { type: 'thinking', thinking: '', signature: '' },
+    { type: 'text', text: 'answer' },
+  ])
 })
 
 test('buildAnthropicMessages includes tool use and tool results', () => {

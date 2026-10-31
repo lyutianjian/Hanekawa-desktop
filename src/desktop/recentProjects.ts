@@ -3,7 +3,8 @@ import { mkdir, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { readJsonFile } from '../utils/json.js'
-import { getHanekawaDir, getSessionsDir, userHome } from '../utils/paths.js'
+import { userHome } from '../utils/paths.js'
+import { readSessionIndex, peekSessionIndex } from '../sessions/readonlyReader.js'
 import { projectRootKey } from '../runtime/projectDirectory.js'
 
 /**
@@ -114,26 +115,7 @@ interface IndexEntry {
   updatedAt?: unknown
 }
 
-/**
- * The newest session's timestamp under one root, or `undefined` when the root
- * has no sessions at all.
- *
- * Reads `sessions/index.json` directly rather than going through
- * `SessionStore.list()`: the store takes a cross-process file lock and may
- * *write* the index back (recovery) — side effects a startup scan of every
- * registered project must not have. A missing or corrupt index simply means
- * "no sessions here".
- */
-/**
- * A project not opened since runtime data moved out of `<root>/.hanekawa/` still
- * has its index there; `SessionStore.init()` migrates it on the next open.
- */
-async function readSessionIndex(root: string): Promise<{ sessions?: unknown }> {
-  const current = join(getSessionsDir(root), 'index.json')
-  const path = existsSync(current) ? current : join(getHanekawaDir(root), 'sessions', 'index.json')
-  return readJsonFile<{ sessions?: unknown }>(path, {})
-}
-
+/** Newest index timestamp; the shared reader has no store lifecycle side effects. */
 export async function peekNewestSessionAt(root: string): Promise<number | undefined> {
   const index = await readSessionIndex(root)
   if (!Array.isArray(index.sessions)) return undefined
@@ -163,24 +145,7 @@ export interface PeekedSession {
  * `SessionStore.list()` shape for projects whose runtime is not open.
  */
 export async function peekSessions(root: string): Promise<PeekedSession[]> {
-  const index = await readSessionIndex(root)
-  if (!Array.isArray(index.sessions)) return []
-  const rows: PeekedSession[] = []
-  for (const entry of index.sessions as Record<string, unknown>[]) {
-    if (typeof entry !== 'object' || entry === null) continue
-    if (typeof entry.id !== 'string' || typeof entry.updatedAt !== 'string') continue
-    const row: PeekedSession = {
-      id: entry.id,
-      updatedAt: entry.updatedAt,
-      messageCount: typeof entry.messageCount === 'number' ? entry.messageCount : 0,
-    }
-    if (typeof entry.title === 'string' && entry.title.length > 0) row.title = entry.title
-    if (entry.lastTurnFailed === true) row.lastTurnFailed = true
-    const role = (entry.coordination as { role?: unknown } | undefined)?.role
-    if (role === 'coordinator' || role === 'thread') row.coordination = { role }
-    rows.push(row)
-  }
-  return rows.sort((left, right) => touchedAt(right.updatedAt) - touchedAt(left.updatedAt))
+  return peekSessionIndex(root)
 }
 
 export interface StartupResolution {

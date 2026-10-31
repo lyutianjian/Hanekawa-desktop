@@ -1,3 +1,4 @@
+import type { SessionReferenceHost } from './protocol/sessionReferences.js'
 import type { AgentLoop, ActiveModelRuntime, AgentRunOverrides } from '../harness/loop.js'
 import type { PlanModeManager } from '../harness/planModeManager.js'
 import type { PermissionGate } from '../harness/permissions.js'
@@ -63,6 +64,8 @@ export interface BootstrapOptions {
    * the honest answer, since there would be no window to drive.
    */
   extraTools?: Tool[]
+  listSessionProjectRoots?: () => Promise<readonly string[]>
+  getSessionLiveState?: (sessionId: string) => 'running' | 'idle' | 'unknown'
 }
 
 /**
@@ -74,6 +77,7 @@ export interface BootstrapOptions {
  * several concurrent sessions without them reaching into each other.
  */
 export interface ProjectRuntime {
+  sessionReferences: SessionReferenceHost
   cwd: string
   config: ConfigService
   store: SessionStore

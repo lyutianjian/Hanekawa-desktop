@@ -102,7 +102,7 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
       ? row.tokens === undefined ? undefined : el('span', 'bt-tokens', `${formatTokens(row.tokens)} token`)
       : el('span', 'bt-time', row.durationMs === undefined ? '' : formatElapsed(row.durationMs))
     if (row.kind === 'shell' && row.running && row.startedAt !== undefined && metric !== undefined) clocks.push({ node: metric, startedAt: row.startedAt })
-    const head = button('bt-head', '', `${row.title} · ${row.status}，${row.kind === 'agent' ? '查看详情' : open ? '收起输出' : '查看输出'}`, () => {
+    const head = button('bt-head', '', `${row.title} · ${row.status}，${open ? '收起详情' : '查看详情'}`, () => {
       if (row.kind === 'agent') handlers.onSelectAgent(row.id)
       else {
         if (expanded.has(row.id)) expanded.delete(row.id)
@@ -117,13 +117,20 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
     head.dataset.focusKey = `task:${row.id}:head`
     replace(
       head,
-      el('div', 'bt-title', mark, el('span', `bt-text${row.kind === 'shell' ? ' bt-shell-title' : ''}`, row.title), row.kind === 'shell' ? el('span', `bt-chevron${open ? ' open' : ''}`, icon('chevron-right')) : undefined),
+      el('div', 'bt-title', mark, el('span', 'bt-text', row.title), row.kind === 'shell' ? el('span', `bt-chevron${open ? ' open' : ''}`, icon('chevron-right')) : undefined),
       el('div', 'bt-meta',
         el('span', 'bt-status', row.status),
         row.model === undefined ? undefined : el('span', 'bt-model', modelName(row.model)),
         metric,
       ),
     )
+    const command = open ? el('pre', 'bt-command step-terminal', row.command ?? row.title) : undefined
+    if (command) {
+      command.setAttribute('tabindex', '0')
+      command.setAttribute('role', 'region')
+      command.setAttribute('aria-label', '完整命令')
+      command.dataset.focusKey = `task:${row.id}:command`
+    }
     const pre = open ? el('pre', 'command-output step-terminal', outputs.get(row.id) || EMPTY_OUTPUT) : undefined
     if (pre) {
       pre.setAttribute('tabindex', '0')
@@ -147,7 +154,7 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
       ? button('bt-stop', '', `停止 ${row.title}`, () => handlers.onStop(row), { icon: 'stop' })
       : undefined
     if (stop !== undefined) stop.dataset.focusKey = `task:${row.id}:stop`
-    return el('div', 'bt-row', head, stop, output, failure)
+    return el('div', 'bt-row', head, stop, command, output, failure)
   }
 
   function stopClock(): void {

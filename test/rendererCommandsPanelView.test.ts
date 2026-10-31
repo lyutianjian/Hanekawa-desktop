@@ -6,8 +6,8 @@ import { createBackgroundTasksView, type BackgroundTasksHandlers } from '../src/
 import type { BackgroundTaskRow, TaskGroup } from '../src/desktop/renderer/model/backgroundTasks.js'
 import { COPY_RECEIPT_MS } from '../src/desktop/renderer/dom/copyButton.js'
 
-const live: BackgroundTaskRow = { id: 't1', kind: 'shell', title: 'npm run dev', tone: 'running', running: true, status: '运行中', startedAt: 0 }
-const done: BackgroundTaskRow = { id: 't2', kind: 'shell', title: 'npm test -- test/rendererCommandsPanelView.test.ts &&\n  npm run typecheck', tone: 'muted', running: false, status: '已完成 · exit 0', startedAt: 0, durationMs: 75_000 }
+const live: BackgroundTaskRow = { id: 't1', kind: 'shell', title: 'npm run dev', command: 'npm run dev', tone: 'running', running: true, status: '运行中', startedAt: 0 }
+const done: BackgroundTaskRow = { id: 't2', kind: 'shell', title: '验证任务面板并检查类型', command: 'npm test -- test/rendererCommandsPanelView.test.ts &&\n  npm run typecheck', tone: 'muted', running: false, status: '已完成 · exit 0', startedAt: 0, durationMs: 75_000 }
 const agent: BackgroundTaskRow = { id: 'a1', kind: 'agent', title: '核对工具权限', tone: 'running', running: true, status: '执行中', startedAt: 0, model: 'deepseek' }
 
 function find(view: StubView | undefined, name: string): StubView | undefined {
@@ -123,7 +123,8 @@ test('commands and agents share rows; each opens its own detail and only running
   assert.equal(find(f.rows('running')[1], 'bt-chevron'), undefined, 'an agent opens a detail page, not an inline disclosure')
   assert.equal(find(f.rows('finished')[0], 'bt-time')?.text, '1 分 15 秒')
   assert.equal(find(f.rows('finished')[0], 'bt-text')?.text, done.title)
-  assert.equal(find(f.rows('finished')[0], 'bt-text')?.classes.includes('bt-shell-title'), true)
+  assert.equal(find(f.rows('finished')[0], 'bt-command'), undefined)
+  assert.equal(f.rows('finished')[0]?.text.includes(done.command!), false, 'the collapsed card only shows its description')
   assert.equal(find(f.rows('finished')[0], 'bt-stop'), undefined)
   f.stub.click(find(f.rows('running')[0], 'bt-stop')!.node)
   f.stub.click(find(f.rows('running')[1], 'bt-stop')!.node)
@@ -139,15 +140,18 @@ test('commands and agents share rows; each opens its own detail and only running
   assert.equal(find(f.rows('finished')[0], 'bt-head')?.attributes.get('aria-expanded'), 'true')
   assert.equal(find(f.rows('finished')[0], 'bt-chevron')?.classes.includes('open'), true)
   assert.equal(find(f.rows('finished')[0], 'bt-output-status'), undefined)
-  assert.equal(find(f.rows('finished')[0], 'bt-command'), undefined)
+  assert.equal(find(f.rows('finished')[0], 'bt-command')?.text, done.command)
   assert.equal(find(find(f.rows('finished')[0], 'bt-meta'), 'bt-status')?.text, done.status)
-  assert.deepEqual(f.rows('finished')[0]?.children.map((child) => child.classes[0]), ['bt-head', 'bt-output'])
+  assert.deepEqual(f.rows('finished')[0]?.children.map((child) => child.classes[0]), ['bt-head', 'bt-command', 'bt-output'])
   assert.deepEqual(find(f.rows('finished')[0], 'bt-output')?.children.map((child) => child.classes[0]), ['command-output', 'step-output-copy'])
   assert.equal(find(f.rows('finished')[0], 'command-output')?.classes.includes('step-terminal'), true)
   assert.equal(find(f.rows('finished')[0], 'command-output')?.attributes.get('tabindex'), '0')
   const before = find(f.rows('finished')[0], 'command-output')!.node
   f.render([live, agent, done])
   assert.equal(find(f.rows('finished')[0], 'command-output')?.node, before)
+  f.stub.click(find(f.rows('finished')[0], 'bt-head')!.node)
+  assert.equal(find(f.rows('finished')[0], 'bt-command'), undefined)
+  assert.equal(find(f.rows('finished')[0], 'command-output'), undefined)
 })
 
 test('command output copies the entire latest text, not the empty placeholder, with the shared receipt', async (t) => {

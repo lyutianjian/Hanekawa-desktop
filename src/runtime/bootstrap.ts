@@ -1,3 +1,4 @@
+import { createSessionReferenceHost } from './sessionReferences.js'
 import { existsSync } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -177,7 +178,13 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
   // The shell's own tools go last so a name it injects wins over nothing —
   // there is no built-in to shadow, and a collision would be a bug in the
   // shell, not a policy this line should paper over.
-  const toolRegistry = new ToolRegistry([...await getAllTools(backgroundTasks), ...(options.extraTools ?? [])])
+  const sessionReferences = createSessionReferenceHost({
+    cwd,
+    listProjectRoots: options.listSessionProjectRoots,
+    getLiveState: options.getSessionLiveState,
+    redact: (text) => config.redactToolOutput(text),
+  })
+  const toolRegistry = new ToolRegistry([...await getAllTools(backgroundTasks, sessionReferences), ...(options.extraTools ?? [])])
   // Constructed fresh on every read: the service caches, and a reload exists
   // precisely to see files that changed since startup.
   let skills = await new SkillsService(cwd).list()
@@ -368,6 +375,7 @@ export async function bootstrap(options: BootstrapOptions): Promise<RuntimeHost>
 
   return {
     ...initialScope,
+    sessionReferences,
     // The initial scope shows the project's startup diagnostics too — they need
     // surfacing once, and this is the scope that surfaces them.
     diagnostics: [...modelDiagnostics, ...initialScope.diagnostics],

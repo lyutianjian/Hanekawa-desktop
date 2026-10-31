@@ -125,6 +125,7 @@ export class BackgroundTaskRegistry {
   registerShell(input: {
     sessionId: string
     command: string
+    description?: string
     proc: ChildProcess
     outputDir?: string
     monitor?: { description: string }
@@ -138,6 +139,7 @@ export class BackgroundTaskRegistry {
       kind: 'shell',
       status: 'running',
       command: input.command,
+      ...(input.description ? { description: input.description } : {}),
       ...(input.monitor ? { description: input.monitor.description, monitor: { lines: [], chars: 0, omitted: 0, partial: '' } } : {}),
       ...(input.proc.pid ? { pid: input.proc.pid } : {}),
       startedAt: Date.now(),

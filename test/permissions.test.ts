@@ -990,6 +990,29 @@ test('the WebFetch preapproved host list does not extend to Browser', async () =
   assert.equal(prompted, 1)
 })
 
+test('a Read deny rule also governs the page a browser opens from disk', async () => {
+  let prompted = 0
+  const gate = new PermissionGate(
+    async () => {
+      prompted += 1
+      return true
+    },
+    [{ toolName: 'Read', contentPattern: '/ws/secrets/**', behavior: 'deny', source: 'config' }],
+  )
+
+  // A page's scripts read whatever the server serves, so the same path stays
+  // off limits however it is reached.
+  assert.equal(
+    await gate.approve(browserTestTool, { operation: 'tab.navigate', tabId: 't1', path: '/ws/secrets/page.html' }),
+    false,
+  )
+  assert.equal(
+    await gate.approve(browserTestTool, { operation: 'tab.navigate', tabId: 't1', path: '/ws/public/page.html' }),
+    true,
+  )
+  assert.equal(prompted, 1)
+})
+
 test('PermissionGate Edit and Read rules govern their whole tool family', async () => {
   let prompted = false
   const gate = new PermissionGate(

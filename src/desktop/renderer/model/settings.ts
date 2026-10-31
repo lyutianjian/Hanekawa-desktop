@@ -198,6 +198,7 @@ export interface SettingsState {
   readonly setupWizard?: boolean
   readonly projectRoot?: string
   readonly skillsScope?: 'personal'
+  readonly permissionsScope?: 'personal'
   readonly snapshot?: WireSettingsSnapshot
   readonly projects: ReadonlyArray<{ projectRoot: string; projectName: string; isGlobal?: boolean }>
   readonly draft?: SettingsDraft
@@ -563,6 +564,8 @@ export interface SettingsModelRowView {
   /** The table's read-only context column: 「200K」 or 「—」. */
   readonly context: string
   readonly contextWindow: string
+  /** The empty box names the window the request falls back to — 通用's default, not a constant. */
+  readonly contextPlaceholder: string
   readonly maxOutputTokens: string
   readonly expanded: boolean
   readonly thinking: boolean
@@ -608,6 +611,7 @@ export interface SettingsViewModel {
   readonly projectChoices: ReadonlyArray<{ value: string; label: string }>
   readonly projectValue: string
   readonly skillProjectPicker?: { readonly value: string; readonly choices: ReadonlyArray<{ value: string; label: string }> }
+  readonly permissionProjectPicker?: { readonly value: string; readonly choices: ReadonlyArray<{ value: string; label: string }> }
   readonly confirming?: {
     readonly message: string
     readonly anchor: SettingsAnchor
@@ -657,8 +661,6 @@ export interface SettingsEditor {
   readonly intentOnSave: SettingsIntent
   readonly intentOnCancel: SettingsIntent
 }
-
-const PROJECT_SCOPED: ReadonlySet<SettingsCategory> = new Set(['extensions', 'permissions', 'general'])
 
 const ALL_CATEGORIES: readonly SettingsCategory[] = [
   'provider',
@@ -1076,13 +1078,25 @@ export function settingsView(state: SettingsState): SettingsViewModel {
     ),
     busy: state.busy,
     query: state.query,
-    // Only on pages with something saved per project: over the all-global
-    // provider page or the renderer-local theme it offered a choice that changed
-    // nothing, and read as contradicting the page's own 「保存在全局」.
-    projectChoices: PROJECT_SCOPED.has(state.category)
+    // 技能/MCP is the only page left editing per-project state through this
+    // picker: 权限 swaps it for its own 个人/项目 selector, and 通用, 服务商 and
+    // the renderer-local theme are all one value for every project — offering a
+    // choice there changed nothing and read as contradicting the page's own
+    // 「保存在全局」.
+    projectChoices: state.category === 'extensions'
       ? state.projects.map((project) => ({ value: project.projectRoot, label: project.projectName }))
       : [],
     projectValue: state.projectRoot ?? '',
+    ...(state.category === 'permissions'
+      ? { permissionProjectPicker: {
+          value: state.permissionsScope === 'personal' || state.projects.some((project) => project.projectRoot === state.projectRoot && project.isGlobal)
+            ? '' : state.projectRoot ?? '',
+          choices: [
+            { value: '', label: '个人' },
+            ...state.projects.filter((project) => !project.isGlobal).map((project) => ({ value: project.projectRoot, label: project.projectName })),
+          ],
+        } }
+      : {}),
     ...(state.category === 'extensions' && state.extensionsTab === 'skills'
       ? { skillProjectPicker: {
           value: state.skillsScope === 'personal' ? '' : state.projectRoot ?? '',
@@ -1230,7 +1244,7 @@ function extensionsBody(
       ? { skillDetail: {
           card: detail,
           enabled: skill.enabled,
-          badge: skillBadge(skill),
+          badge: SKILL_SCOPE_LABELS[skill.scope],
           content: preview ?? skill.content,
           ...(skill.contentTruncated && preview === undefined
             ? { contentNote: state.skillPreview?.error ?? '正在读取完整 SKILL.md…' }
@@ -1562,7 +1576,7 @@ export function routingOptions(
 const BEHAVIOR_NOTES: Record<PermissionBehavior, string> = {
   allow: '匹配到的工具调用不再提示。',
   ask: '匹配到的工具调用一定提示，即使处于「必要时询问」模式。',
-  deny: '匹配到的工具调用直接拒绝，「绕过权限」模式也不例外。',
+  deny: '匹配到的工具调用直接拒绝，「完全访问权限」模式也不例外。',
 }
 
 /**
@@ -1617,7 +1631,8 @@ function permissionCards(snapshot: WireSettingsSnapshot): SettingsCard[] {
       },
     ],
   }
-  return [modeCard, ...permissions.groups.map((group) => permissionGroupCard(group, permissions.localPath))]
+  const personal = snapshot.permissionsScope === 'personal'
+  return [...(personal ? [modeCard] : []), ...permissions.groups.map((group) => permissionGroupCard(group, permissions.localPath, personal))]
 }
 
 /**
@@ -1628,7 +1643,7 @@ function permissionCards(snapshot: WireSettingsSnapshot): SettingsCard[] {
  * neither why a tool is denied nor why removing the rule you *can* see changed
  * nothing.
  */
-function permissionGroupCard(group: WirePermissionGroup, localPath: string): SettingsCard {
+function permissionGroupCard(group: WirePermissionGroup, localPath: string, personal: boolean): SettingsCard {
   const local: SettingsRow[] = group.local.map((entry, index) => ({
     // The index is in the id because the same literal may legitimately be listed
     // twice, and two rows with one id is a DOM bug waiting for a keyed update.
@@ -1660,7 +1675,7 @@ function permissionGroupCard(group: WirePermissionGroup, localPath: string): Set
   return {
     id: `permissions:${group.behavior}`,
     title: BEHAVIOR_LABELS[group.behavior],
-    note: `${BEHAVIOR_NOTES[group.behavior]}新增的规则${SAVED_LOCAL}`,
+    note: `${BEHAVIOR_NOTES[group.behavior]}新增的规则${personal ? '保存到个人设置，所有项目通用。' : '保存在本项目，仅对本项目生效。'}`,
     noteHint: localPath,
     empty: '还没有规则',
     rows: [...local, ...inherited],
@@ -1777,8 +1792,8 @@ function cacheCard(snapshot: WireSettingsSnapshot): SettingsCard {
   return {
     id: 'general',
     title: '思考与缓存',
-    note: SAVED_LOCAL,
-    noteHint: general.localPath,
+    note: SAVED_GLOBAL,
+    noteHint: general.settingsPath,
     rows: [
       {
         id: 'general:thinking',
@@ -1849,7 +1864,7 @@ function skillsCard(snapshot: WireSettingsSnapshot): SettingsCard {
       id: `skill:${skill.name}`,
       label: skill.name,
       icon: 'package' as const,
-      badge: skillBadge(skill),
+      badge: SKILL_SCOPE_LABELS[skill.scope],
       open: { kind: 'open-skill-detail', name: skill.name } as const,
       // One line, ellipsised: a row is a name and a gist, and the rest of the
       // definition is one hover away rather than five clauses deep.
@@ -1909,15 +1924,6 @@ const SKILL_RISK_LABELS: Record<WireSkillInfo['risk'], string> = {
   low: '低',
   medium: '中',
   high: '高',
-}
-
-/** What the badge beside a skill's name says: its scope, and where it is from or what it can do, only when that is not the default. */
-function skillBadge(skill: WireSkillInfo): string {
-  const parts: string[] = [SKILL_SCOPE_LABELS[skill.scope]]
-  if (skill.origin === 'compat') parts.push(skill.rootLabel)
-  if (skill.risk === 'high') parts.push('可自动执行')
-  else if (skill.risk === 'medium') parts.push('带脚本')
-  return parts.join(' · ')
 }
 
 /**
@@ -2302,6 +2308,7 @@ function modelRowView(row: ModelDraftRow, snapshot: WireSettingsSnapshot): Setti
     displayPlaceholder: row.model.trim() || '同模型 ID',
     context: typeof context === 'number' ? formatTokenCount(context) : '—',
     contextWindow: row.contextWindow,
+    contextPlaceholder: `默认 ${formatTokenCount(snapshot.contextManagement.contextWindow)}`,
     maxOutputTokens: row.maxOutputTokens,
     expanded: row.expanded === true,
     thinking: !row.thinkingOff,
@@ -2859,6 +2866,7 @@ export type SettingsIntent =
   | { kind: 'copy-skill-markdown'; name: string }
   | { kind: 'select-project'; projectRoot: string }
   | { kind: 'select-skill-project'; projectRoot?: string }
+  | { kind: 'select-permission-project'; projectRoot?: string }
   | { kind: 'new-endpoint' }
   /** 获取模型列表: the connection test, whose listing opens the picker. */
   | { kind: 'test-endpoint' }
@@ -3114,14 +3122,25 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
     case 'select-project':
       if (intent.projectRoot === state.projectRoot) return { state }
       return {
-        state: { ...cleared, projectRoot: intent.projectRoot, skillsScope: undefined, ...NO_DRAFT, skillDetail: undefined, snapshot: undefined },
+        state: { ...cleared, projectRoot: intent.projectRoot, skillsScope: undefined, permissionsScope: undefined, ...NO_DRAFT, skillDetail: undefined, snapshot: undefined },
         load: true,
       }
     case 'select-skill-project':
       return {
         state: { ...cleared, ...NO_DRAFT, projectRoot: intent.projectRoot ?? state.projectRoot,
           skillsScope: intent.projectRoot === undefined ? 'personal' : undefined,
+          ...(intent.projectRoot !== undefined && intent.projectRoot !== state.projectRoot ? { permissionsScope: undefined } : {}),
           skillDetail: undefined, skillPreview: undefined, snapshot: undefined, busy: true,
+        },
+        load: true,
+      }
+
+    case 'select-permission-project':
+      return {
+        state: { ...cleared, ...NO_DRAFT, projectRoot: intent.projectRoot ?? state.projectRoot,
+          permissionsScope: intent.projectRoot === undefined ? 'personal' : undefined,
+          ...(intent.projectRoot !== undefined && intent.projectRoot !== state.projectRoot ? { skillsScope: undefined } : {}),
+          skillDetail: undefined, skillPreview: undefined, snapshot: undefined, pending: [], busy: true,
         },
         load: true,
       }
@@ -3689,8 +3708,8 @@ function withModelRow(
 
 /** Structural: a test passes a plain object, not a `ShellClient`. */
 export interface SettingsClient {
-  getSettings(projectRoot?: string, skillsScope?: 'personal'): Promise<WireShellSettingsResult>
-  changeSettings(projectRoot: string, change: SettingsChange, skillsScope?: 'personal'): Promise<WireShellSettingsChangeResult>
+  getSettings(projectRoot?: string, skillsScope?: 'personal', permissionsScope?: 'personal'): Promise<WireShellSettingsResult>
+  changeSettings(projectRoot: string, change: SettingsChange, skillsScope?: 'personal', permissionsScope?: 'personal'): Promise<WireShellSettingsChangeResult>
 }
 
 export async function loadSettings(
@@ -3699,9 +3718,9 @@ export async function loadSettings(
   current: () => SettingsState = () => state,
 ): Promise<SettingsState> {
   try {
-    const result = await client.getSettings(state.projectRoot, state.skillsScope)
+    const result = await client.getSettings(state.projectRoot, state.skillsScope, state.permissionsScope)
     const latest = current()
-    if (latest.projectRoot !== state.projectRoot || latest.skillsScope !== state.skillsScope) return latest
+    if (latest.projectRoot !== state.projectRoot || latest.skillsScope !== state.skillsScope || latest.permissionsScope !== state.permissionsScope) return latest
     const setup = latest.setupWizard === true && result.settings.endpoints.length === 0 && !latest.draft
     return {
       ...latest,
@@ -3711,12 +3730,13 @@ export async function loadSettings(
       projects: result.projects,
       projectRoot: result.settings.projectRoot,
       skillsScope: result.settings.skillsScope,
+      permissionsScope: result.settings.permissionsScope,
       setupWizard: undefined,
       ...(setup ? { draft: NEW_ENDPOINT_DRAFT } : {}),
     }
   } catch (error) {
     const latest = current()
-    if (latest.projectRoot !== state.projectRoot || latest.skillsScope !== state.skillsScope) return latest
+    if (latest.projectRoot !== state.projectRoot || latest.skillsScope !== state.skillsScope || latest.permissionsScope !== state.permissionsScope) return latest
     return { ...latest, busy: false, error: messageOf(error) }
   }
 }
@@ -3751,7 +3771,7 @@ export async function runSettingsChanges(
   let next = state
   const finish = (failure?: { error: string; change: SettingsChange }): SettingsState => {
     const latest = current()
-    if (latest.projectRoot !== projectRoot || latest.skillsScope !== state.skillsScope) return latest
+    if (latest.projectRoot !== projectRoot || latest.skillsScope !== state.skillsScope || latest.permissionsScope !== state.permissionsScope) return latest
     // Only the snapshot and this batch's pending entries belong to the reply.
     // Navigation, menus, focus intent and closing may have changed meanwhile.
     const retired = retire(latest)
@@ -3770,7 +3790,7 @@ export async function runSettingsChanges(
   }
   for (const { change } of batch) {
     try {
-      const result = await client.changeSettings(projectRoot, change, state.skillsScope)
+      const result = await client.changeSettings(projectRoot, change, state.skillsScope, state.permissionsScope)
       next = { ...next, snapshot: result.settings, error: undefined }
     } catch (error) {
       return finish({ error: messageOf(error), change })

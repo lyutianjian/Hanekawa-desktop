@@ -69,10 +69,10 @@ test('a full-screen answer floors the pad instead of letting the last line touch
   // above the viewport — and the answer scrolls it off the top like any other
   // content.
   assert.equal(anchorPadding({ viewport: 900, below: 2000, topGap: ANCHOR_TOP_PX }), ANCHOR_FLOOR_PX)
-  // And the boundary itself: below = 900 - 64 - 96 is the last measurement the
+  // And the boundary itself: below = 900 - 64 - 48 is the last measurement the
   // lift still has room for.
-  assert.equal(anchorPadding({ viewport: 900, below: 740, topGap: ANCHOR_TOP_PX }), ANCHOR_FLOOR_PX)
-  assert.equal(anchorPadding({ viewport: 900, below: 739, topGap: ANCHOR_TOP_PX }), 97)
+  assert.equal(anchorPadding({ viewport: 900, below: 788, topGap: ANCHOR_TOP_PX }), ANCHOR_FLOOR_PX)
+  assert.equal(anchorPadding({ viewport: 900, below: 787, topGap: ANCHOR_TOP_PX }), 49)
 })
 
 test('a settled transcript rests on a margin, whatever the measurements say', () => {

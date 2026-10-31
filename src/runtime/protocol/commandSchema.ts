@@ -251,6 +251,7 @@ const COMMAND_SCHEMAS = {
     })
     .strict(),
   'clear-queue': z.object({ type: z.literal('clear-queue'), id: commandId }).strict(),
+  'retract-message': z.object({ type: z.literal('retract-message'), id: commandId, messageId: z.string() }).strict(),
   // --- image attachments ---------------------------------------------------
   'import-attachment': z
     .object({ type: z.literal('import-attachment'), id: commandId, source: attachmentSourceSchema })

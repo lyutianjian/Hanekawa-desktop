@@ -401,7 +401,7 @@ export function countSessionRecordTokens(
     return countMessageTokens(record, imageTokenStrategy)
   }
 
-  if (record.type === 'at_mention_context') {
+  if (record.type === 'at_mention_context' || record.type === 'session_reference_context') {
     return countTextTokens(record.content)
   }
 

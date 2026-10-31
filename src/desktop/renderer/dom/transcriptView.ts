@@ -8,7 +8,6 @@ import {
   runHasTools,
   summarizeRun,
   THINKING_LIVE_LABEL,
-  thoughtCollapsedLabel,
   thoughtLabel,
   thoughtRest,
   type DisclosureState,
@@ -36,7 +35,7 @@ import { AGENT_TOOL, agentDescription } from '../model/subagentPanel.js'
 import type { ImageAttachmentRef } from '../../../media/types.js'
 import type { ToolErrorCode } from '../../../harness/types.js'
 import {
-  completedRow,
+  activityCarrier,
   rowLabel as statusLabel,
   settleLabel,
   statusMeta,
@@ -47,6 +46,7 @@ import {
   type WaitingRow,
 } from '../model/waiting.js'
 import { callParts } from '../model/toolPhrases.js'
+import { browserParams } from '../model/browserSteps.js'
 import { drawnSteps } from '../model/memoryOps.js'
 import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
 import type { ThreadNoteCard } from '../model/threadNotes.js'
@@ -64,7 +64,7 @@ import { markdownChildren } from './markdownView.js'
 import { shellNodes } from './syntaxView.js'
 import { createPresence, finishPresenceWithin, type Presence } from './presence.js'
 import { motionDelay, motionPolicy } from './motion.js'
-import { createTextSwap, createWidthTween, TEXT_SWAP_MS, TEXT_SWAP_EASING, type TextSwap, type WidthTween } from './textSwap.js'
+import { createTextSwap, createWidthTween, type TextSwap, type WidthTween } from './textSwap.js'
 import { createNumberTween, type NumberTween } from './numberTween.js'
 import { createWorkingMark, type WorkingMark } from './workingMarkView.js'
 import type { MarkSpec } from '../model/workingMark.js'
@@ -75,8 +75,9 @@ import { modelName } from '../model/modelNames.js'
  *
  * A run is the work between two pieces of prose, folded to one summary line
  * (「已运行 2 个命令，读取 2 个文件」) that opens into a card with a row per step; a
- * row opens again into the tool's own output. While the turn runs, the last line
- * of the transcript is its live status. Every head is a `<button>` with
+ * row opens again into the tool's own output. While the turn runs, its active
+ * thought or tool row owns the live status — unless the checklist card is drawn,
+ * which takes it so the line always reads below the card. Every head is a `<button>` with
  * `aria-expanded`, and a folded body is **absent rather than `hidden`**: the
  * transcript is `aria-live="polite"`, so a hidden-but-present streaming block is
  * text a screen reader announces that nobody asked for.
@@ -102,9 +103,9 @@ export interface TranscriptView {
    * `disclosure` is the pane's absolute answer for every run and step.
    * `activity` is what the pane knows about the turn in flight — whether one is
    * running, when it started and which turn it is — and `model/waiting.ts` turns
-   * that into the words and working mark at the transcript's end. `undefined`
+   * that into the words and working mark on the active row. `undefined`
    * is an idle session: no live status is drawn. After a running turn ends,
-   * its completion line briefly lingers unless the view opts out. `header` is fixed above every entry,
+   * the live status ends with the turn. `header` is fixed above every entry,
    * `trailer` below the last.
    */
   render(state: TranscriptState, disclosure: DisclosureState, activity?: WaitingInput, selectedSubagent?: string, header?: HTMLElement, trailer?: HTMLElement): void
@@ -148,6 +149,8 @@ export interface TranscriptHandlers {
    * line, `undefined` when the row is the file itself (a `Glob` row, or a Grep
    * file header). The pane turns it into the `open-in-editor` command.
    */
+  onResolveSessionReference?(ref: string): Promise<{ title: string; projectName: string } | undefined>
+  onOpenSessionReference?(ref: string): void
   onOpenPath(path: string, line: number | undefined): void
   /**
    * An image beside a user bubble was clicked (S12). The pane opens the
@@ -162,6 +165,13 @@ export interface TranscriptHandlers {
    */
   imageThumbUrl(imageId: string): string | undefined
   /**
+   * The screen-sized copy of one screenshot's pixels, while an open browser row
+   * is showing it. Fetched by the pane the first time that row opens, and gone
+   * again once the row closes and the cache turns over; until it is in hand the
+   * row draws the thumbnail.
+   */
+  imageViewUrl(imageId: string): string | undefined
+  /**
    * A message's 复制 button. The pane owns the clipboard call: `navigator` is a
    * host object, and this file is the one under test against a hand-written DOM
    * stub. Resolves `true` once the text is on the clipboard.
@@ -172,6 +182,8 @@ export interface TranscriptHandlers {
    * checkpoint. Absent (the sub-agent panel) draws no button.
    */
   onRewind?(messageId: string): void
+  /** Withdraw a staged or queued bubble into its pane's composer. */
+  onEditPending?(itemId: string): void
   /** A thread note card's 查看: open that thread's session. Absent draws the button inert. */
   onOpenThread?(threadId: string): void
   /** A failed turn's 「打开服务商设置」. Absent (the sub-agent panel) draws no button. */
@@ -195,14 +207,19 @@ export interface TranscriptHandlers {
    * rebuilt on every paint.
    */
   commands?(): readonly WireCommandInfo[]
+  /**
+   * This transcript's working directory, read at paint time. A tool row names a
+   * file inside it from there (「读取 src/a.ts」) and one outside in full
+   * (「读取 ~/.hanekawa/AGENTS.md」). Absent (a replay with no scope of its own)
+   * keeps every path as the tool was given it.
+   */
+  cwd?(): string | undefined
 }
 
 export function createTranscriptView(
   container: HTMLElement,
   floatHost: HTMLElement,
   handlers: TranscriptHandlers,
-  /** Detail panels can replace the live status with the settled footer immediately. */
-  options: { readonly lingerOnCompletion?: boolean } = {},
 ): TranscriptView {
   const jump = button(
     'scroll-bottom',
@@ -385,6 +402,7 @@ export function createTranscriptView(
   let metaHost: HTMLElement | undefined
   let metaWidth: WidthTween | undefined
   let labelNode: HTMLElement | undefined
+  let labelFromWidth: number | undefined
   let status: { readonly row: WaitingRow; readonly tokens: number | undefined } | undefined
   let gate: LabelGate | undefined
   let secondsNode: HTMLElement | undefined
@@ -404,52 +422,11 @@ export function createTranscriptView(
   let running = false
   /** What the status line said the mark should be, as of the last paint. */
   let liveMark: MarkSpec | undefined
-  /** The thought the status line is carrying, as of the last paint. */
-  let liveThoughtId: string | undefined
-  let liveInput: WaitingInput | undefined
   let requestKind: 'permission' | 'ask-user-question' | undefined
-  let statusHost: HTMLElement | undefined
   let statusAction: { readonly label: string; run(): void } | undefined
   const activateStatus = (): void => { statusAction?.run() }
-  let linger: { readonly row: WaitingRow; readonly tokens: number | undefined; readonly until: number } | undefined
-  let lingerTimer: ReturnType<typeof setTimeout> | undefined
-  let lingerFade: Animation | undefined
-
-  function cancelLinger(): void {
-    clearTimeout(lingerTimer)
-    lingerTimer = undefined
-    lingerFade?.cancel()
-    lingerFade = undefined
-    linger = undefined
-  }
-
-  function hideLinger(): void {
-    clearTimeout(lingerTimer)
-    lingerTimer = undefined
-    if (statusHost) statusHost.hidden = true
-    lingerFade?.cancel()
-    lingerFade = undefined
-    status = gate = undefined
-    stopClock()
-  }
-
-  function runLinger(): void {
-    if (!linger || lingerTimer !== undefined || statusHost?.hidden || document.hidden) return
-    lingerTimer = setTimeout(() => {
-      lingerTimer = undefined
-      stopClock()
-      if (!statusHost || !motionPolicy().animate || typeof statusHost.animate !== 'function') {
-        hideLinger()
-        return
-      }
-      lingerFade = statusHost.animate([{ opacity: 1 }, { opacity: 0 }], {
-        duration: TEXT_SWAP_MS, easing: TEXT_SWAP_EASING, fill: 'both',
-      })
-      lingerTimer = setTimeout(hideLinger, TEXT_SWAP_MS)
-      ;(lingerTimer as unknown as { unref?: () => void }).unref?.()
-    }, Math.max(0, linger.until - Date.now()))
-    ;(lingerTimer as unknown as { unref?: () => void }).unref?.()
-  }
+  let statusEpoch: string | undefined
+  let liveTurnId: string | undefined
 
   function resetStatusMeta(): void {
     metaWidth?.finish()
@@ -471,8 +448,9 @@ export function createTranscriptView(
     clockFrom = undefined
   }
 
-  function resizeStatusMeta(): void {
-    if (metaHost && clockNode) (metaWidth ??= createWidthTween(metaHost, clockNode)).update()
+  function resizeStatusMeta(change: () => void): void {
+    if (metaHost && clockNode) (metaWidth ??= createWidthTween(metaHost, clockNode)).update(change)
+    else change()
   }
 
   function paintStatus(): void {
@@ -481,24 +459,25 @@ export function createTranscriptView(
     const now = Date.now()
     const settled = settleLabel(gate, statusLabel(row, now), row.startedAt, now, row.timing)
     gate = settled.gate
-    textSwap(labelNode).set(settled.label)
+    textSwap(labelNode).set(settled.label, labelFromWidth)
+    labelFromWidth = undefined
     // Empty under the model's threshold: a short wait is not worth a number.
     const meta = row.startedAt === undefined ? [] : statusMeta(now - row.startedAt, tokens)
     const seconds = meta[0]
     if (seconds === undefined) {
       if (secondsNode) resetStatusMeta()
-      resizeStatusMeta()
       return
-    }
-    if (!secondsNode) {
-      secondsNode = el('span')
-      clockNode.replaceChildren(secondsNode)
     }
     if (seconds !== secondsShown) {
       secondsShown = seconds
-      secondsNode.textContent = seconds
+      resizeStatusMeta(() => {
+        if (!secondsNode) {
+          secondsNode = el('span')
+          clockNode!.replaceChildren(secondsNode)
+        }
+        secondsNode.textContent = seconds
+      })
     }
-    resizeStatusMeta()
     if (!motionPolicy().animate) tokenTween?.finish()
     const nextTokens = meta[1] === undefined ? undefined : tokens
     if (nextTokens === tokensShown) return
@@ -507,21 +486,18 @@ export function createTranscriptView(
       tokenTween?.finish()
       tokenTween = undefined
       tokenNode = undefined
-      clockNode.replaceChildren(secondsNode)
-      resizeStatusMeta()
+      resizeStatusMeta(() => clockNode!.replaceChildren(secondsNode!))
       return
     }
     if (!tokenNode) {
       const node = tokenNode = el('span')
-      append(clockNode, [el('span', 'line-sep', '·'), node])
+      resizeStatusMeta(() => append(clockNode!, [el('span', 'line-sep', '·'), node]))
       tokenTween = createNumberTween((value) => {
         const text = statusMeta(WAITING_CLOCK_AFTER_MS, value)[1] ?? ''
-        if (node.textContent !== text) node.textContent = text
-        resizeStatusMeta()
+        if (node.textContent !== text) resizeStatusMeta(() => { node.textContent = text })
       })
     }
     tokenTween!.set(nextTokens)
-    resizeStatusMeta()
   }
 
   /**
@@ -549,20 +525,36 @@ export function createTranscriptView(
     ;(clock as unknown as { unref?: () => void }).unref?.()
   }
 
+  /**
+   * Whether the seat that owns the working mark is inside the viewport. The mark
+   * belongs to the line that says what the turn is doing; the button is only its
+   * fallback for when that line has scrolled out of sight.
+   */
+  function markOnScreen(): boolean {
+    if (markHost === undefined) return false
+    const seat = box(markHost)
+    const view = box(container)
+    return seat !== undefined && view !== undefined && seat.top < view.bottom && seat.bottom > view.top
+  }
+
   /** Scroll, resize and paint share the jump thresholds and the single mark carrier. */
   function syncJump(): void {
     const detached = !atTail()
     const distance = container.scrollHeight - container.scrollTop - container.clientHeight
     const visible = detached && distance > 200
     container.classList.toggle('has-bottom-fade', detached && distance > 8)
+    // The button takes the mark only while the line that owns it is off screen:
+    // a status line the reader can see already says what the turn is doing, and
+    // pulling its mark into the button would leave that sentence unfinished.
+    const inButton = visible && running && requestKind === undefined && !markOnScreen()
     show(jump, visible)
     show(jumpRequest, requestKind !== undefined)
     jump.classList.toggle('needs-input', requestKind !== undefined)
-    jump.classList.toggle('is-working', visible && running && requestKind === undefined)
+    jump.classList.toggle('is-working', inButton)
     const label = requestKind === undefined ? '回到最新' : '需要你的确认，滚动到底部并聚焦请求卡'
     jump.title = label
     jump.setAttribute('aria-label', label)
-    const carrier = visible && requestKind === undefined ? jumpMark : markHost
+    const carrier = inButton ? jumpMark : markHost
     if (!running) mark?.end()
     else if (liveMark !== undefined && carrier !== undefined) (mark ??= createWorkingMark()).attach(carrier, liveMark)
     else mark?.hide()
@@ -675,9 +667,6 @@ export function createTranscriptView(
 
   function stopMotion(): void {
     stopClock()
-    clearTimeout(lingerTimer)
-    lingerTimer = undefined
-    if (lingerFade) hideLinger()
     stopViewportMotion()
     finishPresenceWithin(container)
     for (const swap of textSwaps.values()) swap.finish()
@@ -695,7 +684,6 @@ export function createTranscriptView(
     },
     dispose() {
       stopMotion()
-      cancelLinger()
       statusAction = undefined
       overflowObserver?.disconnect()
       clearTimeout(taskFlash)
@@ -716,9 +704,6 @@ export function createTranscriptView(
         observing = true
       }
       if (generation !== state.generation) {
-        cancelLinger()
-        liveInput = undefined
-        statusHost = undefined
         stopViewportMotion()
         readingPosition = undefined
         for (const entry of disclosures.values()) entry.presence.dispose()
@@ -729,7 +714,7 @@ export function createTranscriptView(
         cache.clear()
         refs.clear()
         clockNode = labelNode = markHost = metaHost = undefined
-        liveThoughtId = undefined
+        statusEpoch = undefined
         status = gate = undefined
         resetStatusMeta()
         anchorId = undefined
@@ -756,16 +741,8 @@ export function createTranscriptView(
       entries = split.entries
       const footers = activity === undefined ? new Map<number, TurnFooter>() : split.footers
       const live = turnActivity(entries, activity ?? IDLE)
-      // Resuming work releases the request label on the same paint as the mark.
-      if (liveMark?.state === 'blocked' && live.mark?.state !== 'blocked') gate = undefined
-      if (streaming && (liveInput?.turnId !== activity.turnId || liveInput?.startedAt !== activity.startedAt)) resetStatusMeta()
-      if (streaming && linger) gate = undefined
-      if (streaming || activity === undefined || statusHost?.hidden) cancelLinger()
-      if (options.lingerOnCompletion !== false && !streaming && activity !== undefined && liveInput) {
-        const row = completedRow(entries, liveInput)
-        if (row) linger = { row, tokens: activity.outputTokens ?? liveInput.outputTokens, until: Date.now() + 2_000 }
-      }
-      liveInput = streaming ? activity : undefined
+      if (streaming && (liveTurnId !== activity.turnId || clockFrom !== activity.startedAt)) resetStatusMeta()
+      liveTurnId = streaming ? activity.turnId : undefined
       requestKind = live.mark?.state === 'blocked'
         ? activity?.asking === undefined ? 'permission' : 'ask-user-question'
         : undefined
@@ -781,34 +758,32 @@ export function createTranscriptView(
         if (selection && !selection.isCollapsed
           && (node.contains(selection.anchorNode) || node.contains(selection.focusNode))) selected.add(id)
       }
-      const current = entries.at(-1)
-      // The newest entry is a run only while it belongs to this turn: a new user
-      // message always follows the previous turn's work. Its own `turnId` may still
-      // be unstamped (the turn's first records precede its id), so the tail is the
-      // proof, not the stamp.
-      const thought = streaming && !activity?.phase && requestKind === undefined
-        && current?.kind === 'run' && !runHasTools(current.run)
-        ? current.run.steps.find((step): step is Extract<ActivityStep, { kind: 'thinking' }> => step.kind === 'thinking' && step.pending === true)
-        : undefined
-      // The moment a thought seals, its line appears above; holding its words in the
-      // status line for another two seconds would say the same thing twice.
-      if (liveThoughtId !== undefined && thought === undefined) gate = undefined
-      liveThoughtId = thought?.id
+      const card = activity?.taskCard && (live.mark?.state === 'blocked' ? pausedTaskCard(activity.taskCard) : activity.taskCard)
+      // The card owns the tail while it is drawn: it takes the status off any row
+      // that would carry it, or the line would sit above the card for a tool and
+      // below it for the gap between steps.
+      const carrierId = card ? undefined : activityCarrier(entries, live)
+      const epoch = carrierId ?? (live.mark?.state === 'blocked' ? 'blocked' : 'waiting')
+      const shownLabelWidth = statusEpoch !== epoch ? labelNode?.getBoundingClientRect().width : undefined
+      if (statusEpoch !== epoch || clockFrom !== activity?.startedAt) gate = undefined
+      statusEpoch = epoch
       const afterPaint: Array<() => void> = []
       // A paint that draws no status hands nothing over, and nothing stale stays live.
       const shownClock = clockNode
+      const shownLabel = labelNode
       clockNode = labelNode = markHost = metaHost = undefined
       const painter = createPainter(cache, refs, disclosures, seenDisclosures, disclosure, {
         ...handlers,
         onToggle(id, expanded) {
           const head = cache.get(`run-head:${id}`)?.node ?? cache.get(`thinking-head:${id}`)?.node
             ?? cache.get(`tool-head:${id}`)?.node ?? cache.get(`item:${id}`)?.node
-            ?? (thought?.id === id ? cache.get('waiting:main')?.node : undefined)
           beginLayoutChange(head)
           handlers.onToggle(id, expanded)
         },
       }, {
         selectedSubagent,
+        carrierId,
+        activityLabel: live.row?.label,
         keepClock: (span, host) => { clockNode = span; metaHost = host },
         keepLabel: (span) => { labelNode = span },
         swapText: (host, text) => afterPaint.push(() => textSwap(host).set(text)),
@@ -822,61 +797,29 @@ export function createTranscriptView(
       const lastTurn = activity?.isStreaming === true ? undefined : Math.max(-1, ...footers.keys())
       const cards = new Map([...edits].map(([index, turn]) => [index, editsCardNode(painter, turn, index === lastTurn)]))
       const tasks = activity?.backgroundTasks ?? 0
-      const nodes = entries.map((entry, index) => thought && entry === current
-        ? undefined
-        : entryNode(painter, entry, footers.get(index), activity !== undefined, cards.get(index)))
-      // Built before `prune`, or its key would count as dead on the very paint
-      // that asked for it. A kept line keeps the spans its fill handed over.
-      const row = live.row ?? linger?.row
-      status = row ? { row, tokens: live.row ? activity?.outputTokens : linger?.tokens } : undefined
-      // `blocked` is the mark's word for a turn waiting on the user: a question or an approval.
-      const card = activity?.taskCard && (live.mark?.state === 'blocked' ? pausedTaskCard(activity.taskCard) : activity.taskCard)
+      const nodes = entries.map((entry, index) => entryNode(painter, entry, footers.get(index), activity !== undefined, cards.get(index)))
+      const row = live.row
+      status = row ? {
+        row,
+        tokens: activity?.outputTokens,
+      } : undefined
       if (card) nodes.push(taskCardNode(painter, card))
-      // Tasks stay beside the status, or alone between turns.
       statusAction = undefined
-      if (streaming && !activity?.phase) {
-        if (requestKind && handlers.onFocusRequest) {
-          const kind = requestKind
-          statusAction = {
-            label: kind === 'permission' ? '查看待确认请求' : '查看提问',
-            run: () => handlers.onFocusRequest?.(kind),
-          }
-        } else if (thought) {
-          const expanded = isExpanded(disclosure, thought.id, true)
-          statusAction = { label: expanded ? '收起思考' : '展开思考', run: () => painter.onToggle(thought.id, expanded) }
-        } else if (current?.kind === 'run' && current.run.status === 'running'
-          && activity?.turnId !== undefined && current.run.turnId === activity.turnId && runHasTools(current.run)) {
-          const steps = drawnSteps(current.run.steps)
-          const id = steps.length > 1 ? current.run.id : steps[0]!.id
-          const key = steps.length > 1 ? `run-head:${id}` : `tool-head:${id}`
-          const head = cache.get(key)?.node
-          if (head && cache.get(current.run.id)?.node.contains(head)) statusAction = {
-            label: '查看运行工具组',
-            run() {
-              if (!isExpanded(disclosure, id)) painter.onToggle(id, false)
-              const head = cache.get(key)?.node
-              head?.scrollIntoView({ block: 'nearest', behavior: motionPolicy().scrollBehavior })
-              head?.focus()
-            },
-          }
-        }
-        if (!statusAction && tasks > 0 && handlers.onOpenBackgroundTasks) {
-          statusAction = { label: '查看后台任务', run: handlers.onOpenBackgroundTasks }
+      if (requestKind && handlers.onFocusRequest) {
+        const kind = requestKind
+        statusAction = {
+          label: kind === 'permission' ? '查看待确认请求' : '查看提问',
+          run: () => handlers.onFocusRequest?.(kind),
         }
       }
-      statusHost = undefined
-      if (row) {
-        statusHost = waitingNode(painter, tasks, statusAction?.label, activateStatus, thought)
-        statusHost.classList.toggle('is-working', streaming && live.mark?.state === 'working' && activity?.phase?.kind !== 'retrying')
-        statusHost.hidden = false
-        nodes.push(statusHost)
-      } else if (tasks > 0 && painter.onOpenBackgroundTasks) {
-        statusHost = idleStatusNode(painter, tasks)
-        statusHost.hidden = false
-        nodes.push(statusHost)
+      if (row && carrierId === undefined) {
+        const waiting = waitingNode(painter, tasks, statusAction?.label, activateStatus)
+        waiting.dataset.state = live.mark?.state
+        nodes.push(waiting)
       }
+      else if (tasks > 0 && painter.onOpenBackgroundTasks) nodes.push(idleStatusNode(painter, tasks))
       if (!row) gate = undefined
-      // A fresh span starts empty, whatever the old one showed.
+      labelFromWidth = labelNode !== shownLabel ? shownLabelWidth : undefined
       if (clockNode !== shownClock) resetStatusMeta()
       painter.prune()
       const placed = nodes.flatMap((node, index) => {
@@ -894,12 +837,7 @@ export function createTranscriptView(
           textSwaps.delete(host)
         }
       }
-      if (lingerFade) {
-        if (!motionPolicy().animate) hideLinger()
-      } else {
-        runClock(row?.startedAt)
-        runLinger()
-      }
+      runClock(row?.startedAt)
       // Read by the `syncJump` at the end of this paint, after the reconcile has
       // put both carriers in the document.
       running = activity?.isStreaming === true
@@ -968,35 +906,27 @@ export function createTranscriptView(
 /** An idle session: no turn, no clock, no live line. */
 const IDLE: WaitingInput = { isStreaming: false, startedAt: undefined, turnId: undefined }
 
-/**
- * The status line, the transcript's last while the turn runs: mark, counter,
- * words, then tasks, whatever the steps above it are. Built once and filled by
- * the clock (`paintStatus`), so the words can be held back from flickering.
- *
- * `.transcript` is `aria-live="polite"`, so the label is spoken and the counter
- * is `aria-hidden`, or a screen reader would read a new number ten times a second.
- */
+/** The status line at the transcript's end: no thought or tool row carries the work. */
 function waitingNode(
   painter: Painter,
   tasks: number,
   actionLabel: string | undefined,
   activate: () => void,
-  thought?: Extract<ActivityStep, { kind: 'thinking' }>,
 ): HTMLElement {
-  const expanded = thought !== undefined && isExpanded(painter.disclosure, thought.id, true)
-  const headKey = thought ? `thinking-head:${thought.id}` : 'waiting:main'
-  const ref = thought ? painter.ref(headKey, expanded) : undefined
-  const pieces = [markNode(painter, 'waiting'), labelNode(painter, thought ? headKey : 'waiting'), elapsedNode(painter, 'waiting')]
-  const main = painter.node(headKey, thought ? 'run-line waiting-main' : 'waiting-main', [actionLabel, thought?.id, expanded, ...pieces], (node) => {
+  const pieces = [markNode(painter, 'activity'), labelNode(painter, 'waiting'), elapsedNode(painter, 'activity')]
+  const main = painter.node('waiting:main', 'waiting-main', [actionLabel, ...pieces], (node) => {
     ;(node as HTMLButtonElement).disabled = actionLabel === undefined
     if (actionLabel) node.setAttribute('aria-label', actionLabel)
     else node.removeAttribute('aria-label')
-    if (thought) node.setAttribute('aria-expanded', String(expanded))
-    else node.removeAttribute('aria-expanded')
-    return [...pieces, thought ? icon('chevron-right') : undefined]
-  }, () => button('waiting-main', '', '', thought ? () => painter.onToggle(thought.id, ref!.expanded) : activate))
-  const body = thought ? thinkingBody(painter, thought, expanded, main) : undefined
-  return painter.node('waiting', 'waiting', [tasks, main, body], () => [main, tasksButton(painter, tasks), body])
+    return pieces
+  }, () => button('waiting-main', '', '', activate))
+  return painter.node('waiting', 'waiting', [tasks, main], () => [main, tasksButton(painter, tasks)])
+}
+
+/** One live seat, shared by collapsed groups, opened steps and thinking rows. */
+function activityPieces(painter: Painter, id: string, key: string): HTMLElement[] | undefined {
+  if (painter.carrierId !== id) return undefined
+  return [markNode(painter, 'activity'), labelNode(painter, key), elapsedNode(painter, 'activity')]
 }
 
 /** The status line between turns: no mark, no clock, only the button for tasks that outlived the turn. */
@@ -1037,11 +967,12 @@ function markNode(painter: Painter, key: string): HTMLElement {
 /** The elapsed span, empty until the wait is worth a number; hidden, or a reader would hear it ten times a second. */
 function elapsedNode(painter: Painter, key: string): HTMLElement {
   const content = painter.node(`${key}:meta`, 'line-meta-values', [], () => [], () => el('span'))
-  const node = painter.node(`${key}:elapsed`, 'line-meta line-elapsed', [content], (span) => {
+  const seat = painter.node(`${key}:meta-seat`, 'line-meta-seat', [content], () => [content], () => el('span'))
+  const node = painter.node(`${key}:elapsed`, 'line-meta line-elapsed', [seat], (span) => {
     span.setAttribute('aria-hidden', 'true')
-    return [content]
+    return [el('span', 'line-sep', '·'), seat]
   }, () => el('span'))
-  painter.keepClock(content, node)
+  painter.keepClock(content, seat)
   return node
 }
 
@@ -1090,6 +1021,8 @@ interface DisclosureRef {
 interface LivePaint {
   /** The `Agent` row whose run the side panel is showing. */
   readonly selectedSubagent: string | undefined
+  readonly carrierId: string | undefined
+  readonly activityLabel: string | undefined
   /** Handed the elapsed span whichever carrier built it, so the clock can fill it. */
   keepClock(span: HTMLElement, host: HTMLElement): void
   /** Likewise the span for the status words. */
@@ -1152,6 +1085,8 @@ function createPainter(
   return {
     disclosure,
     selectedSubagent: paint.selectedSubagent,
+    carrierId: paint.carrierId,
+    activityLabel: paint.activityLabel,
     keepClock: paint.keepClock,
     keepLabel: paint.keepLabel,
     swapText: paint.swapText,
@@ -1164,12 +1099,17 @@ function createPainter(
     onOpenSubagent: handlers.onOpenSubagent,
     onOpenBackgroundTasks: handlers.onOpenBackgroundTasks,
     onFocusRequest: handlers.onFocusRequest,
+    onResolveSessionReference: handlers.onResolveSessionReference,
+    onOpenSessionReference: handlers.onOpenSessionReference,
     onOpenPath: handlers.onOpenPath,
     onViewImage: handlers.onViewImage,
     imageThumbUrl: handlers.imageThumbUrl,
+    imageViewUrl: handlers.imageViewUrl,
     commands: handlers.commands,
+    cwd: handlers.cwd,
     onCopy: handlers.onCopy,
     onRewind: handlers.onRewind,
+    onEditPending: handlers.onEditPending,
     onOpenThread: handlers.onOpenThread,
     onOpenProviderSettings: handlers.onOpenProviderSettings,
     onRetryTurn: handlers.onRetryTurn,
@@ -1319,14 +1259,15 @@ function runLine(
 ): HTMLElement {
   const headKey = `run-head:${run.id}`
   const ref = painter.ref(headKey, expanded)
-  const text = summary.text
+  const active = activityPieces(painter, run.id, headKey)
+  const text = active ? painter.activityLabel! : summary.text
   const failed = summary.failed > 0 ? failureLabel(summary.failed) : undefined
-  const name = [summary.text, failed, summary.aborted ? '已中断' : undefined].filter(Boolean).join(' · ')
+  const name = [text, failed, summary.aborted ? '已中断' : undefined].filter(Boolean).join(' · ')
   const { diff } = summary
   return painter.node(
     headKey,
-    'run-line',
-    [text, diff?.added, diff?.deleted, summary.failed, summary.aborted, expanded],
+    active ? 'run-line activity-line' : 'run-line',
+    [active !== undefined, text, diff?.added, diff?.deleted, summary.failed, summary.aborted, expanded],
     (node) => {
       // `button()` writes these at build time only, and this node outlives the text
       // it was built with.
@@ -1334,7 +1275,7 @@ function runLine(
       node.setAttribute('aria-label', name)
       node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
       return [
-        lineText(painter, headKey, text, true),
+        ...(active ?? [lineText(painter, headKey, text, true)]),
         diff === undefined ? undefined : el('span', 'line-meta', ...diffStat(diff.added, diff.deleted)),
         failed === undefined ? undefined : quiet('line-fail', `· ${failed}`),
         summary.aborted ? quiet('line-meta', '· 已中断') : undefined,
@@ -1351,36 +1292,37 @@ function diffStat(added: number, deleted: number): Child[] {
 }
 
 /**
- * A thought keeps 「思考」 and its full, plain-text body while streaming. Sealing
- * morphs the line to the first sentence and renders the rest as markdown once.
- * The selectable body is a sibling of the toggle, absent while folded.
+ * The live thinking status uses its first sentence as the disclosure label.
+ * Its body starts folded and continues below that same head without repeating
+ * the sentence. Streaming text stays plain; sealing typesets it as markdown.
  */
 function thinkingLine(
   painter: Painter,
   step: Extract<ActivityStep, { kind: 'thinking' }>,
 ): HTMLElement {
-  const expanded = isExpanded(painter.disclosure, step.id, true)
+  const expanded = isExpanded(painter.disclosure, step.id)
   const classes = ['thinking']
   if (expanded) classes.push('open')
   if (step.pending === true) classes.push('live')
   const headKey = `thinking-head:${step.id}`
   const ref = painter.ref(headKey, expanded)
-  const label = !expanded ? thoughtCollapsedLabel(step.durationMs)
-    : step.pending === true ? THINKING_LIVE_LABEL : thoughtLabel(step.text)
-  const rest = step.pending === true ? step.text : thoughtRest(step.text)
+  const active = activityPieces(painter, step.id, headKey)
+  const label = active ? painter.activityLabel!
+    : step.pending === true && !step.text.trim() ? THINKING_LIVE_LABEL : thoughtLabel(step.text)
+  const rest = thoughtRest(step.text)
   const head = painter.node(
     headKey,
-    'run-line',
-    [label, expanded, rest !== ''],
+    active ? 'run-line activity-line' : 'run-line',
+    [active !== undefined, label, expanded, rest !== ''],
     (node) => {
       node.title = label
       node.setAttribute('aria-label', label)
       node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
-      return [lineText(painter, headKey, label, true, true), rest !== '' ? icon('chevron-right') : undefined]
+      return [...(active ?? [lineText(painter, headKey, label, true, true)]), rest !== '' ? icon('chevron-right') : undefined]
     },
     () => button('run-line', '', label, () => painter.onToggle(step.id, ref.expanded)),
   )
-  const body = thinkingBody(painter, step, expanded, head)
+  const body = thinkingBody(painter, step, expanded, head, rest)
   return painter.node(`step:${step.id}`, classes.join(' '), [head, body], () => [head, body])
 }
 
@@ -1389,10 +1331,13 @@ function thinkingBody(
   step: Extract<ActivityStep, { kind: 'thinking' }>,
   expanded: boolean,
   head: HTMLElement,
+  rest: string,
 ): HTMLElement | undefined {
-  const rest = step.pending === true ? step.text : thoughtRest(step.text)
   return painter.disclose(`thinking-body:${step.id}`, expanded && rest !== '', head, () => (
     painter.node(`thinking-body:${step.id}`, 'thinking-body', [rest, step.pending], (node) => {
+      const follow = node.classList.contains('live')
+        && node.scrollHeight - node.scrollTop - node.clientHeight < 1
+      if (follow) painter.afterPaint(() => { node.scrollTop = node.scrollHeight })
       node.classList.toggle('live', step.pending === true)
       node.classList.toggle('md', step.pending !== true)
       if (step.pending !== true) return markdownChildren(rest, node)
@@ -1425,9 +1370,11 @@ function stepNode(painter: Painter, step: ActivityStep): HTMLElement {
  * pointer, not a disclosure.
  */
 function taskRow(painter: Painter, step: Extract<ActivityStep, { kind: 'task' }>): HTMLElement {
-  return painter.node(`step:${step.id}`, `step task ${step.status}`, [step.text, step.status], () => {
+  const active = activityPieces(painter, step.id, `task-head:${step.id}`)
+  return painter.node(`step:${step.id}`, `step task ${step.status}`, [step.text, step.status, active !== undefined], () => {
     const head = button('step-head', '', `${step.text} · ${toolStatusLabel(step.status)}`, () => painter.locateTaskCard())
-    append(head, [el('span', 'step-label', step.text)])
+    if (active) head.classList.add('activity-line')
+    append(head, active ?? [el('span', 'step-label', step.text)])
     return [head]
   })
 }
@@ -1659,6 +1606,30 @@ function familyStats(family: FamilyData): string | undefined {
 }
 
 /**
+ * The screenshot a browser call produced, if it produced one: `page.screenshot`
+ * and any batch that took one. Only the first is drawn — a row is one line and a
+ * batch's pictures are beside the text that lists its steps.
+ */
+function browserShot(step: ToolLike): ImageAttachmentRef | undefined {
+  if (step.kind !== 'tool' || step.tool.browser === undefined) return undefined
+  return step.tool.images?.[0]
+}
+
+/**
+ * The row's own sliver of the picture, pinned to its right end so the label and
+ * the chevron keep the words. It is not a control — the whole row opens it — so
+ * it takes no role and no focus; its title is the size it was captured at.
+ */
+function shotThumb(image: ImageAttachmentRef | undefined, url: string | undefined): HTMLElement | undefined {
+  if (image === undefined) return undefined
+  const thumb = el('img', 'step-thumb')
+  if (url !== undefined) thumb.setAttribute('src', url)
+  thumb.setAttribute('alt', '')
+  thumb.setAttribute('title', `截图 ${image.width}×${image.height}`)
+  return el('span', 'step-right step-shot-thumb', thumb)
+}
+
+/**
  * A tool's row in an opened run: 「读取 **pricing.js**」, with what the result adds
  * (the patch's counts, the files found, or the time it took) between the name and
  * the chevron — the same place the folded run's line puts its own diff counts. It
@@ -1676,28 +1647,38 @@ function toolRow(painter: Painter, step: ToolLike): HTMLElement {
   // `step.tool` is the item's own detail object, so it changes reference exactly
   // when the result merges in; `toStep` mints the step itself anew every paint.
   const detail = step.kind === 'tool' ? step.tool : undefined
-  return painter.node(`step:${step.id}`, classes.join(' '), [step.text, detail, status, expanded, selected], () => {
+  const active = activityPieces(painter, step.id, 'tool-live')
+  const live = active !== undefined
+  const cwd = painter.cwd?.()
+  // A screenshot's pixels are wanted twice — the row's sliver and the body's
+  // picture — and both are the pane's to fetch. `undefined` while a load is out,
+  // so the signature repaints the node the moment one lands.
+  const shot = browserShot(step)
+  const thumbUrl = shot === undefined ? undefined : painter.imageThumbUrl(shot.id)
+  const viewUrl = shot === undefined ? undefined : painter.imageViewUrl(shot.id)
+  return painter.node(`step:${step.id}`, classes.join(' '), [step.text, detail, status, expanded, selected, live, cwd, thumbUrl, viewUrl], () => {
     const family = familyData(step)
     // A running sub-agent has no run record yet, so it has no counts to state: the
     // row says it is running and its description opens the run's own page.
     const stats = familyStats(family)
     const body = agent ? undefined : stepBody(step, family, painter)
-    const label = rowLabel(step)
-    const name = stepAccessibleName(step, label, status, stats)
+    const label = rowLabel(step, cwd)
+    const name = live ? painter.activityLabel! : stepAccessibleName(step, label, status, stats)
     const toggles = body !== undefined
     const headKey = `${toggles ? 'tool-head' : 'tool-static'}:${step.id}`
     const ref = painter.ref(headKey, expanded)
     const right = agent ? undefined : rowRight(family, stats)
-    const headClass = agent ? 'step-head agent-ran' : toggles ? 'step-head' : 'step-head static'
-    const head = painter.node(headKey, headClass, [name, detail, step.text, expanded, selected], (node) => {
-      if (agent) return [el('span', 'step-label', ...agentRow(painter, step, status, name))]
+    const headClass = (agent ? 'step-head agent-ran' : toggles ? 'step-head' : 'step-head static') + (active ? ' activity-line' : '')
+    const head = painter.node(headKey, headClass, [name, detail, step.text, expanded, selected, thumbUrl, viewUrl], (node) => {
+      if (agent) return active ? [...active, button('agent-description', '查看子代理', name, () => painter.onOpenSubagent(step.id))] : [el('span', 'step-label', ...agentRow(painter, step, status, name, painter.carrierId === undefined))]
       node.title = name
       node.setAttribute('aria-label', name)
       if (toggles) node.setAttribute('aria-expanded', expanded ? 'true' : 'false')
       return [
-        el('span', 'step-label', ...label.parts),
+        ...(active ?? [el('span', 'step-label', ...label.parts)]),
         right,
         toggles ? icon('chevron-right') : undefined,
+        agent ? undefined : shotThumb(shot, thumbUrl),
       ]
     }, () => {
       // The agent's row is prose; only its description is the link to the run.
@@ -1708,7 +1689,7 @@ function toolRow(painter: Painter, step: ToolLike): HTMLElement {
     const bodyKey = `tool-body:${step.id}`
     const shown = body === undefined ? undefined : painter.disclose(bodyKey, expanded, head, () => {
       const content = body()
-      return painter.node(bodyKey, 'step-body', [step.text, detail], () => [...content.childNodes])
+      return painter.node(bodyKey, 'step-body', [step.text, detail, viewUrl], () => [...content.childNodes])
     })
     return [head, shown]
   })
@@ -1719,7 +1700,7 @@ function toolRow(painter: Painter, step: ToolLike): HTMLElement {
  * verb — its description, or the command, already says it — and a failure says so
  * in words too, because the red is not the only carrier.
  */
-function rowLabel(step: ToolLike): { readonly text: string; readonly parts: Child[] } {
+function rowLabel(step: ToolLike, cwd: string | undefined): { readonly text: string; readonly parts: Child[] } {
   if (step.kind === 'subagent') return { text: step.text, parts: [step.text] }
   const failed = step.status === 'failed' ? ' 失败' : step.status === 'interrupted' ? ' 已中断' : ''
   const mark = step.status === 'failed' ? el('span', 'step-fail', failed) : failed
@@ -1729,7 +1710,7 @@ function rowLabel(step: ToolLike): { readonly text: string; readonly parts: Chil
     const target = [type, agentName(step)].filter(Boolean).join(' · ')
     return { text: `${target}${failed}`, parts: [] }
   }
-  const { verb, target, bare } = callParts(step, step.toolName === undefined || !EDIT_TOOLS.has(step.toolName))
+  const { verb, target, bare } = callParts(step, step.toolName === undefined || !EDIT_TOOLS.has(step.toolName), cwd)
   if (target.length === 0) return { text: `${verb}${failed}`, parts: step.status === 'failed' ? [verb, mark] : [`${verb}${failed}`] }
   if (bare) return { text: `${target}${failed}`, parts: [target, mark] }
   const note = step.tool.memoryNote
@@ -1750,11 +1731,11 @@ function agentName(step: ToolLike): string {
  * the link into the run. The row itself is prose — pressing the verb opens
  * nothing — and a live run turns the same spinner the status line does.
  */
-function agentRow(painter: Painter, step: ToolLike, status: string, name: string): Child[] {
+function agentRow(painter: Painter, step: ToolLike, status: string, name: string, showMark: boolean): Child[] {
   const live = status === 'running' || status === 'awaiting-approval'
   const suffix = status === 'failed' ? ' 失败' : status === 'interrupted' ? ' 已中断' : undefined
   return [
-    live ? el('span', 'agent-mark', icon(status === 'running' ? 'spinner' : 'agent')) : undefined,
+    live && showMark ? el('span', 'agent-mark', icon(status === 'running' ? 'spinner' : 'agent')) : undefined,
     el('span', 'agent-verb', live ? '正在运行子 agent ' : '已运行子 agent '),
     button('agent-description', agentName(step), name, () => painter.onOpenSubagent(step.id)),
     suffix ? el('span', 'step-fail', suffix) : undefined,
@@ -1871,6 +1852,7 @@ function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => 
     }
   }
   if (isWebProse(step)) return () => webBody(step)
+  if (step.kind === 'tool' && step.tool.browser !== undefined) return () => browserBody(step, painter)
   const { resultSummary, detail, content } = step.tool
   const text = detail ?? content
   if (resultSummary === undefined && (text === undefined || text.length === 0)) return undefined
@@ -1929,6 +1911,56 @@ function webBody(step: Extract<ToolLike, { kind: 'tool' }>): HTMLElement {
     resultSummary === undefined ? undefined : el('div', 'step-body-head', resultSummary),
     el('div', 'step-web md', ...markdownChildren(content!)),
   )
+}
+
+/**
+ * The browser family's body: what the call asked for, then what came back.
+ *
+ * A screenshot's answer is the picture, so its own caption block — written for
+ * the model, coordinates and all — stays out of it, and a batch keeps its text
+ * beside the picture because those numbered lines are the only place the steps
+ * it ran are named. Everything else is the tool's text under the parameters
+ * that produced it.
+ */
+function browserBody(step: Extract<ToolLike, { kind: 'tool' }>, painter: Painter): HTMLElement {
+  const browser = step.tool.browser!
+  const params = browserParams(browser)
+  const image = step.tool.images?.[0]
+  const { errorCode, resultSummary, detail, content } = step.tool
+  const error = errorCode === undefined ? undefined : TOOL_ERROR_LABELS[errorCode]
+  const text = detail ?? content
+  const textShown = image === undefined || step.failed === true || browser.operation === 'batch'
+  return el(
+    'div',
+    'step-body',
+    params.length === 0 ? undefined : el('div', 'step-params', ...params.map((param) => el(
+      'div',
+      'step-param',
+      el('span', 'step-param-label', param.label),
+      el('span', 'step-param-value', param.value),
+    ))),
+    image === undefined ? undefined : shotNode(painter, image),
+    error === undefined ? undefined : el('div', 'step-error', error),
+    !textShown || resultSummary === undefined ? undefined : el('div', 'step-body-head', resultSummary),
+    !textShown || text === undefined || text.length === 0 ? undefined : outputBlock(painter, 'step-body-text', text),
+  )
+}
+
+/**
+ * The screenshot itself, framed like the card it sits in, and opened into the
+ * window's fullscreen viewer on a press. The pane's screen-sized copy is what it
+ * draws when that has arrived; the thumbnail it was fetched from stands in until
+ * then, and stays if the bigger one never comes.
+ */
+function shotNode(painter: Painter, image: ImageAttachmentRef): HTMLElement {
+  const facts = `截图 ${image.name}，${image.width}×${image.height}`
+  const url = painter.imageViewUrl(image.id) ?? painter.imageThumbUrl(image.id)
+  const picture = el('img', 'step-shot-image')
+  if (url !== undefined) picture.setAttribute('src', url)
+  picture.setAttribute('alt', facts)
+  const frame = button('step-shot', '', `查看 ${facts}`, () => painter.onViewImage(image))
+  append(frame, [picture])
+  return frame
 }
 
 /**
@@ -2074,7 +2106,7 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
     return painter.node(
       key,
       classes.join(' '),
-      [item.text, item.createdAt, item.images, stagedImages, thumbs, expanded, commands],
+      [item.text, item.createdAt, item.delivery, item.images, stagedImages, thumbs, expanded, commands],
       () => {
         const { text, paths } = splitAttachedPaths(item.text)
         const images = stagedImages === undefined
@@ -2220,18 +2252,25 @@ function metaRow(painter: Painter, item: TranscriptItem, footer?: TurnFooter): H
   const model = item.kind === 'assistant' && item.model !== undefined ? modelName(item.model) : undefined
   // A draft has no stamp of its own; copying half a sentence is not the offer.
   if (time === undefined && model === undefined) return undefined
-  // A staged send has no record behind it yet: copying it would offer the words
-  // that are already leaving, and a rewind has no message id to address.
-  const staged = item.pendingImages !== undefined
+  const staged = item.delivery === 'staged'
   const copy = staged ? undefined : itemCopyButton(painter, item)
   const onRewind = painter.onRewind
   const timeLabel = time === undefined ? undefined : timeNode(time, item.createdAt)
   // The user's row hangs off the bubble's right edge, read right to left: the controls end it.
   if (item.kind === 'user') {
-    const rewind = onRewind !== undefined && !staged
+    if (item.delivery !== undefined) {
+      const edit = painter.onEditPending
+      return el('div', 'item-meta', timeLabel, copy,
+        edit ? button('item-retract', '', '撤回并编辑', () => edit(item.id), { icon: 'close' }) : undefined)
+    }
+    const read = el('span', 'item-read', icon('check-check'))
+    read.setAttribute('role', 'img')
+    read.setAttribute('aria-label', '已读')
+    read.setAttribute('title', '已读')
+    const rewind = onRewind !== undefined
       ? button('item-rewind', '', '回退到此消息之前', () => onRewind(item.id), { icon: 'rewind' })
       : undefined
-    return el('div', 'item-meta', timeLabel, copy, rewind)
+    return el('div', 'item-meta', timeLabel, read, copy, rewind)
   }
   return el(
     'div',
@@ -2318,7 +2357,7 @@ function userBubble(
   expanded: boolean,
   commands: readonly WireCommandInfo[] | undefined,
 ): HTMLElement {
-  const text = el('div', 'user-text', ...userParts(source, commands))
+  const text = el('div', 'user-text', ...userParts(source, commands, painter.onOpenSessionReference, painter.onResolveSessionReference))
   const label = expanded ? '收起' : '显示更多'
   const more = button('user-more', label, label, () => painter.onToggle(id, expanded))
   const bubble = el('div', expanded ? 'user-bubble' : 'user-bubble clamped', text, more)
@@ -2336,11 +2375,31 @@ function userBubble(
  * nothing is a worse lie than plain text (the same call 5c made for the context
  * pills).
  */
-function userParts(text: string, commands: readonly WireCommandInfo[] | undefined): Child[] {
+function userParts(text: string, commands: readonly WireCommandInfo[] | undefined, onOpen?: (ref: string) => void, resolve?: TranscriptHandlers['onResolveSessionReference']): Child[] {
   return splitUserMessage(text, commands ?? []).map((segment) => {
     switch (segment.kind) {
       case 'text':
         return segment.text
+      case 'session-reference': {
+        const node = button('session-reference', segment.label, `打开会话 ${segment.label}`, () => onOpen?.(segment.uri), { icon: 'message-circle' })
+        node.title = `${segment.label}\n${segment.uri}`
+        if (resolve) {
+          let pending = false
+          const loadTitle = () => {
+            if (pending) return
+            pending = true
+            void resolve(segment.uri).then((reference) => {
+              if (reference) node.title = `${reference.title} · ${reference.projectName}`
+              else node.title = `无法找到此会话：${segment.uri}`
+            }).catch((error: unknown) => {
+              node.title = `无法解析会话：${error instanceof Error ? error.message : segment.uri}`
+            }).finally(() => { pending = false })
+          }
+          node.addEventListener('mouseenter', loadTitle)
+          node.addEventListener('focus', loadTitle)
+        }
+        return node
+      }
       case 'file':
         return el('span', 'file-chip', icon('file'), el('span', 'file-chip-label', segment.label))
       case 'command':

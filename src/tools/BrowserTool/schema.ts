@@ -32,7 +32,15 @@ import {
 } from './constants.js'
 
 const tabId = z.string().min(1).describe('Tab handle from browser.get_state or browser.create_tab.')
-const url = z.string().min(1).describe('Absolute http(s) URL, including the scheme.')
+const url = z
+  .string()
+  .min(1)
+  .describe('Absolute http(s) URL, including the scheme, with no username or password in it. For a page on disk use "path" instead.')
+/** A document on disk, which the app serves over its own loopback http. */
+const localPath = z
+  .string()
+  .min(1)
+  .describe('Path of a page on disk, absolute or relative to the workspace. The app serves it over loopback http, so its CSS, scripts and images load; give "path" or "url", not both.')
 const cursor = z
   .string()
   .min(1)
@@ -75,9 +83,9 @@ const target = {
 
 export const browserInputSchema = z.discriminatedUnion('operation', [
   z.object({ operation: z.literal('browser.get_state') }).strict(),
-  z.object({ operation: z.literal('browser.create_tab'), url: url.optional() }).strict(),
+  z.object({ operation: z.literal('browser.create_tab'), url: url.optional(), path: localPath.optional() }).strict(),
   z.object({ operation: z.literal('browser.close_tab'), tabId }).strict(),
-  z.object({ operation: z.literal('tab.navigate'), tabId, url }).strict(),
+  z.object({ operation: z.literal('tab.navigate'), tabId, url: url.optional(), path: localPath.optional() }).strict(),
   z.object({ operation: z.literal('tab.go_back'), tabId }).strict(),
   z.object({ operation: z.literal('tab.go_forward'), tabId }).strict(),
   z.object({ operation: z.literal('tab.reload'), tabId }).strict(),

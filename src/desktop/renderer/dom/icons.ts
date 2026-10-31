@@ -31,6 +31,10 @@ export type IconName =
   | 'folder'
   | 'folder-open'
   | 'file'
+  | 'message-circle'
+  | 'file-code'
+  | 'file-image'
+  | 'file-text'
   | 'chevron-left'
   | 'chevron-right'
   | 'chevron-down'
@@ -44,6 +48,7 @@ export type IconName =
   | 'minimize'
   | 'dot'
   | 'check'
+  | 'check-check'
   | 'clock'
   | 'spinner'
   | 'send'
@@ -90,6 +95,8 @@ export type IconName =
   | 'circle-ellipsis'
   | 'x-circle'
   | 'alert-circle'
+  // --- the full-access confirmation: the question's mark and its warning glyph ---
+  | 'triangle-alert'
   | 'more'
   // --- the provider dialog's API key reveal ---
   | 'eye'
@@ -123,6 +130,7 @@ const ICONS = {
   minus: ['M5 12h14'],
   // x
   close: ['M18 6 6 18', 'm6 6 12 12'],
+  'check-check': ['M18 6 7 17l-5-5', 'm22 10-7.5 7.5L13 16'],
   trash: [
     'M10 11v6',
     'M14 11v6',
@@ -226,6 +234,7 @@ const ICONS = {
   'circle-ellipsis': [RING, 'M17 12h.01', 'M12 12h.01', 'M7 12h.01'],
   'x-circle': [RING, 'm15 9-6 6', 'm9 9 6 6'],
   'alert-circle': [RING, ['line', { x1: 12, x2: 12, y1: 8, y2: 12 }], ['line', { x1: 12, x2: 12.01, y1: 16, y2: 16 }]],
+  'triangle-alert': ['m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3', 'M12 9v4', 'M12 17h.01'],
   // ellipsis
   more: [['circle', { cx: 12, cy: 12, r: 1 }], ['circle', { cx: 19, cy: 12, r: 1 }], ['circle', { cx: 5, cy: 12, r: 1 }]],
   eye: [
@@ -246,6 +255,10 @@ const ICONS = {
     'm3.3 7 8.7 5 8.7-5',
     'm7.5 4.27 9 5.15',
   ],
+  'message-circle': ["M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"],
+  'file-code': ["M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z", "M14 2v5a1 1 0 0 0 1 1h5", "M10 12.5 8 15l2 2.5", "m14 12.5 2 2.5-2 2.5"],
+  'file-image': ["M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z", "M14 2v5a1 1 0 0 0 1 1h5", ["circle", {"cx": "10", "cy": "12", "r": "2"}], "m20 17-1.296-1.296a2.41 2.41 0 0 0-3.408 0L9 22"],
+  'file-text': ["M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z", "M14 2v5a1 1 0 0 0 1 1h5", "M10 9H8", "M16 13H8", "M16 17H8"],
 } as const satisfies Record<IconName, IconSpec>
 
 export function icon(name: IconName, className = 'icon'): SVGSVGElement {

@@ -10,7 +10,6 @@ import {
   pruneDisclosure,
   runHasTools,
   summarizeRun,
-  thoughtCollapsedLabel,
   thoughtFirstSentence,
   thoughtLabel,
   thoughtRest,
@@ -45,14 +44,6 @@ test('an open thought\'s body is what follows the first sentence', () => {
   assert.equal(thoughtRest('open design.md first. Then read'), 'Then read')
   assert.equal(thoughtRest('标题\n正文'), '正文')
   assert.equal(thoughtRest('只有一句'), '')
-})
-
-test('a folded thought uses measured seconds or the process fallback', () => {
-  assert.equal(thoughtCollapsedLabel(), '思考过程')
-  assert.equal(thoughtCollapsedLabel(0), '思考了 1 秒')
-  assert.equal(thoughtCollapsedLabel(1499), '思考了 1 秒')
-  assert.equal(thoughtCollapsedLabel(1500), '思考了 2 秒')
-  assert.equal(thoughtCollapsedLabel(458_000), '思考了 458 秒')
 })
 
 const tool = (id: string, toolName: string, extra: Partial<Extract<ActivityStep, { kind: 'tool' }>> & { useSummary?: string; detail?: string } = {}): ActivityStep => {
@@ -117,12 +108,12 @@ test('a failure or an interruption is said beside the counts, not in them', () =
   assert.equal(summarizeRun(run([tool('a', 'Read')], 'aborted')).aborted, true)
 })
 
-test('tools stay folded by default; thoughts start open and manual answers are absolute', () => {
+test('tools and thoughts stay folded by default and manual answers are absolute', () => {
   assert.equal(isExpanded(NO_DISCLOSURE, 'a'), false)
-  assert.equal(isExpanded(NO_DISCLOSURE, 'thought', true), true)
-  const foldedThought = toggleDisclosure(NO_DISCLOSURE, 'thought', true)
-  assert.equal(isExpanded(foldedThought, 'thought', true), false)
-  assert.equal(isExpanded(NO_DISCLOSURE, 'thought', true), true, 'another session has no manual answer')
+  assert.equal(isExpanded(NO_DISCLOSURE, 'thought'), false)
+  const expandedThought = toggleDisclosure(NO_DISCLOSURE, 'thought', false)
+  assert.equal(isExpanded(expandedThought, 'thought'), true)
+  assert.equal(isExpanded(NO_DISCLOSURE, 'thought'), false, 'another session has no manual answer')
   const opened = toggleDisclosure(NO_DISCLOSURE, 'a', false)
   assert.equal(isExpanded(opened, 'a'), true)
   const closed = toggleDisclosure(opened, 'a', true)

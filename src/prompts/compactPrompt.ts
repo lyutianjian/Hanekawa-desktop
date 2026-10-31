@@ -177,7 +177,8 @@ export function getCompactPrompt(
   customInstructions?: string,
   variant: CompactPromptVariant = 'default',
 ): string {
-  let prompt = COMPACT_PROMPTS[variant]
+  let prompt = `${COMPACT_PROMPTS[variant]}
+Preserve referenced session UUIDs/URIs, their titles, and which saved pages or message ranges ReadSession actually returned. A reference identity alone is not read content. After compaction, reread any source text needed beyond the summary; do not claim unread or omitted originals are available.`
   if (customInstructions && customInstructions.trim() !== '') {
     prompt += `\n\nAdditional Instructions:\n${customInstructions}`
   }

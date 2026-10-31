@@ -36,6 +36,19 @@ function createHarness(): Harness {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
+test('retractMessage returns the persisted message and leaves queue updates authoritative', async () => {
+  const harness = createHarness()
+  const pending = harness.client.retractMessage('q1')
+  await settle()
+  const command = harness.sent.at(-1)!
+  assert.equal(command.type, 'retract-message')
+  assert.equal(command.type === 'retract-message' && command.messageId, 'q1')
+  const message = { id: 'q1', content: 'edit me', priority: 'next', createdAt: 'now' }
+  harness.post({ type: 'reply', id: command.type === 'retract-message' ? command.id : '', result: { message } })
+  assert.deepEqual(await pending, message)
+  harness.client.dispose()
+})
+
 test('host close rejects both pending and newly sent commands immediately', { timeout: 1000 }, async () => {
   const harness = createHarness()
   const pending = harness.client.listCommands()

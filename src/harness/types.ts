@@ -287,6 +287,16 @@ export interface AtMentionContextRecord {
   turnId?: string
 }
 
+export interface SessionReferenceContextRecord {
+  id: string
+  type: 'session_reference_context'
+  userMessageId: string
+  references: Array<{ sessionId: string; uri: string; title: string }>
+  content: string
+  createdAt: string
+  turnId?: string
+}
+
 export interface SubagentTranscriptRecord {
   id: string
   type: 'subagent_transcript'
@@ -467,6 +477,9 @@ export interface PersistedQueuedMessage {
  */
 export interface SteerSource {
   pending(): readonly PersistedQueuedMessage[]
+  /** Reserve a pending message before asynchronous validation/recording. */
+  claim?(messageId: string): boolean
+  release?(messageId: string): void
   consume(messageId: string): Promise<void>
 }
 
@@ -498,6 +511,7 @@ export type MessageQueueRecord =
 export type SessionRecord =
   | ({ type: 'message' } & ChatMessage)
   | AtMentionContextRecord
+  | SessionReferenceContextRecord
   | ToolUseRecord
   | ToolResultRecord
   | ToolResultTrimRecord

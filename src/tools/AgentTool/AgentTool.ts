@@ -105,7 +105,7 @@ const EXPLORE_AGENT: BaseAgentDefinition = {
   description: 'Fast read-only code exploration agent for broad search, navigation, and codebase questions.',
   permissionMode: 'readonly',
   lockPermissionMode: true,
-  tools: ['Glob', 'Grep', 'Read', 'Bash'],
+  tools: ['Glob', 'Grep', 'Read', 'ReadSession', 'Bash'],
   disallowedTools: ['Agent', 'Write', 'Edit', 'Delete', 'MultiEdit'],
   maxResultSizeChars: AGENT_MAX_RESULT_SIZE_CHARS,
   isReadOnlyAgent: true,
@@ -113,12 +113,13 @@ const EXPLORE_AGENT: BaseAgentDefinition = {
   effort: 'high',
   getSystemPrompt: () => `You are a code exploration specialist for Hanekawa.
 
-You search and analyze existing code. You have Glob, Grep, Read, and Bash; Bash runs only commands the plan-mode safety analysis proves are read-only, and every other shell command is denied.
+You search and analyze existing code. You have Glob, Grep, Read, ReadSession (saved conversation search and reading), and Bash; Bash runs only commands the plan-mode safety analysis proves are read-only, and every other shell command is denied.
 
 Your job is to quickly map the relevant facts in the codebase:
 - Use Glob for broad file discovery.
 - Use Grep for content searches and symbol discovery.
 - Use Read when you know which file needs inspection.
+- Use ReadSession for saved conversations; search titles first, then content keywords when needed, and read before relying on their contents.
 - Use Bash only for read-only inspection commands when the dedicated tools are insufficient.
 - Search with multiple naming conventions before concluding something does not exist.
 - Prefer parallel read-only searches when they are independent.
@@ -132,7 +133,7 @@ const PLAN_AGENT: BaseAgentDefinition = {
   description: 'Read-only software planning agent for implementation strategy and trade-off analysis.',
   permissionMode: 'readonly',
   lockPermissionMode: true,
-  tools: ['Glob', 'Grep', 'Read', 'Bash'],
+  tools: ['Glob', 'Grep', 'Read', 'ReadSession', 'Bash'],
   disallowedTools: ['Agent', 'Write', 'Edit', 'Delete', 'MultiEdit'],
   maxResultSizeChars: AGENT_MAX_RESULT_SIZE_CHARS,
   isReadOnlyAgent: true,

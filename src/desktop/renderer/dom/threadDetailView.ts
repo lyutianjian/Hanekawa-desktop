@@ -151,6 +151,7 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
         onOpenPath: handlers.onOpenPath,
         onViewImage: () => {},
         imageThumbUrl: () => undefined,
+        imageViewUrl: () => undefined,
         onCopy: (text) => copyText(text).then((ok) => {
           if (!ok) handlers.onError?.('复制失败：无法写入剪贴板。')
           return ok
@@ -189,8 +190,7 @@ export function createThreadDetailView(container: HTMLElement, handlers: ThreadD
           ? button('thread-detail-icon thread-detail-stop', '', '停止这个线程', () => handlers.onStop(page.threadId), { icon: 'stop', enabled: !page.stopPending })
           : undefined,
       ),
-      el('div', 'thread-detail-title', mark, name),
-      el('div', 'subagent-meta', page.statusLabel),
+      el('div', 'thread-detail-title', mark, name, el('span', 'subagent-meta thread-detail-status', page.statusLabel)),
       page.needsYou
         ? button('thread-detail-needs-you', '需要你处理 · 去处理', '在主画布处理这个线程的请求', () => handlers.onOpen(page.sessionId))
         : undefined,

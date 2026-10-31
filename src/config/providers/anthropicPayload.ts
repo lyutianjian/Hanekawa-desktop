@@ -158,8 +158,8 @@ export function buildAnthropicMessages(request: ModelRequest) {
             return [{ type: 'thinking', thinking, signature: block.signature }]
           }
           // Compatible endpoints emit unsigned thinking and require it back on
-          // any history that continues tool calls, so replay it as-is.
-          if (thinking.trim() === '') return []
+          // any history that continues tool calls — an empty progress-update
+          // block included, which must be passed back unmodified.
           return [{ type: 'thinking', thinking, signature: '' }]
         })
         const merged = [...thinkingBlocks, ...content] as Array<Record<string, unknown>>

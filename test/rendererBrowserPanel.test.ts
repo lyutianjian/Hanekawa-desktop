@@ -204,6 +204,14 @@ test('a typo stays a typo — there is no search fallback', () => {
   assert.equal(normalizeAddress('https://'), undefined)
 })
 
+test('an address carrying credentials is not one', () => {
+  // The host refuses these too. What is at stake is the transcript: a tab's
+  // address is recorded, drawn in the strip and handed to the model.
+  assert.equal(normalizeAddress('https://user:secret@example.com/'), undefined)
+  assert.equal(normalizeAddress('https://user@example.com/'), undefined)
+  assert.equal(normalizeAddress('http://user:secret@localhost:3000/'), undefined)
+})
+
 // --- labels -----------------------------------------------------------------------------
 
 test('a tab reads as its title, then its host, then a placeholder', () => {

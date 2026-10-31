@@ -36,6 +36,7 @@
     "test/rendererTaskPanelView.test.ts",
     "test/rendererToastView.test.ts",
     "test/rendererFailureFeedback.test.ts",
+    "test/rendererFullAccessConfirm.test.ts",
     "test/rendererMergeBarView.test.ts",
     "test/rendererThreadPanelView.test.ts",
     "test/rendererThreadDetailView.test.ts",

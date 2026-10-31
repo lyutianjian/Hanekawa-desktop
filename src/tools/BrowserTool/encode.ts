@@ -19,7 +19,24 @@ export function renderTabs(tabs: readonly BrowserTabState[]): string {
   const blocked = tabs.flatMap((tab) =>
     (tab.blockedDownloads ?? []).map((name) => `Blocked a download in tab ${tab.tabId}: ${JSON.stringify(name)} (downloads are cancelled).`),
   )
-  return [TAB_COLUMNS.join('\t'), ...tabs.map(renderTabRow), ...blocked].join('\n')
+  // Same reason, and one more: what a page says on its own console is often the
+  // whole explanation for "the click did nothing", and it is far too long for a
+  // column.
+  const errors = tabs.flatMap((tab) =>
+    (tab.consoleErrors ?? []).map((message) => `Console error in tab ${tab.tabId}: ${message}`),
+  )
+  return [TAB_COLUMNS.join('\t'), ...tabs.map(renderTabRow), ...blocked, ...errors].join('\n')
+}
+
+/**
+ * The page's console errors, as a block under whatever read the page, or `''`.
+ *
+ * Reported once each — the host hands them over and forgets — so this is the
+ * model's only chance to see them.
+ */
+export function renderConsoleErrors(errors: readonly string[]): string {
+  if (errors.length === 0) return ''
+  return ['Console errors the page logged:', ...errors.map((error) => `- ${error}`)].join('\n')
 }
 
 export function renderTabRow(tab: BrowserTabState): string {

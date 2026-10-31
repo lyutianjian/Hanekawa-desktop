@@ -626,6 +626,12 @@ export class SessionClient {
     await this.send({ type: 'clear-queue', id: randomUUID() })
   }
 
+  /** Returns the original message only after its withdrawal is persisted. */
+  async retractMessage(messageId: string): Promise<PersistedQueuedMessage> {
+    const result = await this.send({ type: 'retract-message', id: randomUUID(), messageId }) as WireEnqueueResult
+    return result.message
+  }
+
   // --- image attachments ---------------------------------------------------
 
   /**

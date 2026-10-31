@@ -31,6 +31,20 @@ test('elapsed time reads in seconds, minutes, then hours', () => {
   assert.deepEqual([formatElapsed(-5), formatElapsed(59_999), formatElapsed(75_000), formatElapsed(3_725_000)], ['0 秒', '59 秒', '1 分 15 秒', '1 小时 2 分'])
 })
 
+test('shell titles prefer descriptions while retaining the full command for details', () => {
+  const command = 'cd /tmp/project &&\n  npm test -- test/rendererCommandsPanel.test.ts'
+  const groups = backgroundTaskGroups([
+    task({ id: 'described', status: 'completed', startedAt: 1, command, description: '  验证侧边栏任务  ' }),
+    task({ id: 'legacy', status: 'completed', startedAt: 2, command }),
+    task({ id: 'blank', status: 'completed', startedAt: 3, command, description: ' \n ' }),
+  ], [])
+  assert.equal(groups.finished.find((row) => row.id === 'described')?.title, '验证侧边栏任务')
+  for (const id of ['legacy', 'blank']) {
+    assert.equal(groups.finished.find((row) => row.id === id)?.title, 'cd /tmp/project && npm test -- test/rendererCommandsPanel.test.ts')
+  }
+  assert.ok(groups.finished.every((row) => row.command === command))
+})
+
 test('shells and agents mix by time, without duplicating registered agents or treating failures as successes', () => {
   const agents: SubagentEntry[] = [
     { id: 'agent-live', name: '子代理', description: '核对权限', status: 'running', finished: false, notes: [], startedAt: 2_000 },

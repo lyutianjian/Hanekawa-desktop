@@ -112,7 +112,7 @@ test('Chinese changes the labels, never the slots', () => {
     buildExitPlanModeOptions({ isBypassAvailable: true }).map((option) => option.kind),
     'the slot order is the hotkey map',
   )
-  assert.equal(zh[0]?.label, '好，并绕过权限确认')
+  assert.equal(zh[0]?.label, '好，并开启完全访问权限')
   assert.equal(enterPlanOptions('zh')[0]?.label, '好，进入计划模式')
   assert.deepEqual(enterPlanOptions('zh').map((option) => option.hotkey), ['1', '2'])
   assert.deepEqual(emptyPlanOptions('zh').map((option) => option.kind), ['approve_restore_keep', 'reject'])

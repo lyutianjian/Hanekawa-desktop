@@ -155,6 +155,15 @@ function hostScopedUrl(toolName: string, input: unknown): string {
   return HOST_SCOPED_TOOLS[toolName]?.(input) ?? ''
 }
 
+/** Every `path` a Browser call opens from disk, batch steps included. */
+function browserLocalPaths(input: unknown): string[] {
+  if (!input || typeof input !== 'object') return []
+  const { operation, steps, path: file } = input as { operation?: unknown; steps?: unknown; path?: unknown }
+  if (operation === 'batch' && Array.isArray(steps)) return steps.flatMap((step) => browserLocalPaths(step))
+  const navigates = operation === 'browser.create_tab' || operation === 'tab.navigate'
+  return navigates && typeof file === 'string' && file !== '' ? [file] : []
+}
+
 export { isProtectedPath, checkWindowsPathSafety } from '../utils/permissions/protectedPaths.js'
 
 export function permissionRulesFromSettings(permissions: PermissionSettings | undefined): PermissionRule[] {
@@ -773,8 +782,10 @@ export class PermissionGate {
   }
 
   private matchesRule(rule: PermissionRule, toolName: string, input: unknown, risk?: RiskAssessment): boolean {
-    // String edits read internally. Read restrictions apply; Read allow rules never authorize writes.
-    const internalRead = rule.toolName === 'Read' && rule.behavior !== 'allow' && STRING_EDIT_TOOLS.has(toolName)
+    // String edits read internally, and the browser reads a page's file from
+    // disk. Read restrictions apply to both; Read allow rules authorize neither.
+    const internalRead =
+      rule.toolName === 'Read' && rule.behavior !== 'allow' && (STRING_EDIT_TOOLS.has(toolName) || toolName === 'Browser')
     if (!ruleAppliesToTool(rule.toolName, toolName) && !internalRead) return false
     const pattern = rule.contentPattern
     if (!pattern) return true
@@ -796,6 +807,13 @@ export class PermissionGate {
       const strict = rule.behavior === 'deny' || rule.behavior === 'ask'
       const candidates = strict ? [command, ...bashCommandSegments(command), ...(risk?.commands ?? [])] : [command]
       return matchBashRule(pattern, candidates, { stripAllEnvVars: strict, skipCompoundCheck: strict })
+    }
+
+    if (toolName === 'Browser') {
+      // A `Read` deny/ask rule governs what the browser may open from disk too:
+      // a page's scripts read whatever the server serves, so the same path must
+      // stay off limits however it is reached.
+      return browserLocalPaths(input).some((file) => this.pathMatches(pattern, path.resolve(this.cwd, file)))
     }
 
     if (FILE_TOOLS.has(toolName)) {

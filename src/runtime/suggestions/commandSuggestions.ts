@@ -1,6 +1,7 @@
 import Fuse, { type FuseResult } from 'fuse.js'
 import type { CommandDefinition } from '../../commands/types.js'
 import type { SuggestionItem } from './types.js'
+import { insertSuggestion } from './insertSuggestion.js'
 
 /**
  * The subset of a command this module actually reads.
@@ -124,8 +125,7 @@ export function applyCommandSuggestion<T extends CommandSuggestionSource>(
   cursorPos: number
 } {
   const command = suggestion.metadata
-  const text = `/${command.name} `
-  return { text, cursorPos: text.length }
+  return insertSuggestion('', 0, 0, `/${command.name}`)
 }
 
 function compareCommandMatches<T extends CommandSuggestionSource>(

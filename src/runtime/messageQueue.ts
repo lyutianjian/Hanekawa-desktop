@@ -142,6 +142,8 @@ export class MessageQueue implements SteerSource {
   private snapshot: readonly QueuedMessage[] = EMPTY_SNAPSHOT
   private operationChain: Promise<void> = Promise.resolve()
   private pendingOperations = 0
+  private readonly claimed = new Set<string>()
+  private readonly retracting = new Set<string>()
   private readonly listeners = new Set<() => void>()
   private readonly validateInput: ValidateQueuedInput | undefined
 
@@ -212,6 +214,42 @@ export class MessageQueue implements SteerSource {
    */
   peek(): QueuedMessage | undefined {
     return this.snapshot[0]
+  }
+
+  canClaim(messageId: string): boolean {
+    return !this.claimed.has(messageId) && !this.retracting.has(messageId)
+      && this.snapshot.some((message) => message.id === messageId)
+  }
+
+  claim = (messageId: string): boolean => {
+    if (!this.canClaim(messageId)) return false
+    this.claimed.add(messageId)
+    return true
+  }
+
+  release = (messageId: string): void => { this.claimed.delete(messageId) }
+
+  /** Withdraw only a message that no delivery path has started accepting. */
+  async retract(messageId: string): Promise<QueuedMessage> {
+    if (this.claimed.has(messageId) || this.retracting.has(messageId)) {
+      throw new Error('消息正在发送，无法撤回。')
+    }
+    // Reserve synchronously: steering may already hold an older snapshot.
+    this.retracting.add(messageId)
+    try {
+      return await this.serialize(async () => {
+        const message = this.snapshot.find((entry) => entry.id === messageId)
+        if (!message) throw new Error('消息已发送，无法撤回。')
+        await this.persist(this.sessionId, {
+          id: randomUUID(), type: 'message_queue', operation: 'dequeue', messageId,
+          createdAt: new Date().toISOString(),
+        })
+        this.replaceSnapshot(this.snapshot.filter((entry) => entry.id !== messageId))
+        return message
+      })
+    } finally {
+      this.retracting.delete(messageId)
+    }
   }
 
   /**

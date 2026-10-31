@@ -5,6 +5,7 @@ import { button } from './controls.js'
 import type { DockedCard } from './dockedCard.js'
 import { el, replace } from './dom.js'
 import { focusByKey, heldFocusKey } from './focus.js'
+import { icon } from './icons.js'
 
 /**
  * The AskUserQuestion request, drawn into the docked card (`dockedCard.ts`) so
@@ -88,7 +89,9 @@ export function createQuestionCardView(
       // active descendant; in a single-select list the cursor is the choice.
       line.setAttribute('aria-selected', String(view.multiSelect && !row.isOther ? row.toggled : row.selected))
       if (view.multiSelect && !row.isOther) {
-        line.appendChild(el('span', `ask-tick${row.toggled ? ' on' : ''}`))
+        const tick = el('span', `ask-tick${row.toggled ? ' on' : ''}`)
+        if (row.toggled) tick.appendChild(icon('check', 'ask-tick-check'))
+        line.appendChild(tick)
       }
       const text = el('div', 'ask-option-text', el('span', 'ask-option-label', row.label))
       if (row.description) text.appendChild(el('span', 'ask-option-desc', row.description))

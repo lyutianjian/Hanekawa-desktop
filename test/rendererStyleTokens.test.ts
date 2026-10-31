@@ -175,6 +175,7 @@ test('the stylesheet parses exactly, so nothing below can pass vacuously', () =>
       '@container composer-bar (inline-size < 320px) {',
       '@media (hover: none), (pointer: coarse) {',
       '@media (prefers-reduced-motion: reduce) {',
+    '@media (forced-colors: active) {',
     ],
     'a conditional rule belongs in this list',
   )
@@ -387,9 +388,9 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-5': '24px',
       '--space-6': '32px',
       '--space-7': '48px',
-      '--radius-lg': '14px',
-      '--radius-panel': '12px',
-      '--radius-md': '10px',
+      '--radius-lg': '18px',
+      '--radius-panel': '14px',
+      '--radius-md': '12px',
       '--radius-row': '8px',
       '--radius-sm': '6px',
       '--radius-xs': '4px',
@@ -401,6 +402,8 @@ test('the palette is the one that was agreed, value for value', () => {
       '--control-sm': '24px',
       '--control-md': '28px',
       '--control-lg': '32px',
+      '--session-menu-x': '0px',
+      '--session-menu-y': '0px',
       '--z-under': '-1',
       '--z-raised': '1',
       '--z-pinned': '2',
@@ -552,9 +555,9 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-5': '24px',
       '--space-6': '32px',
       '--space-7': '48px',
-      '--radius-lg': '14px',
-      '--radius-panel': '12px',
-      '--radius-md': '10px',
+      '--radius-lg': '18px',
+      '--radius-panel': '14px',
+      '--radius-md': '12px',
       '--radius-row': '8px',
       '--radius-sm': '6px',
       '--radius-xs': '4px',
@@ -566,6 +569,8 @@ test('the palette is the one that was agreed, value for value', () => {
       '--control-sm': '24px',
       '--control-md': '28px',
       '--control-lg': '32px',
+      '--session-menu-x': '0px',
+      '--session-menu-y': '0px',
       '--z-under': '-1',
       '--z-raised': '1',
       '--z-pinned': '2',
@@ -708,6 +713,8 @@ test('the light block overrides only colours, and adds no token the dark palette
     '--control-sm',
     '--control-md',
     '--control-lg',
+    '--session-menu-x',
+    '--session-menu-y',
     '--z-under',
     '--z-raised',
     '--z-pinned',
@@ -1313,6 +1320,7 @@ test('no tracking on Chinese, and autospace where prose mixes scripts', () => {
     '.md': 'normal',
     '#composer-request': 'normal',
     '#rewind-panel': 'normal',
+    '.full-access-panel': 'normal',
     '.md .md-inline-code': 'no-autospace',
     '.md .md-code': 'no-autospace',
   })
@@ -1512,23 +1520,14 @@ test('the session on screen is painted, and the four row states stack in order',
 })
 
 test('a long session name cannot widen its row out of the rail', () => {
-  // `.project-body` is a grid so the fold can animate to content height, and a
-  // grid's implicit column is an `auto` track — sized to its item's *max-content*,
-  // which here is the widest un-wrapped session title. Measured in Electron
-  // against this sheet, a 40-character name grew the track to 650px inside the
-  // 280px rail; `overflow: hidden` then cropped the row's right end, which is
-  // where `.session-actions` lives, so 🗑 sat at x=626 and could not be reached.
-  // The name did not truncate either — it had all the room it asked for.
-  const body = blockFor('.project-body')
+  // The fold now belongs to each session slot; its column must stay bounded
+  // even when a referenceable session has a title wider than the sidebar.
+  const slot = blockFor('.session-slot')
   assert.ok(
-    declares(body, 'grid-template-columns', 'minmax(0, 1fr)'),
+    declares(slot, 'grid-template-columns', 'minmax(0, 1fr)'),
     'the fold’s column must be capped at the rail, or the widest title sizes it',
   )
-  assert.ok(declares(body, 'overflow', 'hidden'), 'the crop this protects against is still here')
-  assert.ok(
-    declares(blockFor('.project-rows'), 'min-width', '0'),
-    'the grid item must be allowed to shrink below its own max-content',
-  )
+  assert.ok(declares(blockFor('.session-clip'), 'overflow', 'hidden'), 'the fold still clips the bounded row')
 
   // With the row capped, these are what spend the width: the actions slot keeps
   // its size and the name is the half that gives way.
@@ -1809,10 +1808,8 @@ test('a collapsed sidebar is gone, and the column inside it does not resize with
   )
 
   // --- the gutter between the two columns ---
-  // Four rules make one 10px seam, and each is meaningless without the others:
-  // the scrollbar overhang, the canvas's left inset, the handle's basis, and
-  // where the handle draws its line. Written together because the numbers only
-  // add up together.
+  // The scrollbar keeps its overhang; the handle overlays the canvas edge
+  // without adding a gap between the columns.
   assert.equal(tokens.get('--sidebar-gutter'), '10px')
   assert.equal(
     tokens.get('--sidebar-scrollbar-overhang'),
@@ -1826,28 +1823,30 @@ test('a collapsed sidebar is gone, and the column inside it does not resize with
     declares(
       resizer,
       'flex',
-      '0 0 calc(var(--sidebar-gutter) - var(--sidebar-scrollbar-overhang))',
+      '0 0 var(--space-2)',
     ),
-    'the handle owns the gutter the scrollbar has not overhung, or part of the seam looks grabbable and is not',
+    'the handle gives the pointer an 8px target',
   )
   assert.ok(
     declares(
       resizer,
       'margin-right',
-      'calc(-1 * (var(--sidebar-gutter) - var(--sidebar-scrollbar-overhang)))',
+      'calc(-1 * var(--space-2))',
     ),
-    'the handle reaches across the canvas inset without widening the gutter',
+    'the handle overlays the canvas without widening the gutter',
   )
+  assert.ok(declares(resizer, 'z-index', 'var(--z-pinned)'), 'the canvas must not cover the drag target')
+  assert.ok(declares(resizer, 'touch-action', 'none'), 'a touch drag must not become a scroll gesture')
   // The hover line belongs on the canvas edge; the scrollbar is the element that
   // moves toward it.
   const line = blockFor('#sidebar-resizer::after')
   assert.ok(
-    declares(line, 'right', '0'),
+    declares(line, 'left', '0'),
     "the sash's line stays on the canvas edge",
   )
   assert.ok(
-    !line.decls.some((decl) => decl.prop === 'left'),
-    'the sash must not also anchor on the left; two anchors and a width is one too many',
+    !line.decls.some((decl) => decl.prop === 'right'),
+    'the sash must not also anchor on the right; two anchors and a width is one too many',
   )
   // The scroller overhang moves the native rail 7px into the gutter while the
   // matching padding keeps its rows on the original column grid.
@@ -1969,6 +1968,24 @@ test('the composer raises its panels, and they no longer span the canvas', () =>
   }
 })
 
+test('tool disclosure chevrons stay visible with a fuller stroke, while thoughts reveal theirs on hover', () => {
+  const tools = blockFor('.run > .run-line > .icon, .step-head[aria-expanded] > .icon')
+  assert.ok(declares(tools, 'opacity', '1'))
+  assert.ok(declares(tools, 'stroke-width', '3'))
+  for (const block of blocks.filter((candidate) => candidate.at === undefined && declares(candidate, 'opacity', '0'))) {
+    const selectors = block.selector.split(',').map((selector) => selector.trim())
+    assert.ok(!selectors.includes('.run-line > .icon'), 'tool summaries must not need hover')
+    assert.ok(!selectors.includes('.step-head[aria-expanded] > .icon'), 'tool rows must not need hover')
+  }
+  assert.ok(blocks.some((block) => block.selector.split(',').map((selector) => selector.trim()).includes('.thinking > .run-line > .icon')
+    && declares(block, 'opacity', '0')))
+  const reveal = blocks.find((block) => block.at === undefined && block.selector.includes('.run-line:hover > .icon')
+    && declares(block, 'opacity', '1'))
+  assert.ok(reveal)
+  assert.ok(reveal.selector.includes('.run-line:focus-visible > .icon'), 'keyboard focus reveals the thought arrow')
+  assert.ok(!reveal.selector.includes('.run-line:focus-within > .icon'), 'mouse focus must not keep the thought arrow visible')
+})
+
 test('activity lines carry one running mark, which moves and stays readable', () => {
   // The working mark is a fixed square showing one frame of its sprite strip;
   // the view only names the sheet and the frame. Until the sheets decode it is a
@@ -1980,11 +1997,9 @@ test('activity lines carry one running mark, which moves and stays readable', ()
   const waiting = blocks.find((block) => block.selector === '.waiting' && declares(block, 'min-height', '24px'))
   assert.ok(waiting)
   assert.ok(declares(waiting, 'line-height', '24px'))
-  assert.ok(declares(blockFor('.waiting .line-meta'), 'gap', '6px'))
-  const separator = blockFor('.waiting .line-elapsed:not(:empty)::after')
-  assert.ok(declares(separator, 'content', "'·'"))
-  assert.ok(declares(separator, 'color', 'var(--text-tertiary)'))
-  assert.ok(declares(blockFor('.line-elapsed:empty'), 'display', 'none'))
+  assert.ok(declares(blockFor('.activity-line .line-elapsed, .waiting .line-elapsed'), 'gap', '4px'))
+  assert.ok(declares(blockFor('.line-meta-seat'), 'overflow', 'clip'))
+  assert.ok(declares(blockFor('.activity-line .line-elapsed:has(.line-meta-values:empty), .waiting .line-elapsed:has(.line-meta-values:empty)'), 'display', 'none'))
   assert.ok(!blocks.some((block) => /\.waiting\.thinking|\.run-line\.live|\.run-head-row/.test(block.selector)))
   assert.ok(!blocks.some((block) => block.selector.includes('.thinking')
     && block.decls.some((decl) => decl.prop === 'animation' && /\bsheen\b/.test(decl.value))), 'thinking text does not shimmer')
@@ -2017,23 +2032,21 @@ test('activity lines carry one running mark, which moves and stays readable', ()
   }
 })
 
-test("the shell family's command is bare and its output reddens whole on failure", () => {
-  // UI polish T12: the command and copy button sit directly on the tool body,
-  // without another card. Output still scrolls inside itself and reddens whole
-  // on failure; the error code above it keeps its own danger colour.
+test("the shell family's command is framed and its output reddens whole on failure", () => {
   const command = blockFor('.step-command')
   assert.ok(
-    declares(command, 'background', 'transparent'),
-    'the command has no nested surface',
+    declares(command, 'background', 'var(--surface-card)'),
+    'the command has its own surface above the output',
   )
   assert.ok(
-    declares(command, 'border', '0'),
-    'the command has no inner border',
+    declares(command, 'border', '1px solid var(--border-subtle)'),
+    'a fine border separates the command from the output',
   )
   assert.ok(
-    declares(command, 'border-radius', '0'),
-    'the bare command has no card corners',
+    declares(command, 'border-radius', 'var(--radius-sm)'),
+    'the command frame uses the existing corner token',
   )
+  assert.ok(declares(command, 'padding', 'var(--space-1) var(--space-2)'))
   const terminal = blockFor('.step-terminal')
   assert.ok(
     declares(terminal, 'overflow-y', 'auto'),
@@ -2871,4 +2884,18 @@ test('no button draws a text glyph where an icon belongs', () => {
     }
   }
   assert.doesNotMatch(html, /<button[^>]*>\s*[✕×←→↻＋⋯]\s*<\/button>/)
+})
+
+test('only running tool labels shimmer in an opened group, with readable motion fallbacks', () => {
+  const selector = '.run-card .step.running > .step-head > .step-label'
+  const shine = blocks.find((block) => !block.at && block.selector.includes(selector)
+    && block.decls.some((decl) => decl.prop === 'animation'))!
+  assert.ok(shine)
+  assert.ok(declares(shine, 'animation', 'activity-shine calc(var(--motion-running) * 1.5) linear infinite'))
+  assert.ok(declares(shine, '-webkit-text-fill-color', 'transparent'), 'strong filenames inherit the shine too')
+  for (const at of ['@media (prefers-reduced-motion: reduce) {', '@media (forced-colors: active) {']) {
+    const fallback = blocks.find((block) => block.at === at && block.selector.includes(selector))!
+    assert.ok(fallback)
+    assert.ok(declares(fallback, '-webkit-text-fill-color', 'currentColor'))
+  }
 })

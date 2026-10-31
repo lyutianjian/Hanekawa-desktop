@@ -80,9 +80,9 @@ test('the plan cards name keys the platform has: Ctrl+Enter beside a Windows but
   assert.deepEqual(exitPlanViewModel(empty, 'win32').buttons.map((button) => button.shortcut), ['Esc', 'Enter'])
 })
 
-test('bypass turns the primary into 接受并绕过权限', () => {
+test('bypass turns the primary into 接受并开启完全访问权限', () => {
   const state = createExitPlanState(input({ isBypassAvailable: true }))
-  assert.deepEqual(labels(state), ['拒绝', '修改…', '接受', '接受并绕过权限'])
+  assert.deepEqual(labels(state), ['拒绝', '修改…', '接受', '接受并开启完全访问权限'])
   assert.equal(run(state, [{ kind: 'approve', slot: 0 }]).decision?.kind, 'approve_bypass_keep')
 })
 

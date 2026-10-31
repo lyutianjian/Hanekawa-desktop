@@ -1,3 +1,5 @@
+import { createReadSessionTool } from './ReadSessionTool/ReadSessionTool.js'
+import type { SessionReferenceHost } from '../runtime/protocol/sessionReferences.js'
 import { grepTool } from './GrepTool/GrepTool.js'
 import { globTool } from './GlobTool/GlobTool.js'
 import { createBashTool } from './BashTool/BashTool.js'
@@ -26,12 +28,12 @@ import { isToolSearchEnabled, isDeferredTool } from '../utils/toolSearch.js'
 import type { Tool } from '../harness/types.js'
 import type { BackgroundTaskRegistry } from '../services/backgroundTasks/registry.js'
 
-export function getBuiltinTools(backgroundTasks?: BackgroundTaskRegistry): Tool[] {
-  return [grepTool, globTool, createBashTool(backgroundTasks), createKillShellTool(backgroundTasks), createMonitorTool(backgroundTasks), readFileTool, writeFileTool, editFileTool, multiEditTool, deleteFileTool, enterPlanModeTool, exitPlanModeTool, askUserQuestionTool, createSendMessageTool(backgroundTasks), taskCreateTool, taskListTool, taskGetTool, taskUpdateTool, webFetchTool, webSearchTool, configTool, notebookEditTool]
+export function getBuiltinTools(backgroundTasks?: BackgroundTaskRegistry, sessionReferences?: SessionReferenceHost): Tool[] {
+  return [createReadSessionTool(sessionReferences), grepTool, globTool, createBashTool(backgroundTasks), createKillShellTool(backgroundTasks), createMonitorTool(backgroundTasks), readFileTool, writeFileTool, editFileTool, multiEditTool, deleteFileTool, enterPlanModeTool, exitPlanModeTool, askUserQuestionTool, createSendMessageTool(backgroundTasks), taskCreateTool, taskListTool, taskGetTool, taskUpdateTool, webFetchTool, webSearchTool, configTool, notebookEditTool]
 }
 
-export async function getAllTools(backgroundTasks?: BackgroundTaskRegistry): Promise<Tool[]> {
-  const builtinTools = getBuiltinTools(backgroundTasks)
+export async function getAllTools(backgroundTasks?: BackgroundTaskRegistry, sessionReferences?: SessionReferenceHost): Promise<Tool[]> {
+  const builtinTools = getBuiltinTools(backgroundTasks, sessionReferences)
   const tools: Tool[] = [...builtinTools, createSkillTool()]
 
   if (isToolSearchEnabled()) {

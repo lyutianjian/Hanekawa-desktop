@@ -2,6 +2,7 @@ import type { ModelStreamEvent, PersistedQueuedMessage, SessionRecord, SubagentT
 import type { SessionEvent, SubagentActivity } from '../../../runtime/sessionController.js'
 import type { ImageAttachmentRef } from '../../../media/types.js'
 import type { PermissionRequestDto, ToolDisplayDto } from '../../../runtime/protocol/wire.js'
+import { BROWSER_TOOL, browserStepOf, type BrowserStep } from './browserSteps.js'
 import { parseCoordinationUpdate, parseThreadNoteMessage, type ThreadNotesData } from './threadNotes.js'
 import { turnFailureCard, type TurnFailureCard } from './turnFailure.js'
 
@@ -167,6 +168,10 @@ export interface ToolStepDetail {
   readonly description?: string
   /** `Bash` and `Monitor` only: the full command (`input.command`), untruncated, for the body and its copy button. */
   readonly command?: string
+  /** The Browser family: which operation ran and the arguments it was given (`model/browserSteps.ts`). */
+  readonly browser?: BrowserStep
+  /** Pictures the result carried — a browser screenshot. */
+  readonly images?: readonly ImageAttachmentRef[]
   /** The Agent family: the task the parent handed the sub-agent (`input.task`). */
   readonly task?: string
   /** The Agent family: the sub-agent run's own facts (§6.2 Agent). */
@@ -277,6 +282,8 @@ export interface TranscriptItem {
    * so {@link withQueuedMessages} stops drawing it once it is in the transcript.
    */
   readonly queuedMessageId?: string
+  /** Absent once the message has entered the agent's conversation. */
+  readonly delivery?: 'staged' | 'queued'
   /** On a `thread-notes` item: the wake message's / update's notes, drawn as cards. */
   readonly threadNotes?: ThreadNotesData
   /** On a `receipt` item, which `groupTranscript` derives from a settled tool step. */
@@ -498,6 +505,8 @@ export function withQueuedMessages(
       text: message.content,
       ...(message.images && message.images.length > 0 ? { images: message.images } : {}),
       queuedMessageId: message.id,
+      delivery: 'queued',
+      createdAt: message.createdAt,
     }))],
   }
 }
@@ -518,6 +527,7 @@ export function withPendingSends(state: TranscriptState, pending: readonly Pendi
     items: [...state.items, ...pending.map((entry): TranscriptItem => ({
       id: `sending:${entry.id}`,
       kind: 'user',
+      delivery: 'staged',
       text: entry.text,
       createdAt: entry.createdAt,
       ...(entry.images.length > 0 ? { pendingImages: entry.images } : {}),
@@ -1084,6 +1094,7 @@ function recordItems(record: SessionRecord, toolDisplays?: ToolDisplayLookup): T
         ...(dto?.memory ? { memory: true, ...memoryNote(record.tool, record.input) } : {}),
         ...(record.tool === AGENT_TOOL ? agentTask(record.input) : {}),
         ...(record.tool === 'Bash' || record.tool === 'Monitor' ? bashInput(record.input) : {}),
+        ...(record.tool === BROWSER_TOOL ? browserStepOf(record.input) : {}),
         ...(record.tool === ASK_TOOL ? askedQuestions(record.input) : {}),
         ...(TASK_TOOLS.has(record.tool) ? { taskOps: [taskOp(record.tool, record.input)] } : {}),
       }
@@ -1108,6 +1119,7 @@ function recordItems(record: SessionRecord, toolDisplays?: ToolDisplayLookup): T
         // A code the result *succeeded* with is not a failure's code; the field
         // means 「why this call went wrong」, and the body only draws it then.
         record.ok ? undefined : record.errorCode,
+        record.images,
       )
       return [{
         id: record.toolUseId,
@@ -1231,12 +1243,14 @@ function resultDetail(
   display: ToolResultDisplay | undefined,
   content: string,
   errorCode: ToolErrorCode | undefined,
+  images: readonly ImageAttachmentRef[] | undefined,
 ): ToolStepDetail {
   return {
     displayName: toolName,
     useSummary: '',
     content,
     ...(errorCode === undefined ? {} : { errorCode }),
+    ...(images === undefined || images.length === 0 ? {} : { images }),
     ...(display?.headerSuffix === undefined ? {} : { headerSuffix: display.headerSuffix }),
     ...(display?.summary === undefined ? {} : { resultSummary: display.summary }),
     ...(display?.detail === undefined ? {} : { detail: display.detail }),
@@ -1688,7 +1702,7 @@ function askedQuestions(input: unknown): { questions?: readonly string[] } {
 const PLAN_MODE_LABELS: Readonly<Record<Exclude<PlanDecision, 'reject'>, string>> = {
   approve_restore_keep: '逐条确认修改',
   approve_auto_keep: '自动执行',
-  approve_bypass_keep: '绕过权限',
+  approve_bypass_keep: '完全访问权限',
 }
 
 /**

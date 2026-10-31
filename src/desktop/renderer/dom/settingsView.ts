@@ -549,7 +549,7 @@ export function createSettingsView(
       detail = node(`${key}:detail`, 'div', 'settings-model-detail')
       const numbers = node(`${key}:numbers`, 'div', 'settings-model-numbers')
       reconcile(numbers, [
-        labelled('context', '上下文长度', field('contextWindow', row.contextWindow, '上下文长度', '默认 272K')),
+        labelled('context', '上下文长度', field('contextWindow', row.contextWindow, '上下文长度', row.contextPlaceholder)),
         labelled('output', '最大输出 Token', field('maxOutputTokens', row.maxOutputTokens, '最大输出 Token', '默认 128K')),
       ])
       let levels: HTMLElement | null = null
@@ -1053,7 +1053,15 @@ function headerNode(
   // Always on a project-scoped page, even when there is only one project: it is
   // what says which project the page is editing, and what changes it.
   if (skillProjectPicker) header.appendChild(skillProjectPicker)
-  else if (view.projectChoices.length > 0) {
+  else if (view.permissionProjectPicker) {
+    header.appendChild(selectField({
+      className: 'settings-select settings-project',
+      value: view.permissionProjectPicker.value,
+      ariaLabel: '选择权限范围',
+      choices: view.permissionProjectPicker.choices,
+      onChange: (projectRoot) => onIntent({ kind: 'select-permission-project', ...(projectRoot ? { projectRoot } : {}) }),
+    }))
+  } else if (view.projectChoices.length > 0) {
     header.appendChild(
       selectField({
         className: 'settings-select settings-project',

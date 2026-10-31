@@ -143,6 +143,7 @@ test('all builtin tools are callable', async () => {
     'KillShell',
     'Monitor',
     'Read',
+    'ReadSession',
     'Write',
     'Edit',
     'MultiEdit',

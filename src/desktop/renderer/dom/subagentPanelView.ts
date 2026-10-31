@@ -272,12 +272,13 @@ export function createSubagentPanelView(container: HTMLElement, handlers: Subage
         onOpenPath: handlers.onOpenPath,
         onViewImage: () => {},
         imageThumbUrl: () => undefined,
+        imageViewUrl: () => undefined,
         onCopy: (text) => copyText(text).then((ok) => {
           if (!ok) handlers.onError?.('复制失败：无法写入剪贴板。')
           return ok
         }),
         onOpenSubagent: () => {},
-      }, { lingerOnCompletion: false }),
+      }),
     }
     replace(container, pageHead, pageBody)
     pageBody.scrollTop = 0

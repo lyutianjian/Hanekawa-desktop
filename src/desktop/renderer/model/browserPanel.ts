@@ -229,7 +229,7 @@ export function browserBanner(tab: WireBrowserTabInfo | undefined): string | und
 /**
  * What a typed address means, or `undefined` when it means nothing.
  *
- * Three rules, in order:
+ * Four rules, in order:
  * - A bare `host/path` gets a scheme, because a browser address bar that
  *   demanded one would be the only one in existence: `http://` for a loopback
  *   or private-network host — a dev server almost never speaks TLS, and there
@@ -238,6 +238,9 @@ export function browserBanner(tab: WireBrowserTabInfo | undefined): string | und
  * - Only `http:` and `https:` survive. `file:` is the one worth naming: the
  *   panel's partition is the agent's browsing context, and a `file://` tab there
  *   would read the user's disk with the page's own privileges.
+ * - An address carrying a username or password is not one either. The host
+ *   refuses them as well; here it keeps the bar from reading as accepted and
+ *   then doing nothing, and the password never enters the tab's address.
  * - Anything that still will not parse is not an address.
  *
  * Deliberately *not* a search fallback: a typo would otherwise silently leave
@@ -258,6 +261,7 @@ export function normalizeAddress(raw: string): string | undefined {
   }
   if (!hasScheme && isLocalHost(parsed.hostname)) parsed.protocol = 'http:'
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
+  if (parsed.username !== '' || parsed.password !== '') return undefined
   // A host is what makes this an address rather than a scheme with a path.
   if (parsed.hostname === '') return undefined
   return parsed.href

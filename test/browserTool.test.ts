@@ -14,6 +14,7 @@ import type {
 } from '../src/runtime/protocol/browserHost.js'
 import type { ImageAttachmentImporter, Tool, ToolContext } from '../src/harness/types.js'
 import { assertNoImageBytes, makeImageAttachmentRef } from './helpers/imageFixtures.js'
+import { createRiskContext } from '../src/harness/risk/paths.js'
 
 /**
  * The tool with the browser replaced by a record of what it was asked.
@@ -40,6 +41,7 @@ function stubHost(overrides: Partial<BrowserHost> = {}): { host: BrowserHost; ca
   const host: BrowserHost = {
     listTabs: record('listTabs', [tab]),
     createTab: record('createTab', tab),
+    openLocal: record('openLocal', tab),
     closeTab: record('closeTab', undefined),
     navigate: record('navigate', tab),
     history: record('history', tab),
@@ -93,6 +95,33 @@ test('get_state renders a tab table, and says so when there are none', async () 
   }).host)
   const told = await run(blocked, { operation: 'browser.get_state' })
   assert.match(told.content, /\nBlocked a download in tab tab-1: "report 2026\.pdf"/)
+})
+
+test('what a page said on its console rides along with what was read', async () => {
+  const listed = createBrowserTool(stubHost({
+    listTabs: async () => [{ tabId: 'tab-1', url: 'https://x.test/', title: 'X', loading: false, consoleErrors: ['TypeError: x is undefined (app.js:12)'] }],
+  }).host)
+  assert.match(
+    (await run(listed, { operation: 'browser.get_state' })).content,
+    /\nConsole error in tab tab-1: TypeError: x is undefined \(app\.js:12\)$/,
+  )
+
+  // Beside a snapshot, as a block of its own — the model reads it as an
+  // explanation of the page, not as one of the page's rows.
+  const snapshotted = createBrowserTool(stubHost({
+    elements: async () => ({ text: '# elements', snapshotId: 's1', scanTruncated: false, total: 0, consoleErrors: ['boom'] }),
+  }).host)
+  const read = await run(snapshotted, { operation: 'page.elements.snapshot', tabId: 'tab-1' })
+  assert.equal(read.content, '# elements\n\nConsole errors the page logged:\n- boom')
+
+  // Nothing new since the last read, and the page reads exactly as before.
+  assert.equal((await run(createBrowserTool(stubHost().host), { operation: 'page.elements.snapshot', tabId: 'tab-1' })).content, '# elements')
+
+  // A screenshot is a read too, so it carries them under the caption.
+  const shot = createBrowserTool(stubHost({
+    screenshot: async () => ({ bytes: Buffer.from([1]), name: 's.png', width: 800, height: 600, consoleErrors: ['boom'] }),
+  }).host)
+  assert.match((await run(shot, { operation: 'page.screenshot', tabId: 'tab-1' }, imageContext())).content, /\nConsole errors the page logged:\n- boom$/)
 })
 
 test('each operation reaches its own host call', async () => {
@@ -584,4 +613,44 @@ test('a batch is read-only, and concurrency safe, only when every step is', () =
   assert.equal(tool.isConcurrencySafeInput?.(reads), true)
   assert.equal(tool.isConcurrencySafeInput?.(acts), false)
   assert.equal(tool.classifyRisk?.(acts, {} as never), 'normal')
+})
+
+test('a page on disk opens through the loopback route, rooted at the workspace', async () => {
+  const { host, calls } = stubHost()
+  const tool = createBrowserTool(host)
+
+  await run(tool, { operation: 'browser.create_tab', path: 'dist/index.html' })
+  assert.equal(calls.at(-1)?.method, 'openLocal')
+  assert.deepEqual(calls.at(-1)?.args[1], { path: '/tmp/project/dist/index.html', root: '/tmp/project' })
+
+  await run(tool, { operation: 'tab.navigate', tabId: 'tab-1', path: '/opt/site/report.html' })
+  assert.deepEqual(calls.at(-1)?.args[1], { path: '/opt/site/report.html', root: '/opt/site', tabId: 'tab-1' })
+})
+
+test('url and path are alternatives, and a navigate needs one of them', () => {
+  const both = validateBrowserInput({ operation: 'tab.navigate', tabId: 't', url: 'https://x.test/', path: 'a.html' })
+  if (both.ok) assert.fail('a call naming both should be refused')
+  assert.match(both.errors[0]!.message, /"url" or "path"/)
+
+  const neither = validateBrowserInput({ operation: 'tab.navigate', tabId: 't' })
+  if (neither.ok) assert.fail('a navigate with nothing to open should be refused')
+  assert.match(neither.errors[0]!.message, /"url" \(http or https\) or a "path"/)
+})
+
+test('a page outside the workspace is risky, and one inside it is ordinary', () => {
+  const tool = createBrowserTool(stubHost().host)
+  const risk = createRiskContext({ cwd: '/tmp/project' })
+  assert.equal(tool.classifyRisk?.({ operation: 'browser.create_tab', path: 'dist/index.html' }, risk), 'normal')
+  assert.equal(tool.classifyRisk?.({ operation: 'browser.create_tab', path: '/opt/reports/a.html' }, risk), 'risky')
+})
+
+test('a batch opens a local page and keeps working in the new tab', async () => {
+  const { host, calls } = stubHost()
+  const result = await run(createBrowserTool(host), {
+    operation: 'batch',
+    steps: [{ operation: 'browser.create_tab', path: 'dist/index.html' }, { operation: 'page.text.snapshot' }],
+  })
+  assert.equal(result.ok, true)
+  assert.equal(calls[0]?.method, 'openLocal')
+  assert.equal(calls[1]?.args[1], 'tab-1')
 })

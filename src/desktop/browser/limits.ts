@@ -61,8 +61,8 @@ export const SCREENSHOT_TIMEOUT_MS = 5000
  * How long one call into the page gets before it is taken for a hung one.
  *
  * The in-page collectors bound their own scans (`SCAN_BUDGET_MS`), so a call
- * that outlives this is not a slow page: it is an `alert()`, a script looping
- * forever in the page's own event loop, or a renderer that stopped answering.
+ * that outlives this is not a slow page: it is a script looping forever in the
+ * page's own event loop, or a renderer that stopped answering.
  * Generous on purpose — the reply also carries a large snapshot — because
  * ending a working call early costs a retry, while waiting forever costs the
  * turn.

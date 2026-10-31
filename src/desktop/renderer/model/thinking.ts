@@ -6,8 +6,8 @@ import { isMemoryIndex, memoryOp, memorySlug } from './memoryOps.js'
  * What the transcript's activity lines say, and which of them are open — as pure
  * decisions.
  *
- * Disclosure is the user's alone: thoughts start open; tools, failures and edit
- * diffs start folded. A click records `expanded: true | false` as an absolute
+ * Disclosure is the user's alone: thoughts, tools, failures and edit diffs
+ * start folded. A click records `expanded: true | false` as an absolute
  * answer that nothing recomputes.
  *
  * DOM-free, like everything in `model/`.
@@ -15,7 +15,7 @@ import { isMemoryIndex, memoryOp, memorySlug } from './memoryOps.js'
 
 /** While a thought is still arriving. */
 export const THINKING_LIVE_LABEL = '思考'
-/** An empty sealed thought, or a folded thought with no measured duration. */
+/** An empty sealed thought. */
 export const THINKING_DONE_FALLBACK = '思考过程'
 
 /** What the user decided by hand, by run, step or user-message id. */
@@ -89,13 +89,6 @@ export function thoughtRest(text: string): string {
 /** The sealed line: the first sentence, or the generic name when nothing was said. */
 export function thoughtLabel(text: string): string {
   return thoughtFirstSentence(text) || THINKING_DONE_FALLBACK
-}
-
-/** A folded thought names the process, not its hidden first sentence. */
-export function thoughtCollapsedLabel(durationMs?: number): string {
-  return durationMs === undefined
-    ? THINKING_DONE_FALLBACK
-    : `思考了 ${Math.max(1, Math.round(durationMs / 1000))} 秒`
 }
 
 // --- run summary -------------------------------------------------------------

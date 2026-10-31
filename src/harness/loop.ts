@@ -1,3 +1,4 @@
+import { buildSessionReferenceContextRecord } from './sessionReferences.js'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import os from 'node:os'
@@ -711,6 +712,13 @@ export class AgentLoop {
     if (atMentionRecord) {
       await this.appendRecord(atMentionRecord)
     }
+    const sessionReferenceRecord = buildSessionReferenceContextRecord({
+      userInput: userInput.text,
+      userMessageId: userMessage.id,
+      turnId,
+      createdAt: userMessage.createdAt,
+    })
+    if (sessionReferenceRecord) await this.appendRecord(sessionReferenceRecord)
     return userMessage
   }
 
@@ -745,18 +753,23 @@ export class AgentLoop {
       // A coordinator message never joins a turn someone else is driving; it
       // stays queued (and keeps the order) for the pump.
       if (message.origin === 'coordinator' && this.activeRunOverrides?.origin !== 'coordinator') return
-      let userMessage: ChatMessage & { type: 'message' }
+      if (steer.claim?.(message.id) === false) continue
       try {
-        userMessage = await this.recordUserInput(
-          { text: message.content, ...(message.images && message.images.length > 0 ? { images: message.images } : {}) },
-          turnId,
-          { id: randomUUID(), sourceQueuedMessageId: message.id },
-        )
-      } catch {
-        return
+        let userMessage: ChatMessage & { type: 'message' }
+        try {
+          userMessage = await this.recordUserInput(
+            { text: message.content, ...(message.images && message.images.length > 0 ? { images: message.images } : {}) },
+            turnId,
+            { id: randomUUID(), sourceQueuedMessageId: message.id },
+          )
+        } catch {
+          return
+        }
+        await steer.consume(message.id)
+        await this.runUserPromptSubmitHooks(userMessageInput(userMessage), turnId, signal)
+      } finally {
+        steer.release?.(message.id)
       }
-      await steer.consume(message.id)
-      await this.runUserPromptSubmitHooks(userMessageInput(userMessage), turnId, signal)
     }
   }
 

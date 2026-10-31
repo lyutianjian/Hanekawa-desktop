@@ -2,9 +2,8 @@
  * How long one call into the page may take, and what a cancellation means.
  *
  * `executeJavaScriptInIsolatedWorld` and `debugger.sendCommand` both return
- * promises that can simply never settle: a page showing an `alert()` blocks its
- * own event loop, a page script that loops forever never yields, and a renderer
- * that went away takes the reply with it. The layers above check cancellation
+ * promises that can simply never settle: a page script that loops forever never
+ * yields, and a renderer that went away takes the reply with it. The layers above check cancellation
  * *between* awaits, which is useless if the await never returns — so the shared
  * entry point gets a deadline, and a caller's abort settles it too.
  *
@@ -50,7 +49,7 @@ export function abortedError(): BrowserHostError {
 export function stuckError(what: string, timeoutMs: number): BrowserHostError {
   return new BrowserHostError(
     'PAGE_NOT_READY',
-    `The page did not answer within ${timeoutMs}ms while ${what}: a dialog, a long-running script or the page's renderer is stuck. The wait was ended, but anything the action had already done to the page stays done. The tab was left as it is. If it stays unresponsive, reload it or ask the user to close the dialog.`,
+    `The page did not answer within ${timeoutMs}ms while ${what}: a long-running script or the page's renderer is stuck. The wait was ended, but anything the action had already done to the page stays done. The tab was left as it is. If it stays unresponsive, reload it.`,
     true,
   )
 }

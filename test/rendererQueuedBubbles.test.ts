@@ -23,6 +23,8 @@ test('a queued message shows as a user bubble at the tail until the transcript c
   }).state
   const waiting = withQueuedMessages(started, [queued('q1', 'only in src')])
   assert.deepEqual(waiting.items.map((item) => [item.kind, item.text]), [['user', 'fix the bug'], ['user', 'only in src']])
+  assert.equal(waiting.items[1]!.delivery, 'queued')
+  assert.equal(waiting.items[1]!.createdAt, queued('q1', '').createdAt)
 
   // Steered into the turn: the record names its queued message, so the bubble
   // is not drawn twice while the queue's own update is still on its way.
@@ -38,6 +40,7 @@ test('a queued message shows as a user bubble at the tail until the transcript c
     },
   }).state
   assert.equal(withQueuedMessages(steered, [queued('q1', 'only in src')]).items.filter((item) => item.kind === 'user').length, 2)
+  assert.equal(steered.items.at(-1)!.delivery, undefined, 'acceptance replaces the waiting state')
 })
 
 test('a queued message the pump started a turn from is not drawn twice', () => {
@@ -65,6 +68,7 @@ test('a staged send paints as a user bubble at the tail, keyed apart from the re
 
   const staged = withPendingSends(base, [pendingEntry('s1', 'look at this')])
   assert.equal(staged.items.length, 1)
+  assert.equal(staged.items[0]!.delivery, 'staged', 'text-only staged sends are still unsent')
   assert.deepEqual(
     [staged.items[0]!.kind, staged.items[0]!.text, staged.items[0]!.id],
     ['user', 'look at this', 'sending:s1'],

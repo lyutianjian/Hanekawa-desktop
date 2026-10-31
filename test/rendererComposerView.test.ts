@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 
 import { installDomStub, type DomStub, type StubView } from './helpers/domStub.js'
 import { createComposerView, type ComposerView } from '../src/desktop/renderer/dom/composerView.js'
+import { installComposerEditor } from '../src/desktop/renderer/dom/composerEditor.js'
 import { closeTopDismissable } from '../src/desktop/renderer/dom/dismiss.js'
 import { createDockedCard } from '../src/desktop/renderer/dom/dockedCard.js'
 import { createPlanCardView } from '../src/desktop/renderer/dom/planCardView.js'
@@ -25,6 +26,36 @@ import { EFFORT_LABELS, PERMISSION_MODE_LABELS } from '../src/desktop/renderer/m
 import { runtimeMenuView, type RuntimeMenuView } from '../src/desktop/renderer/model/runtimeMenu.js'
 import { CONTEXT_RATIO_VARIABLE, contextGaugeView } from '../src/desktop/renderer/model/usage.js'
 import type { ContextBreakdown } from '../src/harness/contextBreakdown.js'
+
+test('deleting the last character ignores Chromium’s trailing caret break and preserves explicit newlines', (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const input = stub.createContainer() as HTMLTextAreaElement
+  input.setAttribute('contenteditable', 'true')
+  installComposerEditor(input)
+
+  for (const value of ['@', '/', 'a']) {
+    for (const trailingEmptyText of [false, true]) {
+      input.value = value
+      // Chromium leaves a caret break, sometimes followed by the editor's empty text node.
+      input.replaceChildren(document.createElement('br'))
+      if (trailingEmptyText) input.appendChild(document.createTextNode(''))
+      stub.dispatch(input, 'input')
+      assert.equal(input.value, '')
+      assert.equal(input.querySelector('br'), null)
+    }
+  }
+
+  for (const value of ['\n', '第一行\n', '第一行\n\n']) {
+    input.value = value
+    stub.dispatch(input, 'input')
+    assert.equal(input.value, value)
+  }
+
+  input.replaceChildren(document.createTextNode('第一行'), document.createElement('br'), document.createTextNode('第二行'), document.createElement('br'))
+  stub.dispatch(input, 'input')
+  assert.equal(input.value, '第一行\n第二行')
+})
 
 const SAMPLE_BREAKDOWN: ContextBreakdown = {
   usedTokens: 30_000,
@@ -97,6 +128,8 @@ interface Rendered {
     HTMLElement
   >
   readonly picked: PermissionMode[]
+  /** Every `onRequestFullAccess`: full access asks before it applies. */
+  readonly confirmRequests: number[]
   readonly attaches: number[]
   /** Every `onOpenRuntimeMenu`, so "asked once" is assertable. */
   readonly menuRequests: number[]
@@ -155,6 +188,7 @@ function render(t: { after(fn: () => void): void }): Rendered {
   runtimeShell.appendChild(els.chipShell)
 
   const picked: PermissionMode[] = []
+  const confirmRequests: number[] = []
   const attaches: number[] = []
   const menuRequests: number[] = []
   const ran: SurfaceAction[] = []
@@ -183,6 +217,7 @@ function render(t: { after(fn: () => void): void }): Rendered {
       onOpenRuntimeMenu: () => menuRequests.push(1),
       onRuntimeAction: (action) => ran.push(action),
       onSelectPermissionMode: (mode) => picked.push(mode),
+      onRequestFullAccess: () => confirmRequests.push(1),
       onAttach: () => attaches.push(1),
       onPickImages: () => pickedImages.push(1),
       onRemoveAttachment: (draftId) => removedDrafts.push(draftId),
@@ -218,6 +253,7 @@ function render(t: { after(fn: () => void): void }): Rendered {
     attachShell,
     els,
     picked,
+    confirmRequests,
     attaches,
     menuRequests,
     ran,
@@ -237,6 +273,18 @@ function render(t: { after(fn: () => void): void }): Rendered {
       (flyout()?.children ?? []).filter((child) => child.classes.includes('chip-flyout-item')),
   }
 }
+
+test('dropped session references finish with one space and reuse a following space', (t) => {
+  const r = render(t)
+  const reference = '[会话](hanekawa://session/11111111-1111-4111-8111-111111111111)'
+  for (const after of ['', '下一步', ' 下一步']) {
+    r.composer.setValue(`参考 旧引用${after}`, 3)
+    ;(r.els.input as HTMLTextAreaElement).setSelectionRange(3, 6)
+    r.composer.insertText(reference, true)
+    assert.equal(r.composer.value(), `参考 ${reference} ${after.trimStart()}`)
+    assert.equal(r.composer.cursorPos(), 3 + reference.length + 1)
+  }
+})
 
 test('matched commands and skills decorate the input while preserving its editable value', (t) => {
   const r = render(t)
@@ -367,6 +415,34 @@ test('choosing a mode reports it once and closes the menu', (t) => {
   // The label is *not* updated locally: the host posts a fresh runtime snapshot,
   // and guessing here would show a mode the gate may have refused.
   assert.equal(r.view('chipPermission').text, PERMISSION_MODE_LABELS.default)
+})
+
+test('the 完全访问权限 row asks before it applies, and does not ask twice', (t) => {
+  const r = render(t)
+  r.composer.renderRuntime(runtime())
+
+  r.stub.click(r.els.chipPermission)
+  r.stub.click(r.menuItems()[3]!.node)
+
+  assert.deepEqual(r.confirmRequests, [1])
+  assert.deepEqual(r.picked, [], 'the gate must not move on the click that only revealed the question')
+  assert.deepEqual(r.menuItems(), [], 'the menu closes behind the question')
+
+  // Already on: turning it on again is not another decision.
+  r.composer.renderRuntime(runtime({ permissionMode: 'bypass' }))
+  r.stub.click(r.els.chipPermission)
+  r.stub.click(r.menuItems()[3]!.node)
+  assert.deepEqual(r.confirmRequests, [1])
+  assert.deepEqual(r.picked, ['bypass'])
+})
+
+test('the pill is red exactly while full access is in force', (t) => {
+  const r = render(t)
+  r.composer.renderRuntime(runtime({ permissionMode: 'auto' }))
+  assert.equal(r.view('chipPermission').classes.includes('danger'), false)
+
+  r.composer.renderRuntime(runtime({ permissionMode: 'bypass' }))
+  assert.equal(r.view('chipPermission').classes.includes('danger'), true)
 })
 
 test('Escape and focus leaving both close the menu; focus moving inside does not', (t) => {
@@ -1497,6 +1573,11 @@ test('a multi-select question says so, and its ticks are what is selected', (t) 
   const options = q.find('ask-options')
   assert.equal(options.attributes.get('aria-multiselectable'), 'true')
   assert.deepEqual(options.children.slice(0, 2).map((row) => row.attributes.get('aria-selected')), ['false', 'true'])
+  // The tick is the answer's proof: an empty box, and a check inside the box
+  // that was ticked — not a fill alone.
+  const tick = (index: number) => options.children[index]!.children.find((c) => c.classes.includes('ask-tick'))!
+  assert.equal(tick(0).children.length, 0)
+  assert.deepEqual(tick(1).children.map((c) => c.classes.includes('ask-tick-check')), [true])
 })
 
 test('collapsed, the card is just its title row', (t) => {

@@ -12,7 +12,11 @@
  * the code only has to tell the runner whether this was the model's fault.
  */
 
+import path from 'node:path'
+
 import type { Tool, ToolContext, ToolResult } from '../../harness/types.js'
+import { classifyPath, isSameOrInside, realPath } from '../../harness/risk/paths.js'
+import { maxTier, type RiskTier } from '../../harness/risk/types.js'
 import type {
   BrowserActionResult,
   BrowserCaller,
@@ -29,7 +33,7 @@ import {
   WAIT_FOR_DEFAULT_MS,
   WAIT_FOR_LOAD_DEFAULT_MS,
 } from './constants.js'
-import { describeTab, hostOf, renderTabs, summarizeTabs } from './encode.js'
+import { describeTab, hostOf, renderConsoleErrors, renderTabs, summarizeTabs } from './encode.js'
 import { DESCRIPTION } from './prompt.js'
 import { browserApiInputSchema, browserInputSchema, type BrowserInput } from './schema.js'
 import { validateBrowserInput } from './validate.js'
@@ -78,13 +82,19 @@ function snapshotResult(operation: string, snapshot: BrowserSnapshot): ToolResul
   const more = snapshot.cursor === undefined ? '' : ' (more available)'
   return {
     ok: true,
-    content: snapshot.text,
+    content: withConsoleErrors(snapshot.text, snapshot.consoleErrors),
     metadata: {
       display: {
         summary: `${operation === 'page.text.snapshot' ? 'Read' : 'Scanned'} ${snapshot.total}${more}`,
       },
     },
   }
+}
+
+/** A result's text, plus whatever the page said on its console since the last read. */
+function withConsoleErrors(text: string, errors: readonly string[] | undefined): string {
+  const block = renderConsoleErrors(errors ?? [])
+  return block === '' ? text : `${text}\n\n${block}`
 }
 
 function tabResult(tab: BrowserTabState, summary: string): ToolResult {
@@ -135,11 +145,28 @@ export function createBrowserTool(host: BrowserHost): Tool {
     shouldDefer: true,
     maxResultSizeChars: 32_000,
     isConcurrencySafeInput: isReadOnlyInput,
-    classifyRisk: (input) => (isReadOnlyInput(input) ? 'readonly' : 'normal'),
+    classifyRisk: (input, context) => {
+      const base: RiskTier = isReadOnlyInput(input) ? 'readonly' : 'normal'
+      const files = localPathsIn(input)
+      if (files.length === 0) return base
+      let tier: RiskTier = base
+      for (const raw of files) {
+        const absolute = path.resolve(context.cwd, raw)
+        // A page on disk is the one read that can be pointed anywhere, and the
+        // page's own scripts read whatever the server serves: outside the
+        // workspace that is the user's call, every time. `realPath` because the
+        // workspace roots already are, and a symlinked cwd must still count.
+        if (!context.workspaceRoots.some((root) => isSameOrInside(root, realPath(absolute)))) tier = maxTier(tier, 'risky')
+        for (const reason of classifyPath({ raw, abs: absolute }, 'read', context)) tier = maxTier(tier, reason.level)
+      }
+      return tier
+    },
     userFacingName: () => 'Browser',
     getToolUseSummary(input) {
       const parsed = asInput(input)
       if (!parsed) return null
+      const local = localPathOf(parsed)
+      if (local !== undefined) return path.basename(local)
       if (parsed.operation === 'tab.navigate' || (parsed.operation === 'browser.create_tab' && parsed.url)) {
         return hostOf(parsed.url as string)
       }
@@ -151,8 +178,9 @@ export function createBrowserTool(host: BrowserHost): Tool {
       if (!parsed) return 'Using the browser'
       switch (parsed.operation) {
         case 'tab.navigate':
-          return `Opening ${hostOf(parsed.url)}`
+          return `Opening ${localPathOf(parsed) === undefined ? hostOf(parsed.url as string) : path.basename(localPathOf(parsed) as string)}`
         case 'browser.create_tab':
+          if (localPathOf(parsed) !== undefined) return 'Opening a local page'
           return parsed.url === undefined ? 'Opening a browser tab' : `Opening ${hostOf(parsed.url)}`
         case 'page.screenshot':
           return 'Taking a screenshot'
@@ -269,9 +297,12 @@ async function runBatch(host: BrowserHost, batch: BatchInput, context: ToolConte
     let result: ToolResult
     try {
       if (step.data.operation === 'browser.create_tab') {
-        const tab = await host.createTab(callerOf(context), step.data.url)
+        const local = step.data.path === undefined ? undefined : localPage(step.data.path, context)
+        const tab = local === undefined
+          ? await host.createTab(callerOf(context), step.data.url)
+          : await host.openLocal(callerOf(context), local)
         current = tab.tabId
-        result = tabResult(tab, 'Opened a tab')
+        result = tabResult(tab, local === undefined ? 'Opened a tab' : `Opened ${fileLabel(local.path, context)}`)
       } else {
         result = await run(host, step.data, context, images.length + 1)
       }
@@ -301,6 +332,36 @@ function callerOf(context: ToolContext): BrowserCaller {
   }
 }
 
+/** The `path` a create-tab or navigate call names; `undefined` for the url form. */
+function localPathOf(input: BrowserInput): string | undefined {
+  if (input.operation !== 'browser.create_tab' && input.operation !== 'tab.navigate') return undefined
+  return input.path
+}
+
+/** Every local page a call opens, including the steps of a batch. */
+function localPathsIn(input: unknown): string[] {
+  const { operation, steps, path: file } = (input ?? {}) as { operation?: unknown; steps?: unknown; path?: unknown }
+  if (operation === 'batch' && Array.isArray(steps)) return steps.flatMap((step) => localPathsIn(step))
+  const navigates = operation === 'browser.create_tab' || operation === 'tab.navigate'
+  return navigates && typeof file === 'string' && file !== '' ? [file] : []
+}
+
+/**
+ * The absolute path a call names, and the directory its page may read: the
+ * workspace when the page is inside it, otherwise the page's own directory.
+ */
+function localPage(file: string, context: ToolContext): { path: string; root: string } {
+  const absolute = path.resolve(context.cwd, file)
+  const inside = isSameOrInside(realPath(context.cwd), realPath(absolute))
+  return { path: absolute, root: inside ? context.cwd : path.dirname(absolute) }
+}
+
+/** A path as the transcript should read it: relative while it is inside the workspace. */
+function fileLabel(file: string, context: ToolContext): string {
+  const relative = path.relative(context.cwd, file)
+  return relative === '' || relative.startsWith('..') ? file : relative
+}
+
 /** `imageIndex` numbers a screenshot's caption among the images of one result. */
 async function run(host: BrowserHost, input: StepInput, context: ToolContext, imageIndex = 1): Promise<ToolResult> {
   const session = callerOf(context)
@@ -310,6 +371,11 @@ async function run(host: BrowserHost, input: StepInput, context: ToolContext, im
       return { ok: true, content: renderTabs(tabs), metadata: { display: { summary: summarizeTabs(tabs) } } }
     }
     case 'browser.create_tab': {
+      if (input.path !== undefined) {
+        const page = localPage(input.path, context)
+        const tab = await host.openLocal(session, page)
+        return tabResult(tab, `Opened ${fileLabel(page.path, context)}`)
+      }
       const tab = await host.createTab(session, input.url)
       return tabResult(tab, input.url === undefined ? 'Opened a tab' : `Opened ${hostOf(input.url)}`)
     }
@@ -318,8 +384,13 @@ async function run(host: BrowserHost, input: StepInput, context: ToolContext, im
       return { ok: true, content: `Closed tab ${input.tabId}.`, metadata: { display: { summary: 'Closed the tab' } } }
     }
     case 'tab.navigate': {
-      const tab = await host.navigate(session, input.tabId, input.url)
-      return tabResult(tab, `Navigating to ${hostOf(input.url)}`)
+      if (input.path !== undefined) {
+        const page = localPage(input.path, context)
+        const tab = await host.openLocal(session, { ...page, tabId: input.tabId })
+        return tabResult(tab, `Opening ${fileLabel(page.path, context)}`)
+      }
+      const tab = await host.navigate(session, input.tabId, input.url as string)
+      return tabResult(tab, `Navigating to ${hostOf(input.url as string)}`)
     }
     case 'tab.go_back':
     case 'tab.go_forward':
@@ -539,6 +610,7 @@ async function screenshot(
       caption,
       ...coordinateLines(shot, ref.width),
       'The picture is attached as pixels; no text was extracted from it.',
+      ...(shot.consoleErrors === undefined ? [] : ['', renderConsoleErrors(shot.consoleErrors)]),
     ].join('\n'),
     images: [ref],
     metadata: { display: { summary: `Screenshot ${shot.width}x${shot.height}` } },

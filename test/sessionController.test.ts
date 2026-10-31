@@ -607,6 +607,28 @@ test('the turn output count adds up its requests, starts absent and clears on th
   assert.equal(harness.controller.getSnapshot().turnOutputTokens, undefined)
 })
 
+test('the turn output count rises with the stream, then snaps to the reported number', async () => {
+  let harness: Harness | undefined
+  const seen: Array<number | undefined> = []
+  harness = await createHarness({
+    run: async () => {
+      seen.push(harness!.controller.getSnapshot().turnOutputTokens)
+      // 3 300 ASCII characters estimate at 1 100 tokens — a step past the gate.
+      harness!.proxy.onStreamEvent({ type: 'text_delta', text: 'x'.repeat(3_300) })
+      seen.push(harness!.controller.getSnapshot().turnOutputTokens)
+      harness!.proxy.onRequestUsage(usage(1_000, 1_024))
+      seen.push(harness!.controller.getSnapshot().turnOutputTokens)
+      return okResult({ usage: usage(1_000, 1_024) })
+    },
+  })
+
+  await harness.controller.submit({ text: 'hello' })
+  // The response is counted while it streams, and the real number replaces the
+  // estimate rather than being added to it.
+  assert.deepEqual(seen, [undefined, 1_100, 1_024])
+  assert.equal(harness.controller.getSnapshot().turnOutputTokens, 1_024)
+})
+
 test('compaction and subagent usage is counted when it is reported, not at the settle', async () => {
   // The loop reports these through `onAuxUsage` the moment they are known, so
   // the total is complete even for a run that never reaches its settle.

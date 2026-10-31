@@ -86,6 +86,8 @@ export type ShellCommand =
    * snapshot tick or need its own change detection on the store.
    */
   | { type: 'list-sessions'; id: string }
+  | { type: 'session-suggestions'; id: string; query: string; projectRoot?: string; sessionId?: string }
+  | { type: 'resolve-session-reference'; id: string; ref: string }
   /** Per-day token and activity buckets over every project's metrics — the home page's statistics card. */
   | { type: 'usage-stats'; id: string }
   /** Every configured model key with its API id, for drawing recorded ids by their display names. */
@@ -117,14 +119,14 @@ export type ShellCommand =
    * Without `projectRoot` the first open project answers, matching
    * `open-session`.
    */
-  | { type: 'get-settings'; id: string; projectRoot?: string; skillsScope?: 'personal' }
+  | { type: 'get-settings'; id: string; projectRoot?: string; skillsScope?: 'personal'; permissionsScope?: 'personal' }
   /**
    * One edit. A single command carrying a discriminated `SettingsChange`
    * rather than ten commands: the four settings cards will otherwise add a
    * command apiece, and every one of them would repeat the same
    * project-lookup / save / reload / fan-out choreography.
    */
-  | { type: 'settings-change'; id: string; projectRoot: string; change: SettingsChange; skillsScope?: 'personal' }
+  | { type: 'settings-change'; id: string; projectRoot: string; change: SettingsChange; skillsScope?: 'personal'; permissionsScope?: 'personal' }
   /**
    * Lists an endpoint's models — the settings screen's connection test. With
    * `endpointName` and no `apiKey` the key saved for that endpoint is used.
@@ -433,9 +435,9 @@ export interface WireRoutingInfo {
  *
  * Split rather than flagged per entry because that is the shape of the
  * constraint: `mergeSettings` *concatenates* `permissions.allow/deny/ask`
- * across layers, so the only group this screen can rewrite is the local one,
+ * across layers, so this screen rewrites only the selected layer's group,
  * and writing a merged group back would copy every inherited entry into the
- * local file.
+ * selected file. `local` names the editable entries even in personal scope.
  */
 export interface WirePermissionGroup {
   behavior: 'allow' | 'deny' | 'ask'
@@ -444,7 +446,7 @@ export interface WirePermissionGroup {
 }
 
 export interface WirePermissionsInfo {
-  /** `localSettingsPath(cwd)`, `~/.hanekawa/projects/<key>/settings.local.json` — the screen says what it writes. */
+  /** The editable layer's settings file, personal or project-local. */
   localPath: string
   /**
    * The startup mode: one global value in the user layer, written by the
@@ -576,8 +578,8 @@ export interface WireCoordinationSettingsInfo {
 }
 
 export interface WireGeneralInfo {
-  /** `localSettingsPath(cwd)`, `~/.hanekawa/projects/<key>/settings.local.json`, same file the permission groups use. */
-  localPath: string
+  /** `~/.hanekawa/settings.json` — the layer these two switches write. */
+  settingsPath: string
   /**
    * `cache.ttl1h`. Absent is not `false`: unset means the 1h TTL is on, which
    * `HANEKAWA_PROMPT_CACHE_1H=0` turns off, and the row says so.
@@ -611,6 +613,8 @@ export interface WireSettingsSnapshot {
   /** The built-in subagent types unioned with any the routing already names. */
   subagentTypes: string[]
   permissions: WirePermissionsInfo
+  /** User-layer rules only; absent means project-local rules with inherited entries. */
+  permissionsScope?: 'personal'
   skills: WireSkillInfo[]
   /** Personal-only discovery and user-layer switches, independent of this project's overrides. */
   skillsScope?: 'personal'

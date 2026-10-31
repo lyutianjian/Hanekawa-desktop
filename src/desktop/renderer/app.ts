@@ -1,3 +1,5 @@
+import { parseSessionReferences, sessionReferenceMarkdown } from '../../runtime/sessionReferenceText.js'
+import { SESSION_REFERENCE_MIME } from './model/sessionReferenceTransfer.js'
 /**
  * The renderer for the Electron desktop shell: wiring only.
  *
@@ -120,6 +122,7 @@ import { createPlanPanelView } from './dom/planPanelView.js'
 import { createChangesPanelView } from './dom/changesPanelView.js'
 import { createQuestionCardView } from './dom/questionCardView.js'
 import { createRewindView } from './dom/rewindView.js'
+import { createFullAccessConfirmView } from './dom/fullAccessConfirmView.js'
 import { createNoSessionView } from './dom/noSessionView.js'
 import { createSurfacePanel } from './dom/surfaceView.js'
 import { createComposerView } from './dom/composerView.js'
@@ -292,6 +295,12 @@ const suggestions = createSuggestionsView(required('suggestions'), (index) => {
 const status = createStatusView({
   usage: required('status-usage'),
 })
+// The question behind the pill's 完全访问权限 row. Built before the composer
+// because the composer's action opens it; 「了解更多」 lands on the settings
+// card that states what the mode actually skips.
+const fullAccessConfirm = createFullAccessConfirmView(required('permission-confirm'), {
+  onLearnMore: () => runSettingsIntent({ kind: 'open', category: 'permissions' }),
+})
 const composer = createComposerView({
   editor: required('composer-editor'),
   input: required<HTMLTextAreaElement>('input'),
@@ -314,6 +323,13 @@ const composer = createComposerView({
   // straight to `set-permission-mode` (which also remembers it globally) and
   // repaints off the snapshot that comes back.
   onSelectPermissionMode: (mode) => void activePane()?.setPermissionMode(mode),
+  // Full access has no guard left to fall back on, so it is asked for rather
+  // than applied on the click that revealed it. The pane is captured now: the
+  // answer belongs to the conversation the question was asked in.
+  onRequestFullAccess: () => {
+    const pane = activePane()
+    if (pane) fullAccessConfirm.open(() => void pane.setPermissionMode('bypass'))
+  },
   onAttach: () => activePane()?.onComposerInput(),
   // The S11 attachment entrances. Every one routes to the *active* pane, the
   // same routing the popovers above use — the strip and its imports belong to
@@ -324,6 +340,8 @@ const composer = createComposerView({
   onRetryAttachment: (draftId) => activePane()?.retryDraftImage(draftId),
   onOpenAttachment: (draftId) => void activePane()?.openDraftImage(draftId),
   onPreviewAttachment: (draftId) => void activePane()?.previewDraftImage(draftId),
+  onOpenSessionReference: (ref) => void openSessionReference(ref),
+  onResolveSessionReference: (ref) => shellClient.resolveSessionReference(ref).then((source) => ({ title: source.title, projectName: source.projectIsGlobal ? '最近' : source.projectName })),
   onPasteImages: (files) => void activePane()?.importImagesFromFiles(files),
   onLoadContextBreakdown: () => activePane()?.client.getContextBreakdown() ?? Promise.resolve({}),
 })
@@ -408,6 +426,9 @@ function attachPaneSession(lane: string): void {
     status,
     composer,
     imageViewer,
+    sessionSuggestions: (query, root, sessionId) => shellClient.sessionSuggestions(query, root, sessionId),
+    onOpenSessionReference: (ref) => void openSessionReference(ref),
+    onResolveSessionReference: (ref) => shellClient.resolveSessionReference(ref).then((source) => ({ title: source.title, projectName: source.projectIsGlobal ? '最近' : source.projectName })),
     loadUsage: () => modelNamesLoaded.then(() => shellClient.usageStats()).then((result) => result.days),
     onShellChanged: () => {
       // Every pane repaints the sidebar, not just the active one: the badges are
@@ -888,8 +909,25 @@ function closeLane(lane: string): void {
   void session.client.closePane(paneId).catch((error) => reportError({ action: '关闭会话' }, error))
 }
 
+async function openSessionReference(ref: string): Promise<void> {
+  try {
+    const source = await shellClient.resolveSessionReference(ref)
+    leaveSettings()
+    leaveProjects()
+    runSidebarIntent({ kind: 'open', projectRoot: source.projectRoot, sessionId: source.sessionId })
+  } catch (error) {
+    reportError({ action: '打开引用会话' }, error)
+  }
+}
+
 function runSidebarIntent(intent: SidebarIntent): void {
   switch (intent.kind) {
+    case 'copy-session-link':
+      void copyText(sessionReferenceMarkdown({ sessionId: intent.sessionId, title: intent.title })).then((copied) => {
+        if (copied) toastHost.push('info', '会话链接已复制')
+        else reportError({ action: '复制会话链接' }, new Error('剪贴板不可用'))
+      })
+      return
     case 'switch':
       // Every live row is a pane that already exists, so switching is local — no
       // `focus-pane` round trip, nothing for the host to do.
@@ -2705,18 +2743,21 @@ const dropOverlay = el('div', 'drop-overlay', el('span', 'drop-overlay-label', '
 canvas.appendChild(dropOverlay)
 let dragDepth = 0
 const dropTarget = (event: DragEvent): boolean =>
-  event.dataTransfer?.types.includes('Files') === true
+  (event.dataTransfer?.types.includes('Files') === true || event.dataTransfer?.types.includes(SESSION_REFERENCE_MIME) === true)
   && !canvas.classList.contains('projects-open')
   && !settingsState.open
   && activePane() !== undefined
+  && !composerInput.disabled
 function endDrag(): void {
   dragDepth = 0
   canvas.classList.remove('drop-active')
 }
+document.addEventListener('dragend', endDrag)
 canvas.addEventListener('dragenter', (event) => {
   event.preventDefault()
   if (!dropTarget(event)) return
   dragDepth += 1
+  dropOverlay.firstElementChild!.textContent = event.dataTransfer?.types.includes(SESSION_REFERENCE_MIME) ? '松开以引用会话' : '拖放到此处以添加到对话'
   canvas.classList.add('drop-active')
 })
 canvas.addEventListener('dragover', (event) => {
@@ -2732,6 +2773,17 @@ canvas.addEventListener('drop', (event) => {
   endDrag()
   const pane = activePane()
   if (!accepted || !pane || !event.dataTransfer) return
+  const reference = event.dataTransfer.getData(SESSION_REFERENCE_MIME)
+  if (reference) {
+    if (parseSessionReferences(reference).length === 0) {
+      reportError({ action: '引用会话' }, new Error('无效的会话链接'))
+      return
+    }
+    if (event.target instanceof Node && composerInput.contains(event.target)) composer.placeCaretAtPoint?.(event.clientX, event.clientY)
+    composer.insertText(reference, true)
+    pane.onComposerInput()
+    return
+  }
   const images: File[] = []
   const paths: AttachedPath[] = []
   // Read synchronously: the items are gone once the handler returns.

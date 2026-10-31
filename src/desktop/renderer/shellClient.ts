@@ -1,3 +1,4 @@
+import type { SessionReferenceInfo, SessionSearchResult } from '../../runtime/protocol/sessionReferences.js'
 import type { RuntimeChannel } from '../../runtime/protocol/channel.js'
 import { PendingRequests } from '../../runtime/protocol/pendingRequests.js'
 import type {
@@ -126,6 +127,14 @@ export class ShellClient {
     }) as Promise<WireShellOpenSessionResult>
   }
 
+  async sessionSuggestions(query: string, projectRoot?: string, sessionId?: string): Promise<SessionSearchResult> {
+    return this.send({ type: 'session-suggestions', id: crypto.randomUUID(), query, projectRoot, sessionId }) as Promise<SessionSearchResult>
+  }
+
+  async resolveSessionReference(ref: string): Promise<SessionReferenceInfo> {
+    return this.send({ type: 'resolve-session-reference', id: crypto.randomUUID(), ref }) as Promise<SessionReferenceInfo>
+  }
+
   async openProject(): Promise<WireShellOpenProjectResult> {
     return this.send({ type: 'open-project', id: crypto.randomUUID() }) as Promise<WireShellOpenProjectResult>
   }
@@ -175,12 +184,13 @@ export class ShellClient {
   }
 
   /** The settings screen's whole read model. Like `listSessions`, never cached here. */
-  async getSettings(projectRoot?: string, skillsScope?: 'personal'): Promise<WireShellSettingsResult> {
+  async getSettings(projectRoot?: string, skillsScope?: 'personal', permissionsScope?: 'personal'): Promise<WireShellSettingsResult> {
     return this.send({
       type: 'get-settings',
       id: crypto.randomUUID(),
       ...(projectRoot !== undefined ? { projectRoot } : {}),
       ...(skillsScope ? { skillsScope } : {}),
+      ...(permissionsScope ? { permissionsScope } : {}),
     }) as Promise<WireShellSettingsResult>
   }
 
@@ -192,6 +202,7 @@ export class ShellClient {
     projectRoot: string,
     change: SettingsChange,
     skillsScope?: 'personal',
+    permissionsScope?: 'personal',
   ): Promise<WireShellSettingsChangeResult> {
     return this.send({
       type: 'settings-change',
@@ -199,6 +210,7 @@ export class ShellClient {
       projectRoot,
       change,
       ...(skillsScope ? { skillsScope } : {}),
+      ...(permissionsScope ? { permissionsScope } : {}),
     }) as Promise<WireShellSettingsChangeResult>
   }
 

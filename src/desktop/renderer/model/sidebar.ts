@@ -876,6 +876,7 @@ function clampIndex(index: number, length: number): number {
 // --- intents -----------------------------------------------------------------
 
 export type SidebarIntent =
+  | { kind: 'copy-session-link'; sessionId: string; title: string }
   /** Make an already-open lane the visible one. Renderer-local; no host round trip. */
   | { kind: 'switch'; lane: string }
   /** Open a session from history as a new lane. */

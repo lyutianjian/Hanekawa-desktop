@@ -14,8 +14,10 @@ import {
   loadLocalSettings,
   loadMergedSettings,
   localSettingsPath,
-  setLocalCacheTtl1h,
+  setCacheTtl1hForUser,
+  setThinkingForUser,
   setLocalPermissionEntries,
+  setUserPermissionEntries,
   setMcpServerTrustLocally,
   setSkillEnabledLocally,
   saveEffortLevel,
@@ -83,9 +85,12 @@ for (const layer of ['user', 'project', 'local'] as const) {
         assert.doesNotMatch(error.message, /fake-secret-do-not-report/)
         return true
       })
-      if (layer === 'user') await assert.rejects(() => saveEffortLevel('low'))
+      if (layer === 'user') {
+        await assert.rejects(() => saveEffortLevel('low'))
+        await assert.rejects(() => setUserPermissionEntries('allow', ['Read']))
+      }
       if (layer === 'local') {
-        await assert.rejects(() => updateLocalSettings(cwd, { thinking: false }))
+        await assert.rejects(() => updateLocalSettings(cwd, { skills: { disabled: ['x'] } }))
         await assert.rejects(() => setLocalPermissionEntries(cwd, 'allow', ['Read']))
       }
       assert.equal(await readFile(file, 'utf8'), bytes)
@@ -99,7 +104,7 @@ for (const bytes of ['null', '[]', '"text"']) {
       const file = localSettingsPath(cwd)
       await mkdir(path.dirname(file), { recursive: true })
       await writeFile(file, bytes)
-      await assert.rejects(() => updateLocalSettings(cwd, { thinking: false }))
+      await assert.rejects(() => updateLocalSettings(cwd, { skills: { disabled: ['x'] } }))
       assert.equal(await readFile(file, 'utf8'), bytes)
     })
   })
@@ -120,7 +125,7 @@ test('settings re-read inside the lock catches corruption that happened while wa
       await writeFile(file, '{ corrupted while waiting')
     }, { requireLock: true })
     await locked
-    const saving = assert.rejects(() => updateLocalSettings(cwd, { thinking: false }))
+    const saving = assert.rejects(() => updateLocalSettings(cwd, { skills: { disabled: ['x'] } }))
     release()
     await Promise.all([holder, saving])
     assert.equal(await readFile(file, 'utf8'), '{ corrupted while waiting')
@@ -135,7 +140,7 @@ test('a failed settings rename leaves original bytes and permissions and cleans 
     await writeFile(file, bytes)
     await chmod(file, 0o600)
     t.mock.method(fs, 'rename', async () => { throw new Error('fixture rename failure') })
-    await assert.rejects(() => updateLocalSettings(cwd, { thinking: false }), /fixture rename failure/)
+    await assert.rejects(() => updateLocalSettings(cwd, { skills: { disabled: ['x'] } }), /fixture rename failure/)
     assert.equal(await readFile(file, 'utf8'), bytes)
     if (process.platform !== 'win32') assert.equal((await stat(file)).mode & 0o777, 0o600)
     assert.deepEqual(await readdir(path.dirname(file)), ['settings.local.json'])
@@ -154,7 +159,7 @@ test('settings cannot write without acquiring the lock', async (t) => {
     })
     syncBuiltinESMExports()
     try {
-      await assert.rejects(() => updateLocalSettings(cwd, { thinking: false }), /Cannot create file lock/)
+      await assert.rejects(() => updateLocalSettings(cwd, { skills: { disabled: ['x'] } }), /Cannot create file lock/)
       assert.equal(await readFile(file, 'utf8'), '{ "thinking": true }')
     } finally {
       t.mock.restoreAll()
@@ -419,6 +424,32 @@ test('an invalid group is rejected before the file is written', async () => {
   })
 })
 
+test('personal rules persist globally without replacing other groups or project rules', async () => {
+  await withProject(async (cwd) => {
+    const userPath = path.join(getGlobalHanekawaDir(), 'settings.json')
+    await mkdir(path.dirname(userPath), { recursive: true })
+    await writeFile(userPath, JSON.stringify({
+      permissions: { mode: 'auto', allow: ['Read'], ask: ['Bash(git push:*)'], deny: ['Delete'] },
+      thinking: false,
+      unknown: 'keep',
+    }))
+    await setLocalPermissionEntries(cwd, 'allow', ['Write'])
+    const localBefore = await readFile(localSettingsPath(cwd), 'utf8')
+    await setUserPermissionEntries('allow', ['Glob', 'Grep'])
+    await setUserPermissionEntries('allow', ['Grep'])
+    assert.deepEqual(JSON.parse(await readFile(userPath, 'utf8')), {
+      permissions: { mode: 'auto', allow: ['Grep'], ask: ['Bash(git push:*)'], deny: ['Delete'] },
+      thinking: false,
+      unknown: 'keep',
+    })
+    assert.deepEqual((await loadMergedSettings(cwd)).permissions?.allow, ['Grep', 'Write'])
+    assert.equal(await readFile(localSettingsPath(cwd), 'utf8'), localBefore)
+    const saved = await readFile(userPath, 'utf8')
+    await assert.rejects(() => setUserPermissionEntries('deny', ['  ']), /Invalid settings/)
+    assert.equal(await readFile(userPath, 'utf8'), saved)
+  })
+})
+
 test('a patch rewrites the keys it names and nothing else', async () => {
   await withLocalLayer({}, async (cwd) => {
     // A local layer with a key the patch type cannot even express: hand-written
@@ -431,16 +462,16 @@ test('a patch rewrites the keys it names and nothing else', async () => {
       'utf8',
     )
 
-    await setLocalCacheTtl1h(cwd, true)
+    await updateLocalSettings(cwd, { skills: { disabled: ['demo'] } })
     await setLocalPermissionEntries(cwd, 'allow', ['Read'])
 
     const local = await loadLocalSettings(cwd)
-    assert.equal(local.cache?.ttl1h, true)
+    assert.deepEqual(local.skills?.disabled, ['demo'])
     assert.deepEqual(local.permissions?.allow, ['Read'])
     assert.equal(local.models?.hand?.model, 'by-hand', 'the untouched key is still there')
 
-    await updateLocalSettings(cwd, { cache: undefined })
-    assert.equal((await loadLocalSettings(cwd)).cache, undefined, 'undefined deletes rather than writing null')
+    await updateLocalSettings(cwd, { skills: undefined })
+    assert.equal((await loadLocalSettings(cwd)).skills, undefined, 'undefined deletes rather than writing null')
     assert.deepEqual((await loadLocalSettings(cwd)).permissions?.allow, ['Read'])
   })
 })
@@ -465,6 +496,31 @@ test('the startup permission mode is one global value, and project layers cannot
     // The layers that tried to pin it are left exactly as written — merging
     // ignores them, writing does not rewrite them.
     assert.equal((await loadLocalSettings(cwd)).permissions?.mode, 'auto')
+  })
+})
+
+test('thinking and the cache TTL are one global value, and project layers cannot pin them', async () => {
+  await withLocalLayer({ thinking: false, cache: { ttl1h: false } }, async (cwd) => {
+    const local = localSettingsPath(cwd)
+    await mkdir(path.dirname(local), { recursive: true })
+    await writeFile(local, JSON.stringify({ thinking: false, cache: { ttl1h: false } }), 'utf8')
+    // Both lower layers name a value, and both are dropped on load: a stale
+    // per-project write must not mask the 通用 page's toggle.
+    assert.equal('thinking' in (await loadMergedSettings(cwd)), false)
+    assert.equal((await loadMergedSettings(cwd)).cache?.ttl1h, undefined)
+
+    await setThinkingForUser(false)
+    await setCacheTtl1hForUser(false)
+
+    assert.equal((await loadMergedSettings(cwd)).thinking, false)
+    assert.equal((await loadMergedSettings(cwd)).cache?.ttl1h, false)
+    const userFile = path.join(getGlobalHanekawaDir(), 'settings.json')
+    assert.deepEqual(
+      JSON.parse(await readFile(userFile, 'utf8')) as HanekawaSettings,
+      { thinking: false, cache: { ttl1h: false } },
+    )
+    // Merging ignores those layers; writing does not rewrite them.
+    assert.equal((await loadLocalSettings(cwd)).thinking, false)
   })
 })
 

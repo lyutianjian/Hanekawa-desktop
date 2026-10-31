@@ -60,7 +60,7 @@ function snapshotOf(): WireSettingsSnapshot {
       microCompactThresholdRatio: 0.9,
     },
     coordination: { quietDays: 7, autoResolveDays: 14 },
-    general: { localPath: 'C:\\repo\\alpha\\.hanekawa\\settings.local.json' },
+    general: { settingsPath: 'C:\\Users\\me\\.hanekawa\\settings.json' },
     userInstructions: '',
   }
 }
@@ -319,7 +319,12 @@ test('the header project picker and the single-choice form fields stay native se
   const { view, apply } = mount(t)
   // The provider page is all global, so it offers no project to choose.
   assert.equal(findAll(findOne(region(view(), 'settings-body'), 'settings-header'), 'settings-project').length, 0)
+  // 通用 is global too: both of its cards write the user layer.
   apply({ kind: 'select-category', category: 'general' })
+  assert.equal(findAll(findOne(region(view(), 'settings-body'), 'settings-header'), 'settings-project').length, 0)
+  // 技能/MCP still edits per-project state, so it keeps the picker.
+  apply({ kind: 'select-category', category: 'extensions' })
+  apply({ kind: 'select-extensions-tab', tab: 'mcp' })
   const header = findOne(region(view(), 'settings-body'), 'settings-header')
   assert.equal(findOne(header, 'settings-project').tagName, 'SELECT')
   apply({ kind: 'select-category', category: 'provider' })
@@ -337,10 +342,33 @@ test('the header keeps the project picker when there is only one project', (t) =
   // choice left the page anonymous until a second project happened to be open.
   const { view } = mount(
     t,
-    stateOf({ category: 'general', projects: [{ projectRoot: 'C:\\repo\\alpha', projectName: 'alpha' }] }),
+    stateOf({
+      category: 'extensions',
+      extensionsTab: 'mcp',
+      projects: [{ projectRoot: 'C:\\repo\\alpha', projectName: 'alpha' }],
+    }),
   )
   const picker = findOne(findOne(region(view(), 'settings-body'), 'settings-header'), 'settings-project')
   assert.equal(picker.tagName, 'SELECT')
+})
+
+test('the permission scope picker shows personal and projects and sends the selected scope', (t) => {
+  const state = stateOf({ category: 'permissions' })
+  const { view, stub, intents, render } = mount(t, { ...state, projects: [
+    { projectRoot: 'home', projectName: '最近', isGlobal: true }, ...state.projects,
+  ] })
+  const picker = () => findOne(findOne(region(view(), 'settings-body'), 'settings-header'), 'settings-project')
+  assert.equal(picker().attributes.get('aria-label'), '选择权限范围')
+  assert.deepEqual(picker().children.map((node) => node.text), ['个人', 'alpha', 'beta'])
+  ;(picker().node as { value: string }).value = ''
+  stub.dispatch(picker().node, 'change')
+  assert.deepEqual(intents.pop(), { kind: 'select-permission-project' })
+  ;(picker().node as { value: string }).value = state.projectRoot!
+  stub.dispatch(picker().node, 'change')
+  assert.deepEqual(intents.pop(), { kind: 'select-permission-project', projectRoot: state.projectRoot })
+  render({ ...state, permissionsScope: 'personal', snapshot: { ...state.snapshot!, permissionsScope: 'personal' } })
+  assert.equal((picker().node as { value: string }).value, '')
+  assert.ok(findAll(view(), 'settings-card-note').some((node) => node.text.includes('所有项目通用')))
 })
 
 test('an error sits in the open form, under its row, or pins to the screen', (t) => {
@@ -415,7 +443,7 @@ test('a model row opens to its switches, and the effort levels are one switch ea
   const numbers = findAll(findOne(item(), 'settings-model-detail'), 'settings-model-number')
   assert.deepEqual(
     numbers.map((box) => (child(box, 'settings-input').node as HTMLInputElement).placeholder),
-    ['默认 272K', '默认 128K'],
+    ['默认 200K', '默认 128K'],
     'an empty limit names the value the request actually uses',
   )
   stub.click(findOne(switches[1]!, 'settings-toggle').node)

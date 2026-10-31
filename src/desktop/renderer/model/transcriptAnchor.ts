@@ -40,9 +40,10 @@ export const ANCHOR_TOP_PX = 64
  * The pad never falls below this *while a turn runs*, however long the answer
  * gets. It is breathing room under a moving tail: the last line of a
  * full-screen answer keeps its distance from the composer while more of it is
- * still arriving.
+ * still arriving. A line and a half is enough to read as clearance; a screenful
+ * of blank under the live line reads as the conversation having stopped.
  */
-export const ANCHOR_FLOOR_PX = 96
+export const ANCHOR_FLOOR_PX = 48
 /**
  * …and where the pad rests once the turn is over.
  *

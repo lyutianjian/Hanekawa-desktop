@@ -150,7 +150,7 @@ function snapshotOf(overrides: Partial<WireSettingsSnapshot> = {}): WireSettings
       microCompactThresholdRatio: 0.9,
     },
     coordination: { quietDays: 7, autoResolveDays: 14 },
-    general: { localPath: 'C:\\repo\\alpha\\.hanekawa\\settings.local.json' },
+    general: { settingsPath: 'C:\\Users\\me\\.hanekawa\\settings.json' },
     userInstructions: '',
     ...overrides,
   }
@@ -1124,6 +1124,65 @@ function permissionsView(overrides: Partial<WireSettingsSnapshot> = {}) {
   return settingsView(openState({ category: 'permissions', snapshot: snapshotOf(overrides) }))
 }
 
+test('permission scope offers personal and real projects, with recent mapped to personal', () => {
+  const state = openState({ category: 'permissions', projects: [
+    { projectRoot: 'home', projectName: '最近', isGlobal: true },
+    { projectRoot: 'alpha', projectName: 'alpha' },
+  ], projectRoot: 'home' })
+  const view = settingsView(state)
+  assert.deepEqual(view.permissionProjectPicker, { value: '', choices: [
+    { value: '', label: '个人' }, { value: 'alpha', label: 'alpha' },
+  ] })
+  assert.deepEqual(view.projectChoices, [])
+  assert.equal(settingsView({ ...state, projectRoot: 'alpha' }).permissionProjectPicker?.value, 'alpha')
+})
+
+test('personal permission scope is sent on reads and writes and is independent of skill scope', async () => {
+  const selected = openState({ category: 'permissions', skillsScope: 'personal' })
+  const cleared = applySettingsIntent(selected, { kind: 'select-permission-project' })
+  assert.equal(cleared.load, true)
+  assert.equal(cleared.state.snapshot, undefined)
+  assert.equal(cleared.state.permissionsScope, 'personal')
+  assert.equal(cleared.state.skillsScope, 'personal')
+  const snapshot = snapshotOf({ permissionsScope: 'personal', skillsScope: 'personal' })
+  const requests: unknown[][] = []
+  const client: SettingsClient = {
+    getSettings: async (...args) => { requests.push(args); return { settings: snapshot, projects: selected.projects.map((p) => ({ ...p })) } },
+    changeSettings: async (...args) => { requests.push(args); return { settings: snapshot, rebuiltLanes: 0 } },
+  }
+  const loaded = await loadSettings(client, cleared.state)
+  assert.deepEqual(requests.pop(), [selected.projectRoot, 'personal', 'personal'])
+  assert.equal(settingsView(loaded).permissionProjectPicker?.value, '')
+  assert.match(settingsView(loaded).cards.find((card) => card.id === 'permissions:allow')?.note ?? '', /所有项目通用/)
+  const removed = applySettingsIntent(loaded, { kind: 'remove-permission-rule', behavior: 'allow', entry: 'Bash(git status:*)' })
+  await runSettingsChanges(client, removed.state, removed.pending!)
+  assert.deepEqual(requests.pop(), [selected.projectRoot, removed.changes![0], 'personal', 'personal'])
+  const back = applySettingsIntent(loaded, { kind: 'select-permission-project', projectRoot: selected.projectRoot })
+  assert.equal(back.state.permissionsScope, undefined)
+  assert.equal(back.state.skillsScope, 'personal')
+  assert.equal(back.state.snapshot, undefined)
+  assert.equal(back.load, true)
+})
+
+test('a permission scope switch ignores late reads and writes for the same project root', async () => {
+  const original = openState({ category: 'permissions', pending: pendingOf({
+    scope: 'permissions', kind: 'set-permission-entries', behavior: 'allow', entries: [],
+  }) })
+  let latest = original
+  let resolve!: (value: WireShellSettingsResult & WireShellSettingsChangeResult) => void
+  const reply = new Promise<WireShellSettingsResult & WireShellSettingsChangeResult>((done) => { resolve = done })
+  const client: SettingsClient = { getSettings: () => reply, changeSettings: () => reply }
+  const loading = loadSettings(client, original, () => latest)
+  const changing = runSettingsChanges(client, original, pendingOf({
+    scope: 'permissions', kind: 'set-permission-entries', behavior: 'allow', entries: [],
+  }), () => latest)
+  latest = applySettingsIntent(original, { kind: 'select-permission-project' }).state
+  assert.deepEqual(latest.pending, [], 'the previous scope cannot project its pending rules onto the new one')
+  resolve({ settings: snapshotOf(), projects: [], rebuiltLanes: 0 })
+  assert.equal(await loading, latest)
+  assert.equal(await changing, latest)
+})
+
 test('an inherited rule is drawn, labelled, and has no delete button', () => {
   // Drawn rather than hidden: it is being enforced. Hiding it would explain
   // neither why a tool is denied nor why deleting the rule you *can* see did
@@ -1223,7 +1282,8 @@ test('removing a rule drops one copy, not every match', () => {
 })
 
 test('the startup mode row says it does not reach an open session', () => {
-  const card = permissionsView().cards.find((card) => card.id === 'permission-mode')
+  assert.equal(permissionsView().cards.some((card) => card.id === 'permission-mode'), false)
+  const card = permissionsView({ permissionsScope: 'personal' }).cards.find((card) => card.id === 'permission-mode')
   const row = card?.rows[0]
   assert.ok(row && row.control.kind === 'select')
   assert.equal(row.control.value, 'default')
@@ -1264,7 +1324,7 @@ test('the thinking toggle reads unset as on and off as a real off', () => {
   const off = settingsView(openState({
     category: 'general',
     snapshot: snapshotOf({
-      general: { localPath: 'C:\\repo\\alpha\\.hanekawa\\settings.local.json', thinking: false },
+      general: { settingsPath: 'C:\\Users\\me\\.hanekawa\\settings.json', thinking: false },
     }),
   }))
     .cards.find((card) => card.id === 'general')
@@ -1278,6 +1338,17 @@ test('the thinking toggle reads unset as on and off as a real off', () => {
     enabled: false,
   })
   assert.deepEqual(outcome.changes, [{ scope: 'general', kind: 'set-thinking', enabled: false }])
+})
+
+test('the general page is global, so it offers no project picker', () => {
+  const state = openState({ category: 'general' })
+  const view = settingsView(state)
+  assert.deepEqual(view.projectChoices, [])
+  const card = view.cards.find((candidate) => candidate.id === 'general')
+  assert.match(card?.note ?? '', /保存在全局配置/)
+  assert.equal(card?.noteHint, 'C:\\Users\\me\\.hanekawa\\settings.json')
+  // 技能/MCP is the page the picker is still for.
+  assert.equal(settingsView({ ...state, category: 'extensions' }).projectChoices.length, 1)
 })
 
 test('a trust granted by an upper layer is drawn but not toggleable', () => {
@@ -1454,7 +1525,7 @@ test('clearing a skill project selects personal scope and sends it on reads and 
     changeSettings: async (...args) => { requests.push(args); return { settings: snapshot, rebuiltLanes: 0 } },
   }
   const loaded = await loadSettings(client, cleared.state)
-  assert.deepEqual(requests.pop(), [selected.projectRoot, 'personal'])
+  assert.deepEqual(requests.pop(), [selected.projectRoot, 'personal', undefined])
   assert.deepEqual(settingsView(loaded).cards[0]?.headerButtons?.map((button) => button.label), ['导入到个人', '重新加载'])
   const toggled = applySettingsIntent(loaded, { kind: 'set-skill-enabled', name: 'review', enabled: false })
   await runSettingsChanges(client, toggled.state, toggled.pending!)

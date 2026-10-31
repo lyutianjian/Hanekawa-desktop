@@ -1,3 +1,4 @@
+import { createSessionReferenceHost } from '../runtime/sessionReferences.js'
 import { z } from 'zod/v3'
 import path from 'node:path'
 import { homedir } from 'node:os'
@@ -14,9 +15,10 @@ import {
   loadLocalSettings,
   loadSettingsLayers,
   localSettingsPath,
-  setLocalCacheTtl1h,
-  setLocalThinking,
+  setCacheTtl1hForUser,
+  setThinkingForUser,
   setLocalPermissionEntries,
+  setUserPermissionEntries,
   saveStartupPermissionMode,
   setMcpServerTrustLocally,
   setMcpServerLocally,
@@ -42,7 +44,7 @@ import { skillScopeOf } from '../services/skills/skillRoots.js'
 import { readUserInstructions, writeUserInstructions } from '../services/context/projectContext.js'
 import { peekSessions } from './recentProjects.js'
 import { UsageScanner } from './usageStats.js'
-import { getDefaultWorkingDir, getProjectDataDir, getProjectMemoryDir, getSharedSkillsDir, getSkillsDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
+import { getDefaultWorkingDir, getGlobalHanekawaDir, getProjectDataDir, getProjectMemoryDir, getSharedSkillsDir, getSkillsDir, isGlobalWorkspaceRoot } from '../utils/paths.js'
 import type {
   DirectoryProject,
   DirectoryWorkspace,
@@ -736,6 +738,8 @@ const SHELL_COMMAND_SCHEMAS = {
   'remove-project': z
     .object({ type: z.literal('remove-project'), id: commandId, projectRoot: z.string() })
     .strict(),
+  'session-suggestions': z.object({ type: z.literal('session-suggestions'), id: commandId, query: z.string(), projectRoot: z.string().optional(), sessionId: z.string().optional() }).strict(),
+  'resolve-session-reference': z.object({ type: z.literal('resolve-session-reference'), id: commandId, ref: z.string() }).strict(),
   'list-sessions': z.object({ type: z.literal('list-sessions'), id: commandId }).strict(),
   'usage-stats': z.object({ type: z.literal('usage-stats'), id: commandId }).strict(),
   'model-names': z.object({ type: z.literal('model-names'), id: commandId }).strict(),
@@ -748,7 +752,7 @@ const SHELL_COMMAND_SCHEMAS = {
     })
     .strict(),
   'get-settings': z
-    .object({ type: z.literal('get-settings'), id: commandId, projectRoot: z.string().optional(), skillsScope: z.literal('personal').optional() })
+    .object({ type: z.literal('get-settings'), id: commandId, projectRoot: z.string().optional(), skillsScope: z.literal('personal').optional(), permissionsScope: z.literal('personal').optional() })
     .strict(),
   'settings-change': z
     .object({
@@ -757,6 +761,7 @@ const SHELL_COMMAND_SCHEMAS = {
       projectRoot: z.string(),
       change: settingsChangeSchema,
       skillsScope: z.literal('personal').optional(),
+      permissionsScope: z.literal('personal').optional(),
     })
     .strict(),
   'probe-endpoint': z
@@ -1341,6 +1346,19 @@ export class ShellHost<
       }
       case 'remove-project':
         return this.removeProject(command.projectRoot)
+      case 'session-suggestions': {
+        const roots = await this.knownRoots()
+        const cwd = command.projectRoot === undefined ? roots[0] : await this.cwdForRoot(command.projectRoot)
+        if (!cwd) throw new Error('没有可查询的项目')
+        const result = await createSessionReferenceHost({ cwd, listProjectRoots: async () => roots })
+          .search({ action: 'search', scope: 'title', query: command.query, limit: 15 }, { sessionId: command.sessionId })
+        return { ...result, results: result.results.map((hit) => ({ ...hit, projectRoot: projectRootKey(hit.projectRoot) })) }
+      }
+      case 'resolve-session-reference': {
+        const roots = await this.knownRoots()
+        const source = await createSessionReferenceHost({ cwd: roots[0]!, listProjectRoots: async () => roots }).resolve(command.ref)
+        return { ...source, projectRoot: projectRootKey(source.projectRoot) }
+      }
       case 'list-sessions':
         return this.listSessions()
       case 'usage-stats':
@@ -1350,9 +1368,9 @@ export class ShellHost<
       case 'delete-session':
         return this.deleteSession(command.projectRoot, command.sessionId)
       case 'get-settings':
-        return this.getSettings(command.projectRoot, command.skillsScope)
+        return this.getSettings(command.projectRoot, command.skillsScope, command.permissionsScope)
       case 'settings-change':
-        return this.applySettingsChange(command.projectRoot, command.change, command.skillsScope)
+        return this.applySettingsChange(command.projectRoot, command.change, command.skillsScope, command.permissionsScope)
       case 'probe-endpoint':
         return this.probeEndpoint(command)
       case 'rename-session':
@@ -1833,9 +1851,9 @@ export class ShellHost<
   }
 
   /** The settings read model, plus the project list the screen's selector needs. */
-  private async getSettings(projectRoot?: string, skillsScope?: 'personal'): Promise<WireShellSettingsResult> {
+  private async getSettings(projectRoot?: string, skillsScope?: 'personal', permissionsScope?: 'personal'): Promise<WireShellSettingsResult> {
     return this.withProjectEntry(await this.settingsRoot(projectRoot), async (entry) => ({
-      settings: await this.describeSettings(entry, skillsScope ?? (isGlobalWorkspaceRoot(entry.cwd) ? 'personal' : undefined)),
+      settings: await this.describeSettings(entry, skillsScope ?? (isGlobalWorkspaceRoot(entry.cwd) ? 'personal' : undefined), permissionsScope),
       // The sidebar's own list, not the open runtimes: a project's runtime opens
       // only when one of its sessions does, and the selector must offer a
       // project before that. Read inside, while the transient project is still
@@ -1887,10 +1905,11 @@ export class ShellHost<
     projectRoot: string,
     change: SettingsChange,
     skillsScope?: 'personal',
+    permissionsScope?: 'personal',
   ): Promise<WireShellSettingsChangeResult> {
     // Provider configuration is global, so a stale root must not block it.
     const root = change.scope === 'provider' ? await this.settingsRoot(projectRoot) : projectRoot
-    return this.withProjectEntry(root, (entry) => this.applySettingsChangeTo(entry, change, skillsScope))
+    return this.withProjectEntry(root, (entry) => this.applySettingsChangeTo(entry, change, skillsScope, permissionsScope))
   }
 
   private async probeEndpoint(
@@ -1911,7 +1930,9 @@ export class ShellHost<
     entry: ProjectEntry<P, W>,
     change: SettingsChange,
     skillsScope?: 'personal',
+    permissionsScope?: 'personal',
   ): Promise<WireShellSettingsChangeResult> {
+    if (isGlobalWorkspaceRoot(entry.cwd)) permissionsScope = 'personal'
     // Before anything is mutated: a model a turn is *running on* cannot be
     // deleted. Every other reference — the default model, a routing role, an
     // endpoint's models — now repairs itself inside `ConfigService`, so this is
@@ -1925,7 +1946,7 @@ export class ShellHost<
     const effect = await applySettingsEffect(entry, change, {
       ...(this.deps.onPickDirectory ? { pickDirectory: this.deps.onPickDirectory } : {}),
       ...(this.deps.onConfirmSkillImport ? { confirmSkillImport: this.deps.onConfirmSkillImport } : {}),
-    }, skillsScope)
+    }, skillsScope, permissionsScope)
     if (effect.saveConfig) await entry.project.config.save()
     // Provider configuration and the startup permission mode are global. A
     // project opened before either was last edited must see the same saved
@@ -1950,7 +1971,7 @@ export class ShellHost<
       }
     }
     return {
-      settings: await this.describeSettings(entry, skillsScope),
+      settings: await this.describeSettings(entry, skillsScope, permissionsScope),
       rebuiltLanes,
     } satisfies WireShellSettingsChangeResult
   }
@@ -2098,7 +2119,8 @@ export class ShellHost<
    * beside the merged one — the merge concatenates and unions, so it cannot say
    * which entries this screen is allowed to rewrite.
    */
-  private async describeSettings(entry: ProjectEntry<P, W>, skillsScope?: 'personal'): Promise<WireSettingsSnapshot> {
+  private async describeSettings(entry: ProjectEntry<P, W>, skillsScope?: 'personal', permissionsScope?: 'personal'): Promise<WireSettingsSnapshot> {
+    if (isGlobalWorkspaceRoot(entry.cwd)) permissionsScope = 'personal'
     const { config } = entry.project
     const raw = config.get()
     const routing = config.getRouting()
@@ -2146,10 +2168,12 @@ export class ShellHost<
     const subagentTypes = [...new Set([...BUILTIN_SUBAGENT_TYPES, ...Object.keys(routing.subagent ?? {})])]
 
     const permissions: WirePermissionsInfo = {
-      localPath: localSettingsPath(entry.cwd),
+      localPath: permissionsScope === 'personal' ? path.join(getGlobalHanekawaDir(), 'settings.json') : localSettingsPath(entry.cwd),
       mode: startupMode(merged.permissions?.mode),
       groups: (['allow', 'ask', 'deny'] as const).map((behavior) =>
-        splitPermissionGroup(behavior, merged, local),
+        permissionsScope === 'personal'
+          ? splitPermissionGroup(behavior, layers.user, layers.user)
+          : splitPermissionGroup(behavior, merged, local),
       ),
     }
 
@@ -2202,6 +2226,7 @@ export class ShellHost<
       permissions,
       skills,
       ...(skillsScope ? { skillsScope } : {}),
+      ...(permissionsScope ? { permissionsScope } : {}),
       skillsDir: getSkillsDir(entry.cwd),
       sharedSkillsDir: getSharedSkillsDir(),
       mcpServers,
@@ -2209,7 +2234,7 @@ export class ShellHost<
       userInstructions: readUserInstructions(),
       coordination: describeCoordination(config, this.deps.coordinationMigrationFindings?.() ?? []),
       general: {
-        localPath: localSettingsPath(entry.cwd),
+        settingsPath: path.join(getGlobalHanekawaDir(), 'settings.json'),
         ...(merged.cache?.ttl1h !== undefined ? { cacheTtl1h: merged.cache.ttl1h } : {}),
         ...(merged.thinking !== undefined ? { thinking: merged.thinking } : {}),
       },
@@ -2603,6 +2628,7 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
     confirmSkillImport?: ShellHostDeps<P, PaneLike, W>['onConfirmSkillImport']
   } = {},
   skillsScope?: 'personal',
+  permissionsScope?: 'personal',
 ): Promise<SettingsChangeEffect> {
   const pickDirectory = dialogs.pickDirectory
   if (change.scope === 'provider') {
@@ -2634,11 +2660,12 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
 
   switch (change.kind) {
     case 'set-permission-entries':
-      await setLocalPermissionEntries(entry.cwd, change.behavior, change.entries)
+      if (permissionsScope === 'personal') await setUserPermissionEntries(change.behavior, change.entries)
+      else await setLocalPermissionEntries(entry.cwd, change.behavior, change.entries)
       // No rebuild: `reloadSettings()` pushes the new rules into every open
       // scope's gate, and replacing a runtime would drop its prompt cache for
       // nothing.
-      return { saveConfig: false, rebuild: false, scope: 'models' }
+      return { saveConfig: false, rebuild: false, scope: 'models', allProjects: permissionsScope === 'personal' }
     case 'set-startup-permission-mode':
       // One global value, like the composer pill's: every project's next session
       // starts in it, so the reload reaches all of them. Startup only, and
@@ -2648,20 +2675,20 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
       await saveStartupPermissionMode(change.mode)
       return { saveConfig: false, rebuild: false, scope: 'models', allProjects: true }
     case 'set-cache-ttl':
-      await setLocalCacheTtl1h(entry.cwd, change.enabled)
+      await setCacheTtl1hForUser(change.enabled)
       // `cacheRuntime` is captured at runtime construction, so this one does
-      // need the rebuild.
-      return { saveConfig: false, rebuild: true, scope: 'models' }
+      // need the rebuild — in every project, since the value is global now.
+      return { saveConfig: false, rebuild: true, scope: 'models', allProjects: true }
     case 'set-user-instructions':
       await writeUserInstructions(change.content)
       // No rebuild: each session snapshots the file when it starts, so the edit
       // reaches the next new session and an open one keeps its cached prefix.
       return { saveConfig: false, rebuild: false, scope: 'models' }
     case 'set-thinking':
-      await setLocalThinking(entry.cwd, change.enabled)
+      await setThinkingForUser(change.enabled)
       // Same reason as the cache TTL: the loop is handed its thinking config
       // when the runtime is built, so only a rebuild reaches an open session.
-      return { saveConfig: false, rebuild: true, scope: 'models' }
+      return { saveConfig: false, rebuild: true, scope: 'models', allProjects: true }
     case 'set-context-management':
       entry.project.config.setContextManagement({ [change.field]: change.value })
       // No rebuild, because a rebuild would not help: the numbers are snapshotted

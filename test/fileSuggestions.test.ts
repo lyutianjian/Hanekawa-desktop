@@ -62,11 +62,11 @@ test('at-completion token is rejected once the quote is closed', () => {
   assert.equal(extractAtCompletionToken('@"my dir/thing.ts"', 18), null)
 })
 
-test('file suggestions list directories before files and drop non-text extensions', async () => {
+test('file suggestions list directories before text and supported image files', async () => {
   await withFixture(async (dir) => {
     const suggestions = await generateFileSuggestions('@', 1, dir)
 
-    assert.deepEqual(paths(suggestions), ['docs/', 'my dir/', 'src/', 'README.md', 'root.ts'])
+    assert.deepEqual(paths(suggestions), ['docs/', 'my dir/', 'src/', 'image.png', 'README.md', 'root.ts'])
     assert.equal(suggestions[0]?.description, 'directory')
     assert.equal(suggestions.at(-1)?.description, 'file')
   })
@@ -214,7 +214,7 @@ test('applying a suggestion preserves the text after the cursor', () => {
   }
 
   assert.deepEqual(applyFileSuggestion('@ro and then some', 3, suggestion), {
-    text: '@root.ts  and then some',
+    text: '@root.ts and then some',
     cursorPos: 9,
   })
 })

@@ -388,6 +388,7 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
       const task = backgroundTasks.registerShell({
         sessionId: context.sessionId,
         command: options.command,
+        ...(options.description === undefined ? {} : { description: options.description }),
         proc,
         outputDir: getToolResultSpillDir(context.projectDir ?? context.cwd, context.sessionId),
       })
@@ -509,6 +510,7 @@ export function createBashTool(backgroundTasks: BackgroundTaskRegistry = default
         const task = backgroundTasks.registerShell({
           sessionId: context.sessionId,
           command: options.command,
+          ...(options.description === undefined ? {} : { description: options.description }),
           proc,
           outputDir: getToolResultSpillDir(context.projectDir ?? context.cwd, context.sessionId),
         })

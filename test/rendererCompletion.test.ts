@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   NO_COMPLETIONS,
+  mergeMentionSuggestions,
   acceptCompletion,
   acceptOnly,
   applyFileResponse,
@@ -136,18 +137,22 @@ test('an empty answer closes the dropdown', () => {
 
 // --- accepting --------------------------------------------------------------
 
+test('built-in and skill completions both finish with one space after the token', () => {
+  for (const command of [COMMANDS[0]!, { name: 'review', description: 'Review code', isSkill: true }]) {
+    const state = commandCompletions(NO_COMPLETIONS, `/${command.name}`, [command])
+    const text = `/${command.name} `
+    assert.deepEqual(acceptCompletion(state, `/${command.name}`, command.name.length + 1), { text, cursorPos: text.length })
+  }
+})
+
 test('accepting a file mention splices over its token and leaves the rest alone', () => {
   const started = beginFileRequest(NO_COMPLETIONS)
   const state = applyFileResponse(started.state, started.seq, [file('src/desktop/app.ts')])
 
   // The caret sits at the end of `@src/de`, with prose on both sides of it.
-  // The doubled space is `applyFileSuggestion`'s existing behaviour — a file
-  // always gets a trailing space, whether or not one follows it — and the TUI
-  // has always done the same; it is asserted here rather than quietly fixed in
-  // a shared module this stage is only meant to be splitting.
   const applied = acceptCompletion(state, 'read @src/de and summarise', 12)
   assert.deepEqual(applied, {
-    text: 'read @src/desktop/app.ts  and summarise',
+    text: 'read @src/desktop/app.ts and summarise',
     cursorPos: 25,
   })
 })
@@ -216,4 +221,26 @@ test('a clicked row is focused by index, clamped and without re-requesting', () 
   assert.equal((selectCompletion(state, 9) as { selectedIndex: number }).selectedIndex, 1)
   assert.equal((selectCompletion(state, -3) as { selectedIndex: number }).selectedIndex, 0)
   assert.equal(selectCompletion(NO_COMPLETIONS, 0), NO_COMPLETIONS)
+})
+
+
+test('mixed mentions keep both sources, cap at fifteen and accept sessions without sending', () => {
+  const sessions: FileSuggestion[] = Array.from({ length: 15 }, (_, i) => ({
+    id: `session:${i}`, displayText: `会话${i}`,
+    metadata: { kind: 'session', path: 'hanekawa://session/11111111-1111-4111-8111-111111111111', replacementText: '[会话](hanekawa://session/11111111-1111-4111-8111-111111111111)', projectName: '最近' },
+  }))
+  const combined = mergeMentionSuggestions(Array.from({ length: 15 }, (_, i) => file(`src/a${i}.ts`)), sessions)
+  assert.equal(combined.length, 15)
+  assert.ok(combined.filter((row) => row.metadata.kind === 'file').length >= 5)
+  assert.ok(combined.filter((row) => row.metadata.kind === 'session').length >= 5)
+  const requested = beginFileRequest(NO_COMPLETIONS)
+  const state = applyFileResponse(requested.state, requested.seq, sessions)
+  assert.equal(acceptOnly(state), true)
+  const accepted = acceptCompletion(state, '参考 @会', 5)
+  assert.equal(accepted?.text, '参考 [会话](hanekawa://session/11111111-1111-4111-8111-111111111111) ')
+  assert.deepEqual(acceptCompletion(state, '参考 @ 下一步', 4), {
+    text: '参考 [会话](hanekawa://session/11111111-1111-4111-8111-111111111111) 下一步',
+    cursorPos: accepted!.cursorPos,
+  })
+  assert.equal(completionRows(state)[0]?.mention?.icon, 'message-circle')
 })

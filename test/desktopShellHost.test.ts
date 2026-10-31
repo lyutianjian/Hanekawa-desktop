@@ -707,6 +707,8 @@ const COMMAND_SAMPLES = {
   panes: { type: 'panes', id: 'a' },
   'open-session': { type: 'open-session', id: 'b', sessionId: 's1', title: 'T', projectRoot: 'r' },
   'open-project': { type: 'open-project', id: 'c' },
+  'session-suggestions': { type: 'session-suggestions', id: 'suggest', query: 'hello', projectRoot: 'r' },
+  'resolve-session-reference': { type: 'resolve-session-reference', id: 'resolve', ref: 'hanekawa://session/11111111-1111-4111-8111-111111111111' },
   'list-sessions': { type: 'list-sessions', id: 'd' },
   'usage-stats': { type: 'usage-stats', id: 'u' },
   'model-names': { type: 'model-names', id: 'mn' },
@@ -881,7 +883,9 @@ test('every shell command variant round-trips through its schema', () => {
       'remove-project',
       'rename-session',
       'request-attention',
+      'resolve-session-reference',
       'reveal-skill',
+      'session-suggestions',
       'set-window-theme',
       'settings-change',
       'thread-merge',
@@ -2328,6 +2332,60 @@ test('an inherited rule is never copied into the local layer by an edit', async 
   })
 })
 
+test('personal permission rules are global, with project rules kept separate and no runtime rebuild', async () => {
+  await withSettingsDir({ permissions: { allow: ['Read'] } }, async (h, cwd) => {
+    await openOneLane(h)
+    const beta = h.addProject(fixturePath('repo', 'beta'))
+    await beta.project.loadSettings()
+    const betaReloads = beta.project.reloads
+    const result = await h.client.changeSettings(h.entry.root, {
+      scope: 'permissions', kind: 'set-permission-entries', behavior: 'allow', entries: ['Grep'],
+    }, undefined, 'personal')
+    assert.deepEqual((await readUserLayer()).permissions, { allow: ['Grep'] })
+    assert.deepEqual(await readLocalLayer(cwd), {})
+    assert.equal(beta.project.reloads, betaReloads + 1)
+    assert.deepEqual(beta.project.settings.permissions?.allow, ['Grep'])
+    assert.equal(result.settings.permissionsScope, 'personal')
+    assert.equal(result.settings.permissions.localPath, path.join(getGlobalHanekawaDir(), 'settings.json'))
+    assert.deepEqual(result.settings.permissions.groups[0], { behavior: 'allow', local: ['Grep'], inherited: [] })
+    assert.equal(result.rebuiltLanes, 0)
+    assert.equal(h.configRefreshes.length, 0)
+    assert.equal(h.project.config.saves, 0)
+
+    const personal = await h.client.getSettings(h.entry.root, undefined, 'personal')
+    assert.deepEqual(personal.settings.permissions, result.settings.permissions)
+    const project = await h.client.changeSettings(h.entry.root, {
+      scope: 'permissions', kind: 'set-permission-entries', behavior: 'allow', entries: ['Write'],
+    })
+    assert.equal(project.settings.permissionsScope, undefined)
+    assert.deepEqual(project.settings.permissions.groups[0], { behavior: 'allow', local: ['Write'], inherited: ['Grep', 'Read'] })
+    assert.deepEqual((await readUserLayer()).permissions, { allow: ['Grep'] })
+    assert.equal(beta.project.reloads, betaReloads + 1, 'project edits stay within the project')
+  })
+})
+
+test('the recent workspace always reads and writes personal permission rules', async () => {
+  const localPath = localSettingsPath(os.homedir())
+  await mkdir(path.dirname(localPath), { recursive: true })
+  const oldLocal = JSON.stringify({ permissions: { allow: ['Bash(ls:*)'] } })
+  await writeFile(localPath, oldLocal)
+  const h = createHarness({ cwd: os.homedir() })
+  seedConfig(h.project)
+  await h.project.loadSettings()
+  const before = await h.client.getSettings(h.entry.root)
+  assert.equal(before.settings.permissionsScope, 'personal')
+  assert.deepEqual(before.settings.permissions.groups[0]?.local, [], 'the personal editor does not load old recent-only rules')
+  const result = await h.client.changeSettings(h.entry.root, {
+    scope: 'permissions', kind: 'set-permission-entries', behavior: 'deny', entries: ['Delete'],
+  })
+  assert.equal(result.settings.permissionsScope, 'personal')
+  assert.deepEqual((await readUserLayer()).permissions, { deny: ['Delete'] })
+  assert.equal(await readFile(localPath, 'utf8'), oldLocal, 'old recent-only settings are preserved')
+  assert.deepEqual(result.settings.permissions.groups.find((group) => group.behavior === 'deny'), {
+    behavior: 'deny', local: ['Delete'], inherited: [],
+  })
+})
+
 test('a removal is a shorter group, and it really shortens the file', async () => {
   await withSettingsDir({}, async (h, cwd) => {
     const write = (entries: string[]) =>
@@ -2461,7 +2519,8 @@ test('the cache toggle rebuilds the lanes; the context numbers do not', async ()
       kind: 'set-cache-ttl',
       enabled: true,
     })
-    assert.deepEqual((await readLocalLayer(cwd)).cache, { ttl1h: true })
+    assert.deepEqual((await readUserLayer()).cache, { ttl1h: true })
+    assert.deepEqual(await readLocalLayer(cwd), {}, 'global now: no per-project override is written')
     assert.equal(cache.settings.general.cacheTtl1h, true)
     assert.equal(cache.rebuiltLanes, 1)
     assert.equal(h.project.config.saves, 0)
@@ -3450,4 +3509,33 @@ test('a root that is still closing resolves to no project, so a reopen must wait
   const reborn = h.addProject(h.entry.cwd)
   assert.equal(h.directory.size, 1, 'one runtime per root, because the old one was finished first')
   assert.equal(h.directory.entries()[0], reborn.entry)
+})
+
+
+test('session references find closed projects and global history without opening lanes or mutating indexes', async () => {
+  const closed = await mkdtemp(path.join(os.tmpdir(), 'hanekawa-reference-shell-'))
+  const id = '11111111-1111-4111-8111-111111111111'
+  const globalId = '22222222-2222-4222-8222-222222222222'
+  const home = process.env.USERPROFILE!
+  const indexes = [
+    { root: closed, id, title: '引用测试' },
+    { root: home, id: globalId, title: '引用最近' },
+  ]
+  try {
+    for (const fixture of indexes) {
+      await mkdir(getSessionsDir(fixture.root), { recursive: true })
+      await writeFile(path.join(getSessionsDir(fixture.root), 'index.json'), JSON.stringify({ sessions: [{ ...sessionOf(fixture.id, fixture.title), messageCount: 2 }] }))
+    }
+    const before = await readFile(path.join(getSessionsDir(closed), 'index.json'), 'utf8')
+    const h = createHarness({ knownProjects: async () => [closed] })
+    const found = await h.client.sessionSuggestions('引用', h.entry.root)
+    assert.deepEqual(new Set(found.results.map((row) => row.sessionId)), new Set([id, globalId]))
+    const resolved = await h.client.resolveSessionReference(`hanekawa://session/${id}`)
+    assert.equal(resolved.projectRoot, projectRootKey(closed))
+    assert.equal(resolved.title, '引用测试')
+    assert.equal((await h.client.resolveSessionReference(globalId)).projectName, '最近')
+    await assert.rejects(h.client.resolveSessionReference('hanekawa://session/../../etc/passwd'), /无效/)
+    assert.deepEqual(await h.client.panes(), [])
+    assert.equal(await readFile(path.join(getSessionsDir(closed), 'index.json'), 'utf8'), before)
+  } finally { await rm(closed, { recursive: true, force: true }) }
 })

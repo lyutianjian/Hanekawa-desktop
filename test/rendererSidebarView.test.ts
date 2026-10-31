@@ -1152,3 +1152,54 @@ test('a project menu opens from a visible ⋯ and from Shift+F10, and the keyboa
   assert.equal(document.activeElement, item.node, 'Shift+F10 puts focus on the item')
   assert.equal(find(root(), 'project-more')?.attributes.get('aria-expanded'), 'true')
 })
+
+test('session link menu copies stable identity, opens by keyboard and dismisses without opening the session', (t) => {
+  const { render, root, stub, intents } = mount(t)
+  const id = '11111111-1111-4111-8111-111111111111'
+  render(viewOf({ projects: [{ projectRoot: '/w/app', projectName: 'app', sessions: [{ id, title: '讨论 [引用]', updatedAt: '2026-10-31T00:00:00.000Z', messageCount: 2 }] }] }))
+  const row = sessionRows(root())[0]!
+  assert.equal(stub.dispatch(row.node, 'contextmenu').defaultPrevented, true)
+  const menu = find(root(), 'session-reference-menu')!
+  assert.ok(menu)
+  const copy = find(menu, 'project-menu-item')!
+  assert.equal(document.activeElement, copy.node)
+  stub.click(copy.node)
+  assert.deepEqual(intents, [{ kind: 'copy-session-link', sessionId: id, title: '讨论 [引用]' }])
+  assert.equal(find(root(), 'session-reference-menu'), undefined)
+  intents.length = 0
+  stub.dispatch(row.node, 'keydown', { key: 'F10', shiftKey: true })
+  const reopened = find(root(), 'session-reference-menu')!
+  assert.ok(reopened)
+  stub.dispatch(reopened.node, 'focusout', { relatedTarget: null })
+  assert.ok(find(root(), 'session-reference-menu'), 'repaint focusout is ignored')
+  stub.dispatch(reopened.node, 'keydown', { key: 'Escape' })
+  assert.equal(find(root(), 'session-reference-menu'), undefined)
+  assert.deepEqual(intents, [])
+})
+
+test('dragging a long session uses a separate static preview and preserves the complete link', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] })
+  const { render, root, stub, intents } = mount(t)
+  const id = '11111111-1111-4111-8111-111111111111'
+  const title = '当前 subagent 和子线程的模型与思考等级如何选择'.repeat(4)
+  render(viewOf({ projects: [{ projectRoot: '/w/app', projectName: 'app', sessions: [{ id, title, updatedAt: '2026-10-31T00:00:00Z', messageCount: 2 }] }] }))
+  const row = sessionRows(root())[0]!
+  const data = new Map<string, string>()
+  let captured: unknown
+  const transfer = { effectAllowed: 'none', setData: (type: string, value: string) => { data.set(type, value) }, setDragImage: (image: unknown) => { captured = image } }
+  stub.dispatch(row.node, 'dragstart', { dataTransfer: transfer })
+  assert.ok(captured)
+  assert.notEqual(captured, row.node)
+  const preview = stub.inspect(captured)
+  assert.equal(preview.className, 'session-drag-preview')
+  assert.equal(preview.text, title)
+  assert.equal(find(preview, 'session-title-echo'), undefined)
+  assert.equal(find(preview, 'session-actions'), undefined)
+  assert.equal(data.get('application/x-hanekawa-session-reference'), `[${title}](hanekawa://session/${id})`)
+  assert.equal(data.get('text/plain'), data.get('application/x-hanekawa-session-reference'))
+  assert.equal(transfer.effectAllowed, 'copy')
+  stub.click(find(row, 'session-open')!.node)
+  assert.deepEqual(intents, [], 'the drag does not open the source')
+  t.mock.timers.tick(0)
+  assert.equal((captured as HTMLElement).parentElement, null, 'the temporary preview is removed after capture')
+})

@@ -1,4 +1,5 @@
 import type { ActivityStep, TaskOp } from './transcript.js'
+import { BROWSER_TOOL, browserRow } from './browserSteps.js'
 import { isMemoryIndex, memoryOp, memorySlug, type MemoryOp } from './memoryOps.js'
 
 /**
@@ -11,6 +12,7 @@ export type CallStep = Extract<ActivityStep, { kind: 'tool' | 'task' }>
 /** How each built-in reads as an activity: the verb, and which target it names. */
 const PHRASES: Record<string, { readonly verb: string; readonly target?: 'file' | 'text' }> = {
   Read: { verb: '读取', target: 'file' },
+  ReadSession: { verb: '读取会话', target: 'text' },
   Edit: { verb: '编辑', target: 'file' },
   MultiEdit: { verb: '编辑', target: 'file' },
   NotebookEdit: { verb: '编辑', target: 'text' },
@@ -46,11 +48,31 @@ const TARGET_MAX = 40
  * described: 「检查工作目录」 already says everything, and 「运行 检查工作目录」 would
  * only add a word. Without a description the command's first word is the target,
  * and keeps its verb.
+ *
+ * `cwd` is the scope's working directory, for a file target read at `fullPath`:
+ * a file inside it is named from there, one outside keeps the path it was given.
  */
-export function callParts(step: CallStep, fullPath = false): { readonly verb: string; readonly target: string; readonly bare: boolean } {
+export function callParts(step: CallStep, fullPath = false, cwd?: string): { readonly verb: string; readonly target: string; readonly bare: boolean } {
   if (step.tool.taskOps !== undefined) return { verb: taskPhrase(step.tool.taskOps), target: '', bare: false }
   const memory = memoryOp(step)
   if (memory !== undefined) return memoryParts(step, memory)
+  if (step.toolName === 'ReadSession') {
+    const search = step.tool.displayName === '查找会话'
+    let target = step.tool.useSummary
+    if (!search && step.tool.content) {
+      try {
+        const result = JSON.parse(step.tool.content) as { session?: { title?: unknown } }
+        if (typeof result.session?.title === 'string') target = result.session.title
+      } catch { /* A failed result keeps its original target. */ }
+    }
+    return { verb: search ? '查找会话' : '读取会话', target, bare: false }
+  }
+  // The browser names its own action per operation — 「截取页面」, 「点击 e12」 — so
+  // the generic verb would only say 「浏览器 page.screenshot」 over it.
+  if (step.toolName === BROWSER_TOOL && step.tool.browser !== undefined) {
+    const row = browserRow(step.tool.browser)
+    return { verb: row.verb, target: row.target, bare: false }
+  }
   const phrase = step.toolName === undefined ? undefined : PHRASES[step.toolName]
   if (phrase === undefined) {
     const name = step.tool.displayName || step.toolName || '工具'
@@ -60,8 +82,20 @@ export function callParts(step: CallStep, fullPath = false): { readonly verb: st
   // Grep and Glob caption as `pattern · glob · path`; the pattern is the target.
   const raw = step.tool.description ?? step.tool.useSummary.split(' · ')[0] ?? ''
   const oneLine = raw.replace(/\s+/g, ' ').trim()
-  const target = phrase.target === 'file' && !fullPath ? oneLine.split(/[\\/]/).pop()! : bashWord(step, oneLine)
+  const target = phrase.target === 'file' ? fileTarget(oneLine, fullPath, cwd) : bashWord(step, oneLine)
   return { verb: phrase.verb, target, bare: step.toolName === 'Bash' && !!step.tool.description?.trim() }
+}
+
+/**
+ * A file call's target. The live line names the file itself (「读取 waiting.ts」);
+ * an opened run gives the path the tool was handed, minus the workspace prefix
+ * when the file lies inside it — every file the project owns shares that prefix.
+ */
+function fileTarget(path: string, fullPath: boolean, cwd: string | undefined): string {
+  const one = path.replace(/\\/g, '/')
+  if (!fullPath) return one.slice(one.lastIndexOf('/') + 1)
+  const root = cwd === undefined ? '' : cwd.replace(/\\/g, '/').replace(/\/+$/, '')
+  return root.length > 0 && one.startsWith(`${root}/`) ? one.slice(root.length + 1) : path
 }
 
 const MEMORY_VERBS: Readonly<Record<MemoryOp, string>> = {

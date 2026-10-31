@@ -1,4 +1,5 @@
 import type { SuggestionItem } from './types.js'
+import { insertSuggestion } from './insertSuggestion.js'
 
 /**
  * The half of `@` file completion that a browser can run.
@@ -9,8 +10,8 @@ import type { SuggestionItem } from './types.js'
  * accepting one** is pure string work, and both shells need exactly that: the
  * host searches, the view splices.
  *
- * So the split is by dependency, not by convenience. Everything here has no
- * imports beyond the type above, which is what lets this module sit on
+ * So the split is by dependency, not by convenience. This module and its
+ * insertion helper only operate on strings, which lets this module sit on
  * `test/rendererImports.test.ts`'s allowlist — that test opens every allowlisted
  * file and fails on any `node:` value import other than `node:crypto`.
  * `fileSuggestions.ts` re-exports all four names, so no existing caller moved.
@@ -19,7 +20,10 @@ import type { SuggestionItem } from './types.js'
 export interface FileSuggestionMetadata {
   replacementText: string
   path: string
-  kind: 'directory' | 'file'
+  kind: 'directory' | 'file' | 'session'
+  projectName?: string
+  updatedAt?: string
+  currentProject?: boolean
 }
 
 export type FileSuggestion = SuggestionItem<FileSuggestionMetadata> & {
@@ -134,12 +138,5 @@ export function applyFileSuggestion(
   const token = extractAtCompletionToken(input, cursorPos)
   if (!token) return { text: input, cursorPos }
 
-  const replacement = suggestion.metadata.kind === 'directory'
-    ? suggestion.metadata.replacementText
-    : `${suggestion.metadata.replacementText} `
-  const text = input.slice(0, token.startPos) + replacement + input.slice(cursorPos)
-  return {
-    text,
-    cursorPos: token.startPos + replacement.length,
-  }
+  return insertSuggestion(input, token.startPos, cursorPos, suggestion.metadata.replacementText, suggestion.metadata.kind !== 'directory')
 }

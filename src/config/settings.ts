@@ -351,6 +351,22 @@ function withoutStartupPermissionMode(settings: HanekawaSettings): HanekawaSetti
 }
 
 /**
+ * Drops the two account-level switches from a project-scoped layer.
+ *
+ * 扩展思考 and the 1-hour cache TTL are one value for every project, so only the
+ * user layer may set them: a local file still holding one written by the old
+ * per-project control would mask the global toggle, which reads as a switch that
+ * does nothing. Dropped silently, like the startup mode — it was a legitimate
+ * write until the control moved, and nothing on screen offers it any more.
+ */
+function withoutGlobalOnlySwitches(settings: HanekawaSettings): HanekawaSettings {
+  if (settings.thinking === undefined && settings.cache?.ttl1h === undefined) return settings
+  const { thinking: _thinking, cache, ...rest } = settings
+  const { ttl1h: _ttl1h, ...keptCache } = cache ?? {}
+  return Object.keys(keptCache).length > 0 ? { ...rest, cache: keptCache } : rest
+}
+
+/**
  * A repository must not loosen its own guard: the checked-in layer cannot pick
  * the startup permission mode or pre-trust MCP servers. The mode belongs to the
  * user layer; MCP trust stays settable from it and from the local layer.
@@ -406,15 +422,15 @@ export async function loadSettingsLayers(cwd: string): Promise<SettingsLayers> {
   // `config.json`.
   const project = isGlobalWorkspaceRoot(cwd)
     ? {}
-    : withoutProjectTrustGrants(withoutOwnedConfig(
+    : withoutGlobalOnlySwitches(withoutProjectTrustGrants(withoutOwnedConfig(
         await loadSettingsFile(join(cwd, '.hanekawa', 'settings.json')),
         join(cwd, '.hanekawa', 'settings.json'),
-      ))
+      )))
   const compatMcpServers = await readMcpServersFile(join(cwd, '.mcp.json'))
   const legacyMcp = await loadLegacyMcpSettings(cwd, compatMcpServers)
-  const local = withoutStartupPermissionMode(
+  const local = withoutGlobalOnlySwitches(withoutStartupPermissionMode(
     withoutOwnedConfig(await loadSettingsFile(localSettingsPath(cwd)), localSettingsPath(cwd)),
-  )
+  ))
   return { user, project, legacyMcp, local, compatMcp: new Set(Object.keys(compatMcpServers ?? {})) }
 }
 
@@ -445,9 +461,8 @@ export async function updateUserSettings(mutate: (settings: HanekawaSettings) =>
 }
 
 /**
- * The layer every in-app write lands in: an "always allow", an MCP trust
- * decision, and everything the desktop settings screen edits outside
- * `config.json`.
+ * The layer for per-project in-app writes: an "always allow", an MCP trust
+ * decision, and project-scoped desktop settings.
  *
  * Per project but personal, so it lives in the project's data dir under
  * `~/.hanekawa/projects/`, not in the project: clicking "always allow" must not
@@ -471,10 +486,10 @@ export async function loadLocalSettings(cwd: string): Promise<HanekawaSettings> 
 
 /** The keys {@link updateLocalSettings} is allowed to rewrite. */
 export type LocalSettingsPatch = {
-  [K in 'permissions' | 'mcp' | 'skills' | 'cache' | 'thinking' | 'mcpServers']?: HanekawaSettings[K]
+  [K in 'permissions' | 'mcp' | 'skills' | 'mcpServers']?: HanekawaSettings[K]
 }
 
-const LOCAL_PATCH_KEYS = ['permissions', 'mcp', 'skills', 'cache', 'thinking', 'mcpServers'] as const
+const LOCAL_PATCH_KEYS = ['permissions', 'mcp', 'skills', 'mcpServers'] as const
 
 /**
  * Rewrites the named keys in the local layer and leaves the rest of that file
@@ -510,6 +525,16 @@ export async function setLocalPermissionEntries(
 ): Promise<void> {
   await updateSettingsFile(localSettingsPath(cwd), (local) => {
     local.permissions = { ...local.permissions, [behavior]: [...entries] }
+  })
+}
+
+/** Replaces one permission group shared by all projects. */
+export async function setUserPermissionEntries(
+  behavior: 'allow' | 'deny' | 'ask',
+  entries: readonly string[],
+): Promise<void> {
+  await updateUserSettings((settings) => {
+    settings.permissions = { ...settings.permissions, [behavior]: [...entries] }
   })
 }
 
@@ -669,20 +694,18 @@ export async function trustMcpServerLocally(cwd: string, serverName: string): Pr
 }
 
 /**
- * Extended thinking, in the local layer.
+ * Extended thinking, in the user layer: one value for every project.
  *
  * Written as an explicit boolean rather than deleted when enabled: "on" and
- * "unset" behave the same, but only a written `true` survives a `thinking:
- * false` in a layer above this one.
+ * "unset" behave the same, but the row has to be able to say which it is.
  */
-export async function setLocalThinking(cwd: string, enabled: boolean): Promise<void> {
-  await updateLocalSettings(cwd, { thinking: enabled })
+export async function setThinkingForUser(enabled: boolean): Promise<void> {
+  await updateUserSettings((settings) => { settings.thinking = enabled })
 }
 
-/** The 1-hour prompt-cache TTL, in the local layer. */
-export async function setLocalCacheTtl1h(cwd: string, enabled: boolean): Promise<void> {
-  const local = await loadLocalSettings(cwd)
-  await updateLocalSettings(cwd, { cache: { ...local.cache, ttl1h: enabled } })
+/** The 1-hour prompt-cache TTL, in the user layer. */
+export async function setCacheTtl1hForUser(enabled: boolean): Promise<void> {
+  await updateUserSettings((settings) => { settings.cache = { ...settings.cache, ttl1h: enabled } })
 }
 
 export async function persistPermissionRule(cwd: string, rule: PermissionRule): Promise<void> {

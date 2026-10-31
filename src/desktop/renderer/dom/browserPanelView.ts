@@ -158,7 +158,12 @@ export function createBrowserPanelView(
   // on — and both are drawn only while the native view is told not to paint,
   // because a `WebContentsView` sits above this document entirely.
 
-  const blank = el('p', 'browser-blank', '在上方输入网址开始浏览')
+  const blank = el(
+    'div',
+    'browser-blank',
+    icon('globe', 'browser-blank-icon'),
+    el('p', 'browser-blank-text', '在上方输入网址开始浏览'),
+  )
   const failedAddress = el('p', 'browser-error-address')
   const failedReason = el('p', 'browser-error-reason')
   /** The address the error page is about, so 「重试」 does not need the bar re-typed. */
@@ -411,7 +416,9 @@ export function createBrowserPanelView(
  */
 function tabIcon(tab: WireBrowserTabInfo): HTMLElement | SVGSVGElement {
   if (tab.loading) return icon('spinner', 'icon browser-tab-icon loading')
-  if (tab.favicon === undefined) return el('span', 'browser-tab-icon')
+  // A globe, not an empty square: the square read as an image that failed to
+  // load, which is what it was.
+  if (tab.favicon === undefined) return icon('globe', 'browser-tab-icon')
   const image = el('img', 'browser-tab-icon')
   image.setAttribute('src', tab.favicon)
   // Decoration beside a label that already names the site.

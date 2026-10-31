@@ -8,7 +8,7 @@ import {
   type TranscriptItem,
 } from '../src/desktop/renderer/model/transcript.js'
 import {
-  completedRow,
+  activityCarrier,
   rowLabel,
   settleLabel,
   statusMeta,
@@ -63,43 +63,12 @@ test('an idle session says nothing at all', () => {
   assert.deepEqual(activity([USER, DONE_BASH], false), { row: undefined, mark: undefined })
 })
 
-test('normal completion labels use only the ending turn’s last step and measured thinking duration', () => {
-  const input: WaitingInput = { isStreaming: true, startedAt: STARTED_AT, turnId: TURN }
-  const thought = (durationMs?: number): TranscriptItem => ({ ...THINKING, pending: false, durationMs })
-  const cases: Array<[readonly TranscriptItem[], string]> = [
-    [[USER], '已完成'],
-    [turn([DONE_BASH, said]), '已完成'],
-    [turn([thought()]), '已完成'],
-    [turn([thought(0)]), '思考了 1 秒'],
-    [turn([thought(1_499)]), '思考了 1 秒'],
-    [turn([thought(1_500), said]), '思考了 2 秒'],
-    [turn([thought(63_000)]), '思考了 63 秒'],
-    [turn([thought(3_000), DONE_BASH]), '已完成'],
-    [[{ ...thought(3_000), turnId: 't0' }, USER, said], '已完成'],
-  ]
-  for (const [items, label] of cases) {
-    assert.deepEqual(completedRow(groupTranscript(items), input), { label, startedAt: STARTED_AT, timing: 'immediate' })
-  }
-  assert.equal(completedRow(groupTranscript(turn([thought(3_000)])), { ...input, startedAt: undefined })?.startedAt, undefined)
-})
-
-test('failed and interrupted turns do not get normal completion feedback', () => {
-  const input: WaitingInput = { isStreaming: true, startedAt: STARTED_AT, turnId: TURN }
-  const cases: readonly TranscriptItem[][] = [
-    turn([DONE_BASH, { id: 'e', kind: 'error', text: 'boom', turnId: TURN }]),
-    turn([DONE_BASH, { id: 'e', kind: 'turn-failure', text: '失败', turnId: TURN }]),
-    turn([{ ...DONE_BASH, failed: true }]),
-    turn([THINKING, { id: 'stop', kind: 'notice', text: '中断', interrupt: true }]),
-  ]
-  for (const items of cases) assert.equal(completedRow(groupTranscript(items), input), undefined)
-})
-
 test('what the status reads, by priority', () => {
   const cases: Array<[string, string | undefined, readonly TranscriptItem[], Partial<WaitingInput>?, boolean?]> = [
     ['before the first step', '处理中', [USER], {}, true],
-    ['a thought in progress', '正在思考', turn([THINKING])],
-    ['between two tools', '处理中', turn([DONE_BASH])],
-    ['after a paragraph', '处理中', turn([DONE_BASH, said])],
+    ['a thought in progress', '先看看。', turn([THINKING])],
+    ['between two tools', '跑测试', turn([DONE_BASH])],
+    ['after a paragraph', '跑测试', turn([DONE_BASH, said])],
     ['a finished thought', '处理中', turn([{ ...THINKING, pending: false }])],
     ['a running call, in words', '跑测试', turn([THINKING, RUNNING_BASH])],
     ['an undescribed command says only that a command runs', '正在运行命令', turn([bare])],
@@ -177,10 +146,10 @@ test('the clock is carried through, missing and all', () => {
 })
 
 test('a thought escalates from its own start, else from the turn’s', () => {
-  const row = activity(turn([THINKING])).row!
+  const row = activity(turn([{ ...THINKING, text: '' }])).row!
   assert.equal(row.thinkingSince, STARTED_AT + 3_000)
   assert.equal(rowLabel(row, STARTED_AT + 3_000 + 15_000), '仍在思考')
-  const unstamped = activity(turn([{ ...THINKING, startedAt: undefined }])).row!
+  const unstamped = activity(turn([{ ...THINKING, text: '', startedAt: undefined }])).row!
   assert.equal(unstamped.thinkingSince, STARTED_AT)
   // Anything but a thought keeps its words.
   const running = activity(turn([THINKING, RUNNING_BASH])).row!
@@ -250,115 +219,41 @@ test('the streaming call is remembered until its message lands', () => {
   assert.equal(state.draftCall, undefined)
 })
 
-test('the label gate: a burst shows only its last word, once it has held', () => {
-  const step = (gate: LabelGate | undefined, want: string, now: number) => settleLabel(gate, want, 1, now, 'tool')
-  let r = step(undefined, 'A', 0)
-  assert.equal(r.label, 'A')
-  // Past the minimum stay, a new word still waits out the debounce.
-  r = step(r.gate, 'B', 650)
-  assert.deepEqual([r.label, r.recheckAt], ['A', 800])
-  // A change of mind restarts the debounce; B never showed.
-  r = step(r.gate, 'C', 700)
-  assert.deepEqual([r.label, r.recheckAt], ['A', 850])
-  r = step(r.gate, 'C', 850)
-  assert.deepEqual([r.label, r.recheckAt], ['C', undefined])
+test('work-line text settles for 250ms and tool labels stay readable for two seconds', () => {
+  let gate = settleLabel(undefined, '读取 a.ts', STARTED_AT, 0, 'tool').gate
+  const next = settleLabel(gate, '读取 b.ts', STARTED_AT, 100, 'tool')
+  assert.equal(next.label, '读取 a.ts')
+  assert.equal(next.recheckAt, 2_000)
+  gate = next.gate
+  assert.equal(settleLabel(gate, '读取 b.ts', STARTED_AT, 1_999, 'tool').label, '读取 a.ts')
+  assert.equal(settleLabel(gate, '读取 b.ts', STARTED_AT, 2_000, 'tool').label, '读取 b.ts')
+  assert.equal(settleLabel(gate, '读取 a.ts', STARTED_AT, 500, 'tool').gate.pending, undefined)
 })
 
-test('the label gate: a tool stays 650ms, and asking for it back cancels the switch', () => {
-  const step = (gate: LabelGate | undefined, want: string, now: number) => settleLabel(gate, want, 1, now, 'tool')
-  let r = step(undefined, 'A', 0)
-  r = step(r.gate, 'B', 200)
-  assert.deepEqual([r.label, r.recheckAt], ['A', 650])
-  r = step(r.gate, 'B', 649)
-  assert.equal(r.label, 'A')
-  r = step(r.gate, 'B', 650)
-  assert.equal(r.label, 'B')
-  // B came back to A inside the delay: nothing pending, nothing to recheck.
-  r = step(r.gate, 'C', 700)
-  r = step(r.gate, 'B', 710)
-  assert.deepEqual([r.label, r.recheckAt, r.gate.pending], ['B', undefined, undefined])
-})
-
-test('the label gate: a new epoch switches at once', () => {
-  let r = settleLabel(undefined, 'A', 1, 0, 'tool')
-  r = settleLabel(r.gate, 'B', 2, 10, 'tool')
-  assert.deepEqual([r.label, r.recheckAt, r.gate.epoch], ['B', undefined, 2])
-})
-
-test('short tools and processing share a 150ms debounce and 650ms minimum stay', () => {
-  const tool = activity(turn([RUNNING_BASH])).row!
-  const gap = activity(turn([DONE_BASH])).row!
-  const step = (gate: LabelGate | undefined, row: typeof tool, now: number) => settleLabel(gate, row.label, row.startedAt, now, row.timing)
-  let r = step(undefined, tool, 0)
-  r = step(r.gate, gap, 200)
-  assert.deepEqual([r.label, r.recheckAt], ['跑测试', 650], 'the two delays overlap instead of adding up')
-  r = step(r.gate, gap, 649)
-  assert.equal(r.label, '跑测试')
-  r = step(r.gate, gap, 650)
-  assert.equal(r.label, '处理中')
-
-  r = step(undefined, tool, 0)
-  r = step(r.gate, gap, 2_000)
-  assert.deepEqual([r.label, r.recheckAt], ['跑测试', 2_150])
-  r = step(r.gate, gap, 2_149)
-  assert.equal(r.label, '跑测试')
-  r = step(r.gate, gap, 2_150)
-  assert.equal(r.label, '处理中')
-})
-
-test('the next tool cancels a pending gap, while a shown gap has the same minimum stay', () => {
-  let r = settleLabel(undefined, 'A', 1, 0, 'tool')
-  r = settleLabel(r.gate, '处理中', 1, 100, 'gap')
-  r = settleLabel(r.gate, 'B', 1, 200, 'tool')
-  assert.deepEqual([r.label, r.recheckAt], ['A', 650])
-  r = settleLabel(r.gate, 'B', 1, 650, 'tool')
-  assert.equal(r.label, 'B')
-
-  r = settleLabel(undefined, '处理中', 1, 0, 'gap')
-  r = settleLabel(r.gate, 'A', 1, 100, 'tool')
-  assert.equal(r.recheckAt, 650, 'processing stays readable too')
-})
-
-test('thinking, output and compaction share the normal label rhythm', () => {
-  const rows = [
-    activity(turn([THINKING])).row!,
-    activity([USER, DRAFT('好的')], true, undefined).row!,
-    activity(turn([RUNNING_BASH]), true, TURN, { phase: { kind: 'compacting' } }).row!,
-  ]
-  for (const row of rows) {
-    assert.notEqual(row.timing, 'immediate', row.label)
-    let r = settleLabel(undefined, '跑测试', STARTED_AT, 0, 'tool')
-    r = settleLabel(r.gate, row.label, STARTED_AT, 30, row.timing)
-    assert.deepEqual([r.label, r.recheckAt], ['跑测试', 650])
-    r = settleLabel(r.gate, row.label, STARTED_AT, 650, row.timing)
-    r = settleLabel(r.gate, row.label, STARTED_AT, 700, row.timing)
-    assert.equal(r.gate.shownAt, 650, 'unchanged paints do not restart the minimum stay')
-    r = settleLabel(r.gate, '下一条命令', STARTED_AT, 710, 'tool')
-    assert.equal(r.recheckAt, 1_300)
+test('requests and failures bypass the hold; a new turn never inherits it', () => {
+  const gate = settleLabel(undefined, '读取 a.ts', STARTED_AT, 0, 'tool').gate
+  for (const label of ['等待你确认', '正在提问', '请求失败 · 第 1 次重试', '处理中']) {
+    assert.equal(settleLabel(gate, label, STARTED_AT, 10, 'immediate').label, label)
   }
+  assert.equal(settleLabel(gate, '处理中', STARTED_AT + 1, 10, 'gap').label, '处理中')
+  const gap = settleLabel(gate, '正在输出', STARTED_AT, 10, 'gap')
+  assert.equal(gap.recheckAt, 260, 'the fallback does not inherit the tool minimum')
+  assert.equal(settleLabel(gap.gate, '正在输出', STARTED_AT, 260, 'gap').label, '正在输出')
 })
 
-test('user waits, retries, failures and interruptions bypass a held description', () => {
-  const cases = [
-    activity(turn([asking])),
-    activity(turn([RUNNING_BASH]), true, TURN, { asking: '数据库' }),
-    activity(turn([RUNNING_BASH]), true, TURN, { awaitingApproval: true }),
-    activity(turn([RUNNING_BASH]), true, TURN, { phase: { kind: 'retrying', attempt: 2, reason: 'overload' } }),
-    activity(turn([{ ...DONE_BASH, failed: true }])),
-    activity(turn([DONE_BASH, { id: 'stop', kind: 'notice', text: 'Interrupted.', turnId: TURN, interrupt: true }])),
-  ]
-  for (const { row } of cases) {
-    assert.ok(row)
-    assert.equal(row.timing, 'immediate', row.label)
-    let r = settleLabel(undefined, '跑测试', STARTED_AT, 0, 'tool')
-    r = settleLabel(r.gate, '下一条命令', STARTED_AT, 20, 'tool')
-    r = settleLabel(r.gate, row.label, STARTED_AT, 30, row.timing)
-    assert.deepEqual([r.label, r.recheckAt, r.gate.pending], [row.label, undefined, undefined])
-    r = settleLabel(r.gate, row.label, STARTED_AT, 40, row.timing)
-    assert.equal(r.gate.shownAt, 30)
-    r = settleLabel(r.gate, '下一条命令', STARTED_AT, 50, 'tool')
-    assert.equal(r.recheckAt, 680, 'normal replacements still respect the minimum stay')
-  }
+test('the carrier follows the running step, holds through results, and releases on exceptional states', () => {
+  const state = turn([RUNNING_BASH, read('r', 'a.ts')])
+  const current = activity(state)
+  assert.deepEqual(current.carrier, { runId: 'run:call-1', stepId: 'r' })
+  assert.deepEqual(activity(turn([DONE_BASH])).carrier, { runId: 'run:call-1', stepId: 'call-1' })
+  assert.deepEqual(activity(turn([DONE_BASH, said])).carrier, { runId: 'run:call-1', stepId: 'call-1' })
+  assert.equal(activity(state, true, TURN, { awaitingApproval: true }).carrier, undefined)
+  assert.equal(activity(state, true, TURN, { asking: '选一个' }).carrier, undefined)
+  assert.equal(activity(state, true, TURN, { phase: { kind: 'compacting' } }).carrier, undefined)
+  assert.equal(activity(turn([{ ...DONE_BASH, failed: true }])).carrier, undefined)
+  assert.equal(activity(turn([DONE_BASH, { id: 'stop', kind: 'notice', text: 'stop', interrupt: true }])).carrier, undefined)
+  assert.equal(activity(turn([DONE_BASH, { id: 'error', kind: 'error', text: 'failed' }])).carrier, undefined)
+  assert.equal(activity(state, false).carrier, undefined)
 })
 
 test('a running sub-agent names the status, though it is no run’s step', () => {
@@ -371,10 +266,9 @@ test('a running sub-agent names the status, though it is no run’s step', () =>
   assert.equal(activity(turn([asking]))?.row?.label, '等待你确认 · 子代理 · 扫一遍 tools/')
 })
 
-test('turn activity only describes the row and mark, regardless of the transcript’s last entry', () => {
+test('every live activity describes its row and mark, with an optional work carrier', () => {
   for (const items of [[USER], turn([THINKING]), turn([RUNNING_BASH]), turn([DONE_BASH]), turn([DONE_BASH, said])]) {
     const live = activity(items)
-    assert.deepEqual(Object.keys(live).sort(), ['mark', 'row'])
     assert.ok(live.row)
     assert.ok(live.mark)
   }
@@ -385,4 +279,21 @@ test('with a checklist on screen the activity still describes the current work',
   for (const items of [turn([THINKING]), turn([RUNNING_BASH]), turn([DONE_BASH])]) {
     assert.deepEqual(activity(items, true, TURN, { taskCard }), activity(items))
   }
+})
+
+test('thinking status follows only the current segment’s first sentence as it arrives', () => {
+  for (const [text, label] of [['先', '先'], ['先看看。第二句话。', '先看看。'], ['First sentence. Next sentence.', 'First sentence.'], ['第一行\n第二行', '第一行']]) {
+    const current = activity(turn([{ ...THINKING, text }]))
+    assert.equal(current.row?.label, label)
+    assert.equal(current.row?.thinkingSince, undefined)
+    assert.equal(current.row?.timing, 'immediate')
+    assert.deepEqual(current.carrier, { runId: 'run:thinking-0', stepId: 'thinking-0' }, 'the thought itself carries the expandable status')
+  }
+})
+
+test('tool groups always carry their status in the header, while successive thoughts keep their own row', () => {
+  const tools = groupTranscript(turn([RUNNING_BASH, read('r', 'a.ts')]))
+  assert.equal(activityCarrier(tools, activity(turn([RUNNING_BASH, read('r', 'a.ts')]))), 'run:call-1')
+  const thoughts = turn([{ ...THINKING, pending: false }, { ...THINKING, id: 'thinking-1' }])
+  assert.equal(activityCarrier(groupTranscript(thoughts), activity(thoughts)), 'thinking-1')
 })

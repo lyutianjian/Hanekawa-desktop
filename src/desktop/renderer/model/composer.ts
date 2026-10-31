@@ -163,7 +163,7 @@ export const PERMISSION_MODE_LABELS: Record<PermissionMode, string> = {
   default: '请求批准',
   auto: '必要时询问',
   plan: '计划模式',
-  bypass: '绕过权限',
+  bypass: '完全访问权限',
   readonly: '只读',
 }
 
@@ -178,6 +178,8 @@ export interface PermissionPillOption {
   readonly mode: PermissionMode
   readonly label: string
   readonly current: boolean
+  /** Painted with `--text-danger`: this mode removes every guard. */
+  readonly danger: boolean
 }
 
 export interface PermissionPillView {
@@ -189,6 +191,18 @@ export interface PermissionPillView {
   readonly options: readonly PermissionPillOption[]
   /** A coordinator's mode is locked readonly in the backend: no pill at all. */
   readonly hidden: boolean
+  /** The mode in force is the unrestricted one: the pill is drawn red. */
+  readonly danger: boolean
+}
+
+/**
+ * Whether picking `next` has to be confirmed before it takes effect.
+ *
+ * Only full access asks, and only when it is not already on: the mode is
+ * dangerous the moment it is chosen, while turning it *off* needs no ceremony.
+ */
+export function needsFullAccessConfirm(current: PermissionMode | undefined, next: PermissionMode): boolean {
+  return next === 'bypass' && current !== 'bypass'
 }
 
 /**
@@ -208,6 +222,7 @@ export function permissionPillView(input: {
     mode,
     label: PERMISSION_MODE_LABELS[mode],
     current: mode === current,
+    danger: mode === 'bypass',
   }))
 
   if (!current) {
@@ -218,6 +233,7 @@ export function permissionPillView(input: {
       open: false,
       options,
       hidden,
+      danger: false,
     }
   }
 
@@ -231,6 +247,7 @@ export function permissionPillView(input: {
     open: input.open && !hidden,
     options,
     hidden,
+    danger: current === 'bypass',
   }
 }
 

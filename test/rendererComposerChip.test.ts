@@ -6,6 +6,7 @@ import {
   PERMISSION_PILL_MODES,
   composerChipView,
   insertMentionToken,
+  needsFullAccessConfirm,
   permissionPillView,
   submitButtonView,
   submitLabel,
@@ -166,6 +167,17 @@ test('a mode outside the menu is still named rather than mislabelled', () => {
   assert.equal(view.label, PERMISSION_MODE_LABELS.readonly)
   assert.equal(view.options.some((option) => option.current), false)
   assert.equal(PERMISSION_PILL_MODES.includes('readonly'), false)
+})
+
+test('完全访问权限 is the one red row, and it is never applied on the click that picks it', () => {
+  const auto = permissionPillView({ runtime: runtime({ permissionMode: 'auto' }), open: false })
+  assert.deepEqual(auto.options.filter((option) => option.danger).map((option) => option.mode), ['bypass'])
+  assert.equal(auto.danger, false)
+  assert.equal(permissionPillView({ runtime: runtime({ permissionMode: 'bypass' }), open: false }).danger, true)
+
+  assert.equal(needsFullAccessConfirm('auto', 'bypass'), true)
+  assert.equal(needsFullAccessConfirm('bypass', 'bypass'), false, 'already on: nothing left to confirm')
+  assert.equal(needsFullAccessConfirm('bypass', 'auto'), false, 'turning it off never asks')
 })
 
 test('a coordinator lane hides the permission pill; a thread lane keeps it', () => {

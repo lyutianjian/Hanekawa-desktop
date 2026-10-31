@@ -13,7 +13,7 @@ export function recordsAfterAreOnlyInterruptSynthetic(
   if (userIndex < 0) return false
 
   for (const record of records.slice(userIndex + 1)) {
-    if (record.type === 'at_mention_context' && record.userMessageId === userMessageId) continue
+    if ((record.type === 'at_mention_context' || record.type === 'session_reference_context') && record.userMessageId === userMessageId) continue
     if (record.type === 'turn_interruption' && record.userMessageId === userMessageId) continue
     if (record.type === 'compact_boundary' || record.type === 'compact_attempt_failed') continue
     return false

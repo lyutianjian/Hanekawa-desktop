@@ -31,6 +31,8 @@ const rendererRoot = fileURLToPath(new URL('../src/desktop/renderer/', import.me
  * single value import of `node:fs` inside it breaks the desktop build.
  */
 const ALLOWED_SHARED_IMPORTS = [
+  '../../../runtime/sessionReferenceText.js',
+  '../../runtime/sessionReferenceText.js',
   '../../runtime/protocol/client.js',
   '../../../runtime/protocol/wire.js',
   // The lane multiplexer both sides of the desktop shell run over one IPC
@@ -49,6 +51,7 @@ const ALLOWED_SHARED_IMPORTS = [
   // and is *not* here: it value-imports `node:fs/promises`, which is why the two
   // were split at all.
   '../../../runtime/suggestions/atToken.js',
+  '../../../runtime/suggestions/insertSuggestion.js',
   '../../../config/effort.js',
   // The desktop shell's own shared modules, one directory up. Both are pure:
   // `shellProtocol.ts` is types plus one string constant, `paneBudget.ts` has no

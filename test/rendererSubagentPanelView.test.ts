@@ -301,7 +301,7 @@ test('closing the page stops its poll as well', async (t) => {
   assert.equal(reads, 3, 'the list has no page to keep fresh')
 })
 
-test('a running tool keeps the agent spinner below its expanded steps, then settling removes it', async (t) => {
+test('a running tool carries the agent mark in its step, then settling removes it', async (t) => {
   t.mock.timers.enable({ apis: ['setInterval'] })
   const stub = installDomStub()
   const container = stub.createContainer('subagents')
@@ -319,10 +319,10 @@ test('a running tool keeps the agent spinner below its expanded steps, then sett
   view.render({ entries: [running], selected: running.id })
   await flush()
   const column = find(stub.inspect(container), 'transcript-column')!
-  const waiting = column.children.at(-1)!
-  assert.ok(waiting.classes.includes('waiting'))
-  assert.ok(find(waiting, 'mark'))
-  assert.ok(find(column, 'step-head'), 'the tool steps are expanded above it')
+  const active = find(column, 'activity-line')!
+  assert.ok(active)
+  assert.ok(find(active, 'mark'))
+  assert.equal(find(column, 'waiting'), undefined, 'there is no duplicate bottom status')
   view.render({ entries: [{ ...running, finished: true, status: 'done', durationMs: 42_000 }], selected: running.id })
   assert.equal(find(stub.inspect(container), 'waiting'), undefined)
   assert.equal(find(stub.inspect(container), 'subagent-time')?.text, '42 秒')

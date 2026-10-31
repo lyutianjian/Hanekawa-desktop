@@ -66,6 +66,14 @@ function describeFields(operation: string): string {
  */
 function crossFieldRules(operation: string, input: Record<string, unknown>): ToolValidationResult {
   const has = (key: string): boolean => typeof input[key] === 'string' && (input[key] as string) !== ''
+  if (operation === 'browser.create_tab' || operation === 'tab.navigate') {
+    if (has('url') && has('path')) {
+      return fail(`${operation} takes "url" or "path", not both: "url" is an http(s) address, "path" is a page on disk.`, 'path')
+    }
+    if (operation === 'tab.navigate' && !has('url') && !has('path')) {
+      return fail('tab.navigate needs a "url" (http or https) or a "path" (a page on disk).', 'url')
+    }
+  }
   if (has('cursor')) {
     const ignored = Object.keys(input).filter((key) => input[key] !== undefined && !CURSOR_FIELDS.has(key))
     if (ignored.length > 0) {

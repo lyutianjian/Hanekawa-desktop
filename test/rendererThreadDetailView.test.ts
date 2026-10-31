@@ -66,6 +66,18 @@ function mount(t: { after(fn: () => void): void; mock: { timers: { enable(option
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve))
 
+test('the title and status share a row while the full title stays available on hover', (t) => {
+  const m = mount(t)
+  const title = '扩展面盘点：config / MCP / skills / hooks / memories'
+  m.view.render(page({ title, statusLabel: '空闲', tone: 'neutral', poll: false, canStop: false }))
+  const row = m.find('thread-detail-title')[0]!
+  assert.deepEqual(row.children.map((child) => child.classes[0]), ['thread-row-mark', 'thread-detail-name', 'subagent-meta'])
+  assert.equal(m.find('thread-detail-name')[0]!.text, title)
+  assert.equal((m.find('thread-detail-name')[0]!.node as HTMLElement).title, title)
+  assert.equal(row.children.at(-1)?.text, '空闲')
+  assert.equal(m.find('subagent-meta').length, 1)
+})
+
 test('a running thread is re-read on the timer with the last token; leaving the page stops it', async (t) => {
   const m = mount(t)
   m.view.render(page())

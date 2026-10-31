@@ -1,3 +1,5 @@
+import { sessionReferenceMarkdown } from '../../../runtime/sessionReferenceText.js'
+import { SESSION_REFERENCE_MIME } from '../model/sessionReferenceTransfer.js'
 import { relativeTime } from '../model/timeLabel.js'
 import {
   SIDEBAR_COLLAPSE_FALLBACK_MS,
@@ -153,6 +155,51 @@ export function createSidebarView(
   // in `#sidebar`, which is the element that animates. A flex column narrowing
   // to zero reflows on every frame; the shell keeps its 280px, `#sidebar` crops
   // it, and the collapse is a slide rather than a re-wrap. See `styles.css`.
+  let referenceMenu: HTMLElement | undefined
+  let referenceTrigger: HTMLElement | undefined
+  const closeReferenceMenu = (): void => {
+    referenceMenu?.remove()
+    referenceMenu = undefined
+    referenceTrigger?.classList.remove('session-reference-trigger')
+    referenceTrigger = undefined
+  }
+  dismissable(['.session-reference-menu', '.session-reference-trigger'], {
+    isOpen: () => referenceMenu !== undefined,
+    close: closeReferenceMenu,
+  })
+  const openReferenceMenu = (row: SidebarRow, trigger: HTMLElement): void => {
+    closeReferenceMenu()
+    const menu = el('div', 'project-menu session-reference-menu')
+    menu.setAttribute('role', 'menu')
+    const copy = button('project-menu-item', '复制会话链接', '复制会话链接', () => {
+      closeReferenceMenu()
+      onIntent({ kind: 'copy-session-link', sessionId: row.sessionId, title: row.title })
+    })
+    copy.setAttribute('role', 'menuitem')
+    menu.appendChild(copy)
+    menu.addEventListener('focusout', (event) => {
+      if (event.relatedTarget === null) return
+      if (event.relatedTarget instanceof Node && (menu.contains(event.relatedTarget) || trigger.contains(event.relatedTarget))) return
+      closeReferenceMenu()
+    })
+    menu.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopPropagation()
+      closeReferenceMenu()
+      trigger.querySelector<HTMLElement>('.session-open')?.focus()
+    })
+    referenceMenu = menu
+    referenceTrigger = trigger
+    trigger.classList.add('session-reference-trigger')
+    container.appendChild(menu)
+    const bounds = trigger.getBoundingClientRect()
+    const rail = container.getBoundingClientRect()
+    menu.style.setProperty('--session-menu-x', `${Math.max(8, bounds.left - rail.left)}px`)
+    menu.style.setProperty('--session-menu-y', `${Math.max(8, Math.min(bounds.bottom - rail.top, rail.height - 56))}px`)
+    copy.focus()
+  }
+
   const shell = el('div', 'sidebar-shell')
   shell.appendChild(search)
   shell.appendChild(nav)
@@ -200,7 +247,7 @@ export function createSidebarView(
     // A focused confirmation or menu item answers Enter itself. Read as the
     // cursor row's Enter, a focused 取消 would confirm the delete it is cancelling.
     if (event.key === 'Enter' && event.target instanceof Element
-      && event.target.closest('.session-actions, .project-actions, .project-menu') !== null) return
+      && event.target.closest('.session-actions, .project-actions, .project-menu, .session-reference-menu') !== null) return
     const consumed = onKey({
       key: event.key,
       shiftKey: event.shiftKey,
@@ -469,6 +516,35 @@ export function createSidebarView(
     node.id = sessionRowId(row.sessionId)
     node.setAttribute('role', 'option')
     node.setAttribute('aria-selected', String(row.active))
+    node.draggable = true
+    let dragged = false
+    node.addEventListener('dragstart', (event) => {
+      if (!event.dataTransfer || row.confirmingDelete) { event.preventDefault(); return }
+      dragged = true
+      const link = sessionReferenceMarkdown({ sessionId: row.sessionId, title: row.title })
+      event.dataTransfer.setData(SESSION_REFERENCE_MIME, link)
+      event.dataTransfer.setData('text/plain', link)
+      event.dataTransfer.effectAllowed = 'copy'
+      // Capture a bounded, still label; the row's animated title can extend
+      // beyond its clip when Chromium builds the default drag image.
+      const preview = el('div', 'session-drag-preview', icon('message-circle'), el('span', 'session-drag-title', row.title))
+      preview.setAttribute('aria-hidden', 'true')
+      document.body.appendChild(preview)
+      event.dataTransfer.setDragImage(preview, 12, 16)
+      setTimeout(() => preview.remove(), 0)
+    })
+    node.addEventListener('dragend', () => { setTimeout(() => { dragged = false }, 0) })
+    node.addEventListener('contextmenu', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      openReferenceMenu(row, node)
+    })
+    node.addEventListener('keydown', (event) => {
+      if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return
+      event.preventDefault()
+      event.stopPropagation()
+      openReferenceMenu(row, node)
+    })
 
     // One construction path, confirming or not: the confirmation used to replace
     // the whole row, which took the session's name off screen at exactly the
@@ -563,7 +639,7 @@ export function createSidebarView(
     } else {
       // Through the model so a click and Enter cannot disagree about "open or
       // switch".
-      open.addEventListener('click', () => onIntent(activateRow(row)))
+      open.addEventListener('click', () => { if (!dragged) onIntent(activateRow(row)) })
     }
     node.appendChild(open)
 
