@@ -200,7 +200,7 @@ Anthropic 回复中的签名思考只会回传给产生它的同一模型和服�
 - 「技能和 MCP」是两个横向标签页，技能在前、MCP 在后，标签上带数量；搜索框会同时过滤两页并显示命中数。技能行在悬停时显示圆角底色，点击打开详情弹窗：顶部可以启停技能，中间显示渲染后的完整 `SKILL.md`，来源、加载方式与风险提示收在「技能信息」中，底部可以「打开」「在 Finder 中显示」「复制 Markdown」，Hanekawa 管理的技能还有「卸载」。点击遮罩、关闭按钮或按 Esc 返回列表，原搜索与滚动位置保留。带 hooks 的技能导入后默认关闭，读过详情再打开。
 - 技能页右上角可以选择项目，查看该项目可用的项目技能与个人技能。点击项目旁的 × 取消选择后显示「个人」，只管理个人技能；开关写入全局默认，已打开的项目同步重新加载。项目已有的独立开关设置保持优先。个人范围中的文件操作和卸载指向个人副本，即使项目里有同名技能也不会改动它。
 - 六个上下文管理数值在项目启动时读取一次，修改后重启生效。
-- 默认权限模式只影响之后新开的会话；线程调度的六项设置存在全局配置里，所有项目共用，跟随全局的协调者或线程在下一回合采用新值，会话里手动指定的模型不被覆盖。其余设置立即作用于已打开的会话。
+- 默认权限模式只影响之后新开的会话；线程调度的六项设置存在全局配置里，所有项目共用，跟随全局的协调者或线程在下一回合采用新值，会话里手动指定的模型和思考强度不被覆盖。其余设置立即作用于已打开的会话。
 
 ## 使用
 
@@ -386,11 +386,11 @@ hooks:
 
 ### 子代理
 
-模型通过 `Agent` 工具派出子代理。内置类型有 `general`、`explore` 和 `plan`（后两者为 `readonly`）。所有子代理默认使用 `high` 思考强度，自定义 agent 可通过 frontmatter 的 `effort` 显式覆盖。自定义 agent 定义从 `~/.hanekawa/agents/`、`<项目>/.hanekawa/agents/` 和 `~/.hanekawa/projects/<key>/agents.local/` 读取，`/agents` 可以查看和管理。子代理使用的模型由 `routing.subagent` 决定，也可以用环境变量 `HANEKAWA_SUBAGENT_MODEL` 或 `HANEKAWA_SUBAGENT_MODEL_<TYPE>` 覆盖。
+模型通过 `Agent` 工具派出子代理。内置类型有 `general`、`explore` 和 `plan`（后两者为 `readonly`）。所有子代理默认使用 `high` 思考强度，自定义 agent 可通过 frontmatter 的 `effort` 覆盖，`Agent` 调用本身也可以传 `effort` 为这一次按次指定（优先于 frontmatter）。自定义 agent 定义从 `~/.hanekawa/agents/`、`<项目>/.hanekawa/agents/` 和 `~/.hanekawa/projects/<key>/agents.local/` 读取，`/agents` 可以查看和管理。子代理使用的模型由 `routing.subagent` 决定，也可以用环境变量 `HANEKAWA_SUBAGENT_MODEL` 或 `HANEKAWA_SUBAGENT_MODEL_<TYPE>` 覆盖。
 
 旧的 `routing.subagent.fork` 配置不再生效，保存配置时会移除。
 
-`Agent` 和 `StartThread` 的工具说明会列出可选模型的配置 key、实际模型名、已配置的上下文长度，以及省略 `model` 时的默认模型；目录不包含 API key 或服务地址，配置重载并重建运行时后更新。主模型可传入 `model: "配置中的 key"` 为本次新建的子代理或线程选模型，不修改全局设置。`Agent.model` 优先于环境变量、自定义 agent 的 `model` 和路由；省略时沿用原有默认规则。`StartThread` 省略时使用全局线程默认模型。无效 key 会明确报错并列出可选项，不会悄悄换模型；启动或完成回执会返回实际使用的模型 key。
+`Agent` 和 `StartThread` 的工具说明会列出可选模型的配置 key、实际模型名、已配置的上下文长度、模型接受的思考等级（`supportedEfforts`），以及省略 `model` 时的默认模型和线程的默认思考强度；目录不包含 API key 或服务地址，配置重载并重建运行时后更新。主模型可传入 `model: "配置中的 key"` 为本次新建的子代理或线程选模型，传 `effort` 为这一次指定思考强度，都不修改全局设置。`Agent.model` 优先于环境变量、自定义 agent 的 `model` 和路由，`Agent.effort` 优先于自定义 agent 的 `effort`，都没有时为 `high`；`StartThread` 省略时使用全局线程默认模型和默认思考强度。所选模型不接受某个等级时，会降到它接受的最近等级：`StartThread` 的回执始终带实际使用的等级，`Agent` 只在实际等级与请求不同时提示降级；无效 key 会明确报错并列出可选项，不会悄悄换模型。
 
 ### MCP
 

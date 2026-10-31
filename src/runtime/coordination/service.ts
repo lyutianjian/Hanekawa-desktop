@@ -204,7 +204,7 @@ export class CoordinationService implements CoordinationHost {
   private async startThreadIn(cwd: string, request: StartThreadRequest): Promise<StartedThread> {
     const config = this.port.configFor(cwd)
     const selection = resolveSessionModelSelection(config, {
-      coordination: { role: 'thread', modelOverride: request.model },
+      coordination: { role: 'thread', modelOverride: request.model, effortOverride: request.effort },
     }, { defaultEffort: 'high' })
     if (selection.issue || !selection.modelKey) {
       throw new CoordinationError('MODEL_NOT_FOUND', `${selection.issue?.message ?? 'No thread model is configured.'} ${availableModelKeys(config.listSelectableModels())}`)
@@ -248,6 +248,9 @@ export class CoordinationService implements CoordinationHost {
         threadId,
         ...(worktree ? { workingDir: worktree.cwd } : {}),
         ...(request.model ? { modelOverride: request.model } : {}),
+        // The clamped level, not the request: the session's own pick is what
+        // reopening and a restart resolve, and it must already fit the model.
+        ...(request.effort ? { effortOverride: selection.effort } : {}),
       })
       const record: ThreadRecord = { ...base, sessionId: meta.id, ...(worktree ? { worktree } : {}) }
       await store.upsertThread(record)
@@ -263,7 +266,7 @@ export class CoordinationService implements CoordinationHost {
         throw new Error(`任务说明没能送达：${errorMessage(error)}`)
       }
 
-      return { threadId, sessionId: meta.id, modelKey: selection.modelKey, ...(worktree ? { branch: worktree.branch } : {}) }
+      return { threadId, sessionId: meta.id, modelKey: selection.modelKey, effort: selection.effort, ...(worktree ? { branch: worktree.branch } : {}) }
     } catch (error) {
       failed = true
       const cleanup = async (action: () => Promise<void>) => {

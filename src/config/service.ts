@@ -415,7 +415,14 @@ export class ConfigService {
   listSelectableModels(): ModelCatalogEntry[] {
     return this.listModelKeys().flatMap((key) => {
       const model = this.resolveModelReference(key) ? this.resolveModel(key) : undefined
-      return model ? [{ key, model: model.model, ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }) }] : []
+      return model
+        ? [{
+            key,
+            model: model.model,
+            ...(model.contextWindow === undefined ? {} : { contextWindow: model.contextWindow }),
+            ...(model.supportedEfforts === undefined ? {} : { supportedEfforts: model.supportedEfforts }),
+          }]
+        : []
     })
   }
 

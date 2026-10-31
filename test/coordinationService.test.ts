@@ -397,13 +397,25 @@ test('an explicit thread model is recorded before the lane opens', async (t) => 
   assert.deepEqual(s.opened, [{ sessionId: started.sessionId, activate: false }])
 })
 
+test('an explicit thread effort is fitted to the model and recorded before the lane opens', async (t) => {
+  const s = await setup(t)
+  s.config.setModelConfig('narrow', { provider: 'anthropic', model: 'narrow-model', supportedEfforts: ['low', 'medium'] })
+  const started = await s.service.startThread(s.caller, { ...request, model: 'narrow', effort: 'max' })
+  assert.equal(started.effort, 'medium')
+  const meta = await s.sessions.resolve(started.sessionId)
+  assert.equal(meta?.coordination?.effortOverride, 'medium')
+  assert.deepEqual(s.opened, [{ sessionId: started.sessionId, activate: false }])
+})
+
 test('thread model defaults follow global routing without recording an override', async (t) => {
   const s = await setup(t)
   for (const route of ['picked', 'inherit']) {
     s.config.setRouting({ thread: route })
     const started = await s.service.startThread(s.caller, request)
     assert.equal(started.modelKey, route === 'inherit' ? 'main' : 'picked')
-    assert.equal((await s.sessions.resolve(started.sessionId))?.coordination?.modelOverride, undefined)
+    const meta = await s.sessions.resolve(started.sessionId)
+    assert.equal(meta?.coordination?.modelOverride, undefined)
+    assert.equal(meta?.coordination?.effortOverride, undefined)
   }
 })
 

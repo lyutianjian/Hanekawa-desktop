@@ -31,6 +31,7 @@ import { MemoryRecordStream } from './recordStream.js'
 import type { ImageAttachmentRef, UserInput } from '../media/types.js'
 import { mergeHooks, runLifecycleHooks, type Hooks, type LifecycleHookName } from './hooks.js'
 import { FallbackTriggeredError } from '../config/retry.js'
+import type { EffortLevel } from '../config/effort.js'
 import {
   countMessageTokens,
   countTextTokens,
@@ -115,6 +116,13 @@ export interface ActiveModelRuntime {
    * snapshot — so a settings toggle reaches the next runtime built.
    */
   supportsImageInput?: boolean
+  /**
+   * The effort levels this model accepts; absent means every level. Carried
+   * per model so a subagent on an override model nudges an unsupported level
+   * onto one that model really accepts instead of sending it and being
+   * rejected by the endpoint.
+   */
+  supportedEfforts?: EffortLevel[]
 }
 
 /**

@@ -99,6 +99,7 @@ export function createActiveModelRuntimeFactory(
       providerName: targetProvider.name,
       promptCacheRetention: targetModelConfig.promptCacheRetention,
       supportsImageInput: resolveImageCapability(targetModelConfig),
+      supportedEfforts: targetModelConfig.supportedEfforts,
     }
   }
 }
@@ -317,10 +318,10 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     const runtimeTools = toolRegistry.buildRuntimeTools(role)
     const modelCatalog = config.listSelectableModels()
     const agentDefinitions = getAgentDefinitions()
-    const threadModel = resolveSessionModelSelection(config, { coordination: { role: 'thread' } }, { defaultEffort: 'high' }).modelKey
+    const threadSelection = resolveSessionModelSelection(config, { coordination: { role: 'thread' } }, { defaultEffort: 'high' })
     const toolOverrides = runtimeTools.filter((tool) => tool.name === START_THREAD_TOOL_NAME).map((tool) => ({
       ...tool,
-      description: buildStartThreadDescription(modelCatalog, threadModel),
+      description: buildStartThreadDescription(modelCatalog, threadSelection.modelKey, threadSelection.effort),
     }))
     for (const tool of toolOverrides) runtimeTools[runtimeTools.findIndex((entry) => entry.name === tool.name)] = tool
     runtimeTools.push(createAgentTool({
@@ -335,6 +336,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
       providerName: targetProvider.name,
       promptCacheRetention: targetModelConfig.promptCacheRetention,
       supportsImageInput: resolveImageCapability(targetModelConfig),
+      supportedEfforts: targetModelConfig.supportedEfforts,
       fallbackModel,
       tools: () => runtimeTools,
       permissionPrompt: bridges.prompt.prompt,

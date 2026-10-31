@@ -24,7 +24,7 @@ import {
 } from '../../services/agents/subagentWorktree.js'
 import type { CacheRuntime } from '../../harness/cacheControl.js'
 import type { ThinkingConfig } from '../../config/service.js'
-import type { EffortLevel } from '../../config/effort.js'
+import { clampEffort, DEFAULT_EFFORT, VALID_EFFORT_LEVELS, type EffortLevel } from '../../config/effort.js'
 import type { ModelCatalogEntry } from '../../config/modelCatalog.js'
 import { runLifecycleHooks, type Hooks } from '../../harness/hooks.js'
 import type { AttachmentBytesLoader, AgentRunResult, ImageAttachmentImporter, ModelProvider, SessionRecord, SubagentTaskStatus, TokenUsage, Tool, ToolContext, ToolProgressEvent, ToolResult } from '../../harness/types.js'
@@ -167,6 +167,7 @@ const agentInputSchema = z.object({
   task: z.string().min(1).describe('The full brief for the sub-agent, which starts with no knowledge of this conversation.'),
   subagent_type: z.string().min(1).describe('Which agent to run. Must be one of the types listed in this tool\'s description.'),
   model: z.string().trim().min(1).optional().describe('Exact model key from the tool description. Overrides the default for this agent only; omit to use the listed default.'),
+  effort: z.enum(VALID_EFFORT_LEVELS).optional().describe('Reasoning effort for this run. Omit to use the agent definition\'s effort, or high when it sets none. A level the chosen model does not accept is moved to the nearest one it does.'),
   description: z.string().min(1).optional().describe('Short (3-5 word) label for this task, shown in the UI.'),
   run_in_background: z.boolean().optional().describe('Run detached and report back when finished. Defaults to false.'),
   name: z.string().min(1).optional().describe('Name to address this agent by with SendMessage.'),
@@ -188,6 +189,8 @@ export interface CreateAgentToolOptions {
   promptCacheRetention?: 'in_memory' | '24h'
   /** Parent model's effective image-input capability; the inherit default. */
   supportsImageInput?: boolean
+  /** Parent model's effort levels; the inherit default for a sub-agent. */
+  supportedEfforts?: EffortLevel[]
   fallbackModel?: ActiveModelRuntime
   compactModel?: ActiveModelRuntime
   fallbackRetryDelayMs?: number
@@ -338,11 +341,15 @@ export function createAgentTool(options: CreateAgentToolOptions): Tool {
         }
         validateSubagentIsolation(agentDefinition)
         const runtime = resolveSubagentRuntime(options, parsed.subagent_type, agentDefinition, parsed.model)
+        const effort = resolveSubagentEffort(parsed, agentDefinition, runtime)
 
         const subAgentId = allocateSubagentId(options, context.sessionId, parsed.subagent_type)
         const runInBackground = parsed.run_in_background ?? agentDefinition.background ?? false
+        // On disk either way, so the desktop can show what the sub-agent did
+        // while it runs and after.
+        const transcriptPath = getSubagentTranscriptPath(options.projectDir ?? options.cwd, context.sessionId, subAgentId)
+        const spec: SubagentSpec = { options, parsed, agentDefinition, subAgentId, transcriptPath, runtime, ...effort }
         if (runInBackground) {
-          const transcriptPath = getSubagentTranscriptPath(options.projectDir ?? options.cwd, context.sessionId, subAgentId)
           await appendSubagentTaskRecord(context, parsed, subAgentId, 'running', {
             transcriptPath,
             model: runtime.model,
@@ -361,21 +368,17 @@ export function createAgentTool(options: CreateAgentToolOptions): Tool {
               await backgroundRun
             },
           })
-          backgroundRun = runBackgroundSubagent(
-            { options, parsed, agentDefinition, subAgentId, transcriptPath, runtime },
-            context,
-            backgroundAbort.signal,
-          )
+          backgroundRun = runBackgroundSubagent(spec, context, backgroundAbort.signal)
           void backgroundRun
           const description = subagentDescription(parsed)
           return {
             ok: true,
             content: options.backgroundTasks
               ? appendAgentContinuationNotice(
-                  `Started ${parsed.subagent_type} sub-agent "${description}" in the background.${modelNotice(runtime)}`,
+                  `Started ${parsed.subagent_type} sub-agent "${description}" in the background.${runtimeNotice(spec)}`,
                   subAgentId,
                 )
-              : `Started ${parsed.subagent_type} sub-agent "${description}" in the background.${modelNotice(runtime)}`,
+              : `Started ${parsed.subagent_type} sub-agent "${description}" in the background.${runtimeNotice(spec)}`,
             metadata: {
               display: {
                 summary: `${parsed.subagent_type} background agent started`,
@@ -392,9 +395,6 @@ export function createAgentTool(options: CreateAgentToolOptions): Tool {
           }
         }
 
-        // On disk like a background run's, so the desktop can show what the
-        // sub-agent did while it runs and after.
-        const transcriptPath = getSubagentTranscriptPath(options.projectDir ?? options.cwd, context.sessionId, subAgentId)
         // Registered up front so the user can stop this one agent while the
         // parent's turn goes on.
         const stopAbort = new AbortController()
@@ -411,7 +411,7 @@ export function createAgentTool(options: CreateAgentToolOptions): Tool {
             await pending?.catch(() => {})
           },
         })
-        const run = startSubagent({ options, parsed, agentDefinition, subAgentId, transcriptPath, runtime }, context, signal)
+        const run = startSubagent(spec, context, signal)
         pending = run
         let started: Awaited<typeof run>
         try {
@@ -444,6 +444,10 @@ interface SubagentSpec {
   subAgentId: string
   transcriptPath: string
   runtime: ActiveModelRuntime
+  /** Already clamped to what `runtime` accepts. */
+  effort: EffortLevel
+  /** What was asked for before the clamp, for the caller's notice. */
+  requestedEffort: EffortLevel
 }
 
 type SubagentTranscriptRecord = Extract<SessionRecord, { type: 'subagent_transcript' }>
@@ -553,7 +557,7 @@ class SubagentSession implements AgentContinuation {
       maxTurns: parsed.maxTurns ?? agentDefinition.maxTurns,
       maxTurnsExceededBehavior: 'partial',
       thinking: options.thinking ?? { type: 'adaptive' },
-      effort: agentDefinition.effort ?? 'high',
+      effort: spec.effort,
       fallbackModel: options.fallbackModel,
       compactModel: options.compactModel,
       fallbackRetryDelayMs: options.fallbackRetryDelayMs,
@@ -662,7 +666,7 @@ class SubagentSession implements AgentContinuation {
         worktree,
       ),
       turn.stopHookOutput,
-    ) + modelNotice(this.spec.runtime)
+    ) + runtimeNotice(this.spec)
     return {
       ok: true,
       content: options.backgroundTasks ? appendAgentContinuationNotice(content, subAgentId) : content,
@@ -938,6 +942,7 @@ function resolveSubagentRuntime(
     providerName: options.providerName,
     promptCacheRetention: options.promptCacheRetention,
     supportsImageInput: options.supportsImageInput,
+    supportedEfforts: options.supportedEfforts,
   }
 
   const { key: requestedModelKey, envSource } = subagentModelOverride(subagentType, definition, explicitModel)
@@ -970,8 +975,29 @@ function subagentModelOverride(
   return { key: envSource ? process.env[envSource]!.trim() : definition.model?.trim(), envSource }
 }
 
-function modelNotice(runtime: ActiveModelRuntime): string {
-  return runtime.modelKey ? `\n\nModel key: ${JSON.stringify(runtime.modelKey)} (model: ${JSON.stringify(runtime.model)}).` : ''
+/**
+ * The effort a sub-agent actually runs at: the explicit pick, then the agent
+ * definition, then the default — moved onto a level the chosen model accepts,
+ * because endpoints reject an unsupported level instead of rounding it.
+ */
+function resolveSubagentEffort(
+  parsed: AgentInput,
+  definition: BaseAgentDefinition,
+  runtime: ActiveModelRuntime,
+): { effort: EffortLevel; requestedEffort: EffortLevel } {
+  const requestedEffort = parsed.effort ?? definition.effort ?? DEFAULT_EFFORT
+  return {
+    effort: clampEffort(requestedEffort, runtime.supportedEfforts) as EffortLevel,
+    requestedEffort,
+  }
+}
+
+function runtimeNotice(spec: SubagentSpec): string {
+  const model = spec.runtime.modelKey
+    ? `\n\nModel key: ${JSON.stringify(spec.runtime.modelKey)} (model: ${JSON.stringify(spec.runtime.model)}).`
+    : ''
+  if (spec.requestedEffort === spec.effort) return model
+  return `${model}\n\nEffort: ${spec.effort} (${spec.requestedEffort} is not supported by this model; the nearest supported level was used).`
 }
 
 // Strictest first. A sub-agent cannot run the plan workflow (no ExitPlanMode),

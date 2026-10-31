@@ -18,8 +18,9 @@ export function buildAgentToolDescription(
   return `Run a typed sub-agent on an isolated task. Use for complex, multi-step research or planning whose intermediate output does not need to stay in main context. Sub-agents cannot spawn nested agents.
 
 Usage:
-- Parameters are \`task\` and \`subagent_type\` (both required), plus the optional \`model\`, \`description\`, \`name\`, \`run_in_background\`, \`systemPrompt\`, \`maxTurns\`, \`maxOutputTokens\`. Any other key is rejected.
+- Parameters are \`task\` and \`subagent_type\` (both required), plus the optional \`model\`, \`effort\`, \`description\`, \`name\`, \`run_in_background\`, \`systemPrompt\`, \`maxTurns\`, \`maxOutputTokens\`. Any other key is rejected.
 - \`model\` selects a configured model key for this agent only; omit it to follow the default. Explicit selection takes precedence over environment variables, the agent definition and routing.
+- \`effort\` is the reasoning effort for this run only; omit it to use the agent definition's effort, or high when it sets none. A level the chosen model does not accept is moved to the nearest one it does, and the result reports the level actually used.
 - \`subagent_type\` must be one of: ${typeDescriptions}. Always pass it explicitly; an invented type is an error, not a fallback.
 - \`task\` is the whole brief. The agent starts cold, so explain the goal, why it matters, what you already know, what you ruled out, and the shape of the answer you need.
 - Always pass \`description\`: a short task label (3-5 words, or a brief phrase in the user's language) shown in the task panel. Describe the goal, not the full brief, instructions, or file paths.
@@ -32,6 +33,7 @@ Usage:
 function formatDefinitionCapabilities(definition: BaseAgentDefinition): string | undefined {
   const parts: string[] = []
   if (definition.model) parts.push(`model: ${definition.model}`)
+  if (definition.effort) parts.push(`effort: ${definition.effort}`)
   if (definition.background) parts.push('background')
   if (definition.isolation) parts.push(`isolation: ${definition.isolation}`)
   if (definition.permissionMode) parts.push(`permission: ${definition.permissionMode}`)

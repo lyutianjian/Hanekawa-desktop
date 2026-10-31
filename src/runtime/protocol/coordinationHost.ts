@@ -32,12 +32,16 @@ export interface StartThreadRequest {
   background: string
   writesCode: boolean
   model?: string
+  /** Explicit effort for this thread; omitted means the global thread effort. */
+  effort?: EffortLevel
 }
 
 export interface StartedThread {
   threadId: string
   sessionId: string
   modelKey: string
+  /** The effort the thread actually runs at, already fitted to `modelKey`. */
+  effort: EffortLevel
   /** Present for a thread that got its own worktree. */
   branch?: string
 }

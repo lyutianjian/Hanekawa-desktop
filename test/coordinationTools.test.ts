@@ -16,7 +16,7 @@ function fakeHost(overrides: Partial<CoordinationHost> = {}): { host: Coordinati
     return value
   }
   const host: CoordinationHost = {
-    startThread: rec('startThread', { threadId: 't1', sessionId: 's2', modelKey: 'm', branch: 'hanekawa/x-t1' }),
+    startThread: rec('startThread', { threadId: 't1', sessionId: 's2', modelKey: 'm', effort: 'high', branch: 'hanekawa/x-t1' }),
     messageThread: rec('messageThread', undefined),
     stopThread: rec('stopThread', undefined),
     resolveThread: rec('resolveThread', undefined),
@@ -50,6 +50,8 @@ test('schemas: background needs 80 chars, ids are required', () => {
   const start = byName(tools, 'StartThread').inputSchema
   const ok = { title: 't', brief: 'b', background: BACKGROUND, writesCode: false }
   assert.equal(start.safeParse(ok).success, true)
+  assert.equal(start.safeParse({ ...ok, effort: 'max' }).success, true)
+  assert.equal(start.safeParse({ ...ok, effort: 'extreme' }).success, false)
   assert.equal(start.safeParse({ ...ok, background: 'short' }).success, false)
   assert.equal(start.safeParse({ ...ok, writesCode: undefined }).success, false)
   assert.equal(byName(tools, 'FetchThread').inputSchema.safeParse({ threadId: 't', limit: 0 }).success, false)
@@ -96,13 +98,13 @@ test('caller carries session, projectDir and turn; projectDir falls back to cwd'
 test('StartThread passes the request through and names the branch', async () => {
   const { host, calls } = fakeHost()
   const result = await byName(createCoordinationTools(host), 'StartThread').execute(
-    { title: 'Fix', brief: 'b', background: BACKGROUND, writesCode: true, model: 'm' },
+    { title: 'Fix', brief: 'b', background: BACKGROUND, writesCode: true, model: 'm', effort: 'max' },
     context,
   )
   assert.equal(result.ok, true)
   assert.match(result.content, /t1.*hanekawa\/x-t1/)
-  assert.match(result.content, /Model key: "m"/)
-  assert.deepEqual(calls[0]!.args[1], { title: 'Fix', brief: 'b', background: BACKGROUND, writesCode: true, model: 'm' })
+  assert.match(result.content, /Model key: "m", effort: high/)
+  assert.deepEqual(calls[0]!.args[1], { title: 'Fix', brief: 'b', background: BACKGROUND, writesCode: true, model: 'm', effort: 'max' })
 })
 
 test('thread-originated text is labelled as quoted data', async () => {

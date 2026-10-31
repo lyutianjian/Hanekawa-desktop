@@ -2398,6 +2398,93 @@ test('built-in agents have no turn cap', () => {
   }
 })
 
+test('an explicit effort in the Agent call overrides the definition', async () => {
+  const requests: ModelRequest[] = []
+  const agentTool = createAgentTool({
+    provider: {
+      name: 'fake',
+      async createMessage(request) {
+        requests.push(request)
+        return { content: 'done', toolCalls: [] }
+      },
+    },
+    model: 'fake-model',
+    tools: () => [],
+    permissionPrompt: async () => true,
+    cwd: testCwd,
+  })
+
+  const result = await agentTool.execute({ task: 'research', subagent_type: 'general', effort: 'low' }, toolContext())
+
+  assert.equal(result.ok, true)
+  assert.equal(requests.at(-1)?.effort, 'low')
+  assert.doesNotMatch(result.content, /Effort: /)
+})
+
+test('effort is fitted to the levels the chosen model accepts', async () => {
+  const requests: ModelRequest[] = []
+  const narrowProvider: ModelProvider = {
+    name: 'narrow',
+    async createMessage(request) {
+      requests.push(request)
+      return { content: 'done', toolCalls: [] }
+    },
+  }
+  const agentTool = createAgentTool({
+    provider: {
+      name: 'parent',
+      async createMessage() {
+        throw new Error('the parent provider must not run this agent')
+      },
+    },
+    model: 'parent-model',
+    tools: () => [],
+    permissionPrompt: async () => true,
+    cwd: testCwd,
+    resolveSubagentModel: () => ({
+      provider: narrowProvider,
+      model: 'narrow-model',
+      modelKey: 'narrow',
+      supportedEfforts: ['low', 'medium'],
+    }),
+  })
+
+  const explicit = await agentTool.execute({ task: 'research', subagent_type: 'explore', effort: 'xhigh' }, toolContext())
+  assert.equal(explicit.ok, true)
+  assert.equal(requests.at(-1)?.effort, 'medium')
+  assert.match(explicit.content, /Effort: medium \(xhigh is not supported by this model/)
+
+  // The definition's own default has to fit the model too.
+  const inherited = await agentTool.execute({ task: 'research', subagent_type: 'explore' }, toolContext())
+  assert.equal(inherited.ok, true)
+  assert.equal(requests.at(-1)?.effort, 'medium')
+  assert.match(inherited.content, /Effort: medium \(high is not supported by this model/)
+})
+
+test('an inherited runtime carries the parent model\'s effort limits', async () => {
+  const requests: ModelRequest[] = []
+  const agentTool = createAgentTool({
+    provider: {
+      name: 'fake',
+      async createMessage(request) {
+        requests.push(request)
+        return { content: 'done', toolCalls: [] }
+      },
+    },
+    model: 'fake-model',
+    supportedEfforts: ['low'],
+    tools: () => [],
+    permissionPrompt: async () => true,
+    cwd: testCwd,
+    resolveSubagentModel: () => undefined,
+  })
+
+  const result = await agentTool.execute({ task: 'research', subagent_type: 'general', effort: 'max' }, toolContext())
+
+  assert.equal(result.ok, true)
+  assert.equal(requests.at(-1)?.effort, 'low')
+})
+
 test('explicit maxTurns in input overrides per-type default', async () => {
   let requests = 0
   const provider: ModelProvider = {
