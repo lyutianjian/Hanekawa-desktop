@@ -1994,6 +1994,13 @@ test('activity lines carry one running mark, which moves and stays readable', ()
   assert.ok(declares(carrier, 'flex', 'none'))
   assert.ok(declares(carrier, 'width', 'var(--mark-size)'))
   assert.ok(declares(carrier, 'height', 'var(--mark-size)'))
+  // An open thought's head wraps while it carries the mark: the mark hangs on the
+  // first line, centred on it, instead of drifting into the middle of the paragraph.
+  assert.ok(declares(
+    blockFor('.thinking.open > .run-line > .line-mark'),
+    'margin-top',
+    'calc((1lh - var(--mark-size)) / 2)',
+  ))
   const waiting = blocks.find((block) => block.selector === '.waiting' && declares(block, 'min-height', '24px'))
   assert.ok(waiting)
   assert.ok(declares(waiting, 'line-height', '24px'))

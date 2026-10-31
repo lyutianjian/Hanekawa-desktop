@@ -12,6 +12,8 @@
  * `dom/transcriptView.ts` the body.
  */
 
+import type { ImageAttachmentRef } from '../../../media/types.js'
+
 export const BROWSER_TOOL = 'Browser'
 
 /** One call's operation and the arguments it was given. */
@@ -64,7 +66,7 @@ export function browserRow(step: BrowserStep): BrowserRow {
     case 'page.set_checked':
       return verb(input['checked'] === true ? '勾选' : '取消勾选', target)
     case 'batch':
-      return verb('执行', `${Array.isArray(input['steps']) ? input['steps'].length : 0} 步浏览器操作`)
+      return verb('执行', `${batchSteps(step).length} 步浏览器操作`)
     default:
       return verb(ROW_VERBS[step.operation] ?? step.operation)
   }
@@ -83,6 +85,129 @@ const ROW_VERBS: Readonly<Record<string, string>> = {
   'page.screenshot': '截取页面',
   'page.scroll': '滚动页面',
   'page.wait_for': '等待页面',
+}
+
+/**
+ * One step of a call, with what came back for it.
+ *
+ * A batch is the tool's many-operation form, and the tool answers it one
+ * `[i/n] operation: …` line per step — an answer written for the model, full of
+ * tab ids, viewport maths and English. The window splits that answer back into
+ * its steps so each reads as its own action: the operation in words, and under
+ * it only what a person is reading the step for.
+ */
+export interface BrowserRun {
+  /** A batch's 1-based position. A single call has none: its row is the operation. */
+  readonly index?: number
+  readonly row: BrowserRow
+  /** The picture this step produced. */
+  readonly image?: ImageAttachmentRef
+  /** The part of this step's answer worth printing (`stepText`). */
+  readonly text?: string
+  /** The step the batch stopped at. */
+  readonly failed?: boolean
+  /** A step the batch never reached, because one before it failed. */
+  readonly skipped?: boolean
+}
+
+/**
+ * The call as the steps a reader watches happen: one for a plain call, one per
+ * `steps` entry for a batch. `images` arrive in step order, so the *n*-th
+ * screenshot step takes the *n*-th picture; a batch stops at its first failure,
+ * so nothing after the failing step can own one.
+ */
+export function browserRuns(
+  step: BrowserStep,
+  images: readonly ImageAttachmentRef[] | undefined,
+  text: string | undefined,
+  failed: boolean,
+): readonly BrowserRun[] {
+  if (step.operation !== 'batch') {
+    const answer = stepText(step.operation, text, failed)
+    return [{
+      row: browserRow(step),
+      ...(images?.[0] === undefined ? {} : { image: images[0] }),
+      ...(answer === undefined ? {} : { text: answer }),
+      ...(failed ? { failed: true } : {}),
+    }]
+  }
+  const lines = splitBatchText(text)
+  let shot = 0
+  // The tool stops at the first step that fails, so everything after that one was
+  // asked for and never ran — a row that says so, rather than a row that looks done.
+  let stopped = false
+  return batchSteps(step).map((child, index) => {
+    const line = lines[index]
+    const verdict = line === undefined ? undefined : splitVerdict(line, child.operation)
+    const answer = stepText(child.operation, verdict?.text, verdict?.failed === true)
+    const image = child.operation === 'page.screenshot' ? (images ?? [])[shot] : undefined
+    if (image !== undefined) shot += 1
+    const run: BrowserRun = {
+      index: index + 1,
+      row: browserRow(child),
+      ...(image === undefined ? {} : { image }),
+      ...(answer === undefined ? {} : { text: answer }),
+      ...(verdict?.failed === true ? { failed: true } : {}),
+      ...(stopped ? { skipped: true } : {}),
+    }
+    if (verdict?.failed === true) stopped = true
+    return run
+  })
+}
+
+/** The operations whose answer is the document the reader came for. */
+const READING = new Set(['browser.get_state', 'page.elements.snapshot', 'page.text.snapshot'])
+
+/** Where a page's own console report starts in an answer, for `stepText` to keep. */
+const CONSOLE_HEAD = 'Console errors the page logged:'
+
+/**
+ * The part of a step's answer worth printing: all of it for a read and for a
+ * failure, a page's console errors under an action — a handler that threw is the
+ * only explanation for a click that did nothing — and nothing for an action that
+ * went through, whose answer is the tab dump the model needs and a reader does
+ * not. The tool's whole answer stays in the record and the copy button.
+ */
+function stepText(operation: string, text: string | undefined, failed: boolean): string | undefined {
+  if (text === undefined || text.length === 0) return undefined
+  if (failed || READING.has(operation)) return text
+  const at = text.indexOf(CONSOLE_HEAD)
+  return at < 0 ? undefined : text.slice(at)
+}
+
+/** A batch's own steps, each read the way a top-level call is. */
+function batchSteps(step: BrowserStep): readonly BrowserStep[] {
+  const steps = step.input['steps']
+  if (!Array.isArray(steps)) return []
+  return steps.flatMap((entry) => browserStepOf(entry).browser ?? [])
+}
+
+/**
+ * A batch's answer, back in its steps. The tool writes one `[i/n] operation: …`
+ * line per step and that step's own answer under it, so those numbered lines are
+ * the only thing that says where one step ends and the next begins.
+ */
+function splitBatchText(text: string | undefined): readonly (string | undefined)[] {
+  const parts: (string | undefined)[] = []
+  let at = -1
+  for (const line of (text ?? '').split('\n')) {
+    const head = /^\[(\d+)\/\d+\] /.exec(line)
+    if (head !== null) {
+      at = Number(head[1]) - 1
+      parts[at] = line.slice(head[0].length)
+    } else if (at >= 0 && parts[at] !== undefined) {
+      parts[at] = `${parts[at]}\n${line}`
+    }
+  }
+  return parts
+}
+
+/** One step's `[i/n]` line without its `operation:` head, and whether that step was the one that failed. */
+function splitVerdict(text: string, operation: string): { readonly text: string; readonly failed: boolean } {
+  const failed = `${operation} failed: `
+  if (text.startsWith(failed)) return { text: text.slice(failed.length), failed: true }
+  const plain = `${operation}: `
+  return { text: text.startsWith(plain) ? text.slice(plain.length) : text, failed: false }
 }
 
 /** One line of the expanded body's parameter list. */

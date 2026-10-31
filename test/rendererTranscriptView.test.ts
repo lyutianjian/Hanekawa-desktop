@@ -3133,7 +3133,7 @@ test('an opened screenshot is the picture itself, and a press opens the viewer',
   assert.equal(picture()?.attributes.get('src'), 'data:image/png;base64,BIG')
 })
 
-test('an action lists its arguments above the result, and names the element it acted on', (t) => {
+test('an action lists its arguments, and the answer written for the model stays out', (t) => {
   const view = mount(t)
   const step = browserCall({ operation: 'page.type', input: { ref: 'e3', text: 'hello' }, content: 'Typed into e3.' })
   view.render(transcript([step]), opened('b1'))
@@ -3141,14 +3141,86 @@ test('an action lists its arguments above the result, and names the element it a
   const row = rowOf(view)
   assert.equal(row.children[0]?.children[0]?.text, '输入文本 e3')
   const body = row.children[1]!
-  assert.deepEqual(body.children.map((child) => child.className), ['step-params', 'step-body-head', 'step-output'])
+  // The tab dump that answers the model says nothing a reader needs: the row is
+  // the operation, and the arguments are what produced it.
+  assert.deepEqual(body.children.map((child) => child.className), ['step-params'])
   assert.deepEqual(body.children[0]?.children.map((param) => param.children.map((part) => part.text)), [
     ['目标', 'e3'],
     ['文本', 'hello'],
   ])
-  // No picture, so the tool's own text is the body — under the arguments that
-  // produced it, and the parameters say nothing about a picture that is not there.
-  assert.equal(body.children[1]?.text, 'Screenshot 1280x800')
+})
+
+test('a call with nothing to show offers no body at all', (t) => {
+  const view = mount(t)
+  const step = browserCall({ operation: 'browser.close_tab', input: { tabId: 'tab-1' }, content: 'Closed tab tab-1.' })
+  view.render(transcript([step]))
+
+  const row = rowOf(view)
+  // No chevron, nothing to press: an empty body would be a row that opens to a gap.
+  assert.deepEqual(row.children[0]?.classes, ['step-head', 'static'])
+  assert.equal(row.children.length, 1)
+})
+
+test('a batch opens as its steps, one row each, with the picture on the step that took it', (t) => {
+  const view = mount(t)
+  const step = browserCall({
+    operation: 'batch',
+    input: {
+      steps: [
+        { operation: 'tab.wait_for_load', tabId: 'tab-1' },
+        { operation: 'tab.emulate', preset: 'desktop' },
+        { operation: 'page.screenshot', tabId: 'tab-1' },
+      ],
+    },
+    content: [
+      '[1/3] tab.wait_for_load: tabId\turl\ttitle\tflags',
+      'tab-1\thttp://127.0.0.1:64318/pelican-bike.html\t海风骑行\t',
+      '[2/3] tab.emulate: tab tab-1 now emulates desktop (1280x800 @1x); innerWidth=1280.',
+      '[3/3] page.screenshot: Screenshot of the visible area of tab tab-1.',
+    ].join('\n'),
+    images: [shotRef],
+  })
+  view.render(transcript([step]), opened('b1'))
+
+  const row = rowOf(view)
+  assert.equal(row.children[0]?.children[0]?.text, '执行 3 步浏览器操作')
+  const body = row.children[1]!
+  // Three operations are three rows; the numbered English answer is gone.
+  assert.deepEqual(body.children.map((child) => child.className), ['step-run', 'step-run', 'step-run', 'step-shot'])
+  assert.deepEqual(body.children.slice(0, 3).map((run) => run.children.map((part) => part.text)), [
+    ['1', '等待加载'],
+    ['2', '模拟 desktop'],
+    ['3', '截取页面'],
+  ])
+})
+
+test('a batch that stopped marks the step that failed and the ones it never reached', (t) => {
+  const view = mount(t)
+  const step = browserCall({
+    operation: 'batch',
+    input: {
+      steps: [
+        { operation: 'tab.wait_for_load', tabId: 'tab-1' },
+        { operation: 'page.click', ref: 'e9' },
+        { operation: 'page.screenshot', tabId: 'tab-1' },
+      ],
+    },
+    content: [
+      '[1/3] tab.wait_for_load: tabId\turl\ttitle\tflags',
+      '[2/3] page.click failed: No element matches e9.',
+      'Stopped; the remaining 1 step was not run.',
+    ].join('\n'),
+  })
+  view.render(transcript([{ ...step, failed: true }]), opened('b1'))
+
+  const body = rowOf(view).children[1]!.children
+  const runs = body.filter((child) => child.className.startsWith('step-run'))
+  assert.deepEqual(runs.map((run) => run.className), ['step-run', 'step-run failed', 'step-run skipped'])
+  // The failed step keeps the tool's reason, and the steps after it were asked
+  // for and never ran — said in words, not only in colour.
+  assert.equal(body.find((child) => child.className === 'step-output')?.children[0]?.text,
+    'No element matches e9.\nStopped; the remaining 1 step was not run.')
+  assert.equal(runs.at(-1)?.children.at(-1)?.text, '未执行')
 })
 
 // --- a user message's images (S12) ---------------------------------------------

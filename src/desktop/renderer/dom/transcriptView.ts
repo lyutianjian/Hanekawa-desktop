@@ -46,7 +46,7 @@ import {
   type WaitingRow,
 } from '../model/waiting.js'
 import { callParts } from '../model/toolPhrases.js'
-import { browserParams } from '../model/browserSteps.js'
+import { browserParams, browserRuns, type BrowserRun } from '../model/browserSteps.js'
 import { drawnSteps } from '../model/memoryOps.js'
 import { THREAD_STATUS_LABEL, threadTone } from '../model/coordinationStatus.js'
 import type { ThreadNoteCard } from '../model/threadNotes.js'
@@ -1852,7 +1852,7 @@ function stepBody(step: ToolLike, family: FamilyData, painter: Painter): (() => 
     }
   }
   if (isWebProse(step)) return () => webBody(step)
-  if (step.kind === 'tool' && step.tool.browser !== undefined) return () => browserBody(step, painter)
+  if (step.kind === 'tool' && step.tool.browser !== undefined) return browserBody(step, painter)
   const { resultSummary, detail, content } = step.tool
   const text = detail ?? content
   if (resultSummary === undefined && (text === undefined || text.length === 0)) return undefined
@@ -1914,23 +1914,28 @@ function webBody(step: Extract<ToolLike, { kind: 'tool' }>): HTMLElement {
 }
 
 /**
- * The browser family's body: what the call asked for, then what came back.
+ * The browser family's body: what the call asked for, then what came back, step
+ * by step.
  *
- * A screenshot's answer is the picture, so its own caption block — written for
- * the model, coordinates and all — stays out of it, and a batch keeps its text
- * beside the picture because those numbered lines are the only place the steps
- * it ran are named. Everything else is the tool's text under the parameters
- * that produced it.
+ * A batch's answer is one numbered line per step, written for the model — tab
+ * ids, viewport maths, English. `browserRuns` splits it back into its steps, so
+ * three operations read as three actions instead of one block, and each step
+ * keeps only the part a person is reading it for. A call with nothing to show
+ * has no body, so its row does not offer one.
  */
-function browserBody(step: Extract<ToolLike, { kind: 'tool' }>, painter: Painter): HTMLElement {
+function browserBody(step: Extract<ToolLike, { kind: 'tool' }>, painter: Painter): (() => HTMLElement) | undefined {
   const browser = step.tool.browser!
+  const { errorCode, detail, content, images } = step.tool
   const params = browserParams(browser)
-  const image = step.tool.images?.[0]
-  const { errorCode, resultSummary, detail, content } = step.tool
+  const runs = browserRuns(browser, images, detail ?? content, step.failed === true)
   const error = errorCode === undefined ? undefined : TOOL_ERROR_LABELS[errorCode]
-  const text = detail ?? content
-  const textShown = image === undefined || step.failed === true || browser.operation === 'batch'
-  return el(
+  // A batch's rows are the body even when every step came back empty; a single
+  // call's row is already its operation, so it has to bring something of its own.
+  const named = browser.operation === 'batch'
+  if (!named && params.length === 0 && error === undefined && runs.every((run) => run.image === undefined && run.text === undefined)) {
+    return undefined
+  }
+  return () => el(
     'div',
     'step-body',
     params.length === 0 ? undefined : el('div', 'step-params', ...params.map((param) => el(
@@ -1939,11 +1944,34 @@ function browserBody(step: Extract<ToolLike, { kind: 'tool' }>, painter: Painter
       el('span', 'step-param-label', param.label),
       el('span', 'step-param-value', param.value),
     ))),
-    image === undefined ? undefined : shotNode(painter, image),
+    ...runs.flatMap((run) => browserRunNode(painter, run, named)),
     error === undefined ? undefined : el('div', 'step-error', error),
-    !textShown || resultSummary === undefined ? undefined : el('div', 'step-body-head', resultSummary),
-    !textShown || text === undefined || text.length === 0 ? undefined : outputBlock(painter, 'step-body-text', text),
   )
+}
+
+/** One run: a batch's own row for it, then the picture or the text that came back. */
+function browserRunNode(painter: Painter, run: BrowserRun, named: boolean): Child[] {
+  const answer: Child[] = [
+    run.image === undefined ? undefined : shotNode(painter, run.image),
+    run.text === undefined ? undefined : outputBlock(painter, 'step-body-text', run.text),
+  ]
+  if (!named) return answer
+  const runClass = `step-run${run.failed === true ? ' failed' : ''}${run.skipped === true ? ' skipped' : ''}`
+  return [
+    el(
+      'div',
+      runClass,
+      el('span', 'step-run-index', String(run.index)),
+      el(
+        'span',
+        'step-run-label',
+        ...(run.row.target.length === 0 ? [run.row.verb] : [`${run.row.verb} `, el('strong', '', run.row.target)]),
+      ),
+      // The red is not the only carrier of a stop: the steps it never reached say so.
+      run.skipped === true ? el('span', 'step-note', '未执行') : undefined,
+    ),
+    ...answer,
+  ]
 }
 
 /**

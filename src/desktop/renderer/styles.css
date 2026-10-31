@@ -3167,6 +3167,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
    colour, at the folded line's size so the toggle does not reflow it. */
 .thinking.open > .run-line { align-items: flex-start; color: var(--text-secondary); }
 .thinking.open > .run-line > .icon { margin-top: calc((1lh - 13px) / 2); }
+/* The open line wraps while it carries the live mark, so the mark is pinned to the
+   first line — the one its sentence starts on — instead of the paragraph's middle. */
+.thinking.open > .run-line > .line-mark { margin-top: calc((1lh - var(--mark-size)) / 2); }
 .thinking.open > .run-line .line-text,
 .thinking.open > .run-line .text-swap > span {
   white-space: normal;
@@ -3228,7 +3231,6 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .activity-line, .waiting-main { gap: 4px; }
 .activity-line > .line-text { flex: 0 1 auto; }
 .activity-line > .line-mark, .waiting-main > .line-mark { margin-inline-end: 8px; }
-.activity-line > .line-mark { align-self: center; }
 /* Claude's secondary working text: a three-second sweep, with a quiet pause at each end. */
 @keyframes activity-shine {
   0%, 15% { background-position: 83.333% 0; animation-timing-function: cubic-bezier(.714,.121,.211,.888); }
@@ -3495,6 +3497,35 @@ body.resizing #browser-resizer::after { opacity: 1; }
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* A batch, step by step: three operations are three lines, not one block of the
+   answer written for the model. The index is quiet and the numbers line up; the
+   operation is in the row's own two inks, verb then object. */
+.step-run {
+  display: flex;
+  gap: var(--space-2);
+  align-items: baseline;
+  margin-bottom: var(--space-1);
+}
+.step-run-index {
+  flex: 0 0 auto;
+  min-width: 1rem;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  user-select: none;
+}
+.step-run-label { min-width: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.step-run-label strong { font-weight: 600; color: var(--text-primary); }
+.step-run.failed .step-run-label { color: var(--text-danger); }
+/* Asked for, never reached: the batch stopped above it, so the row says so and
+   stays quiet rather than reading as another action that ran. */
+.step-run.skipped .step-run-label,
+.step-run.skipped .step-run-label strong { color: var(--text-tertiary); }
+.step-run .step-note { margin-left: var(--space-2); color: var(--text-tertiary); user-select: none; }
+/* What came back sits under the row that asked for it: room above it, so a block
+   and the action that produced it do not read as one run of text. */
+.step-run + .step-shot,
+.step-run + .step-output { margin-top: var(--space-2); }
 
 /* A screenshot's row keeps a sliver of itself at its right end: enough to tell
    two captures apart, not enough to take the row over. It is pinned there, so
