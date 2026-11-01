@@ -303,6 +303,8 @@ export interface SubagentTranscriptRecord {
   agentId: string
   subagentType: string
   model?: string
+  /** The parent already received this run's requests individually. */
+  usageReported?: true
   parentToolUseId?: string
   transcriptPath?: string
   status?: SubagentTaskStatus
@@ -970,6 +972,8 @@ export interface UsageCost {
   unpriced?: true
   /** A restored total whose earlier requests were recorded before costs were. */
   legacy?: true
+  /** A dispatched request did not report its complete usage. */
+  incomplete?: true
 }
 
 export interface ModelPricing {
@@ -1070,6 +1074,8 @@ export interface ModelRequest {
   imageBytes?: Map<string, RequestImageBytes>
   onTextDelta?: (delta: string) => void
   onStreamEvent?: (event: ModelStreamEvent) => void
+  /** One settlement per API attempt, including billed attempts that fail. */
+  onUsage?: (usage: TokenUsage) => void
 }
 
 export interface ModelResponse {

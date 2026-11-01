@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import type { ModelProvider, ModelRequest, ToolResultRecord, ToolUseSummaryRecord, TokenUsage } from './types.js'
 import { toolUseSummaryCacheSource } from './cacheBreakDetection.js'
+import { requestModel } from './requestUsage.js'
 
 export interface SummarizeToolUseParams {
+  onUsage?(usage: TokenUsage, model: string): void
   provider: ModelProvider
   model: string
   promptCacheRetention?: 'in_memory' | '24h'
@@ -53,7 +55,7 @@ export async function summarizeToolUse(params: SummarizeToolUseParams): Promise<
     ],
   }
 
-  const response = await provider.createMessage(request)
+  const { response, usage } = await requestModel(provider, request, params.onUsage)
   const summary = response.content.trim().split('\n')[0]?.slice(0, 120) ?? 'tool use'
 
   return {
@@ -65,6 +67,6 @@ export async function summarizeToolUse(params: SummarizeToolUseParams): Promise<
       createdAt: new Date().toISOString(),
       model,
     },
-    usage: response.usage,
+    usage,
   }
 }

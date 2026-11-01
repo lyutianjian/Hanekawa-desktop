@@ -2154,6 +2154,12 @@ function itemNode(painter: Painter, item: TranscriptItem, footer: TurnFooter | u
   // The interruption is said once, in the turn's own words: 「已中断」, the way a
   // finished turn says 「已处理 …」.
   const text = item.interrupt === true ? '已中断' : item.text
+  if (item.kind === 'notice' || item.kind === 'error') {
+    return painter.node(key, item.interrupt === true ? `${classes.join(' ')} interrupt` : classes.join(' '), [text], () => [
+      icon(item.kind === 'error' ? 'alert-circle' : item.interrupt === true ? 'square' : 'info'),
+      el('span', 'notice-text', text),
+    ])
+  }
   return painter.node(key, item.interrupt === true ? `${classes.join(' ')} interrupt` : classes.join(' '), [text], () => [text])
 }
 

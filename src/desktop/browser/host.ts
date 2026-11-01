@@ -88,6 +88,7 @@ export class DesktopBrowserHost implements BrowserHost {
   private readonly ownership = new BrowserOwnership()
   /** Tabs whose refs were dropped since their last element scan; see `forgetPage`. */
   private readonly forgotten = new Set<string>()
+  private readonly inputFrames = new WeakMap<object, number>()
   private readonly unsubscribe: readonly (() => void)[]
 
   constructor(private readonly deps: DesktopBrowserHostDeps) {
@@ -291,6 +292,7 @@ export class DesktopBrowserHost implements BrowserHost {
     this.ownership.assertAllowed(caller.sessionId, revision)
     const { width, height } = pngSize(bytes)
     if (width === 0 || height === 0) throw notCaptured()
+    this.inputFrames.set(page.contents, page.generation)
     const shot: BrowserScreenshot = { bytes, name: screenshotName(this.rowFor(tabId)?.url ?? ''), width, height }
     if (report !== undefined) shot.settle = describeSettle(report)
     const viewport = await readViewport(page, bounds)
@@ -303,7 +305,7 @@ export class DesktopBrowserHost implements BrowserHost {
 
   async click(caller: BrowserCaller, tabId: string, request: BrowserClickRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
+    const page = await this.inputPage(caller, tabId, revision, request.signal)
     const check = this.guard(caller, revision, request.signal)
     return this.afterSettling(tabId, check, request.signal, () => clickTarget(this.inputDeps(page, check, request.signal), request))
   }
@@ -312,24 +314,25 @@ export class DesktopBrowserHost implements BrowserHost {
     const revision = this.enter(caller)
     const page = this.requirePage(caller, tabId)
     const check = this.guard(caller, revision, request.signal)
+    await this.prepareInput(page, check, request.signal)
     return this.afterSettling(tabId, check, request.signal, () => clickAt(this.inputDeps(page, check, request.signal), request))
   }
 
   async type(caller: BrowserCaller, tabId: string, request: BrowserTypeRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
+    const page = await this.inputPage(caller, tabId, revision, request.signal)
     return typeText(this.inputDeps(page, this.guard(caller, revision, request.signal), request.signal), request)
   }
 
   async pressKey(caller: BrowserCaller, tabId: string, request: BrowserPressKeyRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
+    const page = await this.inputPage(caller, tabId, revision, request.signal)
     return pressKeys(this.inputDeps(page, this.guard(caller, revision, request.signal), request.signal), request)
   }
 
   async selectOption(caller: BrowserCaller, tabId: string, request: BrowserSelectRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
+    const page = await this.inputPage(caller, tabId, revision, request.signal)
     return selectOption(this.inputDeps(page, this.guard(caller, revision, request.signal), request.signal), request)
   }
 
@@ -339,21 +342,21 @@ export class DesktopBrowserHost implements BrowserHost {
     request: BrowserSetCheckedRequest,
   ): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
+    const page = await this.inputPage(caller, tabId, revision, request.signal)
     const check = this.guard(caller, revision, request.signal)
     return this.afterSettling(tabId, check, request.signal, () => setChecked(this.inputDeps(page, check, request.signal), request))
   }
 
   async hover(caller: BrowserCaller, tabId: string, request: BrowserHoverRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
+    const page = await this.inputPage(caller, tabId, revision, request.signal)
     const check = this.guard(caller, revision, request.signal)
     return this.afterSettling(tabId, check, request.signal, () => hoverTarget(this.inputDeps(page, check, request.signal), request))
   }
 
   async scroll(caller: BrowserCaller, tabId: string, request: BrowserScrollRequest): Promise<BrowserActionResult> {
     const revision = this.enter(caller)
-    const page = await this.emulatedPage(caller, tabId, revision, request.signal)
+    const page = await this.inputPage(caller, tabId, revision, request.signal)
     return scrollPage(this.inputDeps(page, this.guard(caller, revision, request.signal), request.signal), request)
   }
 
@@ -588,6 +591,24 @@ export class DesktopBrowserHost implements BrowserHost {
     return page
   }
 
+  private async inputPage(caller: BrowserCaller, tabId: string, revision: number, signal?: AbortSignal): Promise<BrowserPage> {
+    const page = await this.emulatedPage(caller, tabId, revision, signal)
+    await this.prepareInput(page, this.guard(caller, revision, signal), signal)
+    return page
+  }
+
+  private async prepareInput(page: BrowserPage, check: () => void, signal?: AbortSignal): Promise<void> {
+    check()
+    if (this.inputFrames.get(page.contents) === page.generation) return
+    // DOM ready precedes the compositor's first hit-test surface on parked tabs.
+    // A real frame is the barrier; a timer or a synthetic DOM click is not.
+    const frame = await captureViaCdp(page, callBounds(signal))
+    check()
+    const current = this.deps.tabs.pageFor(page.tabId)
+    if (!frame?.length || current?.generation !== page.generation) throw notCaptured()
+    this.inputFrames.set(page.contents, page.generation)
+  }
+
   private rowFor(tabId: string): WireBrowserTabInfo | undefined {
     return this.deps.tabs.describe().find((tab) => tab.tabId === tabId)
   }
@@ -694,7 +715,7 @@ async function readViewport(page: BrowserPage, bounds?: CallBounds): Promise<Vie
 
 async function captureViaWindow(page: BrowserPage): Promise<Buffer | undefined> {
   if (page.contents.isDestroyed()) return undefined
-  const image = await withTimeout(page.contents.capturePage(), SCREENSHOT_TIMEOUT_MS).catch(() => undefined)
+  const image = await withTimeout(page.contents.capturePage(undefined, { stayHidden: true }), SCREENSHOT_TIMEOUT_MS).catch(() => undefined)
   return image === undefined || image.isEmpty() ? undefined : image.toPNG()
 }
 

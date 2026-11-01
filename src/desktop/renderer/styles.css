@@ -139,11 +139,11 @@
   --space-7: 48px;
 
   /* --- shape ---
-     Tight corners for marks, badges and icon buttons; row for list items and
-     inputs, md for cards and popovers, panel for modal and browser surfaces,
-     lg for the composer. Capsules and circles keep their own geometry. */
-  --radius-lg: 18px;
-  --radius-panel: 14px;
+     Marks and badges stay compact; icon buttons use sm, buttons, inputs and
+     list items use row, cards and popovers use md. Panels and the composer
+     share the window-sized corner. Circles and switches keep their geometry. */
+  --radius-lg: var(--radius-panel);
+  --radius-panel: 16px;
   --radius-md: 12px;
   --radius-row: 8px;
   --radius-sm: 6px;
@@ -325,6 +325,8 @@
      the two above — an empty ring before the first snapshot beats an invalid
      gradient. */
   --context-ratio: 0;
+  /* The effort slider’s discrete position, updated while dragging. */
+  --effort-ratio: 0;
   /* One context-card bar segment's share of the model window, written by
      `dom/contextPopover.ts`. */
   --ctx-share: 0;
@@ -618,47 +620,16 @@ body {
 [hidden] { display: none !important; }
 
 /* --- scrollbars ---
-   Chromium's default is a wide light track, and on the canvas it lands right
-   against the rounded corner the layout is built around — the one piece of
-   chrome in the window that ignores the palette entirely. These are ordinary
-   selector blocks, not at-rules, so `rendererStyleTokens`'s flat parser still
-   holds.
-
-   **Windows and Linux** get the drawn thumb below: a 10px gutter with a 4px
-   pill inset in it, the width `--sidebar-scrollbar-overhang` is cut to. These
-   rules used to sit beside `* { scrollbar-width: thin; scrollbar-color }`, and
-   since Chromium 121 an element with either standard property set ignores its
-   `::-webkit-scrollbar` styling entirely — so the drawn thumb was dead code and
-   the bar was Chromium's own thin one, a different width from the one the
-   sidebar's overhang was measured against.
-
-   **macOS** gets nothing: its scrollbars are the system's overlay ones, which
-   take no width, fade when idle and follow `color-scheme`. Any
-   `::-webkit-scrollbar` style would turn them into always-on classic bars. */
-:root:not([data-platform="darwin"]) ::-webkit-scrollbar { width: 10px; height: 10px; }
-:root:not([data-platform="darwin"]) ::-webkit-scrollbar-track { background: transparent; }
-:root:not([data-platform="darwin"]) ::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
-  border-radius: var(--radius-pill);
-  /* Painting the thumb through its border box is what leaves the 3px inset
-     above transparent — a `background` would fill it. */
-  background-clip: content-box;
-  background-color: var(--border-strong);
+   Thin native thumbs over a transparent track, including macOS with its
+   "Always" preference. Use only the standard properties: mixing them with
+   webkit pseudo-elements makes Chromium ignore the latter. */
+:where(*) {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
 }
-:root:not([data-platform="darwin"]) ::-webkit-scrollbar-thumb:hover { background-color: var(--text-tertiary); }
-:root:not([data-platform="darwin"]) ::-webkit-scrollbar-corner { background: transparent; }
-/* The rail's thumb is the one exception to the inset above. It is read against
-   the canvas's edge rather than against a panel of its own, and 3px short of the
-   rail's boundary reads as a slider that failed to reach it. The 4px thickness
-   is unchanged — the whole inset moves to the left side. */
-:root:not([data-platform="darwin"]) .sidebar-list::-webkit-scrollbar-thumb {
-  border-right-width: 0;
-  border-left-width: 6px;
+*:hover {
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 32%, transparent) transparent;
 }
-/* A classic bar takes width when it appears. Reserved on both edges of the
-   transcript, so the reading column stays centred over the composer instead of
-   jumping 10px left the moment a conversation outgrows the window. */
-:root:not([data-platform="darwin"]) .transcript { scrollbar-gutter: stable both-edges; }
 
 /* --- keyboard focus ---
    Standalone controls keep air around the ring; rows keep it inside their
@@ -679,8 +650,9 @@ body {
 .canvas-menu-item:focus-visible,
 .project-menu-item:focus-visible,
 .composer-menu-item:focus-visible,
-.chip-menu-row:focus-visible,
-.chip-flyout-item:focus-visible,
+.chip-picker-model:focus-visible,
+.chip-picker-back:focus-visible,
+.chip-model-option:focus-visible,
 .settings-menu-item:focus-visible,
 .branch-picker-row:focus-visible,
 .project-picker-row:focus-visible,
@@ -698,8 +670,8 @@ body {
 .canvas-menu:has(:focus-visible) .canvas-menu-item:hover:not(:focus-visible),
 .project-menu:has(:focus-visible) .project-menu-item:hover:not(:focus-visible),
 .composer-menu:has(:focus-visible) .composer-menu-item:hover:not(:focus-visible):not(.active),
-.chip-menu:has(:focus-visible) .chip-menu-row:hover:not(:focus-visible):not(.open),
-.chip-flyout:has(:focus-visible) .chip-flyout-item:hover:not(:focus-visible):not([aria-selected="true"]),
+.chip-menu:has(:focus-visible) :is(.chip-picker-model, .chip-picker-back):hover:not(:focus-visible),
+.chip-model-list:has(:focus-visible) .chip-model-option:hover:not(:focus-visible):not([aria-selected="true"]),
 .settings-menu:has(:focus-visible) .settings-menu-item:hover:not(:focus-visible):not(.active),
 .thread-menu:has(:focus-visible) .thread-menu-item:hover:not(:focus-visible) {
   background: transparent;
@@ -841,7 +813,7 @@ body.resizing #frame::after { transition: none; }
   background: transparent;
   color: var(--text-secondary);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   padding: var(--space-1) var(--space-3);
   font: inherit;
   font-size: var(--type-ui);
@@ -934,7 +906,7 @@ body.resizing #frame::after { transition: none; }
   font-size: var(--type-ui);
   min-width: 16rem;
 }
-.canvas-title-input:focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+.canvas-title-input:focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 /* While renaming, the field floats over the title it edits. The title stays in
    the flow, hidden, so the menu trigger and the controls to its right do not
    move when the field is wider than the name. */
@@ -1016,7 +988,7 @@ body.resizing #frame::after { transition: none; }
   background: transparent;
   color: var(--text-secondary);
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   padding: var(--space-1) var(--space-2);
   font: inherit;
   font-size: var(--type-meta);
@@ -1337,7 +1309,7 @@ body.browser-maximized #browser-resizer { display: none; }
 .browser-error-retry {
   margin-top: var(--space-2);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: var(--surface-card);
   color: var(--text-primary);
   font: inherit;
@@ -1508,7 +1480,7 @@ svg.browser-tab-icon { background: transparent; color: var(--text-tertiary); }
   box-shadow: inset 0 0 0 1px var(--border-subtle);
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-row);
   padding: var(--space-1) var(--space-3);
   font: inherit;
   font-size: var(--type-meta);
@@ -1556,6 +1528,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
   z-index: var(--z-raised);
   display: flex;
 }
+/* Detail pages start inside the scroller's padding; the list has a title row. */
+#browser-panel.tasks #side-actions { top: 10px; }
+#browser-panel.tasks:has(> #tasks-head:not([hidden])) #side-actions { top: 0; }
 .side-action {
   height: 36px;
   display: inline-flex;
@@ -1739,6 +1714,24 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 .changes-row.elided:first-child { margin-top: 0; }
 .changes-row.elided:last-child { margin-bottom: 0; }
+/* The task list owns a fixed title row above its scrolling groups. */
+#tasks-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  height: 36px;
+  padding: 0 64px 0 var(--space-3);
+}
+.tasks-title {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+  font-size: var(--type-ui);
+  font-weight: 400;
+}
 /* 任务: sections stacked in one padded scroller. A
    section holding a page (a sub-agent's or thread's transcript) stands alone
    and takes the column's height. */
@@ -1751,6 +1744,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   gap: var(--space-4);
   padding: 10px;
 }
+#browser-panel.tasks:has(> #tasks-head:not([hidden])) #side-sections { padding-top: 0; }
 .side-section { flex: 0 0 auto; display: flex; flex-direction: column; min-height: 0; }
 .side-section-head {
   display: flex;
@@ -1770,7 +1764,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 }
 /* Room for the panel's actions over whichever section comes first. */
 .side-section-head { padding-right: 40px; }
-#browser-panel.tasks .side-section-head { padding-right: 64px; }
+#browser-panel.tasks .side-section-head { padding-right: var(--space-3); }
 #tasks-empty { margin: 0; padding: var(--space-3); color: var(--text-tertiary); font-size: var(--type-meta); text-align: center; }
 /* 线程: the project's head over its thread list, or one thread's page. */
 #threads-page { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
@@ -1795,12 +1789,12 @@ body.resizing #browser-resizer::after { opacity: 1; }
   display: flex;
   flex-direction: column;
 }
-/* Commands and agents share single-layer cards in the panel's scroller. */
+/* Commands and agents share a ruled list; only expanded content gets a card. */
 .background-tasks-view {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: var(--space-1);
+  gap: 0;
   padding: 0;
 }
 .bt-clear {
@@ -1823,11 +1817,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
   flex-direction: column;
   gap: var(--space-1);
   min-width: 0;
-  border-radius: var(--radius-row);
-  background: var(--surface-hover);
+  padding: var(--space-1) 0 var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
 }
-.bt-row:hover,
-.bt-row:focus-within { background: var(--surface-active); }
 .bt-head {
   display: flex;
   flex-direction: column;
@@ -1835,20 +1827,23 @@ body.resizing #browser-resizer::after { opacity: 1; }
   justify-content: center;
   gap: var(--space-1);
   width: 100%;
-  height: 60px;
+  height: 40px;
   min-width: 0;
   padding: var(--space-2);
   border: 0;
-  border-radius: 0;
+  border-radius: var(--radius-row);
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: pointer;
 }
+.bt-head--agent { height: 64px; }
+.bt-head:hover,
+.bt-head:focus-visible { background: var(--surface-hover); }
 .bt-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 .bt-row:has(.bt-stop) .bt-head { padding-right: 40px; }
-.bt-title { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.bt-title { display: flex; align-items: center; gap: var(--space-2); width: 100%; min-width: 0; }
 .bt-text {
   flex: 1;
   min-width: 0;
@@ -1858,29 +1853,30 @@ body.resizing #browser-resizer::after { opacity: 1; }
   white-space: nowrap;
   overflow: hidden;
 }
-.bt-mark { flex: none; display: inline-flex; color: var(--text-tertiary); }
-.bt-mark .icon, .bt-chevron .icon { width: 14px; height: 14px; }
-.bt-mark.tone-running { color: var(--accent-brand-strong); }
-.bt-mark.tone-running .icon { animation: spin var(--motion-running) linear infinite; }
-.bt-mark.tone-attention { color: var(--text-warn); }
-.bt-mark.tone-danger { color: var(--text-danger); }
-.bt-chevron { display: inline-flex; color: var(--text-tertiary); }
+.bt-row[data-tone="attention"] .bt-text { color: var(--text-warn); }
+.bt-failure { flex: none; color: var(--text-danger); font-size: var(--type-ui); }
+.bt-chevron { flex: none; display: inline-flex; color: var(--text-tertiary); }
 .bt-chevron.open { transform: rotate(90deg); }
+.bt-chevron .icon { width: 14px; height: 14px; }
 .bt-meta {
   display: flex;
+  align-items: center;
   gap: var(--space-2);
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  padding-left: calc(14px + var(--space-2));
+  min-height: 18px;
   color: var(--text-tertiary);
   font-size: var(--type-meta);
   font-variant-numeric: tabular-nums;
 }
+.bt-model { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.bt-tokens { flex: none; }
+.bt-detail-meta { margin: 0 var(--space-2); }
 .bt-stop {
   position: absolute;
-  top: var(--space-1);
-  right: var(--space-1);
+  top: 10px;
+  right: var(--space-2);
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -1892,26 +1888,35 @@ body.resizing #browser-resizer::after { opacity: 1; }
   height: 28px;
   padding: var(--space-1);
   cursor: pointer;
-  opacity: 0;
 }
-.bt-row:hover .bt-stop,
-.bt-row:focus-within .bt-stop { opacity: 1; }
-.bt-stop .icon { width: 16px; height: 16px; }
+.bt-stop .icon { width: 14px; height: 14px; }
 .bt-stop:hover { background: var(--surface-active); color: var(--text-danger); }
 .bt-stop:focus-visible { outline: 2px solid var(--focus-ring); }
-.bt-output { margin: 0 var(--space-2) var(--space-2); }
-.bt-row > .bt-command {
-  margin: 0 var(--space-2);
-  padding-bottom: var(--space-2);
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-primary);
+.bt-output {
+  margin: 0 var(--space-2) var(--space-2);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-hover);
 }
+.bt-row > .bt-command {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  margin: 0 var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-card);
+  color: var(--text-secondary);
+}
+.bt-command-prompt { flex: none; color: var(--text-tertiary); font: var(--type-code)/var(--leading-dense) var(--font-mono); user-select: none; }
+.bt-command-text { flex: 1; min-width: 0; }
 .command-output {
   padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 #thread-detail-view {
   flex: 1 1 auto;
@@ -2032,7 +2037,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   height: 28px;
   padding: 0 var(--space-1);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -2058,7 +2063,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   margin-top: var(--space-2);
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-warn);
   font: inherit;
@@ -2097,7 +2102,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   box-shadow: inset 0 0 0 1px var(--border-subtle);
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-row);
   padding: var(--space-1) var(--space-3);
   font: inherit;
   font-size: var(--type-meta);
@@ -2640,10 +2645,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .session-badge.failed { color: var(--text-danger); }
 /* A running session's name sweeps with a sheen, so a background lane at
    work is seen at a glance without a mark beside it. Drawn on both copies of the
-   name so the hover marquee carries it along. The name itself keeps its resting
-   colour — only the highlight moves — and the highlight is the palette's one pure
-   white: a gleam crossing the dark theme's light text, a gloss crossing the light
-   theme's dark text.
+   name so the hover marquee carries it along. Dark uses the secondary text
+   rung under a wider pure-white band, so the sweep reads clearly without a
+   blurred copy spilling light onto the row behind it.
    The tile is four names wide and `sheen-row` travels exactly one tile per loop,
    so a sweep of about two seconds is followed by about two seconds of rest. Any
    other travel brings the next tile's band onto the name before the loop
@@ -2651,30 +2655,15 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .session-row.running .session-title-run,
 .session-row.running .session-title-echo {
   background: linear-gradient(100deg in oklab,
-    var(--text-primary) 45%, var(--surface-knob) 50%, var(--text-primary) 55%);
+    light-dark(var(--text-primary), var(--text-secondary)) 40%,
+    var(--surface-knob) 48%, var(--surface-knob) 52%,
+    light-dark(var(--text-primary), var(--text-secondary)) 60%);
   background-size: 400% 100%;
   background-clip: text;
   color: transparent;
   animation: sheen-row calc(var(--motion-running) * 2) linear infinite;
 }
 @keyframes sheen-row { 0% { background-position: 100% 0; } 100% { background-position: calc(-100% / 3) 0; } }
-/* The glow riding the band: a blurred copy of the name lit only where the band is,
-   on the same clock, in the same white. Dark theme only — on paper the blur has
-   nothing to light up, and a halo there would only fuzz the letters. */
-.session-row.running .session-title-run { position: relative; }
-.session-row.running .session-title-run::after {
-  content: attr(data-text);
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: linear-gradient(100deg,
-    transparent 45%, light-dark(transparent, var(--surface-knob)) 50%, transparent 55%);
-  background-size: 400% 100%;
-  background-clip: text;
-  color: transparent;
-  filter: blur(3px);
-  animation: sheen-row calc(var(--motion-running) * 2) linear infinite;
-}
 /* A session name that changed on screen — a sidebar row's, the canvas header's —
    enters a grapheme at a time, each out of a blur; `dom/titleReveal.ts` staggers
    their start times. Inline blocks so the filter applies. A running row's sheen
@@ -2690,7 +2679,6 @@ body.resizing #browser-resizer::after { opacity: 1; }
   color: inherit;
   animation: none;
 }
-.session-row.running .session-title-run.revealing::after { display: none; }
 /* A new session whose name is still being written: a bar holds its place. The
    name stays in the row or header, transparent, for anything reading it. */
 .session-title.pending,
@@ -2701,7 +2689,6 @@ body.resizing #browser-resizer::after { opacity: 1; }
   color: transparent;
   animation: none;
 }
-.session-title.pending .session-title-run::after { display: none; }
 .session-title.pending::before,
 .canvas-title.pending::before {
   content: '';
@@ -2757,13 +2744,13 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .session-confirm-no {
   background: transparent;
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   padding: 1px var(--space-2);
   font: inherit;
   font-size: var(--type-meta);
   cursor: pointer;
 }
-.session-confirm-yes { border-radius: var(--radius-pill); color: var(--text-danger); }
+.session-confirm-yes { color: var(--text-danger); }
 .session-confirm-no { color: var(--text-secondary); }
 .session-confirm-yes:hover,
 .session-confirm-no:hover { background: var(--surface-hover); }
@@ -2803,6 +2790,8 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .transcript {
   flex: 1 1 auto;
   overflow-y: auto;
+  /* Keep the reading axis centred even with classic, always-visible bars. */
+  scrollbar-gutter: stable both-edges;
   margin-top: calc(-1 * var(--transcript-tuck));
   padding: calc(var(--space-2) + var(--transcript-tuck)) var(--reading-gutter) var(--space-2);
   /* One step smaller than the rest of the app, and only here: the conversation is
@@ -3117,6 +3106,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   font: inherit;
   /* Every one-line activity line — thought, run, status, row — is one size. */
   font-size: var(--type-ui);
+  font-variant-numeric: tabular-nums;
   text-align: left;
   cursor: pointer;
 }
@@ -3843,18 +3833,36 @@ body.resizing #browser-resizer::after { opacity: 1; }
   overflow-wrap: anywhere;
   color: var(--text-secondary);
 }
-.transcript .item.notice { color: var(--text-secondary); font-style: italic; }
-.transcript .item.notice.interrupt { font-style: normal; }
+.transcript .item.notice,
+.transcript .item.error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+  line-height: var(--leading-dense);
+  font-style: normal;
+}
+.transcript .item.notice > .icon,
+.transcript .item.error > .icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+}
+.notice-text { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 /* Where the context was compacted: a thought-like line, shimmering while it runs. */
 .transcript .item.compaction {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-2);
   margin-bottom: var(--space-3);
+  font-size: var(--type-meta);
   line-height: var(--leading-dense);
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
   user-select: none;
 }
+.transcript .item.compaction > .icon { flex: none; width: 14px; height: 14px; }
 .transcript .item.error { color: var(--text-danger); }
 /* A turn that ended on a provider error: the reason is the card's title, the
    provider's own message sits under it clamped. */
@@ -3920,7 +3928,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .failure-action {
   padding: 3px var(--space-3);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -4084,9 +4092,9 @@ body.resizing #browser-resizer::after { opacity: 1; }
   margin: 0 auto;
   padding: var(--space-7) max(var(--space-3), calc(var(--reading-gutter) - var(--composer-overhang))) var(--space-2);
 }
-.welcome-head { display: flex; align-items: center; gap: var(--space-2); margin-bottom: var(--space-4); }
-.welcome-usage { max-width: 520px; }
-.welcome-mark { width: 26px; height: 26px; color: var(--accent-brand-strong); }
+.welcome-head { flex: none; display: flex; align-items: center; gap: var(--space-3); margin-bottom: var(--space-2); }
+.welcome-usage { display: flex; flex: 0 1 auto; min-height: 0; max-width: 520px; }
+.welcome-mark { flex: none; width: 26px; height: 26px; color: var(--accent-brand-strong); }
 .welcome-title {
   margin: 0;
   font-family: var(--font-serif);
@@ -4095,22 +4103,25 @@ body.resizing #browser-resizer::after { opacity: 1; }
   line-height: var(--leading-tight);
   color: var(--text-primary);
 }
-/* The usage card: one row of three figures over a heatmap. */
+/* Only the model rows scroll; the card shrinks with the welcome pane. */
 .usage-card {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  gap: var(--space-4);
+  padding: var(--space-4);
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
 }
-.usage-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.usage-head { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
 .usage-segments { display: inline-flex; gap: 2px; }
 .usage-segment {
-  padding: 2px 8px;
+  padding: 4px 8px;
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-tertiary);
   font: inherit;
@@ -4120,11 +4131,11 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .usage-segment:hover { background: var(--surface-hover); color: var(--text-primary); }
 .usage-segment.active { background: var(--surface-active); color: var(--text-primary); }
 .usage-segment:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.usage-body { position: relative; display: flex; flex-direction: column; gap: var(--space-2); min-height: 148px; }
+.usage-body { position: relative; display: flex; flex-direction: column; gap: var(--space-3); min-height: 0; }
 .usage-cells,
-.usage-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+.usage-facts { flex: none; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); }
 .usage-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.usage-cell { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.usage-cell { display: flex; flex-direction: column; gap: var(--space-1); min-width: 0; }
 .usage-cell .usage-label { order: -1; font-size: var(--type-meta); color: var(--text-tertiary); }
 .usage-cell .usage-value {
   font-size: var(--type-body);
@@ -4134,11 +4145,15 @@ body.resizing #browser-resizer::after { opacity: 1; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
 }
+.usage-cells .usage-value { font-size: var(--type-title); }
+.usage-chart-head { display: flex; flex: none; align-items: center; justify-content: space-between; font-size: var(--type-meta); color: var(--text-tertiary); }
+.usage-legend { display: flex; align-items: center; gap: 4px; }
 /* Fixed 10px cells: the model gives more weeks than any card shows, and what
    does not fit is clipped from the left (`flex-end` puts the overflow there),
    so the newest week is always the one in view. */
-.usage-heatmap { display: flex; justify-content: flex-end; gap: 3px; overflow: hidden; }
+.usage-heatmap { display: flex; flex: none; justify-content: flex-end; gap: 3px; overflow: hidden; }
 .usage-heat-col { flex: 0 0 10px; display: flex; flex-direction: column; gap: 3px; }
 .usage-heat { width: 10px; height: 10px; border-radius: var(--radius-mark); background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
 .usage-heat:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
@@ -4147,7 +4162,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .usage-heat.level-2 { background: color-mix(in srgb, var(--accent-info) 50%, transparent); }
 .usage-heat.level-3 { background: color-mix(in srgb, var(--accent-info) 70%, transparent); }
 .usage-heat.level-4 { background: color-mix(in srgb, var(--accent-info) 90%, transparent); }
-.usage-footnote { font-size: var(--type-meta); color: var(--text-tertiary); }
+.usage-footnote { flex: none; padding-top: var(--space-3); border-top: 1px solid var(--border-subtle); font-size: var(--type-meta); color: var(--text-tertiary); line-height: var(--leading-ui); }
 .usage-tip {
   position: absolute;
   z-index: var(--z-popover);
@@ -4185,15 +4200,27 @@ body.resizing #browser-resizer::after { opacity: 1; }
   cursor: pointer;
 }
 .usage-retry:hover { color: var(--text-primary); background: var(--surface-hover); }
-.usage-shares { display: flex; flex-direction: column; gap: var(--space-3); }
-.usage-share { display: flex; flex-direction: column; gap: 5px; }
-.usage-share-head { display: flex; justify-content: space-between; gap: var(--space-3); font-size: var(--type-meta); }
-.usage-share-model { color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.usage-share-figures { color: var(--text-tertiary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Keep overlay scrollbars in the card's right inset, clear of the percentages. */
+.usage-models-scroll { min-height: 0; max-height: 240px; margin-inline-end: calc(-1 * var(--space-3)); padding-inline-end: var(--space-3); overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; border-top: 1px solid var(--border-subtle); }
+.usage-models-scroll:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.usage-models-table { width: 100%; table-layout: fixed; border-spacing: 0; font-size: var(--type-meta); text-align: left; }
+.usage-models-table th { position: sticky; top: 0; z-index: var(--z-raised); background: var(--surface-card); padding: var(--space-2) 0; color: var(--text-tertiary); font-weight: 400; }
+.usage-models-table th:first-child { width: 60%; }
+.usage-models-table th:nth-child(2) { width: 24%; }
+.usage-models-table th:last-child { width: 16%; }
+.usage-models-table th:not(:first-child),
+.usage-models-table td:not(:first-child) { text-align: right; }
+.usage-models-table td { padding: var(--space-2) 0; border-top: 1px solid var(--border-subtle); }
+.usage-models-table td:first-child { padding-right: var(--space-4); }
+.usage-share-name { display: flex; flex-direction: column; gap: var(--space-1); }
+.usage-share-model { min-width: 0; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.usage-share-tokens,
+.usage-share-percent { color: var(--text-secondary); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-share-percent { color: var(--text-tertiary); }
 .usage-share-bar {
   appearance: none;
   width: 100%;
-  height: 6px;
+  height: 3px;
   border: 0;
   border-radius: var(--radius-pill);
   background: color-mix(in srgb, var(--text-primary) 8%, transparent);
@@ -4203,13 +4230,18 @@ body.resizing #browser-resizer::after { opacity: 1; }
 .usage-share-bar::-webkit-progress-value { border-radius: var(--radius-pill); background: var(--accent-info); }
 .usage-card.loading .usage-value,
 .usage-card.loading .usage-footnote,
-.usage-card.loading .usage-share-head,
 .usage-card.loading .usage-heat { color: transparent; animation: breathe var(--motion-running) var(--ease-out) infinite; }
 .usage-card.loading .usage-value,
 .usage-card.loading .usage-footnote { background: color-mix(in srgb, var(--text-primary) 8%, transparent); border-radius: var(--radius-sm); width: fit-content; min-width: 3em; }
+@media (max-height: 700px) {
+  .welcome { padding-top: var(--space-5); gap: var(--space-3); }
+  .welcome-head { margin-bottom: 0; }
+  .usage-card { padding: var(--space-3); gap: var(--space-3); }
+}
 /* The pills sit at the foot of the page, just above the composer. */
 .welcome-pills {
   display: flex;
+  flex: none;
   gap: 8px;
   flex-wrap: wrap;
   margin-top: auto;
@@ -4221,7 +4253,7 @@ body.resizing #browser-resizer::after { opacity: 1; }
   padding: 4px 12px;
   background: var(--surface-card);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-row);
   color: var(--text-secondary);
   font-size: var(--type-meta);
 }
@@ -4519,7 +4551,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .edits-title { font-weight: 600; }
 .edits-undo {
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-tertiary);
   font: inherit;
@@ -4834,7 +4866,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   padding: 2px 0;
   background: var(--surface-card);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   color: var(--text-danger);
   cursor: pointer;
 }
@@ -5025,7 +5057,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: var(--surface-card);
   color: var(--text-secondary);
   border: 1px solid transparent;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-row);
   padding: var(--space-1) var(--space-3);
   font: inherit;
   font-size: var(--type-meta);
@@ -5200,6 +5232,14 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font-size: var(--type-meta);
   line-height: var(--leading-ui);
   font-variant-numeric: tabular-nums;
+}
+/* The status readout's right edge is where the statistics line below the card
+   ends, and the card's figures are what sit above it. Hung flush, the card's
+   border lands on that edge and its figures 12px short of it — the padding —
+   so the whole card rides out by exactly that padding and the two right ends
+   meet. Only this card: the context ring's tooltip hangs off a 14px gauge. */
+.hover-card.usage-card {
+  right: calc(-1 * var(--canvas-shift) - var(--space-3));
 }
 .hover-card-note {
   margin: var(--space-2) 0 0;
@@ -5383,7 +5423,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 .ctx-compact {
   padding: 2px var(--space-3);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -5395,16 +5435,19 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
    the same construction `#composer-permission` uses. This was two buttons split
    by a hairline, each opening a full-width `#surface` card; the model and the
    effort are one decision about the next turn, so they are one control with a
-   local menu now. No `overflow` here: the popover and its flyout are absolutely
+   local menu now. No `overflow` here: the popover is an absolutely
    positioned children and would be clipped away. */
 #composer-chip { position: relative; display: inline-flex; min-width: 0; }
-/* Same capsule as `#chip-permission`, same borderless resting state. */
+/* Resting, the chip *is* the values: `deepseek 最高` as plain text on the
+   composer's own card, the way the reference's row reads. The capsule is the
+   pointer's and the menu's — see the two rules below — so the bar carries one
+   less filled control than `#chip-permission` beside it. */
 #chip-runtime {
   display: inline-flex;
   align-items: center;
   gap: var(--space-1);
-  background: var(--surface-card);
-  color: var(--text-secondary);
+  background: transparent;
+  color: var(--text-primary);
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
   padding: var(--space-1) var(--space-3);
@@ -5415,17 +5458,23 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   min-width: 0;
   overflow: hidden;
 }
-/* The one part of the bar that gives. It keeps its `title`, so the full name is
-   one hover away, and the chip's `aria-label` carries it for a screen reader. */
+/* The one part of the bar that gives. It keeps its `title`, so the model and the
+   level are one hover away, and the chip's `aria-label` carries them for a
+   screen reader. */
+.chip-chevron { flex: 0 0 auto; width: 12px; height: 12px; color: var(--text-tertiary); }
 .chip-model-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .chip-effort-label { color: var(--text-tertiary); flex: 0 0 auto; }
+/* Drawn only while the menu is open, in place of the two values
+   (`dom/composerView.ts`): at that moment the pill names the decision, because
+   the menu under it already states `最高` and the model. */
+.chip-prompt-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* Drawn at every width, shown only once the labels go. */
 .chip-model-icon { display: none; flex: 0 0 auto; width: 14px; height: 14px; }
-/* Below this the name has no room left to ellipsise into — the 1024-wide window
+/* Below this the label has no room left to ellipsise into — the 1024-wide window
    with the browser panel open leaves the chip about 46px, which renders as a
-   single clipped glyph. One icon says "the model" honestly; the full name and
-   the effort level are one click away in the menu, and the chip keeps its
-   `title` and `aria-label`. */
+   single clipped glyph. One icon says "this is the model" honestly; the model
+   and the level are one click away in the menu, and the chip keeps its `title`
+   and `aria-label`. */
 @container composer-bar (inline-size < 320px) {
   /* Round and fixed like the row's other icon controls, and no longer the part
      of the bar that gives: with the name gone there is nothing left to shrink,
@@ -5436,30 +5485,26 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
     width: 26px;
     height: 26px;
     padding: 0;
+    border-radius: var(--radius-pill);
   }
   .chip-model-icon { display: inline-flex; }
-  .chip-model-label, .chip-effort-label { display: none; }
+  .chip-model-label, .chip-effort-label, .chip-prompt-label, .chip-chevron { display: none; }
 }
-#chip-runtime:hover:enabled {
-  color: var(--text-primary);
-  background: var(--surface-hover);
-  border-color: var(--border-subtle);
-}
-#chip-runtime.open { color: var(--text-primary); border-color: var(--border-strong); }
+/* The pointer's answer is the capsule, never a hairline: an outline drawn inside
+   the composer's own edge reads as a box around the text rather than as the
+   control being live. An open menu keeps that capsule and lifts it on the float
+   shadow, so the pill the menu hangs over is the one that was pressed. */
+#chip-runtime:hover:enabled,
+#chip-runtime.open { background: var(--surface-hover); }
+#chip-runtime.open { box-shadow: var(--shadow-float); }
 #chip-runtime:disabled { opacity: var(--opacity-disabled); cursor: default; }
-/* The popover, and the flyout hanging off one of its rows. The same card as
-   `.composer-menu` on the same layer (5): over `#composer-popovers` (4), under
-   `#rewind` (9). It opens upward and right-aligned, because
-   the chip sits at the bottom right of a composer anchored to the bottom of the
-   canvas. */
+/* One anchored card; its two pages share the same surface and opening motion. */
 .chip-menu {
   position: absolute;
-  bottom: var(--space-6);
-  right: 0;
+  bottom: calc(100% + var(--space-1));
+  right: calc(50% - var(--canvas-shift));
   z-index: var(--z-popover);
-  /* Bounded by the composer bar it hangs from (`100cqw`), not by the window: in a
-     narrow canvas — the browser panel open — a fixed 15rem ran off the edge. */
-  min-width: min(15rem, calc(100cqw - var(--space-4)));
+  width: min(16rem, calc(100cqw - var(--space-4)));
   display: flex;
   flex-direction: column;
   padding: var(--space-1);
@@ -5467,73 +5512,145 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-float);
+  translate: 50% 0;
 }
-.chip-menu-shell { position: relative; display: flex; }
-.chip-menu-row {
-  flex: 1 1 auto;
+/* Both pages stay mounted. Their opposing folds interpolate the card's height,
+   while opacity and a small offset soften the change of content. */
+.chip-picker-page {
+  display: grid;
+  grid-template-rows: 0fr;
+  min-height: 0;
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: grid-template-rows var(--motion-popover-in) var(--ease-snap),
+              opacity var(--motion-popover-in) var(--ease-out),
+              transform var(--motion-popover-in) var(--ease-snap);
+}
+.chip-picker-page.open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.chip-picker-content { min-height: 0; overflow: hidden; }
+.chip-effort-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: var(--space-2);
+}
+.chip-effort-value {
+  color: var(--accent-brand-text);
+  font-size: var(--type-ui);
+  font-weight: 600;
+  line-height: var(--leading-ui);
+}
+.chip-picker-model, .chip-picker-back {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  text-align: left;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-1) var(--space-2);
   background: transparent;
-  color: var(--text-primary);
+  color: var(--text-secondary);
   border: 0;
   border-radius: var(--radius-row);
-  padding: var(--space-2);
   font: inherit;
   font-size: var(--type-ui);
   cursor: pointer;
 }
-/* The label takes the free space, so the value and the `›` stay at the right
-   edge whatever the label's length — the rule every trailing-glyph control in
-   `controls.ts` follows. */
-.chip-menu-row .btn-label { flex: 1 1 auto; }
-.chip-menu-value { color: var(--text-secondary); }
-.chip-menu-row .icon { color: var(--text-tertiary); width: 14px; height: 14px; }
-.chip-menu-row:hover { background: var(--surface-hover); }
-.chip-menu-row.open { background: var(--surface-active); }
-.chip-flyout {
-  position: absolute;
-  right: 100%;
-  bottom: 0;
-  z-index: var(--z-flyout);
-  /* `max-content`: positioned off `right: 100%` of a ~15rem shell, the flyout's
-     shrink-to-fit width had nothing to fit into and collapsed to its min-width,
-     wrapping a long model name and stacking 「视觉」 one glyph per line. */
-  width: max-content;
-  min-width: 10rem;
-  /* What is left of the bar beside the popover, never less than the floor above. */
-  max-width: min(24rem, max(10rem, calc(100cqw - 15rem - var(--space-4))));
-  max-height: 50vh;
-  overflow-y: auto;
-  display: flex;
+.chip-picker-model .btn-label { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* The target is the whole block, the way the reference draws it: the level on top
+   and the model under it are one button, and the pointer's highlight *is* that
+   box. As the `name ›` line alone it was a third of the box, and the level — the
+   part the eye lands on — was inert. */
+.chip-picker-model {
   flex-direction: column;
-  /* `right: 100%` resolves against `.chip-menu-shell`, which sits *inside* the
-     popover's border and padding — so the gap has to pay those back before it
-     buys any daylight: 1px border + `--space-1` padding, then `--space-2` of
-     actual clearance. */
-  margin-right: calc(var(--space-2) + var(--space-1) + 1px);
-  padding: var(--space-1);
-  background: var(--surface-card);
-  border: 1px solid var(--border-strong);
+  gap: 2px;
+  padding: var(--space-2) var(--space-5);
   border-radius: var(--radius-md);
+  font-size: var(--type-meta);
+}
+.chip-picker-model-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  max-width: 100%;
+}
+.chip-picker-model .icon, .chip-picker-back .icon { width: 12px; height: 12px; flex: 0 0 auto; color: var(--text-tertiary); }
+.chip-picker-model:hover, .chip-picker-back:hover { color: var(--text-primary); background: var(--surface-hover); }
+.chip-picker-back { margin-bottom: var(--space-1); color: var(--text-tertiary); }
+.chip-effort-slider {
+  position: relative;
+  width: 100%;
+  height: 24px;
+  flex: 0 0 auto;
+  margin-top: var(--space-2);
+  border-radius: var(--radius-pill);
+  background: var(--surface-active);
+  cursor: pointer;
+}
+.chip-effort-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(12px + (100% - 24px) * var(--effort-ratio));
+  border-radius: var(--radius-pill);
+  background: var(--accent-brand-strong);
+  transition: width var(--motion-release) var(--ease-out);
+}
+.chip-effort-ticks {
+  position: absolute;
+  inset: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.chip-effort-tick {
+  width: 4px;
+  height: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--text-tertiary);
+  transition: background-color var(--motion-release) var(--ease-out);
+}
+.chip-effort-tick.filled { background: var(--surface-knob); }
+.chip-effort-slider.custom-budget .chip-effort-tick { background: var(--text-tertiary); }
+.chip-effort-knob {
+  position: absolute;
+  top: -1px;
+  left: calc((100% - 24px) * var(--effort-ratio));
+  width: 24px;
+  height: 26px;
+  background: var(--surface-knob);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
   box-shadow: var(--shadow-float);
+  transition: left var(--motion-release) var(--ease-out);
 }
-/* No room left of the popover (a side panel narrows the canvas, which clips):
-   the flyout stands on top of the popover instead, right edges aligned. A static
-   shell hands its containing block to the popover. */
-.chip-menu-shell:has(> .chip-flyout.above) { position: static; }
-.chip-flyout.above {
-  right: 0;
-  bottom: calc(100% + var(--space-2));
-  margin-right: 0;
-  max-width: min(24rem, calc(100cqw - var(--space-4)));
+.chip-effort-range {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  appearance: none;
+  background: transparent;
+  opacity: 0;
+  cursor: inherit;
 }
-.chip-flyout-title { color: var(--text-tertiary); font-size: var(--type-meta); padding: var(--space-1) var(--space-2); }
-.chip-flyout-item {
+.chip-effort-range::-webkit-slider-thumb { appearance: none; width: 24px; height: 24px; }
+.chip-effort-slider:has(.chip-effort-range:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
+.chip-effort-slider.disabled { opacity: var(--opacity-disabled); cursor: default; }
+.chip-effort-slider.custom-budget .chip-effort-knob, .chip-effort-slider.custom-budget .chip-effort-fill { opacity: 0; }
+.chip-model-list { max-height: min(46vh, 22rem); overflow-y: auto; display: flex; flex-direction: column; }
+.chip-model-option {
   display: flex;
   align-items: center;
   gap: var(--space-2);
+  width: 100%;
   text-align: left;
   background: transparent;
   color: var(--text-primary);
@@ -5544,12 +5661,12 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font-size: var(--type-ui);
   cursor: pointer;
 }
-.chip-flyout-item .btn-label { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.chip-flyout-note { flex: 0 0 auto; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-meta); }
-.chip-flyout-item .icon { color: var(--text-primary); width: 14px; height: 14px; }
-.chip-flyout-item:hover:enabled:not([aria-selected="true"]) { background: var(--surface-hover); }
-.chip-flyout-item[aria-selected="true"] { background: var(--surface-active); }
-.chip-flyout-item.disabled { opacity: var(--opacity-disabled); cursor: default; }
+.chip-model-option .btn-label { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.chip-model-note { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-secondary); font-size: var(--type-meta); }
+.chip-model-option .icon { flex: 0 0 auto; color: var(--text-primary); width: 14px; height: 14px; }
+.chip-model-option:hover:enabled { background: var(--surface-hover); }
+.chip-model-option.disabled { opacity: var(--opacity-disabled); cursor: default; }
+.chip-picker-empty { padding: var(--space-2); color: var(--text-tertiary); font-size: var(--type-meta); }
 #submit, #stop {
   display: inline-flex;
   align-items: center;
@@ -5773,10 +5890,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font-size: var(--type-meta);
   cursor: pointer;
 }
-/* The one primary there is: the inverted fill the settings screen and the
-   permission card already used. The rewind panel's raised-grey primary and the
-   failure card's firmer outline were two more ways to say the same thing. */
-#rewind-panel .dialog-btn.primary,
+/* The docked request and empty-canvas action share the inverted primary. */
 .no-session .dialog-btn.primary,
 #composer-request .dialog-btn.primary {
   background: var(--text-primary);
@@ -5790,7 +5904,6 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
 }
 #rewind-panel .dialog-btn:hover:enabled,
 .no-session .dialog-btn:hover:enabled { background: var(--surface-hover); }
-#rewind-panel .dialog-btn.primary:hover:enabled,
 .no-session .dialog-btn.primary:hover:enabled,
 #composer-request .dialog-btn.primary:hover:enabled { background: color-mix(in srgb, var(--text-primary) 86%, var(--surface-base)); }
 /* Where Enter is aimed. On a destructive permission request that is *deny*, so
@@ -5872,7 +5985,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   align-items: flex-start;
   gap: 10px;
   padding: 8px 10px;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   background: transparent;
   cursor: pointer;
   transition: background-color var(--motion-micro) var(--ease-out);
@@ -5904,13 +6017,13 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   margin-top: 5px;
   padding: 5px 8px;
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-row);
   background: var(--surface-canvas);
   color: var(--text-primary);
   font: inherit;
   outline: none;
 }
-.ask-other-input:focus { border-color: var(--border-strong); outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+.ask-other-input:focus { border-color: var(--border-strong); outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .ask-footer { display: flex; align-items: center; gap: 8px; margin-top: var(--space-3); }
 .ask-spacer { flex: 1 1 auto; }
 /* --- the docked plan card and the plan panel ---
@@ -5944,7 +6057,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   font: inherit;
   outline: none;
 }
-.plan-feedback-input:focus { border-color: var(--border-strong); outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: var(--radius-sm); }
+.plan-feedback-input:focus { border-color: var(--border-strong); outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 #composer-request .plan-actions { justify-content: space-between; }
 .plan-actions-group { display: flex; flex-wrap: wrap; gap: 8px; }
 #plan-view {
@@ -6021,58 +6134,106 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   inset: 0;
   background: var(--surface-scrim);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  overflow-y: auto;
   padding: var(--space-5);
   z-index: var(--z-rewind);
 }
 #rewind-panel {
   background: var(--surface-card);
-  border: 1px solid var(--border-strong);
+  border: 1px solid var(--border-subtle);
   border-radius: var(--radius-panel);
   box-shadow: var(--shadow-modal);
-  max-width: 44rem;
+  max-width: 25rem;
   width: 100%;
-  max-height: 100%;
-  overflow-y: auto;
-  padding: 16px 20px;
+  flex-shrink: 0;
+  margin: auto;
+  overflow: visible;
+  padding: var(--space-4) var(--space-5);
   font-size: var(--type-dense);
   line-height: var(--leading-dense);
   text-autospace: normal;
 }
+#rewind-panel[data-screen="select"] { max-width: 40rem; }
 #rewind-panel .title {
-  font-family: var(--font-serif);
-  font-size: var(--type-title);
+  font-size: var(--type-heading);
   font-weight: 600;
-  color: var(--text-warn);
-  /* An <h2> now, so the panel reads as a titled dialog; the margin is its own. */
-  margin: 0 0 2px;
+  color: var(--text-primary);
+  margin: 0 0 var(--space-1);
 }
 #rewind-panel .subtitle { color: var(--text-secondary); font-size: var(--type-meta); }
 #rewind-panel .error { color: var(--text-danger); margin: 8px 0; }
-#rewind-panel .rows { margin: 10px -8px 6px; padding: 0 8px; }
+#rewind-panel .rows { margin: var(--space-4) 0; }
 /* Include the rows' horizontal bleed in the focus container without moving
    their text. Its inset ring stays clear of the labels. */
 #rewind-panel .rows:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: var(--radius-sm); }
 #rewind-panel:focus { outline: none; }
-#rewind-panel .row { display: flex; gap: 10px; padding: 4px 8px; margin: 0 -8px; border-radius: var(--radius-row); cursor: pointer; }
+#rewind-panel .row { display: flex; gap: var(--space-3); padding: var(--space-2); border-radius: var(--radius-row); cursor: pointer; }
 #rewind-panel .row:hover { background: var(--surface-hover); }
 #rewind-panel .row.selected { background: var(--surface-active); }
 #rewind-panel .row.selected .label { color: var(--text-primary); }
-#rewind-panel .row .label { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
+#rewind-panel .row .label { flex: 1 1 auto; min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 #rewind-panel .row .value { color: var(--text-secondary); flex: 0 0 auto; }
 #rewind-panel .row.current .label { color: var(--text-secondary); }
-#rewind-panel .confirm { margin: 10px 0 6px; }
-#rewind-panel .confirm .message {
+#rewind-panel .confirm { margin-top: var(--space-2); }
+#rewind-panel .checkpoint-message {
   background: var(--surface-canvas);
-  border-radius: var(--radius-md);
-  padding: 6px 10px;
-  margin-bottom: 4px;
-  white-space: pre-wrap;
-  word-break: break-word;
+  border-radius: var(--radius-row);
+  padding: var(--space-2) var(--space-3);
+  margin-bottom: var(--space-2);
 }
-#rewind-panel .busy { color: var(--accent-info); margin: 10px 0 6px; }
-#rewind-panel .warning { color: var(--text-danger); margin-top: 8px; }
+#rewind-panel .message {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#rewind-panel .range-label { display: block; font-size: var(--type-meta); margin-bottom: var(--space-1); }
+.rewind-range { display: flex; width: 100%; }
+.rewind-range .settings-pill {
+  width: 100%;
+  height: 32px;
+  padding: 0 var(--space-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-row);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.rewind-range .settings-pill .btn-label { flex: 1; text-align: left; }
+.rewind-range .settings-pill:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.rewind-range .settings-menu { left: 0; right: 0; max-height: 180px; }
+.rewind-range .settings-menu-item { font-size: var(--type-dense); }
+.rewind-range .settings-menu-item:focus-visible { outline: none; background: var(--surface-hover); }
+.rewind-range-check { margin-left: auto; width: 14px; height: 14px; color: var(--text-secondary); }
+#rewind-panel .code-effect {
+  margin-top: var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--type-meta);
+}
+#rewind-panel .code-count { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-2); }
+#rewind-panel .code-added { color: var(--text-success); font-variant-numeric: tabular-nums; }
+#rewind-panel .code-removed { color: var(--text-danger); font-variant-numeric: tabular-nums; }
+#rewind-panel .warning,
+#rewind-panel .busy { display: flex; align-items: flex-start; gap: var(--space-2); margin-top: var(--space-2); }
+#rewind-panel .warning .icon,
+#rewind-panel .busy .icon { flex: none; width: 14px; height: 14px; margin-top: 3px; }
+#rewind-panel .warning-text { min-width: 0; overflow-wrap: anywhere; }
+#rewind-panel .busy { color: var(--text-secondary); }
+#rewind-panel .busy .icon { animation: spin var(--motion-running) linear infinite; }
+#rewind-panel .dialog-actions { margin-top: var(--space-3); }
+#rewind-panel .dialog-btn { min-height: 30px; padding: var(--space-1) var(--space-3); }
+#rewind-panel .dialog-btn.primary {
+  background: color-mix(in srgb, var(--accent-brand-strong) 6%, var(--surface-card));
+  border: none;
+  color: var(--accent-brand-text);
+  font-weight: 600;
+}
+#rewind-panel .dialog-btn.primary:hover:enabled { background: color-mix(in srgb, var(--accent-brand-strong) 8%, var(--surface-card)); }
 
 /* --- the full-access question ---
    Raised by the composer's permission pill when 完全访问权限 is picked. Same
@@ -6169,7 +6330,7 @@ button.welcome-pill:hover { background: var(--surface-hover); color: var(--text-
   background: var(--surface-hover);
   color: var(--text-primary);
   border: 0;
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-row);
   font: inherit;
   font-size: var(--type-ui);
   cursor: pointer;
@@ -6524,7 +6685,6 @@ body.projects-open #browser-resizer,
   border-color: var(--border-strong);
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
 }
 
 .settings-nav-list {
@@ -6565,6 +6725,15 @@ body.projects-open #browser-resizer,
   cursor: pointer;
 }
 
+.settings-nav-item .icon {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: var(--text-secondary);
+}
+
+.settings-nav-item.selected .icon { color: inherit; }
+
 .settings-nav-item:hover:enabled:not(.selected) {
   background: var(--surface-hover);
   color: var(--text-primary);
@@ -6588,23 +6757,18 @@ body.projects-open #browser-resizer,
   /* Reserved whether or not this page scrolls, so switching between a long
      page and a short one does not shift the column sideways. */
   scrollbar-gutter: stable;
-  padding: var(--space-5) var(--space-6) var(--space-7);
+  padding: var(--space-5) var(--space-5) var(--space-6);
 }
 
-/* The settings reading column. A row is label-left/control-right, so the
-   measure is what keeps a control near its name on a wide window.
-
-   The scroller stays `.settings-body`, full width, so its scrollbar keeps to the
-   canvas edge. Deliberately no `overflow` here: a row's dropdown opens downward
-   and this node is on its ancestor chain (the "no clipping ancestor" test). */
-.settings-column { max-width: 760px; margin: 0 auto; }
+/* Use the available pane width. No overflow here: row dropdowns must not clip. */
+.settings-column { width: 100%; }
 
 .settings-header {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--space-3);
-  padding-bottom: var(--space-5);
+  gap: var(--space-2);
+  padding-bottom: var(--space-4);
 }
 
 .settings-title {
@@ -6645,7 +6809,7 @@ body.projects-open #browser-resizer,
   display: flex;
   align-items: center;
   gap: var(--space-1);
-  padding-bottom: var(--space-5);
+  padding-bottom: var(--space-4);
 }
 
 .settings-tab {
@@ -6680,7 +6844,7 @@ body.projects-open #browser-resizer,
    the space after it is what says where it ends. No `overflow` either — a row's
    dropdown is positioned against `.settings-menu-shell` and opens below it. */
 .settings-card {
-  margin-bottom: var(--space-6);
+  margin-bottom: var(--space-5);
 }
 
 /* One rung under the page title. The UI face, not the serif: these titles mix
@@ -6743,10 +6907,10 @@ body.projects-open #browser-resizer,
 .settings-row {
   display: flex;
   align-items: center;
-  gap: var(--space-4);
-  min-height: 52px;
+  gap: var(--space-3);
+  min-height: 44px;
   box-sizing: border-box;
-  padding: var(--space-2) 0;
+  padding: var(--space-1) 0;
   border-top: 1px solid var(--border-subtle);
 }
 
@@ -6971,7 +7135,6 @@ body.projects-open #browser-resizer,
   border-color: var(--border-strong);
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
-  border-radius: var(--radius-sm);
 }
 
 .settings-editor-actions {
@@ -7390,22 +7553,26 @@ body.projects-open #browser-resizer,
   font-size: var(--type-meta);
 }
 
+.settings-dialog-layer:has(> .settings-dialog--skill) {
+  padding: calc(var(--titlebar-height) + var(--space-3) + var(--space-4)) var(--space-6) calc(var(--space-6) + var(--space-4));
+}
 .settings-dialog--skill {
-  width: min(860px, 100%);
+  width: min(600px, 100%, calc((100dvh - var(--titlebar-height) - var(--space-3) - var(--space-6) - var(--space-4) * 2) * 5 / 6));
+  aspect-ratio: 5 / 6;
   min-height: 0;
   border-radius: var(--radius-panel);
   background: var(--surface-canvas);
 }
-.settings-skill-head { padding: var(--space-5) var(--space-6) var(--space-4); }
+.settings-skill-head { flex-shrink: 0; padding: var(--space-4) var(--space-5) var(--space-3); }
 .settings-skill-top {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-4);
-  margin-bottom: var(--space-4);
+  margin-bottom: var(--space-3);
 }
-.settings-skill-icon { width: 52px; height: 52px; }
-.settings-skill-icon .icon { width: 24px; height: 24px; }
+.settings-skill-icon { width: 40px; height: 40px; }
+.settings-skill-icon .icon { width: 20px; height: 20px; }
 .settings-skill-controls { display: flex; align-items: center; gap: var(--space-4); }
 .settings-skill-title-line { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); }
 .settings-skill-title-line .settings-dialog-title {
@@ -7423,30 +7590,58 @@ body.projects-open #browser-resizer,
   white-space: nowrap;
 }
 .settings-skill-status.on { color: var(--text-primary); }
-.settings-skill-kind { color: var(--text-tertiary); font-size: var(--type-body); }
-.settings-skill-description { margin-top: var(--space-2); color: var(--text-secondary); overflow-wrap: anywhere; }
-.settings-skill-source { margin-top: var(--space-2); color: var(--text-tertiary); font-size: var(--type-meta); }
-.settings-skill-body { display: block; padding: 0 var(--space-6); overscroll-behavior: contain; }
+.settings-skill-kind { color: var(--text-tertiary); font-size: var(--type-reading); }
+.settings-skill-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin-top: var(--space-1);
+  color: var(--text-secondary);
+  font-size: var(--type-dense);
+  line-height: var(--leading-dense);
+  overflow-wrap: anywhere;
+}
+.settings-skill-source { margin-top: var(--space-1); color: var(--text-tertiary); font-size: var(--type-meta); }
+.settings-skill-body {
+  flex: 1 1 auto;
+  display: block;
+  margin: 0 var(--space-5);
+  padding: var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  overscroll-behavior: contain;
+}
 .settings-skill-markdown {
-  padding: var(--space-5) 0;
+  padding: 0;
   border: 0;
   border-radius: 0;
   background: transparent;
   color: var(--text-primary);
-  font-size: var(--type-reading);
-  line-height: var(--leading-prose);
+  font-size: var(--type-dense);
+  line-height: var(--leading-dense);
   overflow-wrap: anywhere;
 }
-.settings-skill-markdown p { margin-bottom: var(--space-3); }
-.settings-skill-markdown li { margin: var(--space-1) 0; }
+.settings-skill-markdown :is(h1, h2, h3, h4, h5, h6) { margin: var(--space-4) 0 var(--space-2); }
+.settings-skill-markdown h1 { font-size: var(--type-body); }
+.settings-skill-markdown :is(h2, h3) { font-size: var(--type-reading); }
+.settings-skill-markdown :is(h4, h5, h6) { font-size: var(--type-dense); }
+.settings-skill-markdown p { margin-bottom: var(--space-2); }
+.settings-skill-markdown li { margin: calc(var(--space-1) / 2) 0; }
 .settings-skill-content-note { padding: var(--space-3) 0; color: var(--text-secondary); font-size: var(--type-meta); }
 .settings-skill-info { margin-top: var(--space-3); }
 .settings-skill-info-title { padding: var(--space-2) 0; color: var(--text-secondary); font-size: var(--type-meta); cursor: pointer; }
 .settings-skill-info .settings-row { align-items: flex-start; flex-wrap: wrap; gap: var(--space-2); }
 .settings-skill-info .settings-row-control { flex-shrink: 1; overflow-wrap: anywhere; }
-.settings-skill-foot { justify-content: space-between; flex-wrap: wrap; padding: var(--space-4) var(--space-6) var(--space-5); }
-.settings-skill-file-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-2); margin-left: auto; }
-.settings-dialog--skill > .settings-confirm { margin: var(--space-3) var(--space-6) 0; }
+.settings-skill-foot { flex-shrink: 0; justify-content: space-between; flex-wrap: wrap; padding: var(--space-3) var(--space-5); }
+.settings-skill-foot .settings-btn {
+  height: var(--control-sm);
+  padding: 0 var(--space-2);
+  gap: var(--space-1);
+  font-size: var(--type-meta);
+}
+.settings-skill-file-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-1); margin-left: auto; }
+.settings-dialog--skill > .settings-confirm { margin: var(--space-3) var(--space-5) 0; }
 
 /* A field is its label over its control, the control full width: a form read
    top to bottom, not a column of right-aligned boxes of different widths. */
@@ -7613,7 +7808,7 @@ body.projects-open #browser-resizer,
   align-self: flex-start;
   padding: var(--space-1) var(--space-2);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -8020,8 +8215,8 @@ body.projects-open #browser-resizer,
 #chip-permission,
 #chip-runtime,
 .composer-menu-item,
-.chip-menu-row,
-.chip-flyout-item,
+.chip-picker-model, .chip-picker-back,
+.chip-model-option,
 #submit,
 #stop,
 .settings-nav-item,
@@ -8057,7 +8252,7 @@ body.projects-open #browser-resizer,
 #submit:active, #stop:active { transform: scale(0.96); transition-duration: var(--motion-press); }
 /* Rows answer a press with the same fill as selection, without moving. */
 :is(.titlebar-menu-item, .canvas-menu-item, .project-menu-item, .thread-menu-item,
-    .composer-menu-item, .chip-menu-row, .chip-flyout-item, .branch-picker-row,
+    .composer-menu-item, .chip-picker-model, .chip-picker-back, .chip-model-option, .branch-picker-row,
     .project-picker-row, .sidebar-nav-item, .sidebar-settings, .project-row,
     .project-expand, .session-row:not(.confirming, .opening), .subagent-row,
     .thread-row, .changes-file-toggle, .search-file-head, .search-hit, .edits-row,
@@ -8087,7 +8282,6 @@ body.projects-open #browser-resizer,
 .changes-file-toggle[aria-expanded] > .icon,
 .side-section-head[aria-expanded] > .icon,
 .thread-group-head[aria-expanded] > .icon,
-.bt-chevron,
 .step-command-copy,
 .step-output-more,
 .user-more,
@@ -8130,8 +8324,6 @@ body.projects-open #browser-resizer,
 .side-section-head:focus-within > .icon,
 .thread-group-head:hover > .icon,
 .thread-group-head:focus-within > .icon,
-.bt-row:hover .bt-chevron,
-.bt-row:focus-within .bt-chevron,
 .step-command:hover .step-command-copy,
 .step-command:focus-within .step-command-copy,
 .step-output:hover .step-output-more,
@@ -8297,7 +8489,6 @@ body.projects-open #browser-resizer,
   }
   .step-bead,
   .task-mark .icon,
-  .bt-mark .icon,
   .task-card,
   .thread-status .icon,
   .session-title-text {
@@ -8309,7 +8500,6 @@ body.projects-open #browser-resizer,
     background: none;
     color: inherit;
   }
-  .session-row.running .session-title-run::after { display: none; }
   /* The blanket rule above stops the marquee, and stopping it is not enough: the
      hover state also makes the track an atomic flex box and reveals the echo, so
      a cancelled animation would leave two copies of the name side by side. Here
@@ -8376,7 +8566,7 @@ body.projects-open #browser-resizer,
   flex: 0 0 auto;
   padding: 2px var(--space-2);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -8395,7 +8585,7 @@ body.projects-open #browser-resizer,
 .canvas-stop-thread {
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -8440,7 +8630,7 @@ body.projects-open #browser-resizer,
   flex: none;
   padding: 2px var(--space-2);
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-tertiary);
   font: inherit;
@@ -8480,7 +8670,7 @@ body.projects-open #browser-resizer,
   flex: none;
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -8683,7 +8873,7 @@ body.projects-open #browser-resizer,
   background: var(--surface-card);
   color: var(--text-secondary);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-pill);
+  border-radius: var(--radius-row);
   font: inherit;
   font-size: var(--type-meta);
 }
@@ -8714,14 +8904,13 @@ body.projects-open #browser-resizer,
   flex: 0 0 auto;
   padding: 2px var(--space-2);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
   font-size: var(--type-meta);
   cursor: pointer;
 }
-.merge-bar-merge { border-radius: var(--radius-pill); }
 .merge-bar-merge:hover:enabled,
 .merge-bar-resolve:hover:enabled { background: var(--surface-hover); }
 .merge-bar-merge:disabled,
@@ -8815,7 +9004,7 @@ body.projects-open #browser-resizer,
   flex: none;
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -8837,7 +9026,7 @@ body.projects-open #browser-resizer,
   margin: 0 2px;
   padding: 0 6px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: var(--surface-hover);
   color: var(--link);
   font: inherit;
@@ -8894,7 +9083,7 @@ body.projects-open #browser-resizer,
   justify-self: end;
   padding: 2px var(--space-2);
   border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-secondary);
   font: inherit;
@@ -8928,7 +9117,7 @@ body.projects-open #browser-resizer,
   gap: var(--space-1);
   padding: var(--space-1) var(--space-3);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: transparent;
   color: var(--text-primary);
   font: inherit;
@@ -8998,7 +9187,7 @@ body.projects-open #browser-resizer,
 .startup-failure-retry {
   padding: var(--space-1) var(--space-4);
   border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-row);
   background: var(--surface-card);
   color: var(--text-primary);
   font: inherit;

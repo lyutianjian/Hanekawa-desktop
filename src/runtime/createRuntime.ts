@@ -13,11 +13,12 @@ import { createModelConfigPort } from './modelConfigPort.js'
 import { AgentLoop, type ActiveModelRuntime } from '../harness/loop.js'
 import { ContextBuilder } from '../harness/contextBuilder.js'
 import { priceUsage } from '../harness/usage.js'
+import { toMetricUsage } from '../harness/metrics.js'
 import { PlanModeManager } from '../harness/planModeManager.js'
 import { ToolRunner } from '../harness/toolRunner.js'
 import type { SystemPromptSectionCache } from '../harness/sections.js'
 import type { PermissionGate } from '../harness/permissions.js'
-import type { AttachmentBytesLoader, CoordinationRole, ImageAttachmentImporter, MemoryIndexWatch, ModelPricing, ModelProvider, SessionRecord, ToolContext } from '../harness/types.js'
+import type { AttachmentBytesLoader, CoordinationRole, ImageAttachmentImporter, MemoryIndexWatch, ModelPricing, ModelProvider, SessionRecord, TokenUsage, ToolContext } from '../harness/types.js'
 import type { AttachmentFactsResolver } from '../harness/turnImages.js'
 import { MODEL_CONTEXT_WINDOW_DEFAULT } from '../prompts/budget.js'
 import type { ContextManagementConfig } from '../prompts/budget.js'
@@ -62,7 +63,10 @@ function createModelProvider(modelKey: string, modelConfig: ModelConfig) {
 export function withPricing(provider: ModelProvider, pricing: ModelPricing | undefined): ModelProvider {
   const createMessage = provider.createMessage.bind(provider)
   provider.createMessage = async (request) => {
-    const response = await createMessage(request)
+    const response = await createMessage({
+      ...request,
+      ...(request.onUsage ? { onUsage: (usage: TokenUsage) => request.onUsage!(priceUsage(usage, pricing)) } : {}),
+    })
     return response.usage ? { ...response, usage: priceUsage(response.usage, pricing) } : response
   }
   return provider
@@ -208,6 +212,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     attachmentBytes,
     onActiveSessionChange,
   } = deps
+  let acceptsUsage: (sessionId: string) => boolean = () => false
   let activeSessionId: string | undefined
 
   // Read once per session id, not per runtime: a rebuild of an open session
@@ -267,6 +272,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     const snapshot = snapshotFor(runtimeSession.id)
     activeSessionId = runtimeSession.id
     let disposed = false
+    acceptsUsage = (sessionId) => !disposed && activeSessionId === sessionId
     // Disk writes use the runtime's fixed RecordStream. UI events must also
     // stay with that session when an append or background callback arrives late.
     const isCurrent = () => !disposed && activeSessionId === runtimeSession.id
@@ -284,7 +290,7 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
         if (isCurrent()) bridges.record.onRequestUsage(usage, anchorRecordId)
       },
       onAuxUsage: (usage) => {
-        if (isCurrent()) bridges.record.onAuxUsage(usage)
+        if (acceptsUsage(runtimeSession.id)) bridges.record.onAuxUsage(usage)
       },
     }
     const projectContext = composeProjectContext(snapshot.userInstructions, getProjectEntries())
@@ -325,6 +331,10 @@ export function createRuntimeFactory(deps: CreateRuntimeDeps): CreateRuntime {
     }))
     for (const tool of toolOverrides) runtimeTools[runtimeTools.findIndex((entry) => entry.name === tool.name)] = tool
     runtimeTools.push(createAgentTool({
+      onUsage: ({ usage, model }) => {
+        void recordStream.appendMetric({ event: 'request_usage', source: 'subagent', model, usage: toMetricUsage(usage) })
+        recordEvents.onAuxUsage(usage)
+      },
       provider: targetProvider,
       model: targetModelConfig.model,
       modelKey,

@@ -168,6 +168,67 @@ function abortError(): Error {
   return error
 }
 
+test('activity spans turn preparation and waiting tools, and emits only edges', async () => {
+  let releaseSnapshot!: () => void, releaseTool!: () => void, enteredTool!: () => void
+  const snapshot = new Promise<void>((resolve) => { releaseSnapshot = resolve })
+  const tool = new Promise<void>((resolve) => { releaseTool = resolve })
+  const entered = new Promise<void>((resolve) => { enteredTool = resolve })
+  const h = await createHarness({
+    snapshotGate: () => snapshot,
+    run: async () => { enteredTool(); await tool; return { content: 'done', usage: usage(1, 1) } },
+  })
+  const edges: boolean[] = []
+  const off = h.controller.onActivityChange(() => edges.push(h.controller.isActive()))
+  const turn = h.controller.submit({ text: 'work' })
+  assert.equal(h.controller.isActive(), true)
+  assert.deepEqual(edges, [true])
+  releaseSnapshot()
+  await entered
+  h.proxy.onProgress({ call: { id: 'wait', name: 'AskUserQuestion', input: {} }, phase: 'started' })
+  assert.equal(h.controller.isActive(), true)
+  assert.deepEqual(edges, [true], 'progress cannot emit repeated activity')
+  releaseTool()
+  await turn
+  assert.deepEqual(edges, [true, false])
+  off()
+})
+
+test('activity ends on provider failure and cancellation', async () => {
+  for (const cancelled of [false, true]) {
+    const h = await createHarness({ run: async () => {
+      if (cancelled) h.controller.interrupt()
+      throw cancelled ? abortError() : new Error('provider unavailable')
+    } })
+    const edges: boolean[] = []
+    h.controller.onActivityChange(() => edges.push(h.controller.isActive()))
+    await h.controller.submit({ text: 'work' })
+    assert.deepEqual(edges, [true, false])
+  }
+})
+
+test('standalone compaction activity is paired on success, failure and abort', async () => {
+  for (const result of ['success', 'failure', 'abort']) {
+    const h = await createHarness({ compact: async (_instructions, signal) => {
+      assert.equal(h.controller.isActive(), true)
+      if (result === 'abort') {
+        h.controller.interrupt()
+        assert.equal(signal?.aborted, true)
+        throw abortError()
+      }
+      if (result === 'failure') throw new Error('compaction failed')
+      return { compacted: false, usage: usage(0, 0) }
+    } })
+    const edges: boolean[] = []
+    h.controller.onActivityChange(() => edges.push(h.controller.isActive()))
+    if (result === 'success') await h.controller.compact()
+    else await assert.rejects(h.controller.compact())
+    assert.deepEqual(edges, [true, false])
+    h.controller.beginSessionSwitch()
+    h.controller.endSessionSwitch()
+    assert.deepEqual(edges, [true, false], 'session switches are not Agent work')
+  }
+})
+
 function types(events: SessionEvent[]): string[] {
   return events.map((event) => event.type)
 }
@@ -790,10 +851,7 @@ test('the running total is restored from the sidecar too, not just the last requ
   })
 })
 
-test('a request that lands first keeps the sidecar total from double-counting it', async () => {
-  // The seed is fire-and-forget, so a live request can beat it home. Adding the
-  // session's history on top of a total that already counts this process's
-  // requests would report every resumed turn twice.
+test('a request immediately after resume adds to history exactly once', async () => {
   const harness = await createHarness()
   const resumed = await harness.store.create('resumed session')
   await harness.store.appendMetric(resumed.id, {
@@ -809,11 +867,10 @@ test('a request that lands first keeps the sidecar total from double-counting it
 
   harness.controller.retarget(resumed, [])
   harness.proxy.onRequestUsage(usage(42, 7))
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 10))
-  }
-
-  assert.deepEqual(harness.controller.getSnapshot().usage.total, usage(42, 7))
+  assert.deepEqual(harness.controller.getSnapshot().usage.total, {
+    inputTokens: 9042, cacheReadInputTokens: 1000, outputTokens: 107,
+    cost: { amounts: {}, legacy: true },
+  })
 })
 
 test('tool progress drives the spinner text and only lists calls when several are in flight', async () => {

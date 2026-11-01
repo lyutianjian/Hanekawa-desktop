@@ -536,7 +536,7 @@ test('the segments switch the tab and the range locally', async (t) => {
 
   stub.click(segment(view(), '模型').node)
   const shares = child(view(), 'usage-shares').children
-  assert.deepEqual(shares.map((share) => share.text), ['alpha2 万 · 80%', 'beta5,000 · 20%'])
+  assert.deepEqual(shares.map((share) => share.children.map((cell) => cell.text)), [['alpha', '2 万', '80%'], ['beta', '5,000', '20%']])
   assert.equal(segment(view(), '模型').attributes.get('aria-pressed'), 'true')
   assert.deepEqual(
     child(view(), 'usage-facts').children.map((fact) => fact.children[0]!.text),
@@ -548,6 +548,25 @@ test('the segments switch the tab and the range locally', async (t) => {
   assert.equal(segment(view(), '7 天').attributes.get('aria-pressed'), 'true')
   assert.equal(child(view(), 'usage-cells').children[1]!.children[0]!.text, '3')
   assert.equal(loads.count, 1)
+})
+
+test('all models remain in a focusable scroll region with separate numeric columns', async (t) => {
+  const names = Array.from({ length: 30 }, (_, i) => `provider/model-with-a-long-name-${i}`)
+  const models = Object.fromEntries(names.map((name, i) => [name, 30 - i]))
+  const { view, stub } = render(t, welcomeViewFixture(), Promise.resolve([{ ...DAYS[0]!, models }]))
+  await Promise.resolve()
+  await Promise.resolve()
+  stub.click(segment(view(), '模型').node)
+
+  const scroll = child(view(), 'usage-models-scroll')
+  assert.equal(scroll.attributes.get('role'), 'region')
+  assert.equal(scroll.attributes.get('aria-label'), '模型用量，可滚动查看全部模型')
+  assert.equal((scroll.node as HTMLElement).tabIndex, 0)
+  const rows = child(scroll, 'usage-shares').children
+  assert.equal(rows.length, 30)
+  assert.deepEqual(rows.map((row) => child(row, 'usage-share-model').text), names)
+  assert.equal((child(rows[29]!, 'usage-share-model').node as HTMLElement).title, names[29])
+  assert.ok(rows.every((row) => row.tagName === 'TR' && row.children.length === 3))
 })
 
 test('the stats are asked for once per showing, not per repaint', (t) => {

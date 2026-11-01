@@ -2055,6 +2055,7 @@ const sectionNodes: Record<SideSection, SectionNode> = {
   finished: sectionNode('finished'),
 }
 const sideSections = required('side-sections')
+const tasksHead = required('tasks-head')
 const tasksEmpty = required('tasks-empty')
 /** The tail of a command's output the task list shows. */
 const COMMAND_OUTPUT_BYTES = 16_000
@@ -2123,6 +2124,7 @@ function renderSubagents(): void {
   const groups = backgroundTasks.visibleGroups(activeLaneInfo()?.sessionId ?? '', backgroundTaskGroups(tasks, entries))
   const selected = entries.find((entry) => entry.id === selectedSubagent)
   const onAgentPage = onTasks && selected !== undefined
+  show(tasksHead, onTasks && !onAgentPage)
   show(backgroundTasks.clearButton, onTasks && !onAgentPage)
   show(sideSections, onTasks)
   show(tasksEmpty, onTasks && !onAgentPage && view.sections.length === 0)

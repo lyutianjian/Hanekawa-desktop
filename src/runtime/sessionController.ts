@@ -32,7 +32,6 @@ import {
   createEmptySessionUsage,
   findLatestTaskSnapshot,
   formatInterruptMessage,
-  isEmptyUsage,
   type SessionUsage,
 } from './sessionUsage.js'
 import {
@@ -270,6 +269,8 @@ export class SessionController {
   private readonly listeners = new Set<() => void>()
   private readonly eventListeners = new Set<(event: SessionEvent) => void>()
   private disposed = false
+  private readonly activityListeners = new Set<() => void>()
+  private publishedActivity = false
 
   constructor(deps: SessionControllerDeps) {
     this.cwd = deps.cwd
@@ -339,6 +340,22 @@ export class SessionController {
     return () => {
       this.listeners.delete(listener)
     }
+  }
+
+  isActive(): boolean {
+    return this.streaming || this.compacting
+  }
+
+  onActivityChange = (listener: () => void): (() => void) => {
+    this.activityListeners.add(listener)
+    return () => { this.activityListeners.delete(listener) }
+  }
+
+  private publishActivity(): void {
+    const active = this.isActive()
+    if (active === this.publishedActivity) return
+    this.publishedActivity = active
+    for (const listener of [...this.activityListeners]) listener()
   }
 
   /**
@@ -517,6 +534,7 @@ export class SessionController {
     // the guard above existed, and would now reject every later turn as well.
     // Ordering inside is unchanged: publish, then snapshot, then run.
     try {
+      this.publishActivity()
       this.emit(turn.start)
       this.publish()
       this.refreshFixedContext()
@@ -567,6 +585,8 @@ export class SessionController {
         await this.recordTurnFailure(err, messageId, agentSession, sessionId)
       }
     } finally {
+      this.streaming = false
+      this.publishActivity()
       this.emit({ type: 'active-model', model: loop.getActiveModel() })
 
       this.pendingAcceptance = undefined
@@ -575,7 +595,6 @@ export class SessionController {
       this.activeToolProgress.clear()
       this.subagentProgress.clear()
       this.subagentActivity.clear()
-      this.streaming = false
       this.streamedTokens = 0
       this.streamedOutput = 0
       this.spinnerSubText = undefined
@@ -650,6 +669,7 @@ export class SessionController {
     const ac = new AbortController()
     this.abortController = ac
     try {
+      this.publishActivity()
       const result = await this.getSession().loop.compact(instructions, ac.signal)
       if (result.compacted) {
         // The summary's spend is already in the total: the loop reports it as
@@ -661,6 +681,7 @@ export class SessionController {
     } finally {
       if (this.abortController === ac) this.abortController = null
       this.compacting = false
+      this.publishActivity()
     }
   }
 
@@ -798,6 +819,7 @@ export class SessionController {
     this.recordProxy.setRequestUsageHandler(() => {})
     this.recordProxy.setAuxUsageHandler(() => {})
     this.listeners.clear()
+    this.activityListeners.clear()
     this.eventListeners.clear()
   }
 
@@ -920,46 +942,12 @@ export class SessionController {
     return memo.tokens + Math.ceil(this.streamedTokens)
   }
 
-  /**
-   * Restores both halves of the usage from the metrics sidecar for a session
-   * that was not started in this process.
-   *
-   * `lastRequest` is the context readout; the total is what the hit rate and the
-   * cost are computed over, and leaving it at zero made a resumed session read
-   * as a cold one — the first request after a resume is mostly cache writes, so
-   * the rate beside it collapsed until enough warm turns had run to outweigh it.
-   *
-   * Deliberately fire-and-forget: this is a readout, and neither the
-   * constructor nor `retarget` may become async for it. Every guard matters —
-   * the session can move again before a read lands, and a real request can beat
-   * it, and a stale disk number must never overwrite either.
-   */
+  /** Restore a resolved session's disk snapshot before accepting live usage. */
   private seedUsageFromMetrics(sessionId: string): void {
-    try {
-      void this.store.loadLastRequestUsage(sessionId).then((usage) => {
-        if (!usage || this.disposed) return
-        if (this.session.id !== sessionId || this.usage.lastRequest) return
-        this.usage = { lastRequest: usage, total: this.usage.total }
-        this.publish()
-      }).catch(() => {
-        // Best-effort, exactly like the metrics that back it.
-      })
-      void this.store.loadSessionTotals(sessionId).then((total) => {
-        if (!total || this.disposed) return
-        // `isEmptyUsage` rather than a "did anything arrive" flag: a request
-        // that landed while this was in flight has already counted itself into
-        // the total, and adding the session's history to it would double every
-        // turn that ran in this process.
-        if (this.session.id !== sessionId || !isEmptyUsage(this.usage.total)) return
-        this.usage = { lastRequest: this.usage.lastRequest, total }
-        this.publish()
-      }).catch(() => {
-        // Best-effort, exactly like the metrics that back it.
-      })
-    } catch {
-      // A store that cannot answer at all (a stub in a test) must not take the
-      // constructor down with it.
-    }
+    const restored = this.store.loadSessionUsage?.(sessionId)
+    if (!restored) return
+    this.usage = restored
+    this.publish()
   }
 
   private handleRecord = (record: SessionRecord): void => {
@@ -1109,22 +1097,18 @@ export class SessionController {
     // absent title must not be what holds the row nameless.
     const placeholder = setTimeout(() => this.settleTitlePending(sessionId), this.titlePlaceholderMs)
     try {
-      const { title: generated, usage } = await generateSessionTitle({
+      const { title: generated } = await generateSessionTitle({
+        onUsage: (usage, model) => {
+          if (!hasTokenSpend(usage)) return
+          this.store.appendSessionMetric(sessionId, {
+            event: 'request_usage', source: 'session_title', model, usage: toMetricUsage(usage),
+          })
+          if (this.session.id === sessionId && !this.disposed) this.handleAuxUsage(usage)
+        },
         runtime,
         text,
         cwd: this.cwd,
       })
-      // The naming call is real spend even when its answer is not the title
-      // that lands — and the sidecar keeps it, so a reopen reads the same total.
-      if (hasTokenSpend(usage)) {
-        void this.store.appendMetric(sessionId, {
-          event: 'aux_usage',
-          model: runtime.model,
-          source: 'session_title',
-          usage: toMetricUsage(usage),
-        })
-        if (this.session.id === sessionId && !this.disposed) this.handleAuxUsage(usage)
-      }
       if (!generated || generated === fallback) return
       if (this.disposed || this.session.id !== sessionId || this.session.title !== fallback) return
       await this.store.rename(sessionId, generated)

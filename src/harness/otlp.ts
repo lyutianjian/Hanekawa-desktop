@@ -55,6 +55,7 @@ function readPackageVersion(): string | undefined {
 const SERVICE_VERSION = readPackageVersion() ?? '0.0.0'
 const TELEMETRY_SDK_NAME = 'hanekawa'
 const METRIC_NUMERIC_FIELDS: Record<SessionMetric['event'], ReadonlySet<string>> = {
+  request_usage: new Set(),
   turn: new Set([
     'input_tokens',
     'cache_creation_tokens',

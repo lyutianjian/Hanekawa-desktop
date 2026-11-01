@@ -150,10 +150,10 @@ interface Rendered {
   attachmentRows(): StubView[]
   /** One entry per breakdown fetch. */
   breakdownRequests: number[]
-  /** The chip popover's two rows, or an empty list when it is shut. */
-  chipRows(): StubView[]
-  /** The open flyout's option items, or an empty list when none is open. */
-  flyoutItems(): StubView[]
+  /** Controls in the visible picker page, or an empty list while closed. */
+  pickerControls(): StubView[]
+  /** Model options while the model page is open. */
+  modelOptions(): StubView[]
 }
 
 /** The textarea, typed for the one member a test writes. */
@@ -239,10 +239,12 @@ function render(t: { after(fn: () => void): void }): Rendered {
     stub.inspect(attachShell).children.find((child) => child.classes.includes('composer-menu') && child.attributes.get('aria-hidden') !== 'true')
   const chipMenu = (): StubView | undefined =>
     stub.inspect(els.chipShell).children.find((child) => child.classes.includes('chip-menu') && child.attributes.get('aria-hidden') !== 'true')
-  const flyout = (): StubView | undefined =>
-    chipMenu()
-      ?.children.flatMap((shell) => [...shell.children])
-      .find((child) => child.classes.includes('chip-flyout') && child.attributes.get('aria-hidden') !== 'true')
+  const descendants = (view: StubView): StubView[] =>
+    view.children.flatMap((child) => [child, ...descendants(child)])
+  const pageNodes = (): StubView[] => {
+    const page = chipMenu()?.children.find((child) => child.classes.includes('open'))
+    return page ? descendants(page) : []
+  }
 
   return {
     stub,
@@ -267,10 +269,9 @@ function render(t: { after(fn: () => void): void }): Rendered {
     menuItems: () => [...(menu()?.children ?? [])],
     attachMenuItems: () => [...(attachMenu()?.children ?? [])],
     attachmentRows: () => [...stub.inspect(els.attachStrip).children],
-    // The row is the shell's first child; the flyout, when open, is its second.
-    chipRows: () => (chipMenu()?.children ?? []).map((shell) => shell.children[0]!),
-    flyoutItems: () =>
-      (flyout()?.children ?? []).filter((child) => child.classes.includes('chip-flyout-item')),
+    pickerControls: () => pageNodes().filter((child) =>
+      child.classes.some((name) => ['chip-picker-model', 'chip-effort-range', 'chip-picker-back', 'chip-model-option'].includes(name))),
+    modelOptions: () => pageNodes().filter((child) => child.classes.includes('chip-model-option')),
   }
 }
 
@@ -524,11 +525,11 @@ test('a press outside the chip shell closes the runtime popover', (t) => {
   r.stub.click(r.els.chipRuntime)
   r.composer.showRuntimeMenu(menuView())
 
-  r.stub.dispatchDocument('pointerdown', { target: r.chipRows()[0]!.node })
-  assert.equal(r.chipRows().length, 2)
+  r.stub.dispatchDocument('pointerdown', { target: r.pickerControls()[0]!.node })
+  assert.equal(r.pickerControls().length, 2)
 
   r.stub.dispatchDocument('pointerdown', { target: r.els.input })
-  assert.deepEqual(r.chipRows(), [])
+  assert.deepEqual(r.pickerControls(), [])
 })
 
 test('a background pane cannot leave its menu hanging over the next one', (t) => {
@@ -543,7 +544,7 @@ test('a background pane cannot leave its menu hanging over the next one', (t) =>
 
 // --- the chip's popover --------------------------------------------------------
 
-test('the chip is one label carrying both fields, inert until a snapshot arrives', (t) => {
+test('the chip shows the current values, and names the decision while its menu is open', (t) => {
   const r = render(t)
   assert.equal(r.view('chipRuntime').disabled, true)
 
@@ -551,14 +552,35 @@ test('the chip is one label carrying both fields, inert until a snapshot arrives
   assert.deepEqual(
     r.view('chipRuntime').children.map((child) => [child.className, child.text]),
     [
-      // Drawn at every width; the stylesheet shows it instead of the two labels
-      // once the row is too narrow for a name (`@container composer-bar`).
+      // Drawn at every width; the stylesheet shows it instead of the words once
+      // the row is too narrow to hold them (`@container composer-bar`).
       ['icon chip-model-icon', ''],
       ['chip-model-label', 'sonnet'],
       ['chip-effort-label', EFFORT_LABELS.high],
+      ['icon chip-chevron', ''],
     ],
   )
   assert.equal(r.view('chipRuntime').disabled, false)
+
+  // Opened, the two values give way to the invitation: the menu under the pill
+  // states both of them already, so repeating them on the pill says nothing.
+  r.stub.click(r.els.chipRuntime)
+  r.composer.showRuntimeMenu(menuView())
+  assert.deepEqual(
+    r.view('chipRuntime').children.map((child) => [child.className, child.text]),
+    [
+      ['icon chip-model-icon', ''],
+      ['chip-prompt-label', '选择思考强度'],
+      ['icon chip-chevron', ''],
+    ],
+  )
+
+  r.composer.closeMenus()
+  assert.deepEqual(
+    r.view('chipRuntime').children.map((child) => child.className),
+    ['icon chip-model-icon', 'chip-model-label', 'chip-effort-label', 'icon chip-chevron'],
+    'closing brings the values back',
+  )
 })
 
 test('the context indicator is independent of the chip, and is absent when there is nothing to report', (t) => {
@@ -568,7 +590,7 @@ test('the context indicator is independent of the chip, and is absent when there
   assert.deepEqual(r.view('contextIndicator').children, [])
   assert.deepEqual(
     r.view('chipRuntime').children.map((child) => child.className),
-    ['icon chip-model-icon', 'chip-model-label', 'chip-effort-label'],
+    ['icon chip-model-icon', 'chip-model-label', 'chip-effort-label', 'icon chip-chevron'],
     'the chip carries the two fields it opens and its own stand-in, and nothing else',
   )
   assert.deepEqual(
@@ -653,26 +675,23 @@ test('the context card offers 压缩上下文, which closes it and runs /compact
   assert.equal(r.view('contextIndicator').children[0]!.attributes.get('aria-expanded'), 'false')
 })
 
-test('clicking the chip asks the pane for the rows rather than opening anything', (t) => {
+test('the chip opens the effort card, with a native slider focused on the current level', (t) => {
   const r = render(t)
   r.composer.renderRuntime(runtime())
-
   r.stub.click(r.els.chipRuntime)
   assert.deepEqual(r.menuRequests, [1])
-  assert.deepEqual(r.chipRows(), [], 'nothing is drawn until the rows come back')
+  assert.deepEqual(r.pickerControls(), [])
 
   r.composer.showRuntimeMenu(menuView())
-  assert.deepEqual(r.chipRows().map((row) => row.text), [
-    `模型sonnet`,
-    `思考强度${EFFORT_LABELS.high}`,
-  ])
+  const [model, slider] = r.pickerControls()
+  // The whole block is one button now — the level sits above the model's name
+  // inside it, which is the target the reference draws.
+  assert.equal(model!.text, `${EFFORT_LABELS.high}sonnet`)
+  assert.equal((slider!.node as HTMLInputElement).value, '2')
+  assert.equal(slider!.attributes.get('aria-valuetext'), EFFORT_LABELS.high)
+  assert.equal(r.stub.activeElement(), slider!.node)
   assert.equal(r.view('chipRuntime').attributes.get('aria-expanded'), 'true')
-  // The popover opens as its two rows and nothing else. Focus lands on the first
-  // one, and a flyout on focus would put the model list over the menu the user
-  // has not read yet.
-  assert.deepEqual(r.flyoutItems(), [])
-  r.stub.dispatch(r.chipRows()[0]!.node, 'focus')
-  assert.deepEqual(r.flyoutItems(), [])
+  assert.deepEqual(r.modelOptions(), [])
 })
 
 test('an answer nobody asked for is dropped', (t) => {
@@ -682,12 +701,12 @@ test('an answer nobody asked for is dropped', (t) => {
   r.composer.renderRuntime(runtime())
 
   r.composer.showRuntimeMenu(menuView())
-  assert.deepEqual(r.chipRows(), [])
+  assert.deepEqual(r.pickerControls(), [])
 
   r.stub.click(r.els.chipRuntime)
   r.composer.closeMenus()
   r.composer.showRuntimeMenu(menuView())
-  assert.deepEqual(r.chipRows(), [], 'closing the menus also withdraws the request')
+  assert.deepEqual(r.pickerControls(), [], 'closing the menus also withdraws the request')
 })
 
 test('a snapshotless menu refuses to open, and the next click asks again', (t) => {
@@ -695,120 +714,156 @@ test('a snapshotless menu refuses to open, and the next click asks again', (t) =
   r.stub.click(r.els.chipRuntime)
   r.composer.showRuntimeMenu(inertMenuView())
 
-  assert.deepEqual(r.chipRows(), [])
+  assert.deepEqual(r.pickerControls(), [])
   r.stub.click(r.els.chipRuntime)
   assert.deepEqual(r.menuRequests, [1, 1], 'the second click asks, it does not read as "close"')
 })
 
-test('hovering a row opens its flyout, and only one is open at a time', (t) => {
+test('the model name opens the model list on click, without a hover submenu', (t) => {
   const r = render(t)
   r.composer.renderRuntime(runtime())
   r.stub.click(r.els.chipRuntime)
   r.composer.showRuntimeMenu(menuView())
-
-  const [model, effort] = r.chipRows()
-  r.stub.dispatch(effort!.node, 'mouseenter')
-  assert.deepEqual(
-    r.flyoutItems().map((item) => item.children[0]!.text),
-    [EFFORT_LABELS.low, EFFORT_LABELS.medium, EFFORT_LABELS.high, EFFORT_LABELS.xhigh, EFFORT_LABELS.max],
-  )
-  // The level in force is marked, and the row it is on says so to a reader.
-  assert.deepEqual(
-    r.flyoutItems().filter((item) => item.classes.includes('active')).map((item) => item.children[0]!.text),
-    [EFFORT_LABELS.high],
-  )
-
-  r.stub.dispatch(model!.node, 'mouseenter')
-  assert.deepEqual(r.flyoutItems().map((item) => item.children[0]!.text), ['Sonnet', 'Opus'])
-  assert.equal(r.chipRows().filter((row) => row.classes.includes('open')).length, 1)
+  const model = r.pickerControls()[0]!
+  r.stub.dispatch(model.node, 'mouseenter')
+  assert.deepEqual(r.modelOptions(), [])
+  r.stub.click(model.node)
+  assert.deepEqual(r.modelOptions().map((row) => row.children[0]!.text), ['Sonnet', 'Opus'])
+  assert.equal(r.stub.activeElement(), r.modelOptions()[0]!.node)
+  assert.equal(r.modelOptions()[0]!.attributes.get('aria-selected'), 'true')
+  r.stub.click(r.modelOptions()[1]!.node)
+  assert.deepEqual(r.ran, [{ kind: 'run-command', line: '/model opus' }])
+  assert.deepEqual(r.pickerControls(), [])
 })
 
-test('re-entering the row a flyout already belongs to does not rebuild it', (t) => {
-  // The rows are kept across a flyout change on purpose: rebuilding one under
-  // the pointer fires `mouseenter` on the replacement, and the render loop that
-  // follows has no exit.
+test('slider input previews the level; release persists it once through the command path', (t) => {
   const r = render(t)
   r.composer.renderRuntime(runtime())
   r.stub.click(r.els.chipRuntime)
   r.composer.showRuntimeMenu(menuView())
-
-  const row = r.chipRows()[1]!
-  r.stub.dispatch(row.node, 'mouseenter')
-  const first = r.flyoutItems()[0]!.node
-  r.stub.dispatch(row.node, 'mouseenter')
-
-  assert.equal(r.flyoutItems()[0]!.node, first)
-  assert.equal(r.chipRows()[1]!.node, row.node)
-})
-
-test('choosing a level runs its command once and shuts the popover', (t) => {
-  const r = render(t)
-  r.composer.renderRuntime(runtime())
-  r.stub.click(r.els.chipRuntime)
-  r.composer.showRuntimeMenu(menuView())
-  r.stub.dispatch(r.chipRows()[1]!.node, 'mouseenter')
-
-  r.stub.click(r.flyoutItems()[0]!.node)
-
-  // The slash command, not `set-effort`: that is what writes the choice back to
-  // config (`model/surfaces.ts`).
+  const slider = r.pickerControls()[1]!.node as HTMLInputElement
+  const filledTicks = () => Array.from(slider.parentElement!.querySelectorAll('.chip-effort-tick'))
+    .map((tick) => tick.classList.contains('filled'))
+  assert.deepEqual(filledTicks(), [true, true, true, false, false])
+  for (const value of ['1', '3', '0']) {
+    slider.value = value
+    r.stub.dispatch(slider, 'input')
+  }
+  assert.deepEqual(r.ran, [])
+  assert.equal(r.stub.inspect(slider).attributes.get('aria-valuetext'), EFFORT_LABELS.low)
+  assert.deepEqual(filledTicks(), [true, false, false, false, false])
+  r.stub.dispatch(slider, 'change')
   assert.deepEqual(r.ran, [{ kind: 'run-command', line: '/effort low' }])
-  assert.deepEqual(r.chipRows(), [])
-  assert.equal(r.view('chipRuntime').attributes.get('aria-expanded'), 'false')
+  assert.equal(r.view('chipRuntime').attributes.get('aria-expanded'), 'true')
+  assert.equal(r.stub.activeElement(), slider)
+  slider.value = '2'
+  r.stub.dispatch(slider, 'input')
+  assert.deepEqual(filledTicks(), [true, true, true, false, false])
+  r.stub.dispatch(slider, 'change')
+  r.stub.dispatch(slider, 'change')
+  assert.deepEqual(r.ran, [
+    { kind: 'run-command', line: '/effort low' },
+    { kind: 'run-command', line: '/effort high' },
+  ])
 })
 
-test('a level the model does not support explains itself instead of being pickable', (t) => {
+test('the slider skips unsupported levels and preserves a custom token budget until changed', (t) => {
   const r = render(t)
-  const snapshot = runtime({ effort: 'medium', supportedEfforts: ['low', 'medium', 'high'] })
+  const snapshot = runtime({ effort: '24000', supportedEfforts: ['low', 'high'] })
   r.composer.renderRuntime(snapshot)
   r.stub.click(r.els.chipRuntime)
   r.composer.showRuntimeMenu(menuView(snapshot))
-  r.stub.dispatch(r.chipRows()[1]!.node, 'mouseenter')
-
-  const over = r.flyoutItems().filter((item) => item.classes.includes('disabled'))
-  assert.deepEqual(over.map((item) => item.children[0]!.text), [EFFORT_LABELS.xhigh, EFFORT_LABELS.max])
-  assert.equal(over[0]!.disabled, true)
-  r.stub.click(over[0]!.node)
-  assert.deepEqual(r.ran, [], 'a disabled row is drawn to explain itself, not to be picked')
+  const slider = r.pickerControls()[1]!.node as HTMLInputElement
+  assert.equal(slider.max, '1')
+  assert.equal(slider.getAttribute('aria-valuetext'), '24000')
+  slider.value = '1'
+  r.stub.dispatch(slider, 'input')
+  r.stub.dispatch(slider, 'change')
+  assert.deepEqual(r.ran, [{ kind: 'run-command', line: '/effort high' }])
 })
 
-test('the keyboard walks the two rows, enters a flyout on the value in force and walks it', (t) => {
-  const r = render(t)
-  r.composer.renderRuntime(runtime())
-  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'ArrowDown', target: r.els.chipRuntime })
-  assert.deepEqual(r.menuRequests, [1], 'ArrowDown on the closed chip asks for the rows')
-  r.composer.showRuntimeMenu(menuView())
-
-  const [model, effort] = r.chipRows()
-  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'ArrowDown', target: model!.node })
-  assert.equal(r.stub.activeElement(), effort!.node)
-
-  // Enter and ArrowRight both open the flyout, and focus follows into it: the
-  // level in force, so the arrows start from where the menu says it is.
-  r.stub.dispatch(effort!.node, 'keydown', { key: 'Enter' })
-  const levels = r.flyoutItems()
-  assert.equal(r.stub.activeElement(), levels[2]!.node, 'high is the level in force')
-
-  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'ArrowDown', target: levels[2]!.node })
-  assert.equal(r.stub.activeElement(), levels[3]!.node, 'the arrows walk the flyout, not the rows')
-  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'Home', target: levels[3]!.node })
-  assert.equal(r.stub.activeElement(), levels[0]!.node)
-})
-
-test('Escape closes the flyout first and the popover second', (t) => {
+test('returning to the current slider position does not rewrite config', (t) => {
   const r = render(t)
   r.composer.renderRuntime(runtime())
   r.stub.click(r.els.chipRuntime)
   r.composer.showRuntimeMenu(menuView())
-  r.stub.dispatch(r.chipRows()[1]!.node, 'mouseenter')
+  const slider = r.pickerControls()[1]!.node as HTMLInputElement
+  slider.value = '2'
+  r.stub.dispatch(slider, 'input')
+  r.stub.dispatch(slider, 'change')
+  assert.deepEqual(r.ran, [])
+  assert.equal(r.view('chipRuntime').attributes.get('aria-expanded'), 'true')
+})
 
+test('a model with only one supported level still offers model switching', (t) => {
+  const r = render(t)
+  const snapshot = runtime({ supportedEfforts: ['high'] })
+  r.composer.renderRuntime(snapshot)
+  r.stub.click(r.els.chipRuntime)
+  r.composer.showRuntimeMenu(menuView(snapshot))
+  const [model, slider] = r.pickerControls()
+  assert.equal(slider!.disabled, true)
+  assert.equal(r.stub.activeElement(), model!.node)
+})
+
+test('the keyboard leaves range keys native and roves the model list', (t) => {
+  const r = render(t)
+  r.composer.renderRuntime(runtime())
+  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'ArrowDown', target: r.els.chipRuntime })
+  assert.deepEqual(r.menuRequests, [1])
+  r.composer.showRuntimeMenu(menuView())
+  const [model, slider] = r.pickerControls()
+  const native = r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'ArrowDown', target: slider!.node })
+  assert.equal(native.defaultPrevented, false)
+  r.stub.dispatch(model!.node, 'keydown', { key: 'ArrowRight' })
+  const models = r.modelOptions()
+  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'ArrowDown', target: models[0]!.node })
+  assert.equal(r.stub.activeElement(), models[1]!.node)
+  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'Home', target: models[1]!.node })
+  assert.equal(r.stub.activeElement(), models[0]!.node)
+})
+
+test('unavailable models retain their reason and keyboard navigation skips them', (t) => {
+  const r = render(t)
+  r.composer.renderRuntime(runtime())
+  r.stub.click(r.els.chipRuntime)
+  r.composer.showRuntimeMenu(runtimeMenuView({
+    runtime: runtime(),
+    models: { models: [], pickerOptions: [
+      MODELS.pickerOptions[0]!,
+      { key: 'broken', label: 'Broken', isCurrent: false, isDefault: false, disabledReason: '缺少服务商配置' },
+      MODELS.pickerOptions[1]!,
+    ] },
+  }))
+  r.stub.click(r.pickerControls()[0]!.node)
+  const [current, broken, next] = r.modelOptions()
+  assert.equal(broken!.disabled, true)
+  assert.match(broken!.text, /缺少服务商配置/)
+  r.stub.click(broken!.node)
+  assert.deepEqual(r.ran, [])
+  r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'ArrowDown', target: current!.node })
+  assert.equal(r.stub.activeElement(), next!.node)
+})
+
+test('back and Escape return from models without replacing the slider or losing its preview', (t) => {
+  const r = render(t)
+  r.composer.renderRuntime(runtime())
+  r.stub.click(r.els.chipRuntime)
+  r.composer.showRuntimeMenu(menuView())
+  const [model, slider] = r.pickerControls()
+  ;(slider!.node as HTMLInputElement).value = '1'
+  r.stub.dispatch(slider!.node, 'input')
+  r.stub.click(model!.node)
+  r.stub.click(r.pickerControls()[0]!.node)
+  assert.equal(r.pickerControls()[1]!.node, slider!.node)
+  assert.equal(r.pickerControls()[1]!.attributes.get('aria-valuetext'), EFFORT_LABELS.medium)
+  r.stub.click(model!.node)
   const first = r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'Escape' })
-  assert.equal(first.defaultPrevented, true, 'consumed here, or it also closes a surface behind the composer')
-  assert.deepEqual(r.flyoutItems(), [])
-  assert.equal(r.chipRows().length, 2, 'the popover itself is still open')
-
+  assert.equal(first.defaultPrevented, true)
+  assert.deepEqual(r.modelOptions(), [])
+  assert.equal(r.stub.activeElement(), slider!.node)
   r.stub.dispatch(r.els.chipShell, 'keydown', { key: 'Escape' })
-  assert.deepEqual(r.chipRows(), [])
+  assert.deepEqual(r.pickerControls(), [])
   assert.equal(r.stub.activeElement(), r.els.chipRuntime)
 })
 
@@ -818,11 +873,11 @@ test('focus leaving the chip shell closes the popover; moving inside it does not
   r.stub.click(r.els.chipRuntime)
   r.composer.showRuntimeMenu(menuView())
 
-  r.stub.dispatch(r.els.chipShell, 'focusout', { relatedTarget: r.chipRows()[0]!.node })
-  assert.equal(r.chipRows().length, 2)
+  r.stub.dispatch(r.els.chipShell, 'focusout', { relatedTarget: r.pickerControls()[0]!.node })
+  assert.equal(r.pickerControls().length, 2)
 
   r.stub.dispatch(r.els.chipShell, 'focusout', { relatedTarget: r.els.input })
-  assert.deepEqual(r.chipRows(), [])
+  assert.deepEqual(r.pickerControls(), [])
 })
 
 test('the send button is idle when empty, ready when typed into', (t) => {
@@ -1173,7 +1228,9 @@ test('an unchanged runtime snapshot rebuilds neither the chip nor the pill', (t)
   // A snapshot that moved still repaints, or the guard would be a freeze.
   r.composer.renderRuntime(runtime({ modelKey: 'opus', model: 'claude-opus-5', permissionMode: 'plan' }))
   assert.notDeepEqual(r.view('chipRuntime').children.map((child) => child.node), chipBefore)
-  assert.equal(r.view('chipRuntime').children[1]!.text, 'opus')
+  // The pill's own wording does not follow the model — its tooltip does, and
+  // that is what a pointer resting on it reads.
+  assert.match(r.view('chipRuntime').attributes.get('aria-label') ?? '', /opus/)
   assert.equal(r.view('chipPermission').children[0]!.text, PERMISSION_MODE_LABELS.plan)
 })
 

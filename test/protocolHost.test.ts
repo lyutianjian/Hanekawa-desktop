@@ -1985,6 +1985,7 @@ test('a pending permission prompt holds the queue back until it is answered', as
   await settle()
   const request = harness.received.find((event) => event.type === 'ui-request')
   assert.ok(request && request.type === 'ui-request')
+  assert.deepEqual(harness.host.pendingNotificationRequests(), [{ id: request.request.requestId, kind: 'permission' }])
 
   harness.send({ type: 'enqueue-message', id: 'q1', content: 'held' })
   await waitFor(
@@ -2775,6 +2776,24 @@ test('state flips while a permission prompt is open', async () => {
   await pending
   await settle()
   assert.deepEqual(harness.host.state(), { streaming: false, pendingApproval: false, pendingDialog: false })
+  assert.deepEqual(harness.host.pendingNotificationRequests(), [])
   assert.ok(changes >= 2)
   harness.dispose()
+})
+
+test('pending notification requests distinguish questions from plan permission dialogs and clear on disposal', async () => {
+  const harness = await createHarness()
+  const enter = harness.bridges.enterPlan.open()
+  const exit = harness.bridges.exitPlan.open({ planContent: 'plan', planFilePath: 'plan.md' })
+  const question = harness.bridges.askUserQuestion.ask({ questions: [] })
+  await settle()
+  const requests = harness.received.filter((event) => event.type === 'ui-request')
+  assert.deepEqual(harness.host.pendingNotificationRequests(), requests.map((event) => ({
+    id: event.request.requestId,
+    kind: event.request.kind === 'ask-user-question' ? 'question' : 'permission',
+  })))
+  assert.equal(requests.length, 3)
+  harness.dispose()
+  await Promise.all([enter, exit, question])
+  assert.deepEqual(harness.host.pendingNotificationRequests(), [])
 })

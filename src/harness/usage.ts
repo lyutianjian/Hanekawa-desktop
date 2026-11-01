@@ -66,11 +66,11 @@ export function cacheHitRate(usage: TokenUsage): number | null {
 /**
  * Whether a side call spent anything worth accounting for.
  *
- * A response with no usage, or one that reported all zeros, has nothing to add
- * to a session total and must not move the readout.
+ * A missing tail is accounted even with no known tokens, so its incomplete
+ * flag reaches the session. Otherwise an explicit zero has nothing to add.
  */
 export function hasTokenSpend(usage?: TokenUsage | null): usage is TokenUsage {
-  return !!usage && promptTokens(usage) + usage.outputTokens > 0
+  return !!usage && (promptTokens(usage) + usage.outputTokens > 0 || usage.cost?.incomplete === true)
 }
 
 export function addTokenUsage(left: TokenUsage, right?: TokenUsage): TokenUsage {
@@ -97,6 +97,7 @@ export function addUsageCost(left?: UsageCost, right?: UsageCost): UsageCost | u
     amounts,
     ...(left.unpriced || right.unpriced ? { unpriced: true as const } : {}),
     ...(left.legacy || right.legacy ? { legacy: true as const } : {}),
+    ...(left.incomplete || right.incomplete ? { incomplete: true as const } : {}),
   }
 }
 
@@ -134,8 +135,9 @@ export function calculateTokenCost(usage: TokenUsage, pricing: CompletePricing):
  * "not priced" and "free" are different answers.
  */
 export function priceUsage(usage: TokenUsage, pricing?: ModelPricing): TokenUsage {
-  if (!hasCompletePricing(pricing)) return { ...usage, cost: { amounts: {}, unpriced: true } }
-  return { ...usage, cost: { amounts: { [pricing.currency ?? 'USD']: calculateTokenCost(usage, pricing) } } }
+  const flags = usage.cost?.incomplete ? { incomplete: true as const } : {}
+  if (!hasCompletePricing(pricing)) return { ...usage, cost: { amounts: {}, unpriced: true, ...flags } }
+  return { ...usage, cost: { amounts: { [pricing.currency ?? 'USD']: calculateTokenCost(usage, pricing) }, ...flags } }
 }
 
 export function formatUsageLine(usage: TokenUsage, pricing?: ModelPricing, label = 'Tokens'): string {

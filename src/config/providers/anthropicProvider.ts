@@ -16,7 +16,7 @@ import {
   resolveImageRequestGuardLimits,
 } from './imageRequestGuard.js'
 import { debugProviderPayload, debugProviderResponse, debugProviderSummary } from './debug.js'
-import { normalizeAnthropicUsage } from './usage.js'
+import { normalizeAnthropicUsage, reportProviderUsage } from './usage.js'
 import { isExperimentalToolSearchBetaDisabled } from '../../utils/toolSearch.js'
 import { getPromptCachingEnabled } from '../../harness/cacheControl.js'
 import { USER_AGENT } from '../../utils/userAgent.js'
@@ -184,33 +184,50 @@ export class AnthropicProvider implements ModelProvider {
     debugProviderSummary('anthropic', request, payload, betas)
     debugProviderPayload('anthropic', payload, request)
 
+    request.retry?.signal?.throwIfAborted()
     const stream = this.client.messages.stream(
       payload as unknown as Anthropic.Messages.MessageStreamParams,
       betas.length > 0
         ? { headers: { 'anthropic-beta': betas.join(',') } as Record<string, string> }
         : undefined,
     )
-    const response = await streamWithTimeout(
-      stream,
-      request.retry?.signal,
-      STREAM_IDLE_TIMEOUT_MS,
-      request.onTextDelta,
-      request.onStreamEvent,
-      STREAM_IDLE_WARNING_MS,
-    )
+    let reported: unknown
+    let complete = false
+    let failure: unknown
+    try {
+      const response = await streamWithTimeout(
+        stream,
+        request.retry?.signal,
+        STREAM_IDLE_TIMEOUT_MS,
+        request.onTextDelta,
+        request.onStreamEvent,
+        STREAM_IDLE_WARNING_MS,
+        (usage) => { reported = usage },
+      )
+      reported = response.usage
+      complete = true
 
-    debugProviderResponse('anthropic', response)
-    const parsed = this.parseResponse(response)
-    const cacheReadTokens = response.usage?.cache_read_input_tokens
-    // Compatible endpoints may omit cache usage. Missing data must not be
-    // committed as a zero hit or classified as an eviction.
-    const cacheBreak = typeof cacheReadTokens === 'number' && Number.isFinite(cacheReadTokens)
-      ? checkResponseForCacheBreak(cacheReadTokens, parsed.usage?.inputTokens ?? 0, cacheSource)
-      : null
-    return {
-      ...parsed,
-      ...(parsed.thinkingBlocks?.length ? { thinkingSource } : {}),
-      ...(cacheBreak ? { cacheBreak } : {}),
+      debugProviderResponse('anthropic', response)
+      const parsed = this.parseResponse(response)
+      const cacheReadTokens = response.usage?.cache_read_input_tokens
+      // Compatible endpoints may omit cache usage. Missing data must not be
+      // committed as a zero hit or classified as an eviction.
+      const cacheBreak = typeof cacheReadTokens === 'number' && Number.isFinite(cacheReadTokens)
+        ? checkResponseForCacheBreak(cacheReadTokens, parsed.usage?.inputTokens ?? 0, cacheSource)
+        : null
+      return {
+        ...parsed,
+        ...(parsed.thinkingBlocks?.length ? { thinkingSource } : {}),
+        ...(cacheBreak ? { cacheBreak } : {}),
+      }
+    } catch (error) {
+      failure = error
+      throw error
+    } finally {
+      const usage = reported ? normalizeAnthropicUsage(reported) : undefined
+      reportProviderUsage(request, usage && !complete
+        ? { ...usage, cost: { amounts: {}, incomplete: true } }
+        : usage, failure)
     }
   }
 
@@ -278,6 +295,7 @@ export async function streamWithTimeout(
   onTextDelta?: (delta: string) => void,
   onStreamEvent?: (event: ModelStreamEvent) => void,
   idleWarningMs = STREAM_IDLE_WARNING_MS,
+  onUsage?: (usage: Record<string, unknown>) => void,
 ): Promise<Anthropic.Messages.Message> {
   let timeoutTimer: ReturnType<typeof setTimeout> | undefined
   let warningTimer: ReturnType<typeof setTimeout> | undefined
@@ -300,8 +318,15 @@ export async function streamWithTimeout(
   })
   const blockTypes = new Map<number, string>()
   const toolNames = new Map<number, string>()
+  let partialUsage: Record<string, unknown> = {}
   const handleStreamEvent = (event: unknown) => {
     resetTimer()
+    const typed = event as { type?: string; message?: { usage?: Record<string, unknown> }; usage?: Record<string, unknown> }
+    const usage = typed?.type === 'message_start' ? typed.message?.usage : typed?.type === 'message_delta' ? typed.usage : undefined
+    if (usage) {
+      partialUsage = { ...partialUsage, ...usage }
+      onUsage?.(partialUsage)
+    }
     for (const modelEvent of extractModelStreamEvents(event, blockTypes, toolNames)) {
       if (modelEvent.type === 'text_delta') onTextDelta?.(modelEvent.text)
       onStreamEventCallback?.(modelEvent)

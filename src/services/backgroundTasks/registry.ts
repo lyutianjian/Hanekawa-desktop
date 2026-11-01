@@ -111,6 +111,11 @@ export class BackgroundTaskRegistry {
     return () => this.listeners.delete(listener)
   }
 
+  /** Real work across all sessions; an idle Monitor is still a running process. */
+  hasRunningWork(): boolean {
+    return [...this.tasks.values()].some((task) => task.status === 'running' && !task.monitor)
+  }
+
   getSnapshot = (sessionId: string): readonly BackgroundTaskSnapshot[] => {
     const cached = this.snapshotCache.get(sessionId)
     if (cached) return cached

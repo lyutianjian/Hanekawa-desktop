@@ -4,6 +4,9 @@ import { el, replace } from './dom.js'
 import { createModalPresence } from './presence.js'
 import { actionBar } from './actionBar.js'
 import { focusByKey, heldFocusKey, trapTab } from './focus.js'
+import { pillSelect } from './controls.js'
+import { onPressOutside } from './dismiss.js'
+import { icon } from './icons.js'
 
 /**
  * The `/rewind` panel: a checkpoint list, then a confirm screen.
@@ -47,7 +50,14 @@ export function createRewindView(
     painted = undefined
   })
   panel.setAttribute('tabindex', '-1')
-  container.addEventListener('keydown', (event) => trapTab(panel, event))
+  container.addEventListener('keydown', (event) => {
+    trapTab(panel, event)
+    const target = event.target
+    // Buttons keep their own activation keys; Tab stays in the modal.
+    if (event.key === 'Tab' || target instanceof HTMLElement && (
+      target.tagName.toLowerCase() === 'button' && (event.key === 'Enter' || event.key === ' ')
+    )) event.stopPropagation()
+  })
   let open = false
   /** Where focus was when the panel opened, handed back on close. */
   let returnTo: HTMLElement | undefined
@@ -59,6 +69,7 @@ export function createRewindView(
    * rather than rebuilding the panel per key press.
    */
   let painted: { signature: string; list: HTMLElement; rows: HTMLElement[] } | undefined
+  let disposeRange: (() => void) | undefined
 
   // The scrim, and only the scrim: `event.target === container` is what tells a
   // press on the backdrop from one that started inside the card and bubbled.
@@ -90,29 +101,29 @@ export function createRewindView(
       }
       const held = heldFocusKey(panel)
       const holding = opening || held !== undefined || document.activeElement === panel
+      disposeRange?.()
       const rows = view.screen === 'select' ? selectScreen(view, onIntent) : undefined
+      const confirm = rows === undefined ? confirmScreen(view, onIntent) : undefined
+      disposeRange = confirm?.dispose
       painted = rows && signature !== undefined ? { signature, list: rows.list, rows: rows.nodes } : undefined
+      panel.dataset.screen = view.screen
+      const bar = actionBar(view.actions, (action) => onIntent(rewindActionToIntent(action, view)))
+      for (const node of bar.querySelectorAll<HTMLElement>('button')) {
+        node.dataset.focusKey = node.classList.contains('primary') ? 'rewind-confirm' : 'rewind-cancel'
+      }
       replace(
         panel,
         el('h2', 'title', view.title),
         view.subtitle.length > 0 && el('div', 'subtitle', view.subtitle),
         view.error !== undefined && el('div', 'error', view.error),
         view.emptyMessage !== undefined && el('div', 'subtitle', view.emptyMessage),
-        rows?.list ?? confirmScreen(view),
-        // The same bar the blocking dialogs end with, and the same rule: a slot
-        // resolves through `view.options`, so a button cannot pick a decision
-        // the number key would not.
-        actionBar(
-          view.actions,
-          (action) => onIntent(rewindActionToIntent(action, view)),
-          // Where the cursor is, so Enter's target is visible. `-1` on the list
-          // screen, whose bar is a single non-slot button.
-          view.options.findIndex((option) => option.selected),
-        ),
+        rows?.list ?? confirm?.body,
+        bar,
       )
       presence.set(true)
       open = true
-      if (holding && !focusByKey(panel, held ?? ROWS_FOCUS_KEY) && document.activeElement !== panel) {
+      const initialFocus = view.screen === 'select' ? ROWS_FOCUS_KEY : RANGE_FOCUS_KEY
+      if (holding && !focusByKey(panel, held ?? initialFocus) && !focusByKey(panel, initialFocus) && document.activeElement !== panel) {
         panel.focus({ preventScroll: true })
       }
       rows?.cursor?.scrollIntoView({ block: 'nearest' })
@@ -126,6 +137,8 @@ export function createRewindView(
       const focusInside = active === null || active === document.body || container.contains(active) || panel.contains(active)
       open = false
       busy = false
+      disposeRange?.()
+      disposeRange = undefined
       presence.set(false)
       // A node that left the page meanwhile ignores `focus()`, which is the
       // right answer: there is nothing to go back to.
@@ -139,6 +152,7 @@ export function createRewindView(
 }
 
 const ROWS_FOCUS_KEY = 'rewind-rows'
+const RANGE_FOCUS_KEY = 'rewind-range'
 
 function moveCursor(painted: { list: HTMLElement; rows: readonly HTMLElement[] }, view: RewindViewModel): void {
   let cursor: HTMLElement | undefined
@@ -184,21 +198,86 @@ function selectScreen(
   return { list, cursor, nodes }
 }
 
-function confirmScreen(view: RewindViewModel): HTMLElement {
+function confirmScreen(view: RewindViewModel, onIntent: RewindActivate): { body: HTMLElement; dispose(): void } {
   const body = el('div', 'confirm')
-  body.appendChild(el('div', 'message', view.messagePreview))
-  if (view.timeLabel.length > 0) body.appendChild(el('div', 'subtitle', view.timeLabel))
-  body.appendChild(el('div', 'subtitle', view.codeEffect))
-
-  if (view.busyLabel !== undefined) {
-    // Options are withdrawn rather than disabled while a decision runs: the
-    // panel is not accepting input at all, and leaving them clickable would say
-    // otherwise. The view model empties `actions` for the same reason.
-    body.appendChild(el('div', 'busy', view.busyLabel))
-    return body
+  const message = el('div', 'checkpoint-message', el('div', 'message', view.messagePreview))
+  message.title = `${view.messagePreview}${view.timeLabel ? ` · ${view.timeLabel}` : ''}`
+  body.appendChild(message)
+  const selected = view.options.find((option) => option.selected)!
+  const range = el('div', 'settings-menu-shell rewind-range')
+  let rangeOpen = false
+  function setRangeOpen(open: boolean): void {
+    rangeOpen = open
+    pillSelect({
+      ariaLabel: '操作范围',
+      value: selected.decision,
+      choices: view.options.map((option) => ({ value: option.decision, label: option.label })),
+      enabled: view.busyLabel === undefined,
+      open,
+      onToggle: () => setRangeOpen(!rangeOpen),
+      onFirstItem: (item) => {
+        range.querySelector<HTMLElement>('.settings-menu')?.scrollIntoView({ block: 'nearest' })
+        ;(range.querySelector<HTMLElement>('.active') ?? item).focus({ preventScroll: true })
+      },
+      onCloseFocus: (trigger) => trigger.focus({ preventScroll: true }),
+      onChange: (value) => {
+        setRangeOpen(false)
+        const option = view.options.find((entry) => entry.decision === value)
+        if (option) onIntent({ kind: 'focus-option', decision: option.decision })
+      },
+    }, range)
+    if (open) range.querySelector('.active')?.appendChild(icon('check', 'icon rewind-range-check'))
   }
-
-  // The decisions themselves are the button bar below, not rows.
-  if (view.warning !== undefined) body.appendChild(el('div', 'warning', view.warning))
-  return body
+  setRangeOpen(false)
+  const trigger = range.querySelector<HTMLButtonElement>('button')!
+  trigger.id = 'rewind-range'
+  trigger.dataset.focusKey = RANGE_FOCUS_KEY
+  trigger.setAttribute('aria-describedby', 'rewind-description')
+  const stopOutside = onPressOutside([range], () => {
+    if (!rangeOpen) return false
+    setRangeOpen(false)
+    return true
+  })
+  range.addEventListener('focusout', (event) => {
+    if (!rangeOpen || event.relatedTarget === null) return
+    if (event.relatedTarget instanceof Node && range.contains(event.relatedTarget)) return
+    setRangeOpen(false)
+  })
+  range.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && rangeOpen) {
+      event.preventDefault()
+      event.stopPropagation()
+      setRangeOpen(false)
+      trigger.focus()
+      return
+    }
+    if (event.key === 'Tab' && rangeOpen) setRangeOpen(false)
+    const option = view.options.find((entry) => entry.hotkey === event.key)
+    if (!option || trigger.disabled) return
+    event.preventDefault()
+    event.stopPropagation()
+    onIntent({ kind: 'focus-option', decision: option.decision })
+  })
+  const label = el('label', 'range-label', '操作范围')
+  label.setAttribute('for', trigger.id)
+  const description = el('div', 'range-description', selected.description)
+  description.id = 'rewind-description'
+  description.hidden = true
+  body.appendChild(el('div', 'range-field', label, range, description))
+  const changes = view.codeChanges
+  const counts = el('div', 'code-count', view.codeEffect,
+    changes && el('span', 'code-added', `+${changes.additions}`),
+    changes && el('span', 'code-removed', `−${changes.deletions}`),
+  )
+  if (changes?.files) counts.title = changes.files
+  body.appendChild(el('div', 'code-effect',
+    counts,
+    view.warning && el('div', 'warning', icon('info'), el('span', 'warning-text', view.warning)),
+  ))
+  if (view.busyLabel !== undefined) {
+    const status = el('div', 'busy', icon('spinner'), el('span', '', view.busyLabel))
+    status.setAttribute('role', 'status')
+    body.appendChild(status)
+  }
+  return { body, dispose: stopOutside }
 }

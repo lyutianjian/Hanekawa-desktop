@@ -19,6 +19,7 @@ import {
 import type { DesktopPlatform } from '../../types.js'
 import { isPrimaryModifier } from './desktopShortcuts.js'
 import { providerLabel } from './providerLabels.js'
+import type { TurnCompletionNotification } from '../../../config/notifications.js'
 import { DEFAULT_THEME_PREFERENCE, THEME_PREFERENCES, type ThemePreference } from './theme.js'
 import { EFFORT_LABELS, PERMISSION_MODE_LABELS as COMPOSER_MODE_LABELS } from './composer.js'
 import {
@@ -954,6 +955,14 @@ function projectOne(snapshot: WireSettingsSnapshot, change: SettingsChange): Wir
       return { ...snapshot, general: { ...snapshot.general, cacheTtl1h: change.enabled } }
     case 'set-thinking':
       return { ...snapshot, general: { ...snapshot.general, thinking: change.enabled } }
+    case 'set-prevent-sleep':
+      return { ...snapshot, general: { ...snapshot.general, preventSleep: change.enabled } }
+    case 'set-turn-completion-notification':
+      return { ...snapshot, general: { ...snapshot.general, notifications: { ...snapshot.general.notifications, turnCompletion: change.value } } }
+    case 'set-permission-notifications':
+      return { ...snapshot, general: { ...snapshot.general, notifications: { ...snapshot.general.notifications, permissions: change.enabled } } }
+    case 'set-question-notifications':
+      return { ...snapshot, general: { ...snapshot.general, notifications: { ...snapshot.general.notifications, questions: change.enabled } } }
     case 'set-user-instructions':
       return { ...snapshot, userInstructions: change.content }
     // Actions and the key clear: nothing on screen can be predicted from them.
@@ -1053,6 +1062,18 @@ export function pendingRowIds(pending: readonly PendingMutation[]): Set<string> 
         break
       case 'set-thinking':
         ids.add('general:thinking')
+        break
+      case 'set-prevent-sleep':
+        ids.add('general:prevent-sleep')
+        break
+      case 'set-turn-completion-notification':
+        ids.add('notifications:turn-completion')
+        break
+      case 'set-permission-notifications':
+        ids.add('notifications:permissions')
+        break
+      case 'set-question-notifications':
+        ids.add('notifications:questions')
         break
       default:
         break
@@ -1784,7 +1805,63 @@ const CONTEXT_RATIO_FIELDS: readonly WireContextManagementField[] = [
 ]
 
 function generalCards(snapshot: WireSettingsSnapshot): SettingsCard[] {
-  return [cacheCard(snapshot), contextCard(snapshot)]
+  return [runtimeCard(snapshot), notificationCard(snapshot), cacheCard(snapshot), contextCard(snapshot)]
+}
+
+function notificationCard({ general }: WireSettingsSnapshot): SettingsCard {
+  const notifications = general.notifications ?? {}
+  const labels: Record<TurnCompletionNotification, string> = {
+    never: '从不', always: '始终', unfocused: '窗口未聚焦时',
+  }
+  return {
+    id: 'notifications', title: '通知', note: SAVED_GLOBAL, noteHint: general.settingsPath,
+    rows: [
+      {
+        id: 'notifications:turn-completion', label: '轮次完成通知',
+        detail: '设置 Hanekawa 完成轮次后何时通过系统通知提醒你',
+        control: {
+          kind: 'select', value: notifications.turnCompletion ?? 'unfocused',
+          choices: Object.entries(labels).map(([value, label]) => ({ value, label })),
+          intentOnChange: (value): SettingsIntent => ({ kind: 'set-turn-completion-notification', value: value as TurnCompletionNotification }),
+        },
+      },
+      {
+        id: 'notifications:permissions', label: '启用权限通知',
+        detail: '窗口未聚焦且需要你批准操作时显示系统通知',
+        control: {
+          kind: 'toggle', value: notifications.permissions !== false,
+          intentOnChange: (enabled): SettingsIntent => ({ kind: 'set-permission-notifications', enabled }),
+        },
+      },
+      {
+        id: 'notifications:questions', label: '启用问题通知',
+        detail: '窗口未聚焦且需要你回答问题才能继续时显示系统通知',
+        control: {
+          kind: 'toggle', value: notifications.questions !== false,
+          intentOnChange: (enabled): SettingsIntent => ({ kind: 'set-question-notifications', enabled }),
+        },
+      },
+    ],
+  }
+}
+
+function runtimeCard({ general }: WireSettingsSnapshot): SettingsCard {
+  return {
+    id: 'runtime',
+    title: '任务运行',
+    note: SAVED_GLOBAL,
+    noteHint: general.settingsPath,
+    rows: [{
+      id: 'general:prevent-sleep',
+      label: '运行时防止系统休眠',
+      detail: '在 Hanekawa 运行任务时，让电脑保持唤醒状态',
+      control: {
+        kind: 'toggle',
+        value: general.preventSleep !== false,
+        intentOnChange: (enabled: boolean): SettingsIntent => ({ kind: 'set-prevent-sleep', enabled }),
+      },
+    }],
+  }
 }
 
 function cacheCard(snapshot: WireSettingsSnapshot): SettingsCard {
@@ -2917,6 +2994,10 @@ export type SettingsIntent =
   | { kind: 'set-startup-permission-mode'; mode: 'default' | 'auto' | 'bypass' }
   | { kind: 'set-cache-ttl'; enabled: boolean }
   | { kind: 'set-thinking'; enabled: boolean }
+  | { kind: 'set-prevent-sleep'; enabled: boolean }
+  | { kind: 'set-turn-completion-notification'; value: TurnCompletionNotification }
+  | { kind: 'set-permission-notifications'; enabled: boolean }
+  | { kind: 'set-question-notifications'; enabled: boolean }
   | { kind: 'set-coordination-model'; role: 'coordinator' | 'thread'; value: string }
   | { kind: 'set-coordination-effort'; role: 'coordinator' | 'thread'; value: string }
   | { kind: 'set-coordination-days'; field: 'quietDays' | 'autoResolveDays'; value: string }
@@ -3548,6 +3629,22 @@ function reduceSettingsIntent(state: SettingsState, intent: SettingsIntent): Set
       return {
         state: { ...cleared, busy: true },
         changes: [{ scope: 'general', kind: 'set-thinking', enabled: intent.enabled }],
+      }
+    case 'set-prevent-sleep':
+      return {
+        state: { ...cleared, busy: true },
+        changes: [{ scope: 'general', kind: 'set-prevent-sleep', enabled: intent.enabled }],
+      }
+    case 'set-turn-completion-notification':
+      return {
+        state: { ...cleared, busy: true },
+        changes: [{ scope: 'general', ...intent }],
+      }
+    case 'set-permission-notifications':
+    case 'set-question-notifications':
+      return {
+        state: { ...cleared, busy: true },
+        changes: [{ scope: 'general', ...intent }],
       }
     case 'set-coordination-model':
       return {

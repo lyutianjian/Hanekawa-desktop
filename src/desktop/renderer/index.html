@@ -80,8 +80,8 @@
         <!--
           The anchored composite input: one capsule holding the textarea and an
           inline action bar. `#chip-runtime` is a single status label carrying
-          the model *and* the effort level; it opens a local popover whose two
-          rows fly out into the levels they can take.
+          the model *and* the effort level; it opens an effort slider with a
+          second page for choosing the model.
         -->
         <form id="input-row">
           <!--
@@ -254,6 +254,9 @@
           </div>
           <div id="thread-view" hidden></div>
           <div id="thread-detail-view" hidden></div>
+        </div>
+        <div id="tasks-head" hidden>
+          <h2 class="tasks-title">后台任务</h2>
         </div>
         <!-- 任务: collapsible sections, each shown only while it has content. -->
         <div id="side-sections" hidden>

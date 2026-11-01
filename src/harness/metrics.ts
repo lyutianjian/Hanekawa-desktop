@@ -1,10 +1,9 @@
 import type { CacheBreakSource } from './cacheBreakDetection.js'
 import type { TokenUsage, UsageCost } from './types.js'
-import { cacheCreationTokens, costField, reportsCacheCreation } from './usage.js'
+import { cacheCreationTokens, costField, reportsCacheCreation, promptTokens } from './usage.js'
 
 /**
- * Token counts outside the foreground requests, which the `turn` events do not
- * cover. Optional on `compact` because older sidecars have none.
+ * Persisted spend for an individual request or a legacy aggregate.
  */
 export interface MetricUsage {
   input_tokens: number
@@ -16,6 +15,14 @@ export interface MetricUsage {
 }
 
 export type SessionMetric =
+  | {
+      event: 'request_usage'
+      created_at: string
+      session_id: string
+      model: string
+      source: RequestUsageSource
+      usage: MetricUsage
+    }
   | {
       event: 'turn'
       created_at: string
@@ -36,6 +43,8 @@ export type SessionMetric =
       duration_ms: number
       /** Absent in sidecars written before costs were recorded. */
       cost?: UsageCost
+      /** Spend is already in request_usage; this event describes the response. */
+      usageRecorded?: true
     }
   | {
       event: 'compact'
@@ -96,8 +105,16 @@ export type SessionMetric =
 type MetricInput<T extends SessionMetric> = Omit<T, 'created_at' | 'session_id'>
 
 export type AuxUsageSource = 'tool_summary' | 'session_title' | 'rewind_summary'
+export type RequestUsageSource = AuxUsageSource | 'foreground' | 'compact' | 'subagent'
+
+export interface RequestUsage {
+  model: string
+  source: RequestUsageSource
+  usage: TokenUsage
+}
 
 export type SessionMetricInput =
+  | MetricInput<Extract<SessionMetric, { event: 'request_usage' }>>
   | MetricInput<Extract<SessionMetric, { event: 'turn' }>>
   | MetricInput<Extract<SessionMetric, { event: 'compact' }>>
   | MetricInput<Extract<SessionMetric, { event: 'subagent_usage' }>>
@@ -119,4 +136,38 @@ export function toMetricUsage(usage: TokenUsage): MetricUsage {
     response_tokens: usage.outputTokens,
     ...costField(usage.cost),
   }
+}
+
+/** What one metric spent, or undefined for an event that carries no usage. */
+export function metricTokenUsage(metric: SessionMetric): TokenUsage | undefined {
+  if (metric.event === 'turn' && metric.usageRecorded) return undefined
+  const fields: MetricUsage | undefined = metric.event === 'turn'
+    ? { ...metric, input_tokens: inferTurnInputTokens(metric) }
+    : metric.event === 'compact' || metric.event === 'subagent_usage' || metric.event === 'aux_usage' || metric.event === 'request_usage'
+      ? metric.usage
+      : undefined
+  if (!fields) return undefined
+  const usage: TokenUsage = {
+    inputTokens: Math.max(0, fields.input_tokens),
+    ...(typeof fields.cache_creation_tokens === 'number'
+      ? { cacheCreationInputTokens: Math.max(0, fields.cache_creation_tokens) }
+      : {}),
+    cacheReadInputTokens: Math.max(0, fields.cache_read_tokens),
+    outputTokens: Math.max(0, fields.response_tokens),
+  }
+  if (fields.cost) return { ...usage, cost: fields.cost }
+  return promptTokens(usage) + usage.outputTokens > 0 ? { ...usage, cost: { amounts: {}, legacy: true } } : usage
+}
+
+export function inferTurnInputTokens(turn: Extract<SessionMetric, { event: 'turn' }>): number {
+  if (typeof turn.input_tokens === 'number' && Number.isFinite(turn.input_tokens)) {
+    return Math.max(0, turn.input_tokens)
+  }
+  if (turn.cache_hit_rate && turn.cache_hit_rate > 0) {
+    // The rate's denominator is the whole prompt, so what is left after the
+    // reads is input *and* writes; subtract the writes when they were recorded.
+    const total = turn.cache_read_tokens / turn.cache_hit_rate
+    return Math.max(0, total - turn.cache_read_tokens - (turn.cache_creation_tokens ?? 0))
+  }
+  return 0
 }

@@ -62,8 +62,9 @@ export function createStatusView(els: {
       // not a sentence a screen reader can make sense of. Both halves of the
       // usage go in: the count is the session's, the rate the last request's.
       const usage = statusUsageView(snapshot.usage.total, snapshot.usage.lastRequest)
-      if (usage.title !== lastUsage) {
-        lastUsage = usage.title
+      const signature = `${usage.title}\n${usage.costNote ?? ''}`
+      if (signature !== lastUsage) {
+        lastUsage = signature
         if (usage.text) {
           card.set({
             title: '本会话累计',
@@ -74,7 +75,7 @@ export function createStatusView(els: {
           // The card rides inside the readout, so it is part of what `replace`
           // writes — and it is left out while the line is empty.
           replace(els.usage, ...usageChips(usage), card.node)
-          els.usage.setAttribute('aria-label', `${usage.text}。${usage.title.replace(/\n/g, '；')}`)
+          els.usage.setAttribute('aria-label', [usage.text, usage.title.replace(/\n/g, '；'), usage.costNote].filter(Boolean).join('。'))
         } else {
           card.set(undefined)
           replace(els.usage)

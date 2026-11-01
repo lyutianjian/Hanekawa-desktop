@@ -8,6 +8,7 @@ import { type EffortLevel } from './effort.js'
 import type { HookCommand } from '../harness/hooks.js'
 import { permissionRuleToEntry, type PermissionRule } from '../harness/permissions.js'
 import type { McpServerConfig } from '../services/mcp/types.js'
+import { TURN_COMPLETION_NOTIFICATIONS, type NotificationSettings } from './notifications.js'
 
 export type HookCommandSetting = HookCommand
 export type PreToolUseHookSetting = HookCommandSetting
@@ -68,6 +69,10 @@ export interface HanekawaSettings {
    * adaptive thinking config. `false` sends no `thinking` parameter at all.
    */
   thinking?: boolean
+  /** Keep the computer awake during active work. Global only; on unless false. */
+  preventSleep?: boolean
+  /** OS notification preferences, shared by all projects. */
+  notifications?: NotificationSettings
 }
 
 interface LegacyMcpSettings {
@@ -314,6 +319,12 @@ function mergeSettings(...sources: HanekawaSettings[]): HanekawaSettings {
     if (source.thinking !== undefined) {
       result.thinking = source.thinking
     }
+    if (source.preventSleep !== undefined) {
+      result.preventSleep = source.preventSleep
+    }
+    if (source.notifications !== undefined) {
+      result.notifications = { ...result.notifications, ...source.notifications }
+    }
   }
 
   return result
@@ -351,17 +362,17 @@ function withoutStartupPermissionMode(settings: HanekawaSettings): HanekawaSetti
 }
 
 /**
- * Drops the two account-level switches from a project-scoped layer.
+ * Drops account-level switches from a project-scoped layer.
  *
- * 扩展思考 and the 1-hour cache TTL are one value for every project, so only the
+ * Thinking, cache TTL and sleep prevention are shared by every project, so only the
  * user layer may set them: a local file still holding one written by the old
  * per-project control would mask the global toggle, which reads as a switch that
  * does nothing. Dropped silently, like the startup mode — it was a legitimate
  * write until the control moved, and nothing on screen offers it any more.
  */
 function withoutGlobalOnlySwitches(settings: HanekawaSettings): HanekawaSettings {
-  if (settings.thinking === undefined && settings.cache?.ttl1h === undefined) return settings
-  const { thinking: _thinking, cache, ...rest } = settings
+  if (settings.thinking === undefined && settings.cache?.ttl1h === undefined && settings.preventSleep === undefined && settings.notifications === undefined) return settings
+  const { thinking: _thinking, preventSleep: _preventSleep, notifications: _notifications, cache, ...rest } = settings
   const { ttl1h: _ttl1h, ...keptCache } = cache ?? {}
   return Object.keys(keptCache).length > 0 ? { ...rest, cache: keptCache } : rest
 }
@@ -703,6 +714,14 @@ export async function setThinkingForUser(enabled: boolean): Promise<void> {
   await updateUserSettings((settings) => { settings.thinking = enabled })
 }
 
+export async function setPreventSleepForUser(enabled: boolean): Promise<void> {
+  await updateUserSettings((settings) => { settings.preventSleep = enabled })
+}
+
+export async function setNotificationsForUser(change: Partial<NotificationSettings>): Promise<void> {
+  await updateUserSettings((settings) => { settings.notifications = { ...settings.notifications, ...change } })
+}
+
 /** The 1-hour prompt-cache TTL, in the user layer. */
 export async function setCacheTtl1hForUser(enabled: boolean): Promise<void> {
   await updateUserSettings((settings) => { settings.cache = { ...settings.cache, ttl1h: enabled } })
@@ -833,6 +852,24 @@ export function validateSettings(settings: HanekawaSettings): { valid: boolean; 
 
   if (settings.thinking !== undefined && typeof settings.thinking !== 'boolean') {
     errors.push('thinking must be a boolean')
+  }
+  if (settings.preventSleep !== undefined && typeof settings.preventSleep !== 'boolean') {
+    errors.push('preventSleep must be a boolean')
+  }
+  if (settings.notifications !== undefined) {
+    const notifications = settings.notifications
+    if (!notifications || typeof notifications !== 'object' || Array.isArray(notifications)) {
+      errors.push('notifications must be an object')
+    } else {
+      if (notifications.turnCompletion !== undefined && !TURN_COMPLETION_NOTIFICATIONS.includes(notifications.turnCompletion)) {
+        errors.push('notifications.turnCompletion must be one of: never, always, unfocused')
+      }
+      for (const field of ['permissions', 'questions'] as const) {
+        if (notifications[field] !== undefined && typeof notifications[field] !== 'boolean') {
+          errors.push(`notifications.${field} must be a boolean`)
+        }
+      }
+    }
   }
 
   if (settings.effortLevel !== undefined && !['low', 'medium', 'high', 'xhigh', 'max'].includes(settings.effortLevel)) {

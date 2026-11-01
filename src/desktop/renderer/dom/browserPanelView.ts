@@ -213,12 +213,7 @@ export function createBrowserPanelView(
       open: model.open,
       hasActiveTab: true,
       occluded: model.occluded,
-      // `document.hidden`, not `visibilityState`: the boolean is the whole
-      // question here — the page may not paint while the window is not being
-      // shown — and reading the enum would mean spelling one of its values.
-      windowHidden: document.hidden,
-      // Read here rather than passed in: `measure()` runs on a resize and on a
-      // visibility change too, with no render in between.
+      // Read here rather than passed in: `measure()` also runs on a resize.
       overlaid: browserOverlay(activeTab()).kind !== 'none',
     })
     const box = nodes.hole.getBoundingClientRect()
@@ -249,18 +244,13 @@ export function createBrowserPanelView(
     handlers.onBounds(tabId, rect, visible)
   }
 
-  // Three subscriptions, because three different things move the hole and none
-  // of them implies the others: the panel's own size (a drag, a collapsing
-  // sidebar), the window's size, and the window's visibility.
+  // The hole moves with the panel (a drag, a collapsing sidebar) or the window.
   const onWindowResize = (): void => measure()
-  const onVisibility = (): void => measure()
   window.addEventListener('resize', onWindowResize)
-  document.addEventListener('visibilitychange', onVisibility)
 
   // `ResizeObserver` is the first use of it in this renderer, and the DOM test
   // stub has no implementation. Feature-detected rather than assumed so a view
-  // built under the stub still renders and still measures on the other two
-  // paths — the observer is an optimisation over them, not the only route.
+  // built under the stub still renders and measures on window resize.
   const observer =
     typeof ResizeObserver === 'function'
       ? new ResizeObserver(() => {
@@ -392,7 +382,6 @@ export function createBrowserPanelView(
     if (disposed) return
     disposed = true
     window.removeEventListener('resize', onWindowResize)
-    document.removeEventListener('visibilitychange', onVisibility)
     observer?.disconnect()
     // The page is told to go before this view stops existing. Without it the
     // native view keeps painting over a panel that is no longer in the document

@@ -15,8 +15,7 @@ import {
   hiddenContextGauge,
   type ContextGaugeView,
 } from '../model/usage.js'
-import type { RuntimeMenuKey, RuntimeMenuView } from '../model/runtimeMenu.js'
-import { submenuIntentDelay, type PointerPoint } from '../model/menuIntent.js'
+import type { RuntimeMenuView } from '../model/runtimeMenu.js'
 import type { SurfaceAction, SurfaceRow } from '../model/surfaces.js'
 import type { PermissionMode } from '../../../harness/permissions.js'
 import type { WireCommandInfo, WireContextBreakdownResult, WireRuntimeSnapshot } from '../../../runtime/protocol/wire.js'
@@ -30,6 +29,7 @@ import { createHoverCard, fitInCanvas } from './hoverCard.js'
 import { createContextPopover, type ContextPopoverState } from './contextPopover.js'
 import { icon } from './icons.js'
 import { pathTileNode } from './pathTile.js'
+import { createTextSwap } from './textSwap.js'
 
 /**
  * The composer: a capsule containing the textarea and an inline action bar.
@@ -42,14 +42,13 @@ import { pathTileNode } from './pathTile.js'
  * turn's budget, but it is not part of the decision the chip opens.
  *
  * The chip is **one** button for both fields, and it opens a local popover
- * rather than the full-width `#surface` card: two rows naming model and effort
- * with their current values, each flying out into the levels it can take. The
- * `#surface` pickers are untouched — `/model` and `/effort` still open them —
+ * rather than the full-width `#surface` card: an effort slider, with the model
+ * name opening a second page of model choices. The `#surface` pickers are untouched — `/model` and `/effort` still open them —
  * so the chip is a second *route* to the choice, never a second answer about
  * what the options are: `model/runtimeMenu.ts` builds its rows out of the same
  * `modelPickerView` / `effortPickerView` those cards use.
  *
- * Choosing from the flyout runs the row's `SurfaceAction`, which is a
+ * Choosing an option runs the row's `SurfaceAction`, which is a
  * `run-command` (`/model …`, `/effort …`) rather than `SessionClient.setModel` /
  * `setEffort`. That is the rule `model/surfaces.ts` already states: the slash
  * command is the user expressing a preference, and it is what writes the choice
@@ -271,8 +270,6 @@ export function createComposerView(els: {
   let runtimeMenu: RuntimeMenuView | undefined
   /** An open asked for and not yet answered; see `showRuntimeMenu`. */
   let runtimeMenuPending = false
-  /** At most one flyout at a time — a menu, not a tree. */
-  let openEntry: RuntimeMenuKey | undefined
 
   // Icon-only controls; the accessible name comes from `aria-label`, refreshed
   // by `setStreaming` for the one button whose meaning changes.
@@ -661,200 +658,210 @@ export function createComposerView(els: {
 
   // --- the chip's popover ------------------------------------------------------
 
-  // Closed the same three ways the permission menu is. Escape unwinds one level
-  // at a time — an open flyout first — because a flyout opened by hover would
-  // otherwise take the whole popover with it; a press *outside* the chip is not
-  // that kind of unwinding and takes the popover whole.
+  let runtimeMenuNode: HTMLElement | undefined
+  let runtimePresence: Presence | undefined
+  let pickerPages: HTMLElement[] = []
+  let modelPageOpen = false
+  let modelLink: HTMLButtonElement | undefined
+  let effortRange: HTMLInputElement | undefined
+  let modelItems: HTMLButtonElement[] = []
+
+  const pickerCanvas = els.chipShell.closest('#canvas')
+  if (pickerCanvas && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => {
+      if (runtimeMenu && runtimeMenuNode) fitInCanvas(runtimeMenuNode)
+    }).observe(pickerCanvas)
+  }
+
   dismissable([els.chipRuntime, '.chip-menu'], {
     isOpen: () => runtimeMenu !== undefined,
     close: closeRuntimeMenu,
   })
-  // Arrows walk the flyout when focus is in it and the two rows otherwise;
-  // ArrowDown on the closed chip opens it.
-  els.chipShell.addEventListener('keydown', (event) => {
-    const inFlyout = flyoutNode?.contains(event.target as Node) === true
-    const items = inFlyout ? flyoutItems() : Array.from(entryRows.values())
-    rovingFocus(event, runtimeMenu ? items : [], runtimeMenu !== undefined, toggleRuntimeMenu)
-  })
   els.chipShell.addEventListener('focusout', (event) => {
-    const next = (event as FocusEvent).relatedTarget
+    const next = event.relatedTarget
     if (next === null) return
     if (next instanceof Node && els.chipShell.contains(next)) return
-    if (!runtimeMenu) return
     closeRuntimeMenu()
   })
   els.chipShell.addEventListener('keydown', (event) => {
-    if (!runtimeMenu) return
-    if (event.key !== 'Escape' && event.key !== 'ArrowLeft') return
-    // Consumed here, so Escape over an open menu does not also reach the global
-    // key map and close a surface or a dialog behind it.
-    event.preventDefault()
-    event.stopPropagation()
-    if (openEntry) {
-      const row = entryRows.get(openEntry)
-      openEntry = undefined
-      renderFlyout()
-      row?.focus()
+    if (runtimeMenu && (event.key === 'Escape' || (modelPageOpen && event.key === 'ArrowLeft'))) {
+      event.preventDefault()
+      event.stopPropagation()
+      if (modelPageOpen) showPickerPage(false)
+      else closeRuntimeMenu()
       return
     }
-    if (event.key === 'ArrowLeft') return
-    closeRuntimeMenu()
-    els.chipRuntime.focus()
+    // A native range owns its arrow keys, Home and End.
+    if (runtimeMenu && event.target === effortRange) return
+    const items = modelPageOpen ? modelItems.filter((item) => !item.disabled) : [modelLink, effortRange].filter(
+      (item): item is HTMLButtonElement | HTMLInputElement => item !== undefined && !item.disabled,
+    )
+    rovingFocus(event, runtimeMenu ? items : [], runtimeMenu !== undefined, toggleRuntimeMenu)
   })
 
-  // The popover's nodes are built once per open and then *kept*: the flyout is
-  // driven by hover, and rebuilding the row under the pointer would fire
-  // `mouseenter` again on the replacement — a render loop with no exit.
-  let runtimeMenuNode: HTMLElement | undefined
-  let runtimePresence: Presence | undefined
-  let flyoutNode: HTMLElement | undefined
-  const flyouts = new Map<RuntimeMenuKey, { node: HTMLElement; presence: Presence; signature: string }>()
-  const entryShells = new Map<RuntimeMenuKey, HTMLElement>()
-  const entryRows = new Map<RuntimeMenuKey, HTMLButtonElement>()
-  let pointer: PointerPoint | undefined
-  let flyoutIntent: ReturnType<typeof setTimeout> | undefined
-
   function closeRuntimeMenu(): void {
-    clearTimeout(flyoutIntent)
     runtimeMenuPending = false
     if (!runtimeMenu) return
     const returnFocus = runtimeMenuNode?.contains(document.activeElement)
     runtimeMenu = undefined
-    openEntry = undefined
-    for (const entry of flyouts.values()) entry.presence.set(false)
-    flyoutNode = undefined
     runtimePresence?.set(false)
     els.chipRuntime.setAttribute('aria-expanded', 'false')
     els.chipRuntime.classList.remove('open')
+    renderChip()
     if (returnFocus) els.chipRuntime.focus()
   }
 
-  /** The open flyout's rows that can be chosen, in order. */
-  function flyoutItems(): HTMLButtonElement[] {
-    return Array.from(flyoutNode?.children ?? [])
-      .filter((node): node is HTMLButtonElement => node.classList.contains('chip-flyout-item') && !(node as HTMLButtonElement).disabled)
+  function showPickerPage(models: boolean, focus = true): void {
+    modelPageOpen = models
+    pickerPages.forEach((page, index) => {
+      const open = index === (models ? 1 : 0)
+      page.classList.toggle('open', open)
+      page.setAttribute('aria-hidden', String(!open))
+      if (open) page.removeAttribute('inert')
+      else page.setAttribute('inert', '')
+    })
+    modelLink?.setAttribute('aria-expanded', String(models))
+    if (!focus) return
+    const availableModels = modelItems.filter((item) => !item.disabled)
+    if (models) (availableModels.find((item) => item.getAttribute('aria-selected') === 'true') ?? availableModels[0]
+      ?? runtimeMenuNode?.querySelector<HTMLButtonElement>('.chip-picker-back'))?.focus()
+    else if (effortRange && !effortRange.disabled) effortRange.focus()
+    else modelLink?.focus()
   }
 
-  /** Keyboard entry into the flyout: the value in force, else the first row. */
-  function focusFlyout(): void {
-    const items = flyoutItems()
-    ;(items.find((item) => item.classList.contains('active')) ?? items[0])?.focus()
+  function chooseRuntimeRow(row: SurfaceRow): void {
+    if (!row.action || row.current) return
+    closeRuntimeMenu()
+    actions.onRuntimeAction(row.action)
+    els.input.focus()
   }
 
-  /** The flyout's `margin-right` clearance plus a little daylight at the canvas edge. */
-  const FLYOUT_GAP_PX = 16
-
-  function openFlyout(key: RuntimeMenuKey): void {
-    clearTimeout(flyoutIntent)
-    // The guard is what breaks the hover loop described above, and it also makes
-    // a second `mouseenter` on the same row a no-op rather than a rebuild that
-    // drops the keyboard position inside the flyout.
-    if (openEntry === key) return
-    openEntry = key
-    renderFlyout()
-  }
-
-  function hoverFlyout(key: RuntimeMenuKey, point: PointerPoint): void {
-    clearTimeout(flyoutIntent)
-    const delay = openEntry && openEntry !== key && flyoutNode
-      ? submenuIntentDelay(pointer, point, flyoutNode.getBoundingClientRect()) : 0
-    if (delay === 0) openFlyout(key)
-    else flyoutIntent = setTimeout(() => openFlyout(key), delay)
-  }
-
-  function renderFlyout(): void {
-    flyoutNode = undefined
-    for (const [key, entry] of flyouts) entry.presence.set(!!runtimeMenu && key === openEntry)
-    for (const [key, row] of entryRows) {
-      row.classList.toggle('open', key === openEntry)
-      row.setAttribute('aria-expanded', key === openEntry ? 'true' : 'false')
-    }
-    if (!runtimeMenu || !openEntry) return
-    const entry = runtimeMenu.entries.find((candidate) => candidate.key === openEntry)
-    const shell = entryShells.get(openEntry)
-    if (!entry || !shell) return
-
-    let kept = flyouts.get(openEntry)
-    if (!kept) {
-      const node = el('div', 'chip-flyout')
-      node.setAttribute('role', 'listbox')
-      node.addEventListener('mouseenter', () => clearTimeout(flyoutIntent))
-      shell.appendChild(node)
-      followPointer(node, '.chip-flyout-item')
-      kept = { node, presence: createPresence(node, { direction: 'slide' }), signature: '' }
-      flyouts.set(openEntry, kept)
-    }
-    const signature = JSON.stringify(entry)
-    if (signature !== kept.signature) {
-      kept.signature = signature
-      kept.node.setAttribute('aria-label', entry.title)
-      replace(kept.node, el('div', 'chip-flyout-title', entry.title), ...entry.rows.map(flyoutItem))
-    }
-    kept.presence.set(true)
-    // The canvas clips: with a side panel open there may be no room left of the
-    // popover, and the list then opens above it instead.
-    kept.node.classList.remove('above')
-    const canvasLeft = els.chipShell.closest('#canvas')?.getBoundingClientRect().left ?? 0
-    const room = runtimeMenuNode!.getBoundingClientRect().left - canvasLeft
-    kept.node.classList.toggle('above', kept.node.offsetWidth + FLYOUT_GAP_PX > room)
-    flyoutNode = kept.node
-  }
-
-  function flyoutItem(row: SurfaceRow): HTMLButtonElement {
-    const action = row.action
-    const classes = ['chip-flyout-item']
-    if (row.current) classes.push('active')
-    if (row.disabled) classes.push('disabled')
-    const item = button(
-      classes.join(' '),
-      row.label,
-      row.disabledReason ?? row.label,
-      () => {
-        if (!action) return
-        closeRuntimeMenu()
-        actions.onRuntimeAction(action)
-        els.input.focus()
-      },
-      { enabled: action !== undefined },
+  function renderRuntimePicker(view: RuntimeMenuView): void {
+    const model = view.entries.find((entry) => entry.key === 'model')!
+    const effort = view.entries.find((entry) => entry.key === 'effort')!
+    const value = el('div', 'chip-effort-value')
+    const valueText = createTextSwap(value, 'chip-effort-label-text')
+    valueText.set(effort.value)
+    value.setAttribute('aria-live', 'polite')
+    // The level and the model are one button, not a level above a small link: the
+    // reference's target is the whole block, and its hover highlight is that
+    // block's box. The level stays inside because it is the slider's live readout
+    // (`aria-live`), which is why it is not part of the button's own name.
+    const modelRow = el('span', 'chip-picker-model-row',
+      el('span', 'btn-label', model.value),
+      icon('chevron-right'),
     )
-    item.setAttribute('role', 'option')
-    item.setAttribute('aria-selected', row.current ? 'true' : 'false')
-    // A reason is why the row cannot be picked (an effort level over the model's
-    // ceiling); a detail is a fact about one that can. Never both — see `SurfaceRow`.
-    const note = row.disabledReason ?? row.detail
-    if (note) item.appendChild(el('span', 'chip-flyout-note', note))
-    if (row.current) item.appendChild(icon('check'))
-    return item
+    modelLink = button('chip-picker-model', '', '选择模型', () => showPickerPage(true))
+    replace(modelLink, value, modelRow)
+    modelLink.setAttribute('aria-expanded', 'false')
+    modelLink.addEventListener('keydown', (event) => {
+      if (event.key !== 'ArrowRight') return
+      event.preventDefault()
+      event.stopPropagation()
+      showPickerPage(true)
+    })
+    const choices = effort.rows.filter((row) => row.action && !row.disabled)
+    const current = choices.findIndex((row) => row.current)
+    let selectedEffort = choices[current]?.id
+    const slider = el('div', 'chip-effort-slider')
+    const fill = el('div', 'chip-effort-fill')
+    const ticks = el('div', 'chip-effort-ticks', ...choices.map(() => el('span', 'chip-effort-tick')))
+    const knob = el('div', 'chip-effort-knob')
+    for (const decoration of [fill, ticks, knob]) decoration.setAttribute('aria-hidden', 'true')
+    const range = el('input', 'chip-effort-range')
+    range.type = 'range'
+    range.min = '0'
+    range.max = String(Math.max(choices.length - 1, 1))
+    range.step = '1'
+    range.value = String(Math.max(current, 0))
+    range.disabled = choices.length < 2
+    range.setAttribute('aria-label', effort.title)
+    range.setAttribute('aria-valuetext', effort.value)
+    range.title = choices.map((row) => row.label).join(' · ')
+    effortRange = range
+    const paintSlider = (): void => {
+      slider.style.setProperty('--effort-ratio', String(Number(range.value) / Number(range.max)))
+      Array.from(ticks.children).forEach((tick, index) => {
+        tick.classList.toggle('filled', index <= Number(range.value))
+      })
+    }
+    paintSlider()
+    slider.classList.toggle('custom-budget', current < 0)
+    slider.classList.toggle('disabled', range.disabled)
+    range.addEventListener('input', () => {
+      const row = choices[Number(range.value)]
+      if (!row) return
+      slider.classList.remove('custom-budget')
+      valueText.set(row.label)
+      range.setAttribute('aria-valuetext', row.label)
+      paintSlider()
+    })
+    // Preview while dragging; persist once, on release (or a keyboard change).
+    range.addEventListener('change', () => {
+      const row = choices[Number(range.value)]
+      if (!row?.action || row.id === selectedEffort) return
+      selectedEffort = row.id
+      actions.onRuntimeAction(row.action)
+    })
+    replace(slider, fill, ticks, knob, range)
+    const effortContent = el('div', 'chip-picker-content',
+      el('div', 'chip-effort-card', modelLink, slider),
+    )
+
+    const back = button('chip-picker-back', model.title, '返回思考强度', () => showPickerPage(false), {
+      icon: 'chevron-left',
+    })
+    const list = el('div', 'chip-model-list')
+    list.setAttribute('role', 'listbox')
+    list.setAttribute('aria-label', model.title)
+    modelItems = model.rows.map((row) => {
+      const item = button(`chip-model-option${row.disabled ? ' disabled' : ''}`, row.label,
+        row.disabledReason ?? row.label, () => chooseRuntimeRow(row), { enabled: row.action !== undefined })
+      item.setAttribute('role', 'option')
+      item.setAttribute('aria-selected', String(row.current === true))
+      const note = row.disabledReason ?? row.detail
+      if (note) item.appendChild(el('span', 'chip-model-note', note))
+      if (row.current) item.appendChild(icon('check'))
+      return item
+    })
+    replace(list, ...modelItems)
+    if (!modelItems.length) list.appendChild(el('div', 'chip-picker-empty', '暂无可用模型'))
+    followPointer(list, '.chip-model-option')
+    pickerPages = [
+      el('div', 'chip-picker-page', effortContent),
+      el('div', 'chip-picker-page', el('div', 'chip-picker-content', back, list)),
+    ]
+    replace(runtimeMenuNode!, ...pickerPages)
+    showPickerPage(false, false)
   }
 
   function renderChip(): void {
     const chip = composerChipView(runtimeSnapshot)
     // Signed for the reason the permission pill is: this runs per streamed
-    // chunk and the `replace()` below rebuilds the whole button.
-    const signature = [
-      chip.model,
-      chip.effort,
-      chip.title,
-      chip.enabled ? '1' : '0',
-    ].join(' ')
+    // chunk and the `replace()` below rebuilds the whole button. `open` is part
+    // of the signature because the menu swaps what the pill says.
+    const open = runtimeMenu !== undefined
+    const signature = [chip.label, chip.title, chip.enabled ? '1' : '0', open ? '1' : '0'].join(' ')
     if (signature === chipSignature) return
     chipSignature = signature
 
-    // Spans in one button: the model has to be replaceable without taking the
-    // effort level with it, and nesting buttons is invalid markup. The icon
-    // rides along at every width and the stylesheet decides which of the three
-    // is shown — a narrow row swaps the two labels for it rather than
-    // ellipsising the name down to half a glyph.
+    // Closed, the pill is the two values it opens. Open, it names the decision
+    // instead: the menu beneath it already says `最高` and the model, and the
+    // reference's pill turns into the invitation at that moment. The icon rides
+    // along at every width and the stylesheet swaps it for the words once the
+    // row is too narrow to hold them.
     replace(
       els.chipRuntime,
       icon('model', 'icon chip-model-icon'),
-      el('span', 'chip-model-label', chip.model),
-      el('span', 'chip-effort-label', chip.effort),
+      ...(open
+        ? [el('span', 'chip-prompt-label', chip.label)]
+        : [el('span', 'chip-model-label', chip.model), el('span', 'chip-effort-label', chip.effort)]),
+      icon('chevron-down', 'icon chip-chevron'),
     )
     const title = chip.title
     els.chipRuntime.title = title
     els.chipRuntime.setAttribute('aria-label', title)
-    els.chipRuntime.setAttribute('aria-haspopup', 'menu')
+    els.chipRuntime.setAttribute('aria-haspopup', 'dialog')
     els.chipRuntime.disabled = !chip.enabled
   }
 
@@ -1089,63 +1096,18 @@ export function createComposerView(els: {
 
       if (!runtimeMenuNode) {
         runtimeMenuNode = el('div', 'chip-menu')
-        runtimeMenuNode.setAttribute('role', 'menu')
+        runtimeMenuNode.setAttribute('role', 'dialog')
         runtimeMenuNode.setAttribute('aria-label', '模型与思考强度')
-        runtimeMenuNode.addEventListener('mousemove', (event) => { pointer = { x: event.clientX, y: event.clientY } })
-        followPointer(runtimeMenuNode, '.chip-menu-row')
         els.chipShell.appendChild(runtimeMenuNode)
         runtimePresence = createPresence(runtimeMenuNode)
       }
-      const menu = runtimeMenuNode
-      const shells = view.entries.map((entry) => {
-        let shell = entryShells.get(entry.key)
-        let row = entryRows.get(entry.key)
-        if (shell && row) {
-          row.setAttribute('aria-label', `${entry.label}：${entry.value}`)
-          row.querySelector('.chip-menu-value')!.textContent = entry.value
-          return shell
-        }
-        shell = el('div', 'chip-menu-shell')
-        row = button(
-          'chip-menu-row',
-          entry.label,
-          `${entry.label}：${entry.value}`,
-          () => openFlyout(entry.key),
-        )
-        // No native tooltip: the row already shows both halves, and the OS
-        // tooltip landed on top of the flyout it had just opened.
-        row.removeAttribute('title')
-        row.setAttribute('role', 'menuitem')
-        row.setAttribute('aria-haspopup', 'listbox')
-        row.setAttribute('aria-expanded', 'false')
-        row.appendChild(el('span', 'chip-menu-value', entry.value))
-        row.appendChild(icon('chevron-right'))
-        // Hover is the affordance the flyout is designed around. Focus is
-        // deliberately *not* one of them: the popover focuses its first row when
-        // it opens, and a flyout on focus would mean the popover never appears
-        // as the two rows it is — the model list would be over it already.
-        // `ArrowRight` and Enter are the keyboard's way in.
-        row.addEventListener('mouseenter', (event) => hoverFlyout(entry.key, { x: event.clientX, y: event.clientY }))
-        row.addEventListener('keydown', (event) => {
-          const key = (event as KeyboardEvent).key
-          if (key !== 'ArrowRight' && key !== 'Enter') return
-          event.preventDefault()
-          event.stopPropagation()
-          openFlyout(entry.key)
-          focusFlyout()
-        })
-        shell.appendChild(row)
-        entryShells.set(entry.key, shell)
-        entryRows.set(entry.key, row)
-        return shell
-      })
-      reconcile(menu, shells)
+      renderRuntimePicker(view)
       runtimePresence!.set(true)
+      fitInCanvas(runtimeMenuNode)
       els.chipRuntime.setAttribute('aria-expanded', 'true')
       els.chipRuntime.classList.add('open')
-      // Focused, not flown out: the popover opens as its two rows, and the
-      // keyboard still has somewhere to be.
-      entryRows.get(view.entries[0]?.key ?? 'model')?.focus()
+      renderChip()
+      showPickerPage(false)
     },
     refreshSubmit: applySubmitState,
     renderAttachments,

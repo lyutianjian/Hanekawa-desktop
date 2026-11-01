@@ -49,8 +49,8 @@ export interface RecordProxy {
    * This is what the context gauge is measured from, and a turn that runs ten
    * tool iterations sends ten requests — reporting only the last one at
    * `run()`'s return left the readout a whole turn behind. Carries the request's
-   * own numbers, never a running total: the session totals stay on the
-   * end-of-run accounting so nothing is counted twice.
+   * own numbers, never a running total. Each settlement increments the session
+   * total; an end-of-run aggregate must never be added again.
    */
   onRequestUsage: (usage: TokenUsage, anchorRecordId?: string) => void
   setRequestUsageHandler: (fn: (usage: TokenUsage, anchorRecordId?: string) => void) => void

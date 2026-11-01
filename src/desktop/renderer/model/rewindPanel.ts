@@ -1,6 +1,5 @@
 import {
   buildRestoreOptions,
-  formatDiffSummary,
   formatRelativeTime,
   formatRestoreMessagePreview,
   isSummarizeDecision,
@@ -86,6 +85,7 @@ export interface RewindRow {
 export interface RewindOptionRow {
   readonly decision: RestoreDecision
   readonly label: string
+  readonly description: string
   readonly hotkey: string
   readonly selected: boolean
 }
@@ -100,16 +100,12 @@ export interface RewindViewModel {
   readonly messagePreview: string
   readonly timeLabel: string
   readonly codeEffect: string
+  readonly codeChanges?: { readonly additions: number; readonly deletions: number; readonly files: string }
   readonly warning?: string
   readonly emptyMessage?: string
   readonly busyLabel?: string
   readonly error?: string
-  /**
-   * The button bar. On the confirm screen the options *are* the buttons (slots);
-   * on the list screen there is only 关闭. While a decision runs the bar is
-   * empty, for the same reason the options are withdrawn: the panel is not
-   * accepting input at all.
-   */
+  /** Cancel and confirmation for the selected range; empty while running. */
   readonly actions: readonly DialogAction[]
 }
 
@@ -139,7 +135,7 @@ export function rewindViewModel(state: RewindState): RewindViewModel {
     return {
       screen: 'select',
       title: '回退',
-      subtitle: '把代码与／或对话恢复到某条消息发送之前……',
+      subtitle: '选择一条消息，恢复到发送之前，或整理一段对话。',
       rows: [
         ...state.checkpoints.map((entry, index) => ({
           id: entry.messageId,
@@ -166,18 +162,22 @@ export function rewindViewModel(state: RewindState): RewindViewModel {
     }
   }
 
-  const options = buildRestoreOptions(checkpoint?.restoreDiff.hasChanges === true, UI_LOCALE)
+  const options = desktopRestoreOptions(state)
   const selectedIndex = clamp(state.optionIndex, 0, options.length - 1)
-  const hasCodeChanges = checkpoint?.restoreDiff.hasChanges === true
+  const selected = options[selectedIndex]!
+  const restoresCode = TOUCHES_FILES.has(selected.decision) && checkpoint?.restoreDiff.hasChanges === true
+  const diff = checkpoint?.restoreDiff
 
   return {
     screen: 'confirm',
-    title: '确认恢复到你发送这条消息之前的状态：',
-    subtitle: '对话将从该处分叉。',
+    title: '回到这条消息之前？',
+    subtitle: '',
     rows: [],
     options: options.map((option, index) => ({
       decision: option.decision,
-      label: option.label,
+      label: option.decision === 'restore-conversation' ? '仅恢复对话'
+        : option.decision === 'restore-code' ? '仅恢复代码' : option.label,
+      description: OPTION_DESCRIPTIONS[option.decision],
       hotkey: String(index + 1),
       selected: index === selectedIndex,
     })),
@@ -185,41 +185,53 @@ export function rewindViewModel(state: RewindState): RewindViewModel {
       ? truncateMessage(checkpoint.messageContent, CONFIRM_MESSAGE_WIDTH) || '（无内容）'
       : '(no message)',
     timeLabel: checkpoint ? formatRelativeTime(checkpoint.timestamp, UI_LOCALE) : '',
-    codeEffect: hasCodeChanges && checkpoint
-      ? `代码将被恢复，${formatDiffSummary(checkpoint.restoreDiff, UI_LOCALE)}。`
+    codeEffect: restoresCode && diff
+      ? `将恢复 ${diff.fileCount} 个文件`
       : '代码不会改动。',
-    ...(hasCodeChanges
-      ? { warning: '注意：回退不会影响手动或经由 bash 修改的文件。' }
+    ...(restoresCode && diff
+      ? { codeChanges: {
+        additions: diff.additions,
+        deletions: diff.deletions,
+        files: diff.firstFile
+          ? `${diff.firstFile}${diff.fileCount > 1 ? ` 及另外 ${diff.fileCount - 1} 个文件` : ''}`
+          : '',
+      }, warning: '仅恢复已记录的文件改动；未记录的手动或 Bash 改动不在回退范围内。' }
       : {}),
     ...(state.busy ? { busyLabel: busyLabelFor(options[selectedIndex]) } : {}),
     ...(state.error === undefined ? {} : { error: state.error }),
-    actions: state.busy ? [] : options.map((option, index) => ({
-      label: option.label,
-      shortcut: String(index + 1),
-      role: option.decision === 'nevermind' ? 'secondary' : 'primary',
-      // Only the decisions that write to the working tree are drawn as danger.
-      // Truncating the conversation is undone by nothing either, but it is what
-      // the panel is *for*; overwriting files is the part that surprises.
-      ...(TOUCHES_FILES.has(option.decision) ? { tone: 'danger' as const } : {}),
-      slot: index,
-    })),
+    actions: state.busy ? [] : [
+      { label: '取消', role: 'secondary' },
+      { label: isSummarizeDecision(selected.decision) ? '确认摘要' : '确认回退', role: 'primary', slot: selectedIndex },
+    ],
   }
 }
 
 /** Closing the panel performs nothing, so it is never a primary. */
 const CLOSE_ACTION: DialogAction = { label: '关闭', shortcut: 'Esc', role: 'secondary' }
 
+const OPTION_DESCRIPTIONS: Record<RestoreDecision, string> = {
+  'restore-code-and-conversation': '对话和已记录的文件改动一起回退',
+  'restore-conversation': '从这条消息之前重新开始，代码保持不变',
+  'restore-code': '还原已记录的文件改动，保留完整对话',
+  'summarize-from-here': '将这条消息及之后的对话整理为摘要',
+  'summarize-up-to-here': '将这条消息之前的对话整理为摘要',
+  nevermind: '',
+}
+
 const TOUCHES_FILES: ReadonlySet<RestoreDecision> = new Set([
   'restore-code',
   'restore-code-and-conversation',
 ])
 
+function desktopRestoreOptions(state: RewindState): readonly RestoreOption[] {
+  return buildRestoreOptions(selectedCheckpoint(state)?.restoreDiff.hasChanges === true, UI_LOCALE)
+    .filter((option) => option.decision !== 'nevermind')
+}
+
 /**
  * A button to an intent, the mouse's half of `rewindKeyToIntent`.
  *
- * A slot resolves through the same `options` array the view was built from, so a
- * button cannot choose a decision the number key would not; the list screen's
- * lone button closes, which is what Escape does there.
+ * The confirmation button addresses the selected range; cancellation closes.
  */
 export function rewindActionToIntent(action: OverlayAction, view: RewindViewModel): RewindIntent {
   if (action.kind !== 'slot') return { kind: 'close' }
@@ -258,6 +270,7 @@ export type RewindIntent =
   | { readonly kind: 'open-confirm' }
   /** Address a row directly, which is what a click has. */
   | { readonly kind: 'select-row'; readonly id: string }
+  | { readonly kind: 'focus-option'; readonly decision: RestoreDecision }
   | { readonly kind: 'choose'; readonly decision: RestoreDecision }
   | { readonly kind: 'back' }
   | { readonly kind: 'close' }
@@ -283,7 +296,7 @@ export function rewindKeyToIntent(chord: RewindChord, state: RewindState): Rewin
     return { kind: 'none' }
   }
 
-  const options = buildRestoreOptions(selectedCheckpoint(state)?.restoreDiff.hasChanges === true, UI_LOCALE)
+  const options = desktopRestoreOptions(state)
   if (chord.key === 'Enter') {
     const option = options[clamp(state.optionIndex, 0, options.length - 1)]
     return option ? { kind: 'choose', decision: option.decision } : { kind: 'none' }
@@ -292,7 +305,7 @@ export function rewindKeyToIntent(chord: RewindChord, state: RewindState): Rewin
   const slot = Number.parseInt(chord.key, 10)
   if (!Number.isNaN(slot) && slot >= 1 && slot <= options.length) {
     const option = options[slot - 1]
-    if (option) return { kind: 'choose', decision: option.decision }
+    if (option) return { kind: 'focus-option', decision: option.decision }
   }
 
   return { kind: 'none' }
@@ -312,9 +325,13 @@ export type RewindOutcome =
   | { readonly state: RewindState; readonly close: true }
 
 export function applyRewindIntent(state: RewindState, intent: RewindIntent): RewindOutcome {
+  if (state.busy) return { state }
   switch (intent.kind) {
     case 'move':
       return { state: moveSelection(state, intent.direction) }
+
+    case 'focus-option':
+      return { state: { ...state, optionIndex: optionIndexOf(state, intent.decision) } }
 
     case 'select-row': {
       if (intent.id === 'current') return { state, close: true }
@@ -365,13 +382,13 @@ function moveSelection(state: RewindState, direction: 'up' | 'down'): RewindStat
     const next = clamp(state.checkpointIndex + (direction === 'up' ? -1 : 1), 0, last)
     return { ...state, checkpointIndex: next }
   }
-  const options = buildRestoreOptions(selectedCheckpoint(state)?.restoreDiff.hasChanges === true, UI_LOCALE)
+  const options = desktopRestoreOptions(state)
   const next = clamp(state.optionIndex + (direction === 'up' ? -1 : 1), 0, options.length - 1)
   return { ...state, optionIndex: next }
 }
 
 function optionIndexOf(state: RewindState, decision: RestoreDecision): number {
-  const options = buildRestoreOptions(selectedCheckpoint(state)?.restoreDiff.hasChanges === true, UI_LOCALE)
+  const options = desktopRestoreOptions(state)
   const index = options.findIndex((option) => option.decision === decision)
   return index < 0 ? state.optionIndex : index
 }

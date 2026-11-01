@@ -120,7 +120,10 @@ for (const replacement of ['another session', 'same session', 'disposed'] as con
       })
 
       assert.equal(events.length, eventCount, 'no old record, stream or progress is published')
-      assert.deepEqual(pane.controller.getSnapshot(), before, 'the ledger, usage and progress stay unchanged')
+      const expected = replacement === 'same session'
+        ? { ...before, usage: { ...before.usage, total: { inputTokens: 50, cacheReadInputTokens: 0, outputTokens: 3 } } }
+        : before
+      assert.deepEqual(pane.controller.getSnapshot(), expected, 'late spend joins its live session; records and progress stay isolated')
       assert.ok((await store.loadRecords(session.id)).some((entry) => entry.id === record.id), 'the old session keeps its own durable record')
       if (replacement === 'another session') {
         assert.deepEqual(await store.loadRecords(pane.getSession().id), [], 'the new JSONL is untouched')

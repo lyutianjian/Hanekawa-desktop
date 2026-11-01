@@ -140,10 +140,7 @@ export function createSettingsView(
   nav.appendChild(navList)
   const body = el('div', 'settings-body')
   body.id = 'settings-body'
-  // Two nodes, two jobs (todo V7): `body` is the full-width scroller, so its
-  // scrollbar stays on the canvas edge, and `column` is the 880px reading measure
-  // everything is rebuilt into. Built once here rather than per render — the
-  // replaced region is the column's children.
+  // Keep the scroller separate from the content reconciled on each render.
   const column = el('div', 'settings-column')
   body.appendChild(column)
   const panel = el('div', 'settings-panel')
@@ -719,7 +716,7 @@ export function createSettingsView(
         el('span', detail.enabled ? 'settings-skill-status on' : 'settings-skill-status', detail.enabled ? '已启用' : '已禁用'),
         el('span', 'settings-skill-kind', 'Skill'),
       ),
-      el('div', 'settings-skill-description', card.note ?? ''),
+      hinted(el('div', 'settings-skill-description', card.note ?? ''), card.note),
       hinted(el('div', 'settings-skill-source', detail.badge), card.noteHint),
     ])
     const content = node(`${key}:body`, 'div', 'settings-dialog-body settings-skill-body')
@@ -996,6 +993,15 @@ type SelectFactory = (
   options: { value: string; ariaLabel: string; choices: ReadonlyArray<{ value: string; label: string }>; field: string },
 ) => HTMLSelectElement
 
+const CATEGORY_ICONS: Record<SettingsNavItem['category'], IconName> = {
+  general: 'gear',
+  personalization: 'sliders-horizontal',
+  appearance: 'palette',
+  provider: 'cpu',
+  extensions: 'plug',
+  permissions: 'shield',
+}
+
 function navItemNode(
   item: SettingsNavItem,
   onIntent: (intent: SettingsIntent) => void,
@@ -1005,6 +1011,7 @@ function navItemNode(
     item.label,
     item.label,
     () => onIntent({ kind: 'select-category', category: item.category }),
+    { icon: CATEGORY_ICONS[item.category] },
   )
   markNavItem(node, item.selected)
   return node

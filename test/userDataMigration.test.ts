@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { migrateLegacyUserData } from '../src/desktop/userDataMigration.js'
+import { existsSync } from 'node:fs'
+import { fixUserDataPaths, migrateLegacyUserData } from '../src/desktop/userDataMigration.js'
 
 async function exists(target: string): Promise<boolean> {
   return access(target).then(() => true, () => false)
@@ -14,6 +15,23 @@ async function scratch(t: test.TestContext): Promise<string> {
   t.after(() => rm(root, { recursive: true, force: true }))
   return root
 }
+
+test('development and packaged names use an existing lowercase data root for both paths', async (t) => {
+  const root = await scratch(t)
+  const paths = new Map<string, string>()
+  fixUserDataPaths({
+    getPath: () => root,
+    setPath(name, value) {
+      assert.equal(existsSync(value), true, 'Electron requires the directory before setPath')
+      paths.set(name, value)
+    },
+  })
+  assert.equal(paths.get('userData'), path.join(root, 'hanekawa'))
+  assert.equal(paths.get('sessionData'), paths.get('userData'))
+  await writeFile(path.join(root, 'hanekawa', 'Preferences'), 'kept')
+  fixUserDataPaths({ getPath: () => root, setPath() {} })
+  assert.equal(await readFile(path.join(root, 'hanekawa', 'Preferences'), 'utf8'), 'kept')
+})
 
 test('moves the old userData directory when the current one is missing', async (t) => {
   const root = await scratch(t)

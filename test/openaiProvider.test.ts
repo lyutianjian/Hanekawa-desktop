@@ -857,6 +857,24 @@ test('a stream that ends without finish_reason, or on content_filter, is an erro
   }
 })
 
+test('usage survives a filtered terminal response and missing stream usage is marked incomplete', async () => {
+  const provider = new OpenAIProvider({ provider: 'openai', model: 'audit', apiKey: 'test-key' })
+  const spends: unknown[] = []
+  const req = { ...baseRequest('agent:usage-filter'), onUsage: (usage: unknown) => spends.push(usage) }
+  installFakeClient(provider, async () => [chunk({ content: 'x' }, 'content_filter'), { choices: [], usage: { prompt_tokens: 1000, completion_tokens: 100 } }])
+  await assert.rejects(provider.createMessage(req), /content_filter/)
+  assert.deepEqual(spends.pop(), { inputTokens: 1000, cacheReadInputTokens: 0, outputTokens: 100 })
+  installFakeClient(provider, async () => [chunk({ content: 'half' })])
+  await assert.rejects(provider.createMessage(req), /Stream ended/)
+  assert.deepEqual(spends.pop(), { inputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0, cost: { amounts: {}, incomplete: true } })
+  installFakeClient(provider, async () => { throw Object.assign(new Error('bad key'), { status: 401 }) })
+  await assert.rejects(provider.createMessage(req), /bad key/)
+  assert.equal(spends.length, 0, 'an HTTP rejection is not invented usage')
+  installFakeClient(provider, async () => { throw Object.assign(new Error('gateway failed'), { status: 500 }) })
+  await assert.rejects(provider.createMessage(req), /gateway failed/)
+  assert.deepEqual(spends.pop(), { inputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0, cost: { amounts: {}, incomplete: true } }, 'a server failure cannot prove no billed generation')
+})
+
 test('each server gets its own request shape and thinking fields', async () => {
   const cases: Array<{ url: string; format?: string; expect: Record<string, unknown>; absent: string[] }> = [
     {

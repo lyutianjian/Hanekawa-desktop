@@ -15,6 +15,7 @@ import {
 import { ToolRunner } from '../src/harness/toolRunner.js'
 import { bashTool } from '../src/tools/BashTool/BashTool.js'
 import { configTool } from '../src/tools/ConfigTool/ConfigTool.js'
+import { createComputerTool } from '../src/tools/ComputerTool/ComputerTool.js'
 import { createMonitorTool } from '../src/tools/MonitorTool/MonitorTool.js'
 import { resolveSubagentPermissionMode } from '../src/tools/AgentTool/AgentTool.js'
 import type { Tool, ToolContext } from '../src/harness/types.js'
@@ -34,6 +35,26 @@ function fileTool(name: string, readOnly: boolean): Tool {
 const readTool = fileTool('Read', true)
 const writeTool = fileTool('Write', false)
 const editTool = fileTool('Edit', false)
+
+test('Computer observations, semantic actions and physical/forced actions follow permission modes and deny rules', async (t) => {
+  const cwd = await scratch(t)
+  const tool = createComputerTool({ run: async () => ({ envelope: { ok: true } }) })
+  const cases = [
+    [{ operation: 'snapshot', args: ['--app', 'Finder'] }, ['allow', 'allow', 'allow', 'allow', 'allow']],
+    [{ operation: 'click', args: ['@s1:e1'] }, ['ask', 'ask', 'allow', 'allow', 'deny']],
+    [{ operation: 'click', args: ['@s1:e1'], headed: true }, ['ask', 'ask', 'ask', 'allow', 'deny']],
+    [{ operation: 'press', args: ['--force', 'cmd+q'] }, ['ask', 'ask', 'ask', 'allow', 'deny']],
+    [{ operation: 'close-app', args: ['TextEdit'] }, ['ask', 'ask', 'ask', 'allow', 'deny']],
+    [{ operation: 'permissions', args: ['--guide'] }, ['ask', 'ask', 'allow', 'allow', 'deny']],
+  ] as const
+  const modes: PermissionMode[] = ['default', 'plan', 'auto', 'bypass', 'readonly']
+  for (const [input, expected] of cases) {
+    for (const [index, mode] of modes.entries()) {
+      assert.equal(await harness(cwd, mode).outcome(tool, input), expected[index], `${mode}: ${JSON.stringify(input)}`)
+      assert.equal(await harness(cwd, mode, { deny: ['Computer'] }).outcome(tool, input), 'deny')
+    }
+  }
+})
 
 test('global directory reads are allowed in every mode while writes and deny rules keep their policy', async (t) => {
   const cwd = await scratch(t)

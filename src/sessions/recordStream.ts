@@ -26,6 +26,6 @@ export class JsonlRecordStream implements RecordStream {
   }
 
   async appendMetric(metric: SessionMetricInput): Promise<void> {
-    await this.store.appendMetric(this.sessionId, metric)
+    this.store.appendSessionMetric(this.sessionId, metric)
   }
 }

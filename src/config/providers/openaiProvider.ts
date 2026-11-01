@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
 import type { ModelConfig } from '../service.js'
-import type { ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, ToolCall } from '../../harness/types.js'
+import type { ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, TokenUsage, ToolCall } from '../../harness/types.js'
 import {
   checkResponseForCacheBreak,
   recordPromptState,
@@ -19,7 +19,7 @@ import {
   redactImageBytesFromText,
   resolveImageRequestGuardLimits,
 } from './imageRequestGuard.js'
-import { normalizeOpenAIUsage } from './usage.js'
+import { normalizeOpenAIUsage, reportProviderUsage } from './usage.js'
 
 export class OpenAIProvider implements ModelProvider {
   name = 'openai'
@@ -113,27 +113,32 @@ export class OpenAIProvider implements ModelProvider {
     debugProviderPayload('openai', payload, request)
 
     const collector = new ChatStreamCollector(request)
+    request.retry?.signal?.throwIfAborted()
+    let failure: unknown
     try {
       const stream = await this.client.chat.completions.create(
         payload as OpenAI.Chat.ChatCompletionCreateParamsStreaming,
         request.retry?.signal ? { signal: request.retry.signal } : undefined,
       )
       await consumeWithIdleTimeout(stream, (chunk) => collector.add(chunk), request.onStreamEvent)
-    } catch (error) {
-      throw augmentImageEndpointRejection(error, request, this.client.baseURL)
-    }
-    const response = collector.finish()
-    debugProviderResponse('openai', response)
+      const response = collector.finish()
+      debugProviderResponse('openai', response)
 
-    let cacheBreak: CacheBreakResult | null = null
-    if (response.usage) {
-      cacheBreak = checkResponseForCacheBreak(
-        response.usage.cacheReadInputTokens,
-        response.usage.inputTokens,
-        cacheSource,
-      )
+      let cacheBreak: CacheBreakResult | null = null
+      if (response.usage) {
+        cacheBreak = checkResponseForCacheBreak(
+          response.usage.cacheReadInputTokens,
+          response.usage.inputTokens,
+          cacheSource,
+        )
+      }
+      return { ...response, ...(cacheBreak ? { cacheBreak } : {}) }
+    } catch (error) {
+      failure = error
+      throw augmentImageEndpointRejection(error, request, this.client.baseURL)
+    } finally {
+      reportProviderUsage(request, collector.getUsage(), failure)
     }
-    return { ...response, ...(cacheBreak ? { cacheBreak } : {}) }
   }
 }
 
@@ -175,6 +180,7 @@ export class ChatStreamCollector {
   private readonly toolCallsByIndex = new Map<number, PartialToolCall>()
   private finishReason: string | undefined
   private usage: unknown
+  private usageComplete = false
 
   constructor(private readonly request: Pick<ModelRequest, 'onStreamEvent' | 'onTextDelta'>) {}
 
@@ -195,12 +201,18 @@ export class ChatStreamCollector {
       this.emit({ type: 'message_start' })
     }
     this.id ??= chunk.id
-    if (chunk.usage) this.usage = chunk.usage
+    if (chunk.usage) {
+      this.usage = chunk.usage
+      this.usageComplete = chunk.choices?.length === 0 || !!chunk.choices?.[0]?.finish_reason
+    }
     const choice = chunk.choices?.[0]
     if (!choice) return
     // Moonshot reports usage on the choice instead of the chunk.
     const choiceUsage = (choice as { usage?: unknown }).usage
-    if (!chunk.usage && choiceUsage) this.usage = choiceUsage
+    if (!chunk.usage && choiceUsage) {
+      this.usage = choiceUsage
+      this.usageComplete = !!choice.finish_reason
+    }
     if (choice.finish_reason) this.finishReason = choice.finish_reason
     const delta = choice.delta as (OpenAI.Chat.ChatCompletionChunk.Choice.Delta & Record<string, unknown>) | undefined
     if (!delta) return
@@ -247,6 +259,12 @@ export class ChatStreamCollector {
         this.emit({ type: 'tool_input_delta', index: 2 + index, ...(call.name ? { name: call.name } : {}), partialJson: args })
       }
     }
+  }
+
+  getUsage(): TokenUsage | undefined {
+    if (!this.usage) return undefined
+    const usage = normalizeOpenAIUsage(this.usage)
+    return this.usageComplete ? usage : { ...usage, cost: { amounts: {}, incomplete: true } }
   }
 
   finish(): ModelResponse {

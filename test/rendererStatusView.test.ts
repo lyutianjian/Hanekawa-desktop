@@ -92,8 +92,19 @@ test('the card carries the session cost and repaints when only the cost moves', 
   assert.match(card(r.view())!.text, /开销不含早期请求/)
 })
 
-test('a session on unpriced models shows no cost row', (t) => {
+test('a session on unpriced models explains its missing cost', (t) => {
   const r = mount(t)
   r.render({ ...TOTAL, cost: { amounts: {}, unpriced: true } })
-  assert.doesNotMatch(card(r.view())!.text, /会话开销/)
+  assert.match(card(r.view())!.text, /会话开销未设置价格/)
+  assert.match(card(r.view())!.text, /开销未计入未设置价格的模型/)
+})
+
+
+test('the hover refreshes when only accounting completeness changes', (t) => {
+  const r = mount(t)
+  r.render({ ...TOTAL, cost: { amounts: { USD: 1 } } })
+  assert.doesNotMatch(card(r.view())!.text, /可能不完整/)
+  r.render({ ...TOTAL, cost: { amounts: { USD: 1 }, incomplete: true } })
+  assert.match(card(r.view())!.text, /可能不完整/)
+  assert.match(r.view().attributes.get('aria-label')!, /可能不完整/)
 })

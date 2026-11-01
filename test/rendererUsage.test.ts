@@ -63,6 +63,18 @@ test('an untouched session leaves the status line empty', () => {
   }
 })
 
+test('a fully unpriced session still explains the missing cost', () => {
+  const view = statusUsageView(usage({ inputTokens: 1000, cost: { amounts: {}, unpriced: true } }))
+  assert.deepEqual(view.breakdown.find((row) => row.label === '会话开销'), { label: '会话开销', value: '未设置价格' })
+  assert.match(view.costNote!, /未设置价格/)
+})
+
+test('a request missing all usage still makes its incomplete accounting visible', () => {
+  const view = statusUsageView(usage({ cost: { amounts: {}, incomplete: true } }))
+  assert.notEqual(view.text, '')
+  assert.match(view.costNote!, /用量.*不完整/)
+})
+
 test('the status line sums every count into one total', () => {
   const view = statusUsageView(
     usage({

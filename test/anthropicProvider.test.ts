@@ -63,6 +63,10 @@ class FakeAnthropicStream {
     for (const listener of this.listeners) listener({ type: 'ping' })
   }
 
+  emitUsage(event: Record<string, unknown>): void {
+    for (const listener of this.listeners) listener(event)
+  }
+
   emitTextDelta(text: string): void {
     for (const listener of this.listeners) {
       listener({
@@ -173,6 +177,22 @@ test('Anthropic stream timeout is reset by stream events', async () => {
   } finally {
     mock.timers.reset()
   }
+})
+
+test('an interrupted Anthropic request settles its latest reported usage and marks the missing tail', async () => {
+  const provider = new AnthropicProvider({ provider: 'anthropic', model: 'claude-sonnet', apiKey: 'test-key' })
+  const stream = new FakeAnthropicStream()
+  ;(provider as unknown as { client: unknown }).client = { messages: { stream: () => stream } }
+  const spends: unknown[] = []
+  const ac = new AbortController()
+  const pending = provider.createMessage({ model: 'claude-sonnet', cacheSource: 'agent:partial-usage', messages: [],
+    retry: { maxRetries: 0, signal: ac.signal }, onUsage: (usage) => { spends.push(usage) },
+  })
+  stream.emitUsage({ type: 'message_start', message: { usage: { input_tokens: 100, cache_creation_input_tokens: 200, cache_read_input_tokens: 300, output_tokens: 1 } } })
+  stream.emitUsage({ type: 'message_delta', usage: { output_tokens: 15 } })
+  ac.abort('user-cancel')
+  await assert.rejects(pending, { name: 'AbortError' })
+  assert.deepEqual(spends, [{ inputTokens: 100, cacheCreationInputTokens: 200, cacheReadInputTokens: 300, outputTokens: 15, cost: { amounts: {}, incomplete: true } }])
 })
 
 test('Anthropic stream emits text deltas through callback', async () => {

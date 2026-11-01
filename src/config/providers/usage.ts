@@ -1,4 +1,14 @@
-import type { TokenUsage } from '../../harness/types.js'
+import type { ModelRequest, TokenUsage } from '../../harness/types.js'
+
+/** Client rejections are not spend; server failures and timeouts may hide usage. */
+export function reportProviderUsage(request: ModelRequest, usage?: TokenUsage, error?: unknown): void {
+  const status = error && typeof error === 'object' ? (error as { status?: unknown }).status : undefined
+  const rejected = typeof status === 'number' && status >= 400 && status < 500 && status !== 408 && status !== 499
+  if (usage) request.onUsage?.(usage)
+  else if (!rejected) {
+    request.onUsage?.({ inputTokens: 0, cacheReadInputTokens: 0, outputTokens: 0, cost: { amounts: {}, incomplete: true } })
+  }
+}
 
 function tokenNumber(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0

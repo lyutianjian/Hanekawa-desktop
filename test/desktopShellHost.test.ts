@@ -510,6 +510,8 @@ function createHarness(
     withOpenInEditor?: boolean
     /** A shell with no native chrome: no overlay, no taskbar or Dock to flash. */
     withWindowTheme?: boolean
+    onPreventSleepChanged?: (enabled: boolean) => void
+    onNotificationsChanged?: (settings: HanekawaSettings['notifications']) => void
     cwd?: string
     /** The registry the sidebar's full history is built from. */
     knownProjects?: () => Promise<readonly string[]>
@@ -571,6 +573,8 @@ function createHarness(
     mux: mainMux,
     directory,
     nextLaneKey: () => `${++nextKey}`,
+    ...(options.onPreventSleepChanged ? { onPreventSleepChanged: options.onPreventSleepChanged } : {}),
+    ...(options.onNotificationsChanged ? { onNotificationsChanged: options.onNotificationsChanged } : {}),
     createOccupant: (attach) => {
       attaches.push(attach)
       return {
@@ -791,6 +795,10 @@ const SETTINGS_CHANGE_SAMPLES = {
   'set-coordination-days': { scope: 'provider', kind: 'set-coordination-days', field: 'quietDays', value: 5 },
   'set-cache-ttl': { scope: 'general', kind: 'set-cache-ttl', enabled: true },
   'set-thinking': { scope: 'general', kind: 'set-thinking', enabled: false },
+  'set-prevent-sleep': { scope: 'general', kind: 'set-prevent-sleep', enabled: false },
+  'set-turn-completion-notification': { scope: 'general', kind: 'set-turn-completion-notification', value: 'unfocused' },
+  'set-permission-notifications': { scope: 'general', kind: 'set-permission-notifications', enabled: false },
+  'set-question-notifications': { scope: 'general', kind: 'set-question-notifications', enabled: false },
   'set-context-management': {
     scope: 'general',
     kind: 'set-context-management',
@@ -2543,6 +2551,53 @@ test('the cache toggle rebuilds the lanes; the context numbers do not', async ()
       'the others keep their values',
     )
   })
+})
+
+test('sleep prevention saves globally and applies after reload without rebuilding active lanes', async () => {
+  const applied: boolean[] = []
+  await withSettingsDir({}, async (h, cwd) => {
+    await openOneLane(h)
+    h.runOn(h.attaches.at(-1)!.lane, 'sonnet')
+    const other = createProject(h.directory, fixturePath('repo', 'other-power'), h.log)
+    for (const enabled of [false, true]) {
+      const result = await h.client.changeSettings(h.entry.root, {
+        scope: 'general', kind: 'set-prevent-sleep', enabled,
+      })
+      assert.equal((await readUserLayer()).preventSleep, enabled)
+      assert.equal(result.settings.general.preventSleep, enabled)
+      assert.equal(other.project.getSettings().preventSleep, enabled)
+      assert.equal(result.rebuiltLanes, 0)
+      assert.deepEqual(applied, enabled ? [false, true] : [false])
+    }
+    assert.deepEqual(await readLocalLayer(cwd), {})
+    assert.equal(h.project.config.saves, 0)
+    assert.deepEqual(h.configRefreshes, [])
+  }, { onPreventSleepChanged: (enabled) => { applied.push(enabled) } })
+})
+
+test('notification settings apply globally after reload without rebuilding running lanes', async () => {
+  const applied: HanekawaSettings['notifications'][] = []
+  await withSettingsDir({}, async (h, cwd) => {
+    await openOneLane(h)
+    h.runOn(h.attaches.at(-1)!.lane, 'sonnet')
+    const other = createProject(h.directory, fixturePath('repo', 'other-notifications'), h.log)
+    const edits: SettingsChange[] = [
+      { scope: 'general', kind: 'set-turn-completion-notification', value: 'never' },
+      { scope: 'general', kind: 'set-permission-notifications', enabled: false },
+      { scope: 'general', kind: 'set-question-notifications', enabled: false },
+    ]
+    for (const change of edits) {
+      const result = await h.client.changeSettings(h.entry.root, change)
+      const saved = (await readUserLayer()).notifications
+      assert.deepEqual(result.settings.general.notifications, saved)
+      assert.deepEqual(other.project.getSettings().notifications, saved)
+      assert.deepEqual(applied.at(-1), saved, 'native policy reads the reloaded preferences')
+      assert.equal(result.rebuiltLanes, 0)
+    }
+    assert.deepEqual(applied.at(-1), { turnCompletion: 'never', permissions: false, questions: false })
+    assert.deepEqual(await readLocalLayer(cwd), {})
+    assert.deepEqual(h.configRefreshes, [])
+  }, { onNotificationsChanged: (settings) => { applied.push(settings) } })
 })
 
 test('a context number that cannot mean anything is rejected and saves nothing', async () => {

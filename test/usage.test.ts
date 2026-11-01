@@ -83,6 +83,12 @@ test('priceUsage marks tokens unpriced rather than free without complete pricing
     'half a price list is not a price list')
 })
 
+test('pricing and accumulation preserve incomplete usage across models and currencies', () => {
+  const uncertain = priceUsage({ ...usage, cost: { amounts: {}, incomplete: true } }, { inputPerMillionTokens: 1, outputPerMillionTokens: 2 })
+  const result = addTokenUsage(uncertain, { ...usage, cost: { amounts: { CNY: 2 }, unpriced: true } })
+  assert.deepEqual(result.cost, { amounts: { USD: 0.4, CNY: 2 }, incomplete: true, unpriced: true })
+})
+
 test('addTokenUsage sums the cost per currency and keeps either side\'s flags', () => {
   const usd = { ...usage, cost: { amounts: { USD: 1 } } }
   const cny = { ...usage, cost: { amounts: { CNY: 2, USD: 0.5 }, unpriced: true as const } }

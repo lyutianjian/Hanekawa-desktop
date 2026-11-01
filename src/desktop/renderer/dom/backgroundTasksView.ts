@@ -8,7 +8,7 @@ import { copyButton } from './copyButton.js'
 import { el, replace } from './dom.js'
 import { focusByKey, heldFocusKey } from './focus.js'
 import { icon } from './icons.js'
-import { TONE_ICON } from './threadPanelView.js'
+import { shellNodes } from './syntaxView.js'
 
 export interface BackgroundTasksModel {
   readonly sessionId: string
@@ -96,13 +96,9 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
 
   function rowNode(row: BackgroundTaskRow): HTMLElement {
     const open = row.kind === 'shell' && expanded.has(row.id)
-    const mark = el('span', `bt-mark tone-${row.tone}`, icon(TONE_ICON[row.tone]))
-    mark.setAttribute('aria-hidden', 'true')
-    const metric = row.kind === 'agent'
-      ? row.tokens === undefined ? undefined : el('span', 'bt-tokens', `${formatTokens(row.tokens)} token`)
-      : el('span', 'bt-time', row.durationMs === undefined ? '' : formatElapsed(row.durationMs))
+    const metric = open ? el('span', 'bt-time', row.durationMs === undefined ? '' : formatElapsed(row.durationMs)) : undefined
     if (row.kind === 'shell' && row.running && row.startedAt !== undefined && metric !== undefined) clocks.push({ node: metric, startedAt: row.startedAt })
-    const head = button('bt-head', '', `${row.title} · ${row.status}，${open ? '收起详情' : '查看详情'}`, () => {
+    const head = button(`bt-head${row.kind === 'agent' ? ' bt-head--agent' : ''}`, '', `${row.title} · ${row.status}，${open ? '收起详情' : '查看详情'}`, () => {
       if (row.kind === 'agent') handlers.onSelectAgent(row.id)
       else {
         if (expanded.has(row.id)) expanded.delete(row.id)
@@ -117,14 +113,20 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
     head.dataset.focusKey = `task:${row.id}:head`
     replace(
       head,
-      el('div', 'bt-title', mark, el('span', 'bt-text', row.title), row.kind === 'shell' ? el('span', `bt-chevron${open ? ' open' : ''}`, icon('chevron-right')) : undefined),
-      el('div', 'bt-meta',
-        el('span', 'bt-status', row.status),
-        row.model === undefined ? undefined : el('span', 'bt-model', modelName(row.model)),
-        metric,
+      el('div', 'bt-title', el('span', 'bt-text', row.title),
+        !row.running && row.tone === 'danger' ? el('span', 'bt-failure', '失败') : undefined,
+        !row.running ? el('span', `bt-chevron${open ? ' open' : ''}`, icon('chevron-right')) : undefined,
       ),
+      row.kind === 'agent' ? el('div', 'bt-meta',
+        row.model === undefined ? undefined : el('span', 'bt-model', modelName(row.model)),
+        row.tokens === undefined ? undefined : el('span', 'bt-tokens', `${formatTokens(row.tokens)} token`),
+      ) : undefined,
     )
-    const command = open ? el('pre', 'bt-command step-terminal', row.command ?? row.title) : undefined
+    const prompt = el('span', 'bt-command-prompt', '$')
+    prompt.setAttribute('aria-hidden', 'true')
+    const command = open ? el('div', 'bt-command', prompt,
+      el('pre', 'bt-command-text step-terminal', ...shellNodes(row.command ?? row.title)),
+    ) : undefined
     if (command) {
       command.setAttribute('tabindex', '0')
       command.setAttribute('role', 'region')
@@ -142,6 +144,7 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
     const copy = copyButton('step-output-copy', '复制输出', () => copyText(outputs.get(row.id) ?? ''))
     copy.dataset.focusKey = `task:${row.id}:copy`
     const output = pre === undefined ? undefined : el('div', 'bt-output step-output', pre, copy)
+    const meta = open ? el('div', 'bt-meta bt-detail-meta', el('span', 'bt-status', row.status), metric) : undefined
     const failed = open ? failures.get(row.id) : undefined
     const retry = failed === undefined
       ? undefined
@@ -151,10 +154,12 @@ export function createBackgroundTasksView(containers: Readonly<Record<TaskGroup,
       ? undefined
       : el('div', 'load-error', el('span', 'load-error-text', `无法读取输出：${failed}`), retry)
     const stop = row.running
-      ? button('bt-stop', '', `停止 ${row.title}`, () => handlers.onStop(row), { icon: 'stop' })
+      ? button('bt-stop', '', `停止 ${row.title}`, () => handlers.onStop(row), { icon: 'square' })
       : undefined
     if (stop !== undefined) stop.dataset.focusKey = `task:${row.id}:stop`
-    return el('div', 'bt-row', head, stop, command, output, failure)
+    const node = el('div', 'bt-row', head, stop, command, output, meta, failure)
+    node.dataset.tone = row.tone
+    return node
   }
 
   function stopClock(): void {

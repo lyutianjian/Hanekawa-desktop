@@ -108,17 +108,13 @@ test('the native view paints only when every condition holds', () => {
     open: true,
     hasActiveTab: true,
     occluded: false,
-    windowHidden: false,
     overlaid: false,
   }
   assert.equal(shouldShowBrowserView(base), true)
   assert.equal(shouldShowBrowserView({ ...base, open: false }), false)
   assert.equal(shouldShowBrowserView({ ...base, hasActiveTab: false }), false)
-  // These three are the ones a DOM-only panel would forget: a WebContentsView
-  // is not in the document, so neither a covering screen, nor a hidden window,
-  // nor the panel's own error page stops it painting on its own.
+  // A native view must yield to a covering screen or the panel's own error page.
   assert.equal(shouldShowBrowserView({ ...base, occluded: true }), false)
-  assert.equal(shouldShowBrowserView({ ...base, windowHidden: true }), false)
   assert.equal(shouldShowBrowserView({ ...base, overlaid: true }), false)
 })
 

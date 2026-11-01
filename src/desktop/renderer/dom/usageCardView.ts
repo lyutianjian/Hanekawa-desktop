@@ -131,25 +131,47 @@ export function createUsageCard(now: () => Date = () => new Date()): UsageCardDo
       heatmap.setAttribute('role', 'group')
       heatmap.setAttribute('aria-label', '每日用量，方向键逐日查看')
     }
-    return [cells('usage-cells', view.cells), heatmap, el('div', 'usage-footnote', view.footnote), tip]
+    const legend = el('div', 'usage-legend', '少', ...[0, 1, 2, 3, 4].map((level) => {
+      const swatch = el('span', `usage-heat level-${level}`)
+      swatch.setAttribute('aria-hidden', 'true')
+      return swatch
+    }), '多')
+    legend.setAttribute('aria-label', '每日消息量由少到多')
+    return [
+      cells('usage-cells', view.cells),
+      el('div', 'usage-chart-head', el('span', undefined, '每日活动'), legend),
+      heatmap,
+      el('div', 'usage-footnote', view.footnote),
+      tip,
+    ]
   }
 
-  const models = (view: UsageCardView): HTMLElement[] =>
-    view.shares.length === 0
-      ? [el('div', 'usage-empty', USAGE_NO_MODELS)]
-      : [cells('usage-facts', view.facts), el('div', 'usage-shares', ...view.shares.map((share) => {
-          const bar = el('progress', 'usage-share-bar')
-          bar.setAttribute('max', '100')
-          bar.setAttribute('value', String(share.width))
-          return el(
-            'div',
-            'usage-share',
-            el('div', 'usage-share-head',
-              el('span', 'usage-share-model', share.model),
-              el('span', 'usage-share-figures', `${share.tokens} · ${share.percent}`)),
-            bar,
-          )
-        }))]
+  const models = (view: UsageCardView): HTMLElement[] => {
+    if (view.shares.length === 0) return [el('div', 'usage-empty', USAGE_NO_MODELS)]
+    const header = el('thead', undefined, el('tr', undefined, ...['模型', 'Token', '占比'].map((label) => {
+      const node = el('th', undefined, label)
+      node.scope = 'col'
+      return node
+    })))
+    const rows = el('tbody', 'usage-shares', ...view.shares.map((share) => {
+      const name = el('span', 'usage-share-model', share.model)
+      name.title = share.model
+      const bar = el('progress', 'usage-share-bar')
+      bar.setAttribute('max', '100')
+      bar.setAttribute('value', String(share.width))
+      bar.setAttribute('aria-label', `${share.model} 用量占比`)
+      return el('tr', 'usage-share',
+        el('td', undefined, el('div', 'usage-share-name', name, bar)),
+        el('td', 'usage-share-tokens', share.tokens),
+        el('td', 'usage-share-percent', share.percent),
+      )
+    }))
+    const scroll = el('div', 'usage-models-scroll', el('table', 'usage-models-table', header, rows))
+    scroll.tabIndex = 0
+    scroll.setAttribute('role', 'region')
+    scroll.setAttribute('aria-label', '模型用量，可滚动查看全部模型')
+    return [cells('usage-facts', view.facts), scroll]
+  }
 
   function paint(): void {
     const view = usageCardView(days, tab, range, now())

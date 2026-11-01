@@ -2032,6 +2032,15 @@ test('buildAnthropicTools includes concrete schemas for built-in tools', () => {
   }
 })
 
+test('every builtin publishes an object at the API schema root', async () => {
+  const builtins = await getAllTools()
+  const anthropic = buildAnthropicTools(builtins)
+  const openai = buildOpenAITools(builtins)
+  assert.equal(anthropic[0]?.name, 'ReadSession')
+  for (const tool of anthropic) assert.equal(tool.input_schema.type, 'object', tool.name)
+  for (const tool of openai) assert.equal(tool.function.parameters.type, 'object', tool.function.name)
+})
+
 test('buildAnthropicMessages merges assistant text with following tool use', () => {
   const request: ModelRequest = {
     cacheSource: 'agent:test',

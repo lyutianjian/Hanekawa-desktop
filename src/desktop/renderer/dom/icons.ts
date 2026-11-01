@@ -25,6 +25,8 @@ const SVG_NS = 'http://www.w3.org/2000/svg'
 
 export type IconName =
   | 'plus'
+  | 'square-pen'
+  | 'square'
   | 'minus'
   | 'close'
   | 'trash'
@@ -54,6 +56,10 @@ export type IconName =
   | 'send'
   | 'stop'
   | 'gear'
+  | 'sliders-horizontal'
+  | 'palette'
+  | 'cpu'
+  | 'plug'
   // --- the empty-state screen (5c) ---
   // The mark and the three guidance cards it sat over are gone: the screen's
   // identity is typographic now (see `model/welcome.ts`), so `thought-bubble`,
@@ -95,6 +101,7 @@ export type IconName =
   | 'circle-ellipsis'
   | 'x-circle'
   | 'alert-circle'
+  | 'info'
   // --- the full-access confirmation: the question's mark and its warning glyph ---
   | 'triangle-alert'
   | 'more'
@@ -126,7 +133,14 @@ const FRAME: Shape = ['rect', { width: 18, height: 18, x: 3, y: 3, rx: 2 }]
  * named after the Lucide icon it copies.
  */
 const ICONS = {
+  // Lucide icons/info.svg, copied without changing its geometry.
+  info: [RING, 'M12 16v-4', 'M12 8h.01'],
   plus: ['M5 12h14', 'M12 5v14'],
+  square: [FRAME],
+  'square-pen': [
+    'M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7',
+    'M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z',
+  ],
   minus: ['M5 12h14'],
   // x
   close: ['M18 6 6 18', 'm6 6 12 12'],
@@ -177,6 +191,20 @@ const ICONS = {
     'M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915',
     ['circle', { cx: 12, cy: 12, r: 3 }],
   ],
+  'sliders-horizontal': ['M10 5H3', 'M12 19H3', 'M14 3v4', 'M16 17v4', 'M21 12h-9', 'M21 19h-5', 'M21 5h-7', 'M8 10v4', 'M8 12H3'],
+  palette: [
+    'M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z',
+    ['circle', { cx: 13.5, cy: 6.5, r: .5, fill: 'currentColor' }],
+    ['circle', { cx: 17.5, cy: 10.5, r: .5, fill: 'currentColor' }],
+    ['circle', { cx: 6.5, cy: 12.5, r: .5, fill: 'currentColor' }],
+    ['circle', { cx: 8.5, cy: 7.5, r: .5, fill: 'currentColor' }],
+  ],
+  cpu: [
+    'M12 20v2', 'M12 2v2', 'M17 20v2', 'M17 2v2', 'M2 12h2', 'M2 17h2', 'M2 7h2', 'M20 12h2', 'M20 17h2', 'M20 7h2', 'M7 20v2', 'M7 2v2',
+    ['rect', { x: 4, y: 4, width: 16, height: 16, rx: 2 }],
+    ['rect', { x: 8, y: 8, width: 8, height: 8, rx: 1 }],
+  ],
+  plug: ['M12 22v-5', 'M15 8V2', 'M17 8a1 1 0 0 1 1 1v4a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1z', 'M9 8V2'],
   // git-branch
   branch: ['M15 6a9 9 0 0 0-9 9V3', ['circle', { cx: 18, cy: 6, r: 3 }], ['circle', { cx: 6, cy: 18, r: 3 }]],
   // external-link: the hand-off to another app.

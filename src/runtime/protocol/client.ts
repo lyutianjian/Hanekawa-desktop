@@ -1060,4 +1060,5 @@ function sameCost(a: UsageCost | undefined, b: UsageCost | undefined): boolean {
     && currencies.every((currency) => a.amounts[currency] === b.amounts[currency])
     && a.unpriced === b.unpriced
     && a.legacy === b.legacy
+    && a.incomplete === b.incomplete
 }

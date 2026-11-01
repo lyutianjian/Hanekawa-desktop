@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { ChatMessage, CompactBoundaryRecord, ModelProvider, SessionRecord, Tool, TokenUsage } from './types.js'
 import type { ActiveModelRuntime } from './loop.js'
 import { EMPTY_TOKEN_USAGE, addTokenUsage } from './usage.js'
+import { requestModel } from './requestUsage.js'
 import {
   countTextTokens,
   countSessionRecordTokens,
@@ -25,6 +26,7 @@ const compactFailuresByKey = new Map<string, number>()
 const compactRunsByKey = new Map<string, Promise<CompactCheckResult>>()
 
 export interface CompactCheckInput {
+  onUsage?(usage: TokenUsage, model: string): void
   records: SessionRecord[]
   provider: ModelProvider
   model: string
@@ -72,7 +74,7 @@ export interface CompactCheckInput {
    * conversation goes out as text. A failure or an empty answer falls back to
    * that text path.
    */
-  summarizeWithSharedPrefix?(prompt: string): Promise<{ content: string; usage?: TokenUsage }>
+  summarizeWithSharedPrefix?(prompt: string, onUsage?: (usage: TokenUsage, model: string) => void): Promise<{ content: string; usage?: TokenUsage }>
   /** Cancels the entire summary chain, including fallback and retry waits. */
   signal?: AbortSignal
   appendRecord(record: SessionRecord): Promise<void>
@@ -99,6 +101,7 @@ export interface CompactCheckResult {
 }
 
 export interface ContinuationSummaryInput {
+  onUsage?(usage: TokenUsage, model: string): void
   signal?: AbortSignal
   records: SessionRecord[]
   provider: ModelProvider
@@ -160,14 +163,18 @@ async function autoCompactIfNeededOnce(input: CompactCheckInput, circuitKey: str
   // Everything goes into the summary, the latest user message and this turn's
   // work included: the boundary lands after all of it, so whatever the summary
   // leaves out is gone from every later request.
+  let spent: TokenUsage = { ...EMPTY_TOKEN_USAGE }
   try {
-    return await compactRecords(input, compactableRecords, tokenCount, 'auto', circuitKey)
+    return await compactRecords({ ...input, onUsage: (usage, model) => {
+      spent = addTokenUsage(spent, usage)
+      input.onUsage?.(usage, model)
+    } }, compactableRecords, tokenCount, 'auto', circuitKey)
   } catch (error) {
     if (isCancelled(input.signal, error)) throw error
     const failureCount = currentFailures + 1
     await setCompactFailureCount(input, circuitKey, failureCount)
     await appendCompactFailureRecord(input, error, failureCount, tokenCount)
-    return { compacted: false, attempted: true, usage: { ...EMPTY_TOKEN_USAGE } }
+    return { compacted: false, attempted: true, usage: spent }
   }
 }
 
@@ -246,10 +253,18 @@ async function summarizeForAutoCompact(
   let sharedUsage: TokenUsage | undefined
   if (input.summarizeWithSharedPrefix) {
     try {
-      const response = await input.summarizeWithSharedPrefix(getSharedPrefixCompactPrompt(input.compactInstructions, input.compactPromptVariant))
+      let reported = false
+      const response = await input.summarizeWithSharedPrefix(getSharedPrefixCompactPrompt(input.compactInstructions, input.compactPromptVariant), (usage, model) => {
+        reported = true
+        sharedUsage = addTokenUsage(sharedUsage ?? EMPTY_TOKEN_USAGE, usage)
+        input.onUsage?.(usage, model)
+      })
+      if (!reported && response.usage) {
+        sharedUsage = response.usage
+        input.onUsage?.(response.usage, input.model)
+      }
       const content = formatCompactSummary(response.content.trim())
-      if (content) return { content, usage: response.usage, preTokens: tokenCount }
-      sharedUsage = response.usage
+      if (content) return { content, usage: sharedUsage, preTokens: tokenCount }
     } catch (error) {
       if (isCancelled(input.signal, error)) throw error
       if (process.env.HANEKAWA_DEBUG_PROVIDER === '1') {
@@ -270,6 +285,7 @@ async function summarizeForAutoCompact(
     ...(input.attachmentFacts ? { attachmentFacts: input.attachmentFacts } : {}),
     cwd: input.cwd,
     signal: input.signal,
+    onUsage: input.onUsage,
   })
   return sharedUsage ? { ...summary, usage: addTokenUsage(sharedUsage, summary.usage) } : summary
 }
@@ -445,7 +461,7 @@ export async function summarizeRecordsForContinuation(input: ContinuationSummary
   const model = runtime?.model ?? input.model
   const promptCacheRetention = runtime?.promptCacheRetention ?? input.promptCacheRetention
 
-  const response = await provider.createMessage({
+  const { response, usage } = await requestModel(provider, {
     system: 'You summarize prior conversation context so an agent can continue after compaction.',
     systemBlocks: [
       'You summarize prior conversation context so an agent can continue after compaction.',
@@ -458,12 +474,12 @@ export async function summarizeRecordsForContinuation(input: ContinuationSummary
     promptCaching: false,
     cacheSource: compactCacheSource(input.cwd),
     retry: { callerKind: 'interactive', signal: input.signal },
-  })
+  }, input.onUsage)
 
   throwIfCancelled(input.signal)
   return {
     content: formatCompactSummary(response.content.trim()) || '(No compact summary was produced.)',
-    usage: response.usage,
+    usage,
     preTokens: tokenCount,
   }
 }

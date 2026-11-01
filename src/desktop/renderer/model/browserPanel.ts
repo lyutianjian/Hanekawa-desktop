@@ -114,10 +114,9 @@ export function resolveActiveTab(
 /**
  * Whether the native view should be on screen.
  *
- * Four conditions, and the last two are the ones that are easy to forget: a
- * `WebContentsView` is not part of the document, so nothing the stylesheet does
- * — another panel covering the hole, the window being hidden behind another
- * app — stops it painting. It has to be told.
+ * A `WebContentsView` is not part of the document, so covering the hole must
+ * explicitly hide it. Hiding the application window leaves the panel's intent
+ * intact: Electron 45 keeps its attached view painting in the background.
  */
 export function shouldShowBrowserView(input: {
   /** The user opened the panel (or the agent opened a tab, which opens it). */
@@ -126,13 +125,11 @@ export function shouldShowBrowserView(input: {
   hasActiveTab: boolean
   /** Something in the document covers the hole — the settings screen, a modal. */
   occluded: boolean
-  /** `document.visibilityState === 'hidden'`. */
-  windowHidden: boolean
   /** The panel is drawing its own page into the hole — see `browserOverlay`. */
   overlaid: boolean
 }): boolean {
   return (
-    input.open && input.hasActiveTab && !input.occluded && !input.windowHidden && !input.overlaid
+    input.open && input.hasActiveTab && !input.occluded && !input.overlaid
   )
 }
 

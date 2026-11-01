@@ -27,6 +27,7 @@ const PHRASES: Record<string, { readonly verb: string; readonly target?: 'file' 
   WebFetch: { verb: '抓取', target: 'text' },
   WebSearch: { verb: '联网搜索', target: 'text' },
   Browser: { verb: '浏览器', target: 'text' },
+  Computer: { verb: '操作电脑', target: 'text' },
   Skill: { verb: '使用技能', target: 'text' },
   Agent: { verb: '子代理', target: 'text' },
   SendMessage: { verb: '发送消息', target: 'text' },

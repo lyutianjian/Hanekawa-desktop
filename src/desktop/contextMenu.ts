@@ -42,7 +42,8 @@ export interface ContextMenuInput {
 export interface ContextMenuActions {
   replaceMisspelling(word: string): void
   addToDictionary(word: string): void
-  copyText(text: string): void
+  copyText(text: string): Promise<void>
+  onCopyError(error: unknown): void
   copyImageAt(x: number, y: number): void
 }
 
@@ -87,7 +88,13 @@ export function contextMenuTemplate(
 
   if (params.linkURL !== '') {
     const url = params.linkURL
-    groups.push([{ label: '复制链接地址', click: () => actions.copyText(url) }])
+    groups.push([{ label: '复制链接地址', click: async () => {
+      try {
+        await actions.copyText(url)
+      } catch (error) {
+        actions.onCopyError(error)
+      }
+    } }])
   }
 
   if (params.mediaType === 'image' && params.hasImageContents) {

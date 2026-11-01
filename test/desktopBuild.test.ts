@@ -71,7 +71,7 @@ before(async () => {
     bundle: true,
     platform: 'node',
     format: 'cjs',
-    target: 'node20',
+    target: 'node24',
     outfile: join(buildRoot, 'desktop', 'main.js'),
     external: ['electron'],
   })
@@ -81,7 +81,7 @@ before(async () => {
     bundle: true,
     platform: 'node',
     format: 'cjs',
-    target: 'node20',
+    target: 'node24',
     outfile: join(buildRoot, 'desktop', 'preload.js'),
     external: ['electron'],
   })
@@ -91,7 +91,7 @@ before(async () => {
     bundle: true,
     platform: 'neutral',
     format: 'esm',
-    target: 'chrome120',
+    target: 'chrome156',
     mainFields: [],
     alias: { 'node:crypto': './src/desktop/renderer/runtime/nodeCryptoShim.ts' },
     outfile: join(buildRoot, 'desktop', 'renderer', 'app.js'),
@@ -102,7 +102,7 @@ before(async () => {
     bundle: true,
     platform: 'browser',
     format: 'iife',
-    target: 'chrome120',
+    target: 'chrome156',
     outfile: join(buildRoot, 'desktop', 'renderer', 'theme-boot.js'),
   })
 })
@@ -117,6 +117,48 @@ test('preload bundle exists and is non-empty', () => {
   const file = join(buildRoot, 'desktop', 'preload.js')
   assert.ok(existsSync(file), 'expected dist/desktop/preload.js')
   assert.ok(statSync(file).size > 0, 'preload bundle must be non-empty')
+})
+
+test('preload runs with Electron 45 sandbox globals and only the electron module', () => {
+  const source = readFileSync(join(buildRoot, 'desktop', 'preload.js'), 'utf8')
+  let bridge!: import('../src/desktop/types.js').DesktopBridge
+  const messages: unknown[] = []
+  const listeners = new Map<string, (...args: unknown[]) => void>()
+  const ipcRenderer = {
+    send: (_channel: string, message: unknown) => messages.push(message),
+    on: (channel: string, listener: (...args: unknown[]) => void) => { listeners.set(channel, listener) },
+    removeListener: (channel: string) => { listeners.delete(channel) },
+    removeAllListeners: (channel: string) => { listeners.delete(channel) },
+  }
+  runInNewContext(source, {
+    process: { platform: 'darwin' },
+    require: (name: string) => {
+      assert.equal(name, 'electron', 'sandbox preload cannot require Node module shims')
+      return {
+        contextBridge: { exposeInMainWorld: (name: string, value: typeof bridge) => {
+          assert.equal(name, 'hanekawa')
+          bridge = value
+        } },
+        ipcRenderer,
+        webUtils: { getPathForFile: () => '/attachment.png' },
+      }
+    },
+  })
+  assert.equal(bridge.platform, 'darwin')
+  assert.equal(bridge.pathForFile({} as File), '/attachment.png')
+  const frame = { kind: 'hello' } as const
+  bridge.send(frame)
+  assert.equal(messages[0], frame)
+  const received: unknown[] = []
+  const off = bridge.onMessage((message) => received.push(message))
+  const [channel, listener] = [...listeners][0]!
+  listener({}, frame)
+  assert.equal(received[0], frame)
+  off()
+  assert.equal(listeners.has(channel), false)
+  bridge.onMessage(() => {})
+  bridge.close()
+  assert.equal(listeners.size, 0)
 })
 
 test('renderer bundle exists and is non-empty', () => {
@@ -204,6 +246,18 @@ test('copy-desktop-assets mirrors the renderer assets next to the bundle', async
   rmSync(join(rendererDir, 'sprites'), { recursive: true, force: true })
 
   await run(process.execPath, ['scripts/copy-desktop-assets.mjs', buildRoot], { cwd: repoRoot })
+  const computerDir = join(buildRoot, 'desktop', 'computer', 'native')
+  const binaryName = process.platform === 'win32' ? 'agent-desktop.exe' : 'agent-desktop'
+  assert.ok(statSync(join(computerDir, binaryName)).size > 0)
+  if (process.platform !== 'win32') assert.ok(statSync(join(computerDir, binaryName)).mode & 0o100)
+  if (process.platform === 'darwin') assert.ok(statSync(join(computerDir, 'agent-desktop-macos-helper')).size > 0)
+  if (process.platform === 'linux') assert.ok(statSync(join(computerDir, 'agent-desktop-linux-clipboard-owner')).size > 0)
+  assert.match(readFileSync(join(computerDir, 'LICENSE'), 'utf8'), /Apache License/)
+  assert.ok(statSync(join(computerDir, 'agent-desktop-README.md')).size > 0)
+  const tray = readFileSync(join(buildRoot, 'desktop/assets/tray.png'))
+  assert.deepEqual(tray.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
+  assert.ok(tray.readUInt32BE(16) >= 16)
+  assert.ok(tray.readUInt32BE(20) >= 16)
 
   for (const name of copied) {
     const dest = join(rendererDir, name)

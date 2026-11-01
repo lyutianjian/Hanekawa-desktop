@@ -845,7 +845,7 @@ test('matching is case-insensitive and trimmed', () => {
   )
   // A query of nothing but whitespace is not a query at all.
   const blank = settingsView(openState({ category: 'general', query: '   ' }))
-  assert.deepEqual(blank.cards.map((card) => card.id), ['general', 'context'])
+  assert.deepEqual(blank.cards.map((card) => card.id), ['runtime', 'notifications', 'general', 'context'])
   assert.equal(blank.searchEmpty, undefined)
 })
 
@@ -1351,6 +1351,51 @@ test('the general page is global, so it offers no project picker', () => {
   assert.equal(settingsView({ ...state, category: 'extensions' }).projectChoices.length, 1)
 })
 
+test('sleep prevention defaults on and projects an immediate global toggle', () => {
+  const state = openState({ category: 'general' })
+  const row = settingsView(state).cards.find((card) => card.id === 'runtime')?.rows[0]
+  assert.ok(row && row.control.kind === 'toggle')
+  assert.equal(row.label, '运行时防止系统休眠')
+  assert.equal(row.detail, '在 Hanekawa 运行任务时，让电脑保持唤醒状态')
+  assert.equal(row.control.value, true)
+  assert.deepEqual(row.control.intentOnChange(false), { kind: 'set-prevent-sleep', enabled: false })
+  const outcome = applySettingsIntent(state, { kind: 'set-prevent-sleep', enabled: false })
+  assert.deepEqual(outcome.changes, [{ scope: 'general', kind: 'set-prevent-sleep', enabled: false }])
+  const pending = settingsView(outcome.state).cards.find((card) => card.id === 'runtime')?.rows[0]
+  assert.ok(pending?.pending && pending.control.kind === 'toggle')
+  assert.equal(pending.control.value, false)
+  const off = settingsView(openState({ category: 'general', snapshot: snapshotOf({
+    general: { settingsPath: '/home/test/.hanekawa/settings.json', preventSleep: false },
+  }) })).cards.find((card) => card.id === 'runtime')?.rows[0]
+  assert.ok(off && off.control.kind === 'toggle')
+  assert.equal(off.control.value, false)
+})
+
+test('notification controls default to unfocused/on/on and project each edit independently', () => {
+  const state = openState({ category: 'general' })
+  const rows = settingsView(state).cards.find((card) => card.id === 'notifications')!.rows
+  const values = (items: typeof rows) => items.map(({ control }) => {
+    assert.ok('value' in control)
+    return control.value
+  })
+  assert.deepEqual(values(rows), ['unfocused', true, true])
+  assert.ok(rows[0]!.control.kind === 'select')
+  assert.deepEqual(rows[0]!.control.choices.map((choice) => choice.label), ['从不', '始终', '窗口未聚焦时'])
+  const edits: SettingsIntent[] = [
+    { kind: 'set-turn-completion-notification', value: 'always' },
+    { kind: 'set-permission-notifications', enabled: false },
+    { kind: 'set-question-notifications', enabled: false },
+  ]
+  for (const [index, intent] of edits.entries()) {
+    const outcome = applySettingsIntent(state, intent)
+    assert.deepEqual(outcome.changes, [{ scope: 'general', ...intent }])
+    const projected = settingsView(outcome.state).cards.find((card) => card.id === 'notifications')!.rows
+    assert.equal(projected[index]!.pending, true)
+    assert.equal(values(projected)[index], index === 0 ? 'always' : false)
+    assert.equal(values(projected)[(index + 1) % 3], values(rows)[(index + 1) % 3])
+  }
+})
+
 test('a trust granted by an upper layer is drawn but not toggleable', () => {
   const card = settingsView(openState({ category: 'extensions', extensionsTab: 'mcp' })).cards.find((card) => card.id === 'mcp')
   const shared = card?.rows.find((row) => row.id === 'mcp:shared')
@@ -1470,7 +1515,7 @@ test('the extensions page draws one card at a time: skills by default, MCP on it
   assert.deepEqual(mcp.cards.map((card) => card.id), ['mcp'])
   // And the general page no longer carries MCP.
   const general = settingsView(openState({ category: 'general' }))
-  assert.deepEqual(general.cards.map((card) => card.id), ['general', 'context'])
+  assert.deepEqual(general.cards.map((card) => card.id), ['runtime', 'notifications', 'general', 'context'])
   // Other pages have no tab strip.
   assert.equal(general.tabs, undefined)
 })

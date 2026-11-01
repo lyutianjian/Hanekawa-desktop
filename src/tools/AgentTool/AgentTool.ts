@@ -4,6 +4,7 @@ import { z } from 'zod/v3'
 import { agentCacheSource, resetCacheBreakDetection } from '../../harness/cacheBreakDetection.js'
 import { ContextBuilder } from '../../harness/contextBuilder.js'
 import { AgentLoop, type ActiveModelRuntime } from '../../harness/loop.js'
+import type { RequestUsage } from '../../harness/metrics.js'
 import {
   PermissionGate,
   type PermissionMode,
@@ -180,6 +181,7 @@ const agentInputSchema = z.object({
 type AgentInput = z.infer<typeof agentInputSchema>
 
 export interface CreateAgentToolOptions {
+  onUsage?(event: RequestUsage, parentSessionId: string): void
   provider: ModelProvider
   model: string
   modelKey?: string
@@ -521,6 +523,7 @@ class SubagentSession implements AgentContinuation {
     }
     const cacheSource = agentCacheSource(subAgentId, context.projectDir ?? context.cwd)
     const createLoop = () => new AgentLoop({
+      onUsage: options.onUsage ? (event) => options.onUsage!(event, context.sessionId) : undefined,
       provider: subagentRuntime.provider,
       model: subagentRuntime.model,
       modelKey: subagentRuntime.modelKey,
@@ -632,6 +635,7 @@ class SubagentSession implements AgentContinuation {
         transcriptRecord: {
           id: randomUUID(),
           type: 'subagent_transcript',
+          ...(options.onUsage ? { usageReported: true as const } : {}),
           agentId: subAgentId,
           subagentType: parsed.subagent_type,
           model: this.model,

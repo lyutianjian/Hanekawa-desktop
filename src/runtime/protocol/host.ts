@@ -1428,9 +1428,15 @@ export class SessionHost implements CoordinationLaneControl {
     return () => { this.stateListeners.delete(listener) }
   }
 
+  pendingNotificationRequests(): Array<{ id: string; kind: 'permission' | 'question' }> {
+    return [...this.pendingKinds].map(([id, kind]) => ({
+      id, kind: kind === 'ask-user-question' ? 'question' : 'permission',
+    }))
+  }
+
   private notifyStateChange(): void {
     const { streaming, pendingApproval, pendingDialog } = this.state()
-    const key = `${streaming}|${pendingApproval}|${pendingDialog}`
+    const key = `${streaming}|${pendingApproval}|${pendingDialog}|${[...this.pendingKinds.keys()].join(',')}`
     if (key === this.lastStateKey) return
     this.lastStateKey = key
     for (const listener of [...this.stateListeners]) listener()

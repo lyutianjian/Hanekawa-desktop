@@ -143,6 +143,11 @@ export class ProjectDirectory<
    */
   private readonly closing = new Map<string, Promise<void>>()
 
+  constructor(private readonly lifecycle: {
+    onAdded?: (entry: ProjectEntry<P, W>) => void
+    onClosed?: (entry: ProjectEntry<P, W>) => void
+  } = {}) {}
+
   get size(): number {
     return this.entries_.size
   }
@@ -162,6 +167,7 @@ export class ProjectDirectory<
     }
     const entry: ProjectEntry<P, W> = { root, cwd: project.cwd, project, workspace }
     this.entries_.set(root, entry)
+    this.lifecycle.onAdded?.(entry)
     return entry
   }
 
@@ -262,6 +268,7 @@ export class ProjectDirectory<
       await entry.project.shutdown(reason)
     } finally {
       this.closing.delete(entry.root)
+      this.lifecycle.onClosed?.(entry)
     }
   }
 

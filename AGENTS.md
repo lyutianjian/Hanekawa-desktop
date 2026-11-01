@@ -4,7 +4,7 @@ This file provides implementation guidance for Codex and other coding agents whe
 
 ## Commands
 
-Requires Node.js 22+. Run `npm install`.
+Requires Node.js 24+. Desktop runtime is pinned to Electron 45.2.1 (macOS 13+, 64-bit platforms). Run `npm install`.
 
 ```bash
 npm run start:desktop
@@ -56,6 +56,11 @@ desktop/ -> runtime/ + harness/ -> config/providers/
 - Startup moves the pre-rename data once (`utils/legacyDataMigration.ts`) and the Electron `userData` preferences (`desktop/userDataMigration.ts`): `~/.myagent` and `~/Documents/myagent` are renamed only when the new path is absent, thread worktrees stay where git and coordination records already point, and the old worktree root is removed only when empty. The running app resolves no old path; `<cwd>/.myagent` is not read and the user moves it by hand.
 - Resolve root-keyed commands through `ShellHost.cwdForRoot` or `ensureEntryForRoot`, never `knownCwdForRoot` alone.
 - Closing a lane releases a runtime but does not delete the session or stop project background tasks. Use the dedicated session/project deletion paths so all artifacts are removed.
+- On macOS/Windows ordinary window close hides the live window. Windows requires a valid tray; otherwise retain the visible window. Dock/tray recovery shows the same window. Explicit quit retains `QuitCoordinator` draining, and system session end is never blocked. The last lane does not quit the desktop app.
+- Desktop `PowerSaveController` owns one `prevent-app-suspension` request across all controller turn/compaction activity and non-Monitor running project tasks. Bind lanes by controller identity, projects through `ProjectDirectory` add/closed callbacks (including closing entries). Keep activity facts Electron-free, renew on real resume, and dispose in quit finally. Visibility and renderer messages never control demand.
+- Browser panel views stay attached to the main window across hide/show; only tabs not requested by the panel use `BrowserTabHost` parking. Before the first input per WebContents/document generation, wait for a real CDP frame so hit testing is ready; Stop/navigation cannot dispatch late input. `capturePage` fallback uses `stayHidden`, not an extra permanent power request.
+- Electron clipboard writes are asynchronous: context-menu actions await them and report failures. Sandboxed preload bundles may require only Electron; do not depend on removed Node shims (`Buffer`, `events`, `timers`, `url`, or `setImmediate`). Build preload for Node 24 and renderer for Chromium 156.
+- Before the single-instance lock, `fixUserDataPaths` creates and fixes both Electron `userData` and `sessionData` to `appData/hanekawa`; keep legacy migration. `clean:dist` removes only script-relative `dist`, never icon sources in `build`.
 
 ## Coordination
 
@@ -100,7 +105,7 @@ desktop/ -> runtime/ + harness/ -> config/providers/
 - Settings changes follow `mutate -> save if config changed -> reload -> after-reload action -> optional refresh/rebuild`, with unique change kinds, optimistic pending state, and one wire scope per category (except renderer-local `appearance`).
 - Window views derive identity from `WireLaneInfo`. Context occupancy uses `AgentLoop.getContextBudget().usableContextWindow`, not the raw model window. `open-in-editor` resolves the real `entry.cwd` through `getDefaultWorkingDir`.
 - `TokenUsage`'s three input fields are disjoint: uncached input, cache writes (`cacheCreationInputTokens`, optional — absent means the provider does not report writes, never zero writes), cache reads. Add them only through `promptTokens()`, and take the hit rate only from `cacheHitRate()`, whose denominator is that same sum: a write is a miss that was paid for. Usage arithmetic preserves absence rather than materializing a zero.
-- Context occupancy is `promptTokens(usage.lastRequest)`, pushed per provider response through `RecordProxy.onRequestUsage` and seeded from the metrics sidecar for a session this process never ran — `loadLastRequestUsage` for the request, `loadSessionTotals` for the running total, which only lands while the total is still empty. Every spend counts as it is reported: foreground responses through `onRequestUsage`, compaction summaries, subagent transcripts and side calls (tool summaries, generated titles, rewind summaries) through `onAuxUsage`, each mirrored by its metrics event. The end-of-run figure is never added on top, or every request is counted twice.
+- Context occupancy is `promptTokens(usage.lastRequest)`, pushed through `RecordProxy.onRequestUsage`. Restore a resolved session with the synchronous `SessionStore.loadSessionUsage` snapshot before accepting live increments; an async restore must never discard history when a new request wins the race. Provider adapters settle each attempt through `ModelRequest.onUsage`, `withPricing` prices that actual provider, and `requestModel` supports providers that only return usage. Persist each spend once as `request_usage`; new `turn` events have `usageRecorded: true`, and new compact events describe compaction without repeating its spend. Old metrics remain readable. Foreground spend goes through `onRequestUsage`, auxiliary and child requests through `onAuxUsage`; a child's `usageReported` transcript is display data, not another charge. Late usage belongs to its session even after a runtime rebuild. Preserve `UsageCost.incomplete` when an attempt has no complete usage. Never add the end-of-run figure again.
 - The desktop readout pairs a cumulative count with the *last request's* hit rate; the session-cumulative rate lives in the hover. A cumulative rate can only fall — the cold first request, every compaction and every subagent prompt sit in its denominator forever — so it answers how the session went, not whether the cache is working now.
 
 ## Renderer invariants

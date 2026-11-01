@@ -34,6 +34,7 @@ test('the chip is inert until a runtime snapshot arrives', () => {
   // model, which is why `renderStatus` repaints the chip even with no snapshot.
   const view = composerChipView(undefined)
   assert.equal(view.enabled, false)
+  assert.equal(view.label, '选择思考强度')
   assert.equal(view.model, '…')
   assert.equal(view.effort, '…')
   assert.equal(view.atCeiling, false)
@@ -47,12 +48,17 @@ test('an unconfigured runtime offers settings instead of a loading placeholder',
     permissionMode: 'default',
   })
   assert.equal(view.enabled, true)
+  assert.equal(view.label, '配置模型')
   assert.equal(view.model, '配置模型')
   assert.match(view.title, /点击配置模型与服务商/)
 })
 
-test('the chip shows the model and the effort level', () => {
+test('the pill invites the choice; the model and the level are in the tooltip', () => {
+  // The reference's own wording: a control in the composer states what it opens,
+  // and the two values it opens are read in the popover. The fields stay on the
+  // view because the tooltip is built from them.
   const view = composerChipView(runtime())
+  assert.equal(view.label, '选择思考强度')
   assert.equal(view.model, 'sonnet')
   assert.equal(view.effort, EFFORT_LABELS.high)
   assert.equal(view.enabled, true)

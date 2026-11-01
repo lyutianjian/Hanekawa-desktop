@@ -169,7 +169,7 @@ export function statusUsageView(
   if (!total) return EMPTY
   const { inputTokens, cacheReadInputTokens, outputTokens } = total
   const allTokens = totalTokens(total)
-  if (allTokens === 0) return EMPTY
+  if (allTokens === 0 && !total.cost?.incomplete) return EMPTY
 
   const metrics: UsageMetric[] = [
     { kind: 'total', value: `${formatTokens(allTokens)} token`, label: '总计' },
@@ -177,7 +177,7 @@ export function statusUsageView(
   const cost = formatSessionCost(total.cost)
   const breakdown: UsageBreakdownRow[] = [
     { label: '总计', value: `${formatExact(allTokens)} token` },
-    ...(cost ? [{ label: '会话开销', value: cost }] : []),
+    ...(cost ? [{ label: '会话开销', value: cost }] : total.cost?.unpriced ? [{ label: '会话开销', value: '未设置价格' }] : []),
     { label: '输入（未缓存）', value: formatExact(inputTokens) },
     ...(total.cacheCreationInputTokens === undefined ? [] : [{ label: '缓存写入', value: formatExact(writes(total)) }]),
     { label: '缓存命中', value: formatExact(cacheReadInputTokens) },
@@ -206,7 +206,7 @@ export function statusUsageView(
     rate,
     text: parts.join(' · '),
     breakdown,
-    costNote: cost ? costNote(total.cost!) : undefined,
+    costNote: total.cost ? costNote(total.cost) : undefined,
     title: `本会话累计\n${breakdown.map((row) => `${row.label} ${row.value}`).join('\n')}`,
   }
 }
@@ -234,6 +234,7 @@ function costNote(cost: UsageCost): string | undefined {
   const notes = [
     ...(cost.unpriced ? ['开销未计入未设置价格的模型'] : []),
     ...(cost.legacy ? ['开销不含早期请求'] : []),
+    ...(cost.incomplete ? ['部分请求未返回完整用量，token 和开销可能不完整'] : []),
   ]
   return notes.length > 0 ? notes.join('；') : undefined
 }

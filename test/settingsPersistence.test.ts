@@ -16,6 +16,8 @@ import {
   localSettingsPath,
   setCacheTtl1hForUser,
   setThinkingForUser,
+  setPreventSleepForUser,
+  setNotificationsForUser,
   setLocalPermissionEntries,
   setUserPermissionEntries,
   setMcpServerTrustLocally,
@@ -521,6 +523,44 @@ test('thinking and the cache TTL are one global value, and project layers cannot
     )
     // Merging ignores those layers; writing does not rewrite them.
     assert.equal((await loadLocalSettings(cwd)).thinking, false)
+  })
+})
+
+test('sleep prevention persists globally and project layers cannot override it', async () => {
+  await withLocalLayer({ preventSleep: false }, async (cwd) => {
+    const local = localSettingsPath(cwd)
+    await mkdir(path.dirname(local), { recursive: true })
+    await writeFile(local, JSON.stringify({ preventSleep: false }), 'utf8')
+    assert.equal((await loadMergedSettings(cwd)).preventSleep, undefined)
+    await setPreventSleepForUser(false)
+    assert.equal((await loadMergedSettings(cwd)).preventSleep, false)
+    await setPreventSleepForUser(true)
+    assert.equal((await loadMergedSettings(cwd)).preventSleep, true)
+    assert.equal((await loadLocalSettings(cwd)).preventSleep, false)
+    assert.deepEqual(validateSettings(JSON.parse('{"preventSleep":"false"}')), {
+      valid: false, errors: ['preventSleep must be a boolean'],
+    })
+  })
+})
+
+test('notification preferences persist globally, retain other switches and ignore project layers', async () => {
+  const override = { turnCompletion: 'always', permissions: true, questions: true } as const
+  await withLocalLayer({ notifications: override }, async (cwd) => {
+    const local = localSettingsPath(cwd)
+    await mkdir(path.dirname(local), { recursive: true })
+    await writeFile(local, JSON.stringify({ notifications: override }), 'utf8')
+    assert.equal((await loadMergedSettings(cwd)).notifications, undefined)
+    await setThinkingForUser(false)
+    await setNotificationsForUser({ permissions: false })
+    await setNotificationsForUser({ turnCompletion: 'never', questions: false })
+    assert.deepEqual((await loadMergedSettings(cwd)).notifications, {
+      turnCompletion: 'never', permissions: false, questions: false,
+    })
+    assert.equal((await loadMergedSettings(cwd)).thinking, false)
+    assert.deepEqual((await loadLocalSettings(cwd)).notifications, override)
+    for (const notifications of [null, [], false, { turnCompletion: 'invalid' }, { permissions: 'false' }, { questions: 1 }]) {
+      assert.equal(validateSettings(JSON.parse(JSON.stringify({ notifications }))).valid, false)
+    }
   })
 })
 

@@ -9,6 +9,11 @@ import type { SessionRecord } from '../src/harness/types.js'
 import type { SessionReferenceHost, SessionReadResult } from '../src/runtime/protocol/sessionReferences.js'
 import { applySessionEvent, createTranscriptState, groupTranscript } from '../src/desktop/renderer/model/transcript.js'
 import { callParts } from '../src/desktop/renderer/model/toolPhrases.js'
+import { buildAnthropicTools } from '../src/config/providers/anthropicPayload.js'
+import { buildOpenAITools } from '../src/config/providers/openaiPayload.js'
+import { buildResponsesPayload } from '../src/config/providers/responsesPayload.js'
+import { toolToAPISchema } from '../src/harness/toolApiSchema.js'
+import type { JsonSchema } from '../src/harness/toolValidation.js'
 
 const id = '11111111-1111-4111-8111-111111111111'
 const context = { cwd: '/tmp', sessionId: 'caller', readFiles: new Set<string>() }
@@ -26,6 +31,33 @@ function host(read: SessionReferenceHost['read'] = async () => result): SessionR
     resolve: async () => result.session,
   }
 }
+
+test('ReadSession publishes an object schema in all provider requests while runtime keeps strict action validation', () => {
+  const tools = getBuiltinTools()
+  assert.equal(tools[0]?.name, 'ReadSession')
+  const anthropic = buildAnthropicTools(tools)[0]!
+  const openai = buildOpenAITools(tools)[0]!
+  const responses = buildResponsesPayload({ cacheSource: 'agent:read-session-schema', model: 'fixture', messages: [], tools }).tools![0]!
+  const schema = toolToAPISchema(tools[0]!)
+  for (const published of [schema, anthropic.input_schema, openai.function.parameters, responses.parameters] as JsonSchema[]) {
+    assert.equal(published.type, 'object')
+    assert.deepEqual(published.required, ['action'])
+    assert.equal(published.additionalProperties, false)
+    assert.deepEqual(published.properties?.action?.enum, ['search', 'read'])
+    assert.equal('anyOf' in published, false)
+    assert.equal('oneOf' in published, false)
+    assert.equal(JSON.stringify(published).includes('"$ref"'), false)
+  }
+  assert.deepEqual(Object.keys(schema.properties ?? {}).sort(), [
+    'action', 'anchorMessageId', 'cursor', 'from', 'includeTools', 'limit',
+    'projectRoot', 'query', 'ref', 'scope', 'updatedAfter', 'updatedBefore',
+  ])
+  assert.equal(schema.properties?.limit?.maximum, 50)
+  assert.equal(readSessionInputSchema.safeParse({ action: 'search' }).success, false)
+  assert.equal(readSessionInputSchema.safeParse({ action: 'read' }).success, false)
+  assert.equal(readSessionInputSchema.safeParse({ action: 'search', query: 'x', limit: 21 }).success, false)
+  assert.equal(readSessionInputSchema.safeParse({ action: 'read', ref: id, query: 'x' }).success, false)
+})
 
 test('ReadSession is a builtin with strict action schemas and valid mutually exclusive read positions', () => {
   assert.ok(getBuiltinTools().some((tool) => tool.name === 'ReadSession' && tool.isReadOnly && tool.riskLevel === 'safe'))

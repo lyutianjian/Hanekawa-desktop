@@ -305,6 +305,14 @@ test('terminal states: truncation is max_tokens, everything else that is not com
     /Stream ended/.test(error.message) && classifyError(error) === 'transient')
 })
 
+test('a failed terminal response keeps its reported usage', async () => {
+  const provider = new ResponsesProvider({ provider: 'openai-responses', model: 'gpt-x', apiKey: 'test-key' })
+  const spends: unknown[] = []
+  install(provider, () => [{ type: 'response.failed', response: { ...finalResponse({ output: [] }), status: 'failed', error: { code: 'failed', message: 'failed response' } } }])
+  await assert.rejects(provider.createMessage(request({ onUsage: (usage) => spends.push(usage) })), /failed response/)
+  assert.deepEqual(spends, [{ inputTokens: 10, cacheReadInputTokens: 0, outputTokens: 2 }])
+})
+
 test('a stream that fails on prompt_cache_key is sent again without it', async () => {
   resetCacheBreakDetection(SOURCE)
   const provider = new ResponsesProvider({ provider: 'openai-responses', model: 'gpt-key-test', apiKey: 'k' })

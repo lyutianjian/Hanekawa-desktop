@@ -1,6 +1,5 @@
+import { shouldQuitAfterWindowsClosed } from '../src/desktop/backgroundWindow.js'
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
-import vm from 'node:vm'
 import test from 'node:test'
 import { QuitCoordinator } from '../src/desktop/quitCoordinator.js'
 
@@ -247,10 +246,7 @@ test('the flag is cleared after a quit decision too', async () => {
   assert.equal(recovery.isRecovering(), false)
 })
 
-test('the main window-all-closed callback skips quit drain during recovery and still handles normal closes', async () => {
-  const main = await readFile(new URL('../src/desktop/main.ts', import.meta.url), 'utf8')
-  const body = /app\.on\('window-all-closed', \(\) => \{([\s\S]*?)\n  \}\)/.exec(main)?.[1]
-  assert.ok(body, 'exercise the callback registered by the real main entry')
+test('window-all-closed retains macOS/Windows and skips quit drain during recovery', async () => {
   for (const platform of ['win32', 'linux', 'darwin']) {
     let drains = 0
     let exits = 0
@@ -260,17 +256,16 @@ test('the main window-all-closed callback skips quit drain during recovery and s
       onAllClosed()
       assert.equal(quit.isQuitting(), false, `${platform}: replacing the dead last window is not a quit`)
     } })
-    onAllClosed = vm.runInNewContext(`(() => {${body}\n})`, {
-      process: { platform }, rendererRecovery: recovery,
-      app: { quit: () => quit.onBeforeQuit() },
-    }) as () => void
+    onAllClosed = () => {
+      if (shouldQuitAfterWindowsClosed(platform, recovery.isRecovering())) quit.onBeforeQuit()
+    }
     await recovery.handle(crash)
     assert.equal(drains, 0)
     assert.equal(exits, 0)
     onAllClosed()
     await new Promise((resolve) => setImmediate(resolve))
-    assert.equal(drains, platform === 'darwin' ? 0 : 1)
-    assert.equal(exits, platform === 'darwin' ? 0 : 1)
+    assert.equal(drains, platform === 'linux' ? 1 : 0)
+    assert.equal(exits, platform === 'linux' ? 1 : 0)
   }
 })
 

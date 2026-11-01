@@ -181,7 +181,10 @@ test('the meta is seconds, then tokens beside them', () => {
   assert.deepEqual(statusMeta(2_000, 0), ['2 秒'])
   assert.deepEqual(statusMeta(14_000, 396), ['14 秒', '396 token'])
   assert.deepEqual(statusMeta(14_000, 3_200), ['14 秒', '3.2k token'])
-  assert.deepEqual(statusMeta(14_000, 2_000), ['14 秒', '2k token'])
+  assert.deepEqual(statusMeta(14_000, 2_000), ['14 秒', '2.0k token'])
+  assert.deepEqual([6_900, 7_000, 7_100].map((tokens) => statusMeta(14_000, tokens)[1]), [
+    '6.9k token', '7.0k token', '7.1k token',
+  ])
 })
 
 test('the working mark follows what the status is about', () => {

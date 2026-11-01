@@ -19,6 +19,34 @@ function context() {
   return { cwd: process.cwd(), sessionId: 'session-1', readFiles: new Set<string>() }
 }
 
+test('running work excludes Monitor and terminal history across every session', async () => {
+  const registry = new BackgroundTaskRegistry()
+  const proc = new EventEmitter() as ChildProcess
+  const monitor = registry.registerShell({ sessionId: 'monitor', command: 'watch', proc, monitor: { description: 'observe' } })
+  assert.equal(registry.hasRunningWork(), false)
+  const shell = registry.registerShell({ sessionId: 'hidden-session', command: 'build', proc })
+  assert.equal(registry.hasRunningWork(), true)
+  registry.finishShell('hidden-session', shell.id, 1, null)
+  assert.equal(registry.hasRunningWork(), false)
+  const agent = registry.registerAgent({ sessionId: 'other', agentId: 'a', agentType: 'general', description: 'work' })
+  assert.equal(registry.hasRunningWork(), true)
+  registry.completeAgent('other', 'a', 'completed')
+  assert.equal(registry.hasRunningWork(), false)
+  registry.setAgentContinuation('other', 'a', {
+    resume: async () => {
+      assert.equal(registry.hasRunningWork(), true)
+      return { ok: true, content: 'done' }
+    },
+  })
+  await registry.sendAgentMessage('other', 'a', 'continue', { cwd: '/tmp/registry-activity', sessionId: 'other', readFiles: new Set() })
+  assert.equal(registry.hasRunningWork(), false)
+  registry.finishShell('monitor', monitor.id, 0, null)
+  assert.equal(registry.hasRunningWork(), false)
+  assert.equal(registry.getTask('other', agent.id)?.status, 'completed')
+  await registry.restoreSession('orphan', [backgroundRecord('bash_1', 'shell', 'running')])
+  assert.equal(registry.hasRunningWork(), false)
+})
+
 test('background Bash writes its output to a file and notifies with the last lines', async () => {
   const records: SessionRecord[] = []
   const registry = new BackgroundTaskRegistry(async (_sessionId, record) => { records.push(record) })

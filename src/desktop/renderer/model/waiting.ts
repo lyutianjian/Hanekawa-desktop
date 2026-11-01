@@ -103,7 +103,7 @@ export function statusMeta(elapsedMs: number, tokens: number | undefined): strin
 }
 
 function formatTokens(tokens: number): string {
-  return tokens < 1000 ? String(tokens) : `${(tokens / 1000).toFixed(1).replace(/\.0$/, '')}k`
+  return tokens < 1000 ? String(tokens) : `${(tokens / 1000).toFixed(1)}k`
 }
 
 /**

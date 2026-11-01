@@ -164,12 +164,14 @@ test('agent loop appends user and assistant messages', async () => {
     outputTokens: 30,
   })
   assert.equal(records.filter((record) => record.type === 'message').length, 2)
-  assert.equal(metrics.length, 1)
-  assert.equal(metrics[0]?.event, 'turn')
-  assert.equal(metrics[0]?.model, 'fake-model')
-  assert.equal(metrics[0]?.response_tokens, 30)
-  assert.equal(metrics[0]?.cache_read_tokens, 10)
-  assert.equal(metrics[0]?.tool_calls, 0)
+  assert.equal(metrics.length, 2)
+  assert.equal(metrics[0]?.event, 'request_usage')
+  const turnMetric = metrics.find((metric) => metric.event === 'turn')
+  assert.equal(turnMetric?.usageRecorded, true)
+  assert.equal(turnMetric?.model, 'fake-model')
+  assert.equal(turnMetric?.response_tokens, 30)
+  assert.equal(turnMetric?.cache_read_tokens, 10)
+  assert.equal(turnMetric?.tool_calls, 0)
 })
 
 test('the loop persists thinking provenance and the context builder carries it into replay', async () => {

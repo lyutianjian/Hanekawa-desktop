@@ -5,6 +5,7 @@ import type { McpServerConfig } from '../services/mcp/types.js'
 import type { EffortLevel } from '../config/effort.js'
 import type { EndpointProbeResult } from '../config/providers/probe.js'
 import type { SupportedProviderName } from '../config/providers/registry.js'
+import type { NotificationSettings, TurnCompletionNotification } from '../config/notifications.js'
 
 export type { EndpointProbeFailure, ProbedModel } from '../config/providers/probe.js'
 
@@ -256,9 +257,8 @@ export type ShellCommand =
    * entry per push would be pure overhead — and there is nothing for the user to
    * act on if a geometry push is lost, because the next one supersedes it.
    *
-   * `visible` is not just "is this tab active": the panel also reports false when
-   * it is occluded or the window itself is hidden, because a native view keeps
-   * painting over page content that the stylesheet believes it has covered.
+   * `visible` expresses the panel's intent, including whether it is occluded.
+   * Hiding the application window does not change it or reparent the view.
    */
   | {
       type: 'browser-set-bounds'
@@ -578,7 +578,7 @@ export interface WireCoordinationSettingsInfo {
 }
 
 export interface WireGeneralInfo {
-  /** `~/.hanekawa/settings.json` — the layer these two switches write. */
+  /** `~/.hanekawa/settings.json` — the layer these switches write. */
   settingsPath: string
   /**
    * `cache.ttl1h`. Absent is not `false`: unset means the 1h TTL is on, which
@@ -590,6 +590,9 @@ export interface WireGeneralInfo {
    * which is what the row says.
    */
   thinking?: boolean
+  /** Global runtime sleep prevention; on unless false. */
+  preventSleep?: boolean
+  notifications?: NotificationSettings
 }
 
 export interface WireSettingsSnapshot {
@@ -695,6 +698,10 @@ export type SettingsChange =
   | { scope: 'provider'; kind: 'set-coordination-days'; field: 'quietDays' | 'autoResolveDays'; value: number }
   | { scope: 'general'; kind: 'set-cache-ttl'; enabled: boolean }
   | { scope: 'general'; kind: 'set-thinking'; enabled: boolean }
+  | { scope: 'general'; kind: 'set-prevent-sleep'; enabled: boolean }
+  | { scope: 'general'; kind: 'set-turn-completion-notification'; value: TurnCompletionNotification }
+  | { scope: 'general'; kind: 'set-permission-notifications'; enabled: boolean }
+  | { scope: 'general'; kind: 'set-question-notifications'; enabled: boolean }
   | { scope: 'personalization'; kind: 'set-user-instructions'; content: string }
   | { scope: 'general'; kind: 'set-context-management'; field: WireContextManagementField; value: number }
   /**

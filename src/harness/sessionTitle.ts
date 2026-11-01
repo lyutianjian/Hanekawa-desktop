@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { ActiveModelRuntime } from './loop.js'
 import type { ModelRequest, TokenUsage } from './types.js'
 import { sessionTitleCacheSource } from './cacheBreakDetection.js'
+import { requestModel } from './requestUsage.js'
 
 /** Longest generated title, in characters. */
 export const GENERATED_TITLE_LENGTH = 36
@@ -31,6 +32,7 @@ export interface GeneratedSessionTitle {
  * Answers no title when the model gives nothing usable; throws on provider errors.
  */
 export async function generateSessionTitle(params: {
+  onUsage?(usage: TokenUsage, model: string): void
   runtime: Pick<ActiveModelRuntime, 'provider' | 'model' | 'promptCacheRetention'>
   text: string
   cwd?: string
@@ -54,9 +56,9 @@ export async function generateSessionTitle(params: {
       createdAt: new Date().toISOString(),
     }],
   }
-  const response = await runtime.provider.createMessage(request)
+  const { response, usage } = await requestModel(runtime.provider, request, params.onUsage)
   return {
-    ...(response.usage ? { usage: response.usage } : {}),
+    ...(response.usage ? { usage } : {}),
     title: cleanGeneratedTitle(response.content),
   }
 }

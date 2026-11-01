@@ -17,6 +17,8 @@ import {
   localSettingsPath,
   setCacheTtl1hForUser,
   setThinkingForUser,
+  setPreventSleepForUser,
+  setNotificationsForUser,
   setLocalPermissionEntries,
   setUserPermissionEntries,
   saveStartupPermissionMode,
@@ -29,6 +31,7 @@ import {
   type HanekawaSettings,
   type StartupPermissionMode,
 } from '../config/settings.js'
+import { TURN_COMPLETION_NOTIFICATIONS, type NotificationSettings } from '../config/notifications.js'
 import { DEFAULT_CONTEXT_MANAGEMENT, type ContextManagementConfig } from '../prompts/budget.js'
 import { coordinatedThreadSessionIds, deleteSessionArtifacts } from '../runtime/deleteSession.js'
 import type { ProviderConfigChangeScope } from '../runtime/providerRuntime.js'
@@ -399,6 +402,9 @@ export interface ShellHostDeps<
    * unfocused. Absent and silent alike in a shell without either.
    */
   onRequestAttention?: () => void
+  /** Applies the saved global preference to the process-owned power request. */
+  onPreventSleepChanged?: (enabled: boolean) => void
+  onNotificationsChanged?: (settings: NotificationSettings) => void
   /**
    * While quitting, `detachLane` skips project shutdown: teardown owns the
    * ordering then, and closing projects mid-loop would race its own sweep.
@@ -645,6 +651,18 @@ const SETTINGS_CHANGE_SCHEMAS = {
     .strict(),
   'set-thinking': z
     .object({ scope: z.literal('general'), kind: z.literal('set-thinking'), enabled: z.boolean() })
+    .strict(),
+  'set-prevent-sleep': z
+    .object({ scope: z.literal('general'), kind: z.literal('set-prevent-sleep'), enabled: z.boolean() })
+    .strict(),
+  'set-turn-completion-notification': z
+    .object({ scope: z.literal('general'), kind: z.literal('set-turn-completion-notification'), value: z.enum(TURN_COMPLETION_NOTIFICATIONS) })
+    .strict(),
+  'set-permission-notifications': z
+    .object({ scope: z.literal('general'), kind: z.literal('set-permission-notifications'), enabled: z.boolean() })
+    .strict(),
+  'set-question-notifications': z
+    .object({ scope: z.literal('general'), kind: z.literal('set-question-notifications'), enabled: z.boolean() })
     .strict(),
   'set-context-management': z
     .object({
@@ -1656,9 +1674,8 @@ export class ShellHost<
    * settings, skills and rules are not history.
    *
    * The lane teardown borrows `deleteSession`'s deferral (below): detaching the
-   * window's *last* lane fires `onAllLanesClosed`, which quits the app off
-   * darwin. "Remove this project" is not "I am done with this window", so the
-   * last-lane case defers the exit and lands on a fresh global workspace draft
+   * window's *last* lane fires the optional `onAllLanesClosed` hook. The
+   * last-lane case defers that tail and lands on a fresh global workspace draft
    * instead — the same answer `deleteSession` gives, and the reason `deferExit`
    * is a flag rather than a check on `reason`.
    */
@@ -1673,8 +1690,7 @@ export class ShellHost<
     const lanes = [...this.lanes.entries()]
       .filter(([, held]) => held.project === entry)
       .map(([lane]) => lane)
-    // True when this project holds every lane in the window: the exit has to be
-    // deferred and a replacement lane opened, or the app quits under the user.
+    // Defer the last-lane tail until its replacement draft has opened.
     const replacing = lanes.length > 0 && lanes.length === this.lanes.size
     for (const lane of lanes) this.detachLane(lane, 'project-removed', { deferExit: replacing })
     // Awaited whether the exit was deferred or not: `deferExit` skips
@@ -1761,9 +1777,8 @@ export class ShellHost<
    * is also the only signal that would work for a closed session.
    *
    * The fifth step is conditional: deleting the session behind the window's
-   * *only* lane used to run `onAllLanesClosed`, which quits the app off darwin —
-   * "clean up this history" and "I am done with this window" were the same event
-   * in `detachLane`. So that one case defers the tail and opens a draft instead:
+   * *only* lane runs the optional `onAllLanesClosed` tail. That case defers the
+   * tail and opens a draft instead:
    * an empty window is far closer to what was asked for, and a fresh draft is
    * what "new session" has always meant here. The draft is created **after**
    * `deleteSessionArtifacts`, so the sweep only ever faces the id being deleted.
@@ -1955,6 +1970,10 @@ export class ShellHost<
     for (const target of affected) await target.project.reloadSettings()
     if (effect.reloadSkills) for (const target of affected) await target.project.reloadSkills()
     if (effect.afterReload) await effect.afterReload()
+    if (change.kind === 'set-prevent-sleep') this.deps.onPreventSleepChanged?.(change.enabled)
+    if (change.kind === 'set-turn-completion-notification' || change.kind === 'set-permission-notifications' || change.kind === 'set-question-notifications') {
+      this.deps.onNotificationsChanged?.(entry.project.getSettings().notifications ?? {})
+    }
 
     let rebuiltLanes = 0
     if (effect.rebuild) {
@@ -2237,6 +2256,8 @@ export class ShellHost<
         settingsPath: path.join(getGlobalHanekawaDir(), 'settings.json'),
         ...(merged.cache?.ttl1h !== undefined ? { cacheTtl1h: merged.cache.ttl1h } : {}),
         ...(merged.thinking !== undefined ? { thinking: merged.thinking } : {}),
+        ...(merged.preventSleep !== undefined ? { preventSleep: merged.preventSleep } : {}),
+        ...(merged.notifications !== undefined ? { notifications: merged.notifications } : {}),
       },
     }
     if (raw.defaultModel !== undefined) snapshot.defaultModel = raw.defaultModel
@@ -2689,6 +2710,18 @@ async function applySettingsEffect<P extends ShellLaneProject, W extends ShellLa
       // Same reason as the cache TTL: the loop is handed its thinking config
       // when the runtime is built, so only a rebuild reaches an open session.
       return { saveConfig: false, rebuild: true, scope: 'models', allProjects: true }
+    case 'set-prevent-sleep':
+      await setPreventSleepForUser(change.enabled)
+      return { saveConfig: false, rebuild: false, scope: 'models', allProjects: true }
+    case 'set-turn-completion-notification':
+      await setNotificationsForUser({ turnCompletion: change.value })
+      return { saveConfig: false, rebuild: false, scope: 'models', allProjects: true }
+    case 'set-permission-notifications':
+      await setNotificationsForUser({ permissions: change.enabled })
+      return { saveConfig: false, rebuild: false, scope: 'models', allProjects: true }
+    case 'set-question-notifications':
+      await setNotificationsForUser({ questions: change.enabled })
+      return { saveConfig: false, rebuild: false, scope: 'models', allProjects: true }
     case 'set-context-management':
       entry.project.config.setContextManagement({ [change.field]: change.value })
       // No rebuild, because a rebuild would not help: the numbers are snapshotted

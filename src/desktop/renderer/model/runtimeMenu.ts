@@ -6,9 +6,7 @@ import type { WireModelsResult, WireRuntimeSnapshot } from '../../../runtime/pro
 /**
  * The composer chip's own menu: model and effort as **one** control.
  *
- * They used to be two buttons opening two full-width `#surface` cards. The chip
- * is now a single status label, and this is what it opens: two rows naming the
- * field and its current value, each with a flyout of the levels it can take.
+ * The chip opens an effort slider and a second page of model choices.
  * The `#surface` pickers stay exactly as they were — `/model` and `/effort`
  * still open them, and this menu must not become a second answer to what the
  * options *are*.
@@ -30,7 +28,7 @@ export interface RuntimeMenuEntry {
   readonly label: string
   /** Its current value, the same text the chip itself shows. */
   readonly value: string
-  /** The flyout's heading; the picker's own title, so the two cannot drift. */
+  /** The picker's own title, so the two entry points cannot drift. */
   readonly title: string
   readonly rows: readonly SurfaceRow[]
 }

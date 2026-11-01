@@ -1,4 +1,5 @@
 import type { CommandDefinition, CommandUsage } from './types.js'
+import { cacheHitRate } from '../harness/usage.js'
 
 export const costCommand: CommandDefinition = {
   name: 'cost',
@@ -31,7 +32,7 @@ export const costCommand: CommandDefinition = {
         sections.push({
           title: 'Prompt cache',
           rows: [
-            { label: 'Cache hit rate', value: formatPercent(summary.totalCacheHitRate) },
+            { label: 'Cache hit rate', value: formatPercent(cacheHitRate(usage)) },
             { label: 'Total turns', value: summary.totalTurns.toLocaleString() },
             { label: 'First break turn', value: formatNullableInteger(summary.firstBreakTurnCount) },
             { label: 'Cache breaks', value: summary.cacheBreakCount.toLocaleString() },
@@ -60,7 +61,7 @@ export const costCommand: CommandDefinition = {
       lines.push(
         '',
         'Session cache:',
-        `  Cache hit rate:        ${formatPercent(summary.totalCacheHitRate)}`,
+        `  Cache hit rate:        ${formatPercent(cacheHitRate(usage))}`,
         `  Total turns:           ${summary.totalTurns.toLocaleString()}`,
         `  First break turn:      ${formatNullableInteger(summary.firstBreakTurnCount)}`,
         `  Cache breaks:          ${summary.cacheBreakCount.toLocaleString()}`,
@@ -74,12 +75,15 @@ export const costCommand: CommandDefinition = {
 /** `USD 0.31 + CNY 2.1 (excludes earlier requests)`, or undefined when nothing was priced. */
 function describeCost(usage: CommandUsage): string | undefined {
   const amounts = Object.entries(usage.cost?.amounts ?? {})
-  if (amounts.length === 0) return undefined
   const notes = [
     ...(usage.cost?.unpriced ? ['some requests unpriced'] : []),
     ...(usage.cost?.legacy ? ['excludes earlier requests'] : []),
+    ...(usage.cost?.incomplete ? ['usage and cost may be incomplete'] : []),
   ]
-  const total = amounts.map(([currency, amount]) => `${currency} ${formatCost(amount)}`).join(' + ')
+  if (amounts.length === 0 && notes.length === 0) return undefined
+  const total = amounts.length > 0
+    ? amounts.map(([currency, amount]) => `${currency} ${formatCost(amount)}`).join(' + ')
+    : 'unavailable (missing pricing)'
   return notes.length > 0 ? `${total} (${notes.join('; ')})` : total
 }
 

@@ -26,7 +26,8 @@ import { applyProgressiveCompaction } from './progressiveCompact.js'
 import { summarizeToolUse } from './toolUseSummary.js'
 import { agentCacheSource, compactCacheSource, formatCacheHitRate, notifyCompaction, resetCacheBreakDetection, type CacheBreakSource } from './cacheBreakDetection.js'
 import { logDiagnostics, type RuntimeDiagnostic } from './diagnostics.js'
-import { toMetricUsage, type SessionMetricInput } from './metrics.js'
+import { toMetricUsage, type RequestUsage, type RequestUsageSource, type SessionMetricInput } from './metrics.js'
+import { requestModel } from './requestUsage.js'
 import type { RecordStream } from './recordStream.js'
 import { MemoryRecordStream } from './recordStream.js'
 import type { ImageAttachmentRef, UserInput } from '../media/types.js'
@@ -273,6 +274,7 @@ export interface AgentLoopOptions {
    * readout's `onRequestUsage` figure must never move for it.
    */
   onAuxUsage?(usage: TokenUsage): void
+  onUsage?(event: RequestUsage): void
   /** User-role messages appended verbatim at the start of each step; `midTurn` is false on a turn's first step. */
   consumePendingUserMessages?(midTurn: boolean): string[]
   /** The user's mid-turn messages, recorded into the running turn at each step. */
@@ -494,8 +496,10 @@ export class AgentLoop {
       this.pendingSubagentTranscriptUsage = addTokenUsage(this.pendingSubagentTranscriptUsage, record.usage)
       // Counted the moment the transcript lands: a background agent finishes
       // between turns, where the run's own accounting will never see it.
-      this.reportAuxUsage(record.usage)
-      void this.emitMetric({ event: 'subagent_usage', model: record.model ?? '', usage: toMetricUsage(record.usage) })
+      if (!record.usageReported) {
+        this.reportAuxUsage(record.usage)
+        void this.emitMetric({ event: 'subagent_usage', model: record.model ?? '', usage: toMetricUsage(record.usage) })
+      }
     }
     if (record.type === 'tool_use' || record.type === 'tool_result') {
       this.recordsCacheHasCleanToolProtocol = false
@@ -555,6 +559,7 @@ export class AgentLoop {
   async summarizeRecordsForRewind(records: SessionRecord[], signal?: AbortSignal): Promise<{ summary: string; usage?: TokenUsage; preTokens: number }> {
     return this.enqueue(async () => {
       const result = await summarizeRecordsForContinuation({
+        onUsage: (usage, model) => this.recordRequestUsage('rewind_summary', usage, model),
         records,
         signal,
         provider: this.activeModel.provider,
@@ -567,15 +572,6 @@ export class AgentLoop {
         cwd: this.dataRoot(),
         ...(this.options.compactPromptVariant ? { compactPromptVariant: this.options.compactPromptVariant } : {}),
       })
-      this.reportAuxUsage(result.usage)
-      if (hasTokenSpend(result.usage)) {
-        void this.emitMetric({
-          event: 'aux_usage',
-          model: this.activeModel.model,
-          source: 'rewind_summary',
-          usage: toMetricUsage(result.usage),
-        })
-      }
       return {
         summary: result.content,
         usage: result.usage,
@@ -1060,7 +1056,10 @@ export class AgentLoop {
       let response
       const modelStartedAt = Date.now()
       try {
-        response = await this.activeModel.provider.createMessage(modelRequest)
+        response = (await requestModel(this.activeModel.provider, modelRequest, (spend, model) => {
+          usage = addTokenUsage(usage, spend)
+          this.recordRequestUsage('foreground', spend, model, records.at(-1)?.id)
+        })).response
         pendingAssistantStreamContent = ''
       } catch (error) {
         if (error instanceof FallbackTriggeredError) {
@@ -1081,15 +1080,7 @@ export class AgentLoop {
         throw error
       }
 
-      usage = addTokenUsage(usage, response.usage)
       lastForegroundResponseUsage = response.usage
-      // Per request, not per turn: this is the only point where the provider's
-      // own count for the context just sent is known, and a multi-step turn
-      // passes through it once per step.
-      // The anchor is the last record this request carried, so a reader can add
-      // the estimate for everything appended after it to the provider's own
-      // count and get a context readout that keeps up mid-turn.
-      if (response.usage) this.options.onRequestUsage?.(response.usage, records.at(-1)?.id)
       await this.emitTurnMetric(modelStartedAt, response.usage ?? EMPTY_TOKEN_USAGE, response.toolCalls.length)
       const assistantMessage: ChatMessage & { type: 'message' } = {
         type: 'message',
@@ -1817,6 +1808,7 @@ export class AgentLoop {
       turnId,
       status: 'pending',
       promise: summarizeToolUse({
+        onUsage: (usage, model) => this.recordRequestUsage('tool_summary', usage, model),
         provider: runtime.provider,
         model: runtime.model,
         promptCacheRetention: runtime.promptCacheRetention,
@@ -1830,19 +1822,9 @@ export class AgentLoop {
         ...summary.record,
         turnId,
       }
-      // The summary request is spend of its own. A session loop reports it to
-      // the controller as it lands; a subagent loop has no such listener, so it
-      // rides on the run's usage and reaches the parent with its transcript.
+      // Runs without an auxiliary listener also retain spend in their result.
       if (hasTokenSpend(summary.usage)) {
-        if (this.options.onAuxUsage) {
-          this.reportAuxUsage(summary.usage)
-          void this.emitMetric({
-            event: 'aux_usage',
-            model: runtime.model,
-            source: 'tool_summary',
-            usage: toMetricUsage(summary.usage),
-          })
-        } else {
+        if (!this.options.onAuxUsage) {
           this.pendingSideUsage = addTokenUsage(this.pendingSideUsage, summary.usage)
         }
       }
@@ -2103,6 +2085,7 @@ export class AgentLoop {
       provider: this.activeModel.provider,
       model: this.activeModel.model,
       compactRuntime: this.options.compactModel,
+      onUsage: (usage, model) => this.recordRequestUsage('compact', usage, model),
       tools: this.currentTools,
       system: this.options.system,
       contextManagement: this.activeContextManagement,
@@ -2118,8 +2101,8 @@ export class AgentLoop {
       setCompactFailureCount: this.options.setCompactFailureCount,
       ...(this.compactSharesPrefix()
         ? {
-            summarizeWithSharedPrefix: (prompt: string) =>
-              this.summarizeWithSharedPrefix(records, prompt, turnId, userMessageId, signal),
+            summarizeWithSharedPrefix: (prompt: string, onUsage: CompactCheckInput['onUsage']) =>
+              this.summarizeWithSharedPrefix(records, prompt, turnId, userMessageId, signal, onUsage),
           }
         : {}),
       ...(signal ? { signal } : {}),
@@ -2137,9 +2120,6 @@ export class AgentLoop {
     if (result.compacted) {
       notifyCompaction(cacheSource)
       this.options.contextBuilder.clearCachedSections()
-      // The summary request was real spend whether or not the turn goes on to
-      // finish; the metric beside it is what a reopened session reads back.
-      this.reportAuxUsage(result.usage)
       if (result.metrics) {
         await this.emitMetric({
           event: 'compact',
@@ -2147,7 +2127,6 @@ export class AgentLoop {
           pre_tokens: result.metrics.preTokens,
           post_tokens: result.metrics.postTokens,
           compact_duration_ms: result.metrics.compactDurationMs,
-          usage: toMetricUsage(result.usage),
         })
       }
     }
@@ -2172,6 +2151,7 @@ export class AgentLoop {
     turnId: string,
     userMessageId: string,
     signal: AbortSignal | undefined,
+    onUsage: CompactCheckInput['onUsage'],
   ): Promise<ModelResponse> {
     const built = await this.buildModelRequest(
       records,
@@ -2191,12 +2171,13 @@ export class AgentLoop {
       createdAt: new Date().toISOString(),
       transient: true,
     }
-    return this.activeModel.provider.createMessage({
+    const { response, usage } = await requestModel(this.activeModel.provider, {
       ...base,
       messages: [...base.messages, message],
       contextItems: [...(base.contextItems ?? []), { kind: 'message', message }],
       retry: { callerKind: 'interactive', signal },
-    })
+    }, onUsage)
+    return { ...response, usage }
   }
 
   /**
@@ -2329,6 +2310,17 @@ export class AgentLoop {
     this.options.onAuxUsage?.(usage)
   }
 
+  private recordRequestUsage(source: RequestUsageSource, usage: TokenUsage, model: string, anchorRecordId?: string): void {
+    if (!hasTokenSpend(usage)) return
+    void this.emitMetric({ event: 'request_usage', source, model, usage: toMetricUsage(usage) })
+    this.options.onUsage?.({ source, usage, model })
+    if (source === 'foreground' && promptTokens(usage) + usage.outputTokens > 0) {
+      this.options.onRequestUsage?.(usage, anchorRecordId)
+    } else {
+      this.reportAuxUsage(usage)
+    }
+  }
+
   private drainSideUsage(): TokenUsage {
     const usage = this.pendingSideUsage
     this.pendingSideUsage = { ...EMPTY_TOKEN_USAGE }
@@ -2385,6 +2377,7 @@ export class AgentLoop {
   private async emitTurnMetric(startedAt: number, usage: TokenUsage, toolCalls: number): Promise<void> {
     await this.emitMetric({
       event: 'turn',
+      usageRecorded: true,
       model: this.activeModel.model,
       input_tokens: usage.inputTokens,
       // Written only when the provider reported it, so the sidecar keeps the

@@ -30,6 +30,12 @@ export const EFFORT_LABELS: Record<EffortLevel, string> = {
 }
 
 export interface ComposerChipView {
+  /**
+   * What the pill itself reads: the decision it opens, not the state it is in.
+   * The model and the level live in the menu and in `title`, which is why this
+   * is a constant except in the one state that has nothing to choose yet.
+   */
+  readonly label: string
   /** The model's display name, or a placeholder before the first snapshot. */
   readonly model: string
   readonly modelTitle: string
@@ -46,6 +52,13 @@ export interface ComposerChipView {
 
 const PLACEHOLDER = '…'
 
+/**
+ * The pill's own wording. 「思考强度」, not the reference's 「推理强度」: the
+ * renderer settled that term when the composer and the settings page disagreed
+ * (`test/rendererWording.test.ts`), and the popover above this pill says it too.
+ */
+const PROMPT_LABEL = '选择思考强度'
+
 function isEffortLevel(value: string): value is EffortLevel {
   return (VALID_EFFORT_LEVELS as readonly string[]).includes(value)
 }
@@ -55,6 +68,7 @@ export function composerChipView(
 ): ComposerChipView {
   if (!runtime) {
     return {
+      label: PROMPT_LABEL,
       model: PLACEHOLDER,
       modelTitle: '正在连接会话…',
       effort: PLACEHOLDER,
@@ -68,6 +82,7 @@ export function composerChipView(
   if (runtime.status === 'needs_configuration') {
     const title = `${runtime.configurationIssue.message} 点击配置模型与服务商。`
     return {
+      label: '配置模型',
       model: '配置模型',
       modelTitle: title,
       effort: '—',
@@ -100,6 +115,7 @@ export function composerChipView(
   const effortTitle = `思考强度：${level ? EFFORT_LABELS[level] : runtime.effort}${ceilingNote} · 点击切换`
 
   return {
+    label: PROMPT_LABEL,
     model: runtime.modelKey,
     modelTitle,
     effort: level ? EFFORT_LABELS[level] : runtime.effort,

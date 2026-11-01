@@ -12,7 +12,7 @@
  * uses after `npm run build:desktop` — the Electron binary starts from the
  * repo root and `sharp` resolves out of `node_modules`, native binaries
  * included. `sharp` 0.35 ships N-API binaries, so the ABI matches both
- * Node 22 and Electron 43 without an electron-rebuild.
+ * Node 24 and Electron 45 without an electron-rebuild.
  */
 import { app } from 'electron'
 import path from 'node:path'

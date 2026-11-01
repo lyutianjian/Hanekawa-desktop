@@ -346,7 +346,7 @@ test('SessionStore appendRecord updates metadata without rereading JSONL history
       if (String(filePath) === jsonlPath) {
         throw new Error('appendRecord should not reread JSONL history')
       }
-      return originalReadFileSync(filePath, ...(args as [BufferEncoding | undefined]))
+      return Reflect.apply(originalReadFileSync, fs, [filePath, ...args])
     }) as typeof fs.readFileSync
     syncBuiltinESMExports()
 

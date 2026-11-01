@@ -11,7 +11,8 @@ import { createSuggestionsView } from '../src/desktop/renderer/dom/suggestionsVi
 import { createSurfacePanel } from '../src/desktop/renderer/dom/surfaceView.js'
 import type { CompletionState } from '../src/desktop/renderer/model/completion.js'
 import type { OverlayAction } from '../src/desktop/renderer/model/dialogActions.js'
-import { beginRewindRun, createRewindState, rewindViewModel } from '../src/desktop/renderer/model/rewindPanel.js'
+import { applyRewindIntent, beginRewindRun, createRewindState, rewindViewModel } from '../src/desktop/renderer/model/rewindPanel.js'
+import type { RewindIntent } from '../src/desktop/renderer/model/rewindPanel.js'
 
 /**
  * The three modal views: the blocking dialog, the rewind panel and the completion
@@ -63,7 +64,7 @@ test('the button bar carries the keys, and the focused slot is marked', (t) => {
 
 // --- the rewind panel --------------------------------------------------------
 
-test('the rewind panel ends with the same bar, and its decisions are its buttons', (t) => {
+test('the empty rewind panel offers a close action', (t) => {
   const stub = installDomStub()
   t.after(() => stub.uninstall())
   const container = stub.createContainer('rewind')
@@ -83,14 +84,75 @@ test('the rewind panel ends with the same bar, and its decisions are its buttons
   assert.equal(bar()[0]!.text, '关闭Esc')
   stub.click(bar()[0]!.node)
   assert.deepEqual(intents, [{ kind: 'close' }])
+})
 
-  // The confirm screen: no option rows at all, because a decision is an action.
-  const confirming = rewindViewModel({ ...state, screen: 'confirm' })
-  view.render(confirming)
-  assert.equal(
-    stub.inspect(panel).children.some((child) => child.classes.includes('options')),
-    false,
-  )
+test('rewind range changes only update the preview, keep focus, and confirm the chosen operation', (t) => {
+  const stub = installDomStub()
+  t.after(() => stub.uninstall())
+  const container = stub.createContainer('rewind')
+  const panel = stub.createContainer('rewind-panel')
+  const diff = { fileCount: 2, additions: 12, deletions: 3, hasChanges: true, firstFile: 'src/parser.ts' }
+  let state = { ...createRewindState([{
+    messageId: 'm1', messageContent: 'fix the parser', timestamp: '2026-05-19T10:00:00.000Z',
+    turnDiff: diff, restoreDiff: diff, isCurrent: false,
+  }]), screen: 'confirm' as const, checkpointIndex: 0 }
+  const intents: RewindIntent[] = []
+  const view = createRewindView(container, panel, (intent) => {
+    intents.push(intent)
+    state = { ...state, ...applyRewindIntent(state, intent).state, screen: 'confirm' }
+    view.render(rewindViewModel(state))
+  })
+  view.render(rewindViewModel(state))
+  const trigger = () => panel.querySelector<HTMLButtonElement>('#rewind-range')!
+  const shell = () => panel.querySelector<HTMLElement>('.rewind-range')!
+  const actions = () => panel.querySelector('.dialog-actions')!.querySelectorAll('button')
+  assert.equal(panel.querySelector('select'), null, 'the OS menu is not used')
+  assert.equal(trigger().textContent, '恢复代码与对话')
+  assert.equal(actions().length, 2)
+  assert.equal(panel.querySelector('.code-added')?.textContent, '+12')
+  stub.click(trigger())
+  assert.equal(trigger().getAttribute('aria-expanded'), 'true')
+  const options = panel.querySelectorAll('.settings-menu-item')
+  assert.equal(options.length, 5)
+  assert.equal(options[0]?.getAttribute('aria-selected'), 'true')
+  stub.click(options[3]!)
+  assert.deepEqual(intents, [{ kind: 'focus-option', decision: 'summarize-from-here' }])
+  assert.equal(stub.activeElement(), trigger())
+  assert.equal(trigger().getAttribute('aria-expanded'), 'false')
+  assert.equal(panel.querySelector('.code-added'), null)
+  assert.equal(panel.querySelector('.warning'), null)
+  assert.equal(panel.querySelector('.code-count')?.textContent, '代码不会改动。')
+  assert.equal(actions()[1]!.textContent, '确认摘要')
+  stub.click(actions()[1]!)
+  assert.deepEqual(intents.at(-1), { kind: 'choose', decision: 'summarize-from-here' })
+  stub.dispatch(shell(), 'keydown', { key: '3' })
+  assert.deepEqual(intents.at(-1), { kind: 'focus-option', decision: 'restore-code' })
+  assert.equal(trigger().textContent, '仅恢复代码')
+
+  const down = stub.dispatch(shell(), 'keydown', { key: 'ArrowDown', target: trigger() })
+  assert.equal(down.defaultPrevented, true)
+  assert.equal(trigger().getAttribute('aria-expanded'), 'true')
+  stub.dispatch(shell(), 'focusout', { relatedTarget: null })
+  assert.equal(trigger().getAttribute('aria-expanded'), 'true', 'a repaint is not an outside focus move')
+  const escape = stub.dispatch(shell(), 'keydown', { key: 'Escape' })
+  assert.equal(escape.propagationStopped, true, 'Escape closes just the open menu')
+  assert.equal(trigger().getAttribute('aria-expanded'), 'false')
+  assert.equal(stub.activeElement(), trigger())
+  stub.click(trigger())
+  stub.dispatchDocument('pointerdown', { target: actions()[0]! })
+  assert.equal(trigger().getAttribute('aria-expanded'), 'false', 'pressing outside closes the menu')
+  stub.click(trigger())
+  stub.dispatch(shell(), 'focusout', { relatedTarget: actions()[0]! })
+  assert.equal(trigger().getAttribute('aria-expanded'), 'false', 'leaving the field closes its menu')
+
+  const cancel = actions()[0]!
+  const key = (target: HTMLElement, value: string) => stub.dispatch(container, 'keydown', { target, key: value })
+  assert.equal(key(cancel, 'Enter').propagationStopped, true)
+  assert.equal(key(panel, 'Tab').propagationStopped, true)
+  stub.click(cancel)
+  assert.deepEqual(intents.at(-1), { kind: 'close' })
+  view.hide()
+
 })
 
 test('the rewind panel takes focus on open, keeps it across repaints and hands it back', (t) => {
@@ -147,9 +209,10 @@ test('the rewind panel takes focus on open, keeps it across repaints and hands i
   assert.equal(moved.attributes.get('aria-activedescendant'), movedCursor?.attributes.get('id'))
   assert.equal(stub.activeElement(), moved.node)
 
-  // The confirm screen has no list: focus falls back to the panel itself.
-  view.render(rewindViewModel({ ...state, screen: 'confirm' }))
-  assert.equal(stub.activeElement(), panel)
+  // The confirm screen starts at its range trigger.
+  view.render(rewindViewModel({ ...state, checkpointIndex: 0, screen: 'confirm' }))
+  const range = panel.querySelector('#rewind-range')
+  assert.equal(stub.activeElement(), range)
 
   // Closing hands focus back to where it was before the panel opened.
   view.hide()

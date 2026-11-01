@@ -39,8 +39,8 @@
  *     shut every project down — but only up to `SHUTDOWN_DEADLINE_MS`. The
  *     window is destroyed in the first half of `teardown()`, so a project that
  *     never finishes draining used to leave a running process with nothing on
- *     screen. `window-all-closed` quits only when there are no panes left, and
- *     its `app.quit()` goes through the same gate: every quit request is
+ *     screen. Ordinary close on macOS/Windows hides the live window; explicit
+ *     quit goes through the same gate: every quit request is
  *     cancelled until `teardown()` has settled, and only the single release
  *     afterwards is allowed through (`quitCoordinator.ts`).
  *
@@ -59,10 +59,14 @@ import {
   dialog,
   ipcMain,
   Menu,
+  nativeImage,
   nativeTheme,
   Notification,
+  powerMonitor,
+  powerSaveBlocker,
   screen,
   shell as electronShell,
+  Tray,
   type MessageBoxOptions,
   type OpenDialogOptions,
 } from 'electron'
@@ -81,7 +85,7 @@ import {
   SHUTDOWN_DEADLINE_MS,
   type ProjectEntry,
 } from '../runtime/projectDirectory.js'
-import { isGlobalWorkspaceRoot, userHome } from '../utils/paths.js'
+import { getGlobalHanekawaDir, isGlobalWorkspaceRoot, userHome } from '../utils/paths.js'
 import {
   recordProjectOpen,
   resolveStartupRoot,
@@ -97,8 +101,15 @@ import { createLaneMux } from '../runtime/protocol/laneChannel.js'
 import type { RuntimeHost } from '../runtime/types.js'
 import { ShellHost } from './shellHost.js'
 import { QuitCoordinator } from './quitCoordinator.js'
+import { PowerSaveController } from './powerSave.js'
+import { loadUserSettings } from '../config/settings.js'
+import { DesktopTray } from './tray.js'
+import { closeWindowAction, focusBackgroundWindow, shouldQuitAfterWindowsClosed } from './backgroundWindow.js'
+import { InteractionAttention } from './interactionAttention.js'
+import { SystemNotifications } from './systemNotifications.js'
+import { interactionNotificationEnabled } from '../config/notifications.js'
 import { explicitCwd, secondLaunchIntent } from './launchArgs.js'
-import { legacyUserDataPath, migrateLegacyUserData } from './userDataMigration.js'
+import { fixUserDataPaths, legacyUserDataPath, migrateLegacyUserData } from './userDataMigration.js'
 import { migrateLegacyGlobalData } from '../utils/legacyDataMigration.js'
 import {
   RendererRecovery,
@@ -111,6 +122,8 @@ import { restoreGuiPath } from './guiPath.js'
 import { BrowserTabHost } from './browser/tabs.js'
 import { DesktopBrowserHost } from './browser/host.js'
 import { createBrowserTool } from '../tools/BrowserTool/BrowserTool.js'
+import { DesktopComputerHost } from './computer/host.js'
+import { createComputerTool } from '../tools/ComputerTool/ComputerTool.js'
 import { createCoordinationTools } from '../tools/coordinationTools.js'
 import { CoordinationService } from '../runtime/coordination/service.js'
 import { CoordinationWakeEngine } from '../runtime/coordination/wakeEngine.js'
@@ -210,6 +223,9 @@ const mainIpc: MainSideIpc = ipcMain
  */
 const APP_DISPLAY_NAME = 'Hanekawa'
 
+// Product display names must not change the lock, preferences or Chromium storage root.
+fixUserDataPaths(app)
+
 /**
  * The last window's placement and theme, loaded once at ready and kept current
  * while a window is up — see `windowState.ts` for why the theme lives here too.
@@ -224,7 +240,17 @@ interface Shell {
 }
 
 /** Every open project. All decisions that used to be module-level variables live here. */
-const directory = new ProjectDirectory()
+const powerSave = new PowerSaveController(powerSaveBlocker, (message, error) => {
+  if (error) console.error(`[hanekawa] ${message}`, error)
+  else console.info(`[hanekawa] ${message}`)
+})
+const directory = new ProjectDirectory({
+  onAdded: (entry) => {
+    const tasks = entry.project.backgroundTasks
+    powerSave.watch(entry, { isActive: () => tasks.hasRunningWork(), subscribe: tasks.subscribe })
+  },
+  onClosed: (entry) => powerSave.unwatch(entry),
+})
 /**
  * The browser's tabs, for every lane.
  *
@@ -237,6 +263,11 @@ const directory = new ProjectDirectory()
 const browserTabs = new BrowserTabHost()
 /** The single window's shell, once the first project has opened it. */
 let shell: Shell | undefined
+let creatingShell: Promise<Shell> | undefined
+let systemEnding = false
+let nativeInteractions = 0
+const isExiting = (): boolean => systemEnding || quit.isQuitting()
+const canAcceptAction = (): boolean => !isExiting() && !rendererRecovery.isRecovering()
 /**
  * The quit gate: every `before-quit` is cancelled while `teardown()` runs, and
  * exactly one `app.quit()` is released afterwards. See `quitCoordinator.ts`.
@@ -257,7 +288,7 @@ const quit = new QuitCoordinator({
  * `before-quit` the teardown owns the window.
  */
 const rendererRecovery = new RendererRecovery({
-  isQuitting: () => quit.isQuitting(),
+  isQuitting: () => isExiting(),
   confirm: (details) => confirmRendererGone(details),
   captureLanes: () => captureRestorableLanes(),
   rebuild: (lanes) => rebuildWindowAfterCrash(lanes),
@@ -294,6 +325,11 @@ const browserHost = new DesktopBrowserHost({
   laneForSession: (sessionId) => shell?.host.laneForSessionId(sessionId),
 })
 const browserTool = createBrowserTool(browserHost)
+const computerHost = new DesktopComputerHost({
+  nativeDir: join(bundleDir, 'computer', 'native'),
+  stateDir: join(getGlobalHanekawaDir(), 'computer'),
+})
+const computerTool = createComputerTool(computerHost)
 
 /**
  * The global config, as the coordination path reads it.
@@ -328,7 +364,8 @@ const coordinationEngine = new CoordinationWakeEngine({
   storeFor: (cwd) => coordination.coordinationStore(cwd),
   laneControl: (sessionId) => shell?.host.laneControlFor(sessionId),
   openLane: (cwd, sessionId, options) => openCoordinationLane(cwd, sessionId, options.activate),
-  notify: (notice) => notifyCoordination(notice),
+  // Approval notices join the same preference-aware path as ordinary sessions.
+  notify: () => interactionAttention.refresh(),
   // Lazy: the service is built after the engine.
   reseedCoordinator: (cwd, sessionId) => coordination.reseedCoordinator(cwd, sessionId),
   onError: (error) => {
@@ -356,8 +393,36 @@ const coordination = new CoordinationService(
   coordinationEngine,
 )
 const coordinationTools = createCoordinationTools(coordination)
-/** Shown notifications, held until clicked or closed so a click is never collected away. */
-const liveNotifications = new Set<Notification>()
+const systemNotifications = new SystemNotifications({
+  focused: () => mainWindowFocused(),
+  supported: () => !isExiting() && Notification.isSupported(),
+  create: (options) => new Notification(options),
+  attention: () => {
+    const window = liveWindow()
+    if (!window || isExiting()) return
+    if (process.platform === 'darwin') app.dock?.bounce('informational')
+    else window.flashFrame(true)
+  },
+  error: (error) => console.error('[hanekawa] 系统通知失败：', error),
+})
+const interactionAttention = new InteractionAttention({
+  unfocused: () => !isExiting() && liveWindow() !== undefined && !mainWindowFocused(),
+  enabled: (kind) => interactionNotificationEnabled(systemNotifications.preferences(), kind),
+  show: showMainWindow,
+  notify: (kinds, title, click, closed) => systemNotifications.interaction(kinds, title, click, closed),
+  schedule: (callback) => { setImmediate(callback) },
+})
+const tray = new DesktopTray({
+  loadImage: (path) => nativeImage.createFromPath(path),
+  create: (image) => new Tray(image),
+  setMenu: (item, template) => item.setContextMenu(Menu.buildFromTemplate(template)),
+}, {
+  available: canAcceptAction,
+  show: () => showMainWindow(),
+  run: runMenuAction,
+  quit: () => app.quit(),
+  error: (error) => console.error('[hanekawa] 托盘不可用：', error),
+})
 /** Old-data moves that could not finish; the first window tells the user. */
 const startupWarnings: string[] = []
 
@@ -374,6 +439,7 @@ if (!app.requestSingleInstanceLock()) {
   }
 
   app.on('second-instance', (_event, argv) => {
+    if (!canAcceptAction()) return
     // Only `--cwd=` is intent — `launchArgs.ts` explains why the event's own
     // working directory is not, and is where the decision is tested. With a
     // window, a plain second launch is "come to the front"; without one it is
@@ -395,12 +461,13 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin' && !rendererRecovery.isRecovering()) {
+    if (shouldQuitAfterWindowsClosed(process.platform, rendererRecovery.isRecovering())) {
       app.quit()
     }
   })
 
   app.on('before-quit', (event) => {
+    if (systemEnding) return
     // Electron will not wait for an async handler, so every request is
     // cancelled until the drain settles; the gate then lets the single
     // `app.quit()` it issues afterwards through. This also covers
@@ -409,10 +476,13 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) reopenWindow()
+    showMainWindow()
   })
 
   void app.whenReady().then(async () => {
+    powerMonitor.on('resume', resumePowerSave)
+    if (process.platform === 'darwin') powerMonitor.on('shutdown', handleSystemEnd)
+    tray.create(process.platform, join(bundleDir, 'assets', 'tray.png'))
     const legacyData = migrateLegacyGlobalData(userHome())
     startupWarnings.push(...legacyData.warnings)
     if (startupWarnings.length > 0) {
@@ -448,6 +518,9 @@ if (!app.requestSingleInstanceLock()) {
     // overlay and every dialog open in is the one the renderer last reported.
     windowState = await loadWindowState(windowStateFile())
     nativeTheme.themeSource = windowState.themePreference
+    const userSettings = await loadUserSettings()
+    powerSave.setEnabled(userSettings.preventSleep !== false)
+    systemNotifications.setPreferences(userSettings.notifications ?? {})
     try {
       await migrateCoordinationOnce()
       await openProject(await resolveStartupProject())
@@ -481,6 +554,7 @@ if (!app.requestSingleInstanceLock()) {
 let reopening: Promise<void> | undefined
 
 function reopenWindow(): void {
+  if (!canAcceptAction()) return
   if (reopening !== undefined) {
     void reopening.then(() => {
       const window = liveWindow()
@@ -514,6 +588,7 @@ async function reopenWindowOnce(): Promise<void> {
     }
     await ensureVisibleLane(built)
   } catch (error) {
+    if (isExiting()) return
     dialog.showErrorBox(
       '无法打开窗口',
       error instanceof Error ? (error.stack ?? error.message) : String(error),
@@ -547,6 +622,8 @@ function liveWindow(): BrowserWindow | undefined {
  * sheet attached to it would be the one dialog nobody can see.
  */
 async function confirmRendererGone(details: RendererGoneDetails): Promise<boolean> {
+  const window = liveWindow()
+  if (window) focusWindow(window)
   const { response } = await dialog.showMessageBox({
     type: 'error',
     title: '窗口已停止运行',
@@ -651,10 +728,13 @@ async function waitForShellToGo(): Promise<void> {
  * one still work; the rest have nothing to act on.
  */
 function runMenuAction(action: WireMenuAction): void {
-  const built = shell
-  if (built && !built.window.isDestroyed()) {
-    focusWindow(built.window)
-    built.host.postMenuAction(action)
+  if (!canAcceptAction()) return
+  if (liveWindow() || creatingShell) {
+    void ensureShell().then((built) => {
+      if (!canAcceptAction()) return
+      focusWindow(built.window)
+      built.host.postMenuAction(action)
+    }).catch((error) => console.error('[hanekawa] 菜单动作失败：', error))
     return
   }
   if (action === 'new-session') reopenWindow()
@@ -687,6 +767,7 @@ async function ensureProject(
   cwd: string,
   options: { sessionId?: string } = {},
 ): Promise<{ entry: ProjectEntry; session: SessionMeta | undefined }> {
+  if (isExiting()) throw new Error('应用正在退出。')
   const open = directory.get(cwd)
   if (open) return { entry: open, session: undefined }
 
@@ -749,14 +830,17 @@ async function bootstrapProject(
       const pane = directory.entries().flatMap((entry) => entry.workspace.list()).find((pane) => pane.getSession().id === sessionId)
       return pane ? pane.controller.getSnapshot().isStreaming ? 'running' : 'idle' : 'unknown'
     },
-    // The one tool the shared registry cannot build: it needs this process's
-    // window. The TUI's `bootstrap()` passes none, so `Browser` is desktop-only
-    // by construction rather than by a runtime check.
+    // Desktop-owned tools reach native resources through pure host interfaces.
     // The coordination tools ride along: they reach the shell through
     // `CoordinationService`, and `Tool.sessionRoles` keeps each one to the
     // coordinator or thread sessions it belongs to.
-    extraTools: [browserTool, ...coordinationTools],
+    extraTools: [browserTool, computerTool, ...coordinationTools],
   })
+
+  if (isExiting()) {
+    await project.shutdown('app-quit')
+    throw new Error('应用正在退出。')
+  }
 
   logDiagnostics(project.diagnostics)
   const workspace = new SessionWorkspace(project)
@@ -807,11 +891,13 @@ async function openProject(cwd: string): Promise<void> {
  * report failures without taking the process down.
  */
 async function openProjectInteractive(path?: string): Promise<void> {
+  if (!canAcceptAction()) return
   try {
     const target = path ?? (await promptForProjectDirectory())
-    if (!target) return
+    if (!target || !canAcceptAction()) return
     await openProject(target)
   } catch (error) {
+    if (isExiting()) return
     dialog.showErrorBox(
       '无法打开这个项目',
       error instanceof Error ? error.message : String(error),
@@ -825,10 +911,27 @@ async function openProjectInteractive(path?: string): Promise<void> {
  * on Windows — rather than a free-floating panel that can land behind it.
  * `message` repeats the title because macOS does not draw a dialog title.
  */
-function showOpenDialog(options: OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> {
+async function showOpenDialog(options: OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> {
   const parent = liveWindow()
   const withMessage = { ...options, ...(options.title !== undefined ? { message: options.title } : {}) }
-  return parent ? dialog.showOpenDialog(parent, withMessage) : dialog.showOpenDialog(withMessage)
+  if (parent) focusWindow(parent)
+  nativeInteractions++
+  try {
+    return await (parent ? dialog.showOpenDialog(parent, withMessage) : dialog.showOpenDialog(withMessage))
+  } finally {
+    nativeInteractions--
+  }
+}
+
+async function showMessageBox(options: MessageBoxOptions): Promise<Electron.MessageBoxReturnValue> {
+  const parent = liveWindow()
+  if (parent) focusWindow(parent)
+  nativeInteractions++
+  try {
+    return await (parent ? dialog.showMessageBox(parent, options) : dialog.showMessageBox(options))
+  } finally {
+    nativeInteractions--
+  }
 }
 
 /** Native directory picker. Cancelling is a no-op, not an error. */
@@ -865,8 +968,14 @@ const IMAGE_PICKER_EXTENSIONS = [...IMAGE_FILE_EXTENSIONS].map((extension) => ex
  * Idempotent: the second and every later project share the first window.
  */
 async function ensureShell(): Promise<Shell> {
+  if (isExiting()) throw new Error('应用正在退出。')
+  if (creatingShell) return creatingShell
   if (shell) return shell
+  creatingShell = createShell().finally(() => { creatingShell = undefined })
+  return creatingShell
+}
 
+async function createShell(): Promise<Shell> {
   // Where the last window was, if that is still on a screen; otherwise room for
   // the sidebar, a full reading column and a side panel beside it, centred on
   // the primary display (`windowState.ts`). The minimums are where the two
@@ -949,6 +1058,7 @@ async function ensureShell(): Promise<Shell> {
         contents.session.addWordToSpellCheckerDictionary(word)
       },
       copyText: (text) => clipboard.writeText(text),
+      onCopyError: (error) => console.error('[hanekawa] 复制链接失败：', error),
       copyImageAt: (x, y) => contents.copyImageAt(x, y),
     })
     if (template.length > 0) Menu.buildFromTemplate(template).popup({ window })
@@ -979,9 +1089,36 @@ async function ensureShell(): Promise<Shell> {
   window.on('unmaximize', scheduleState)
   window.on('enter-full-screen', scheduleState)
   window.on('leave-full-screen', scheduleState)
-  window.on('close', () => {
+  window.on('close', (event) => {
     void stateWriter.flush()
+    const action = closeWindowAction({
+      platform: process.platform,
+      quitting: isExiting(),
+      nativeInteraction: nativeInteractions > 0 || rendererRecovery.isRecovering(),
+      trayAvailable: tray.isAvailable(),
+    })
+    if (action === 'close') return
+    event.preventDefault()
+    if (action === 'hide') {
+      window.hide()
+      tray.explainBackground()
+      interactionAttention.refresh()
+    } else {
+      focusWindow(window)
+      if (action === 'tray-unavailable') {
+        void showMessageBox({
+          type: 'warning', title: '无法隐藏 Hanekawa',
+          message: '托盘不可用，暂时无法隐藏。',
+          detail: '保留窗口可让任务继续运行；选择退出会结束应用及其任务。',
+          buttons: ['保留窗口', '退出 Hanekawa'], defaultId: 0, cancelId: 0,
+        }).then(({ response }) => { if (response === 1) app.quit() })
+      }
+    }
   })
+  if (process.platform === 'win32') {
+    // query-session-end is only an inquiry and may be cancelled by the user.
+    window.on('session-end', handleSystemEnd)
+  }
 
   let revealed = false
   const reveal = (): void => {
@@ -1007,14 +1144,25 @@ async function ensureShell(): Promise<Shell> {
     mux,
     directory,
     nextLaneKey: () => `${++laneCounter}`,
+    onPreventSleepChanged: (enabled) => powerSave.setEnabled(enabled),
+    onNotificationsChanged: (settings) => {
+      systemNotifications.setPreferences(settings)
+      interactionAttention.refresh()
+    },
     createOccupant: (attach) => {
       // A finished turn hands the session's browser tabs back to the user: the
       // 「agent 正在操作」banner goes, and touching the page stops counting as
       // a takeover. The id is read at the event, not captured here — the pane
       // outlives any one session in it.
       const controller = attach.pane.controller
+      const offPowerSave = powerSave.watch(controller, {
+        isActive: () => controller.isActive(), subscribe: controller.onActivityChange,
+      })
       const offTurnEnd = controller.onEvent((event) => {
-        if (event.type === 'turn-end') browserHost.turnEnded(controller.getSessionId())
+        if (event.type !== 'turn-end') return
+        const session = attach.pane.getSession()
+        browserHost.turnEnded(session.id)
+        systemNotifications.turnEnded(event, session.title ?? '新会话', () => activateNotificationSession(session.id))
       })
       const sessionHost = new SessionHost({
         channel: attach.channel,
@@ -1063,12 +1211,21 @@ async function ensureShell(): Promise<Shell> {
       // Thread turn-ends become coordinator notes, and coordinator turn-ends
       // re-evaluate waking it; the engine ignores lanes with no role.
       const offCoordination = coordinationEngine.attachLane(attach.project.cwd, controller, sessionHost)
+      const offAttention = interactionAttention.watch(sessionHost, {
+        pending: () => sessionHost.pendingNotificationRequests().map((request) => ({
+          ...request, title: attach.pane.getSession().title ?? '新会话',
+        })),
+        subscribe: (listener) => sessionHost.onStateChange(listener),
+        activate: () => { if (canAcceptAction()) shellHost?.requestActivate(attach.lane) },
+      })
       // Delegated one for one rather than handing the `SessionHost` over as the
       // occupant: `LaneOccupant` is what `ShellHost` is allowed to say to a
       // lane, and keeping it a three-method view is what stops the shell from
       // reaching into a session's runtime.
       return {
         dispose: () => {
+          offPowerSave()
+          offAttention()
           offTurnEnd()
           offCoordination()
           sessionHost.dispose()
@@ -1167,14 +1324,7 @@ async function ensureShell(): Promise<Shell> {
     browser: browserTabs,
     coordination,
     coordinationMigrationFindings: () => coordinationMigrationFindings,
-    isQuitting: () => quit.isQuitting(),
-    onAllLanesClosed: () => {
-      // The last lane of the single window is the single-window equivalent of
-      // "the last window closed". Non-darwin quits, exactly as it always did;
-      // darwin keeps the empty window — its tab bar still offers new tabs and
-      // "Open project", which the 4b sidebar builds on.
-      if (process.platform !== 'darwin') app.quit()
-    },
+    isQuitting: () => isExiting(),
   })
   shellHost = host
 
@@ -1190,10 +1340,16 @@ async function ensureShell(): Promise<Shell> {
   // The renderer dims its chrome while the window is inactive. Focus also ends
   // a taskbar flash; Windows would otherwise keep it lit until clicked.
   window.on('focus', () => {
+    interactionAttention.refresh()
     window.flashFrame(false)
     host.broadcastWindowFocus(true)
   })
-  window.on('blur', () => host.broadcastWindowFocus(false))
+  window.on('blur', () => {
+    interactionAttention.refresh()
+    host.broadcastWindowFocus(false)
+  })
+  window.on('hide', () => interactionAttention.refresh())
+  window.on('minimize', () => interactionAttention.refresh())
 
   const built: Shell = { window, host }
   shell = built
@@ -1232,28 +1388,33 @@ async function ensureShell(): Promise<Shell> {
 }
 
 async function teardown(): Promise<void> {
-  // Lanes first, in the fixed order inside `workspace.close`
-  // (`interrupt('exit')` → controller → slot → scope), then the projects: a
-  // project shut down under a live pane pulls the tools out from beneath a turn
-  // that is still draining. `detachLane` skips project shutdown while quitting
-  // — `shutdownAll` owns that ordering.
-  if (shell) {
-    for (const key of shell.host.laneKeys()) shell.host.detachLane(key, 'app-quit')
-    if (!shell.window.isDestroyed()) shell.window.destroy()
-  }
-  // After the window, like every other native child: a `WebContentsView` whose
-  // parent is already destroyed has nothing left to detach from, and this call
-  // is then only closing whatever web contents outlived it.
-  browserHost.dispose()
-  browserTabs.dispose()
-  // Bounded, because `before-quit` has already cancelled the real quit and is
-  // waiting on this: an unbounded await here is how "the window closed but the
-  // process is still running" happens. Timing out is not a failure to report to
-  // the user — there is no UI left — so it goes to stderr like every other
-  // main-process diagnostic.
-  const outcome = await directory.shutdownAll('app-quit', { timeoutMs: SHUTDOWN_DEADLINE_MS })
-  if (outcome === 'timed-out') {
-    console.error(`[hanekawa] shutdown did not drain in ${SHUTDOWN_DEADLINE_MS}ms; quitting anyway`)
+  try {
+    computerHost.dispose()
+    // Lanes first, in the fixed order inside `workspace.close`
+    // (`interrupt('exit')` → controller → slot → scope), then the projects: a
+    // project shut down under a live pane pulls the tools out from beneath a turn
+    // that is still draining. `detachLane` skips project shutdown while quitting
+    // — `shutdownAll` owns that ordering.
+    if (shell) {
+      for (const key of shell.host.laneKeys()) shell.host.detachLane(key, 'app-quit')
+      if (!shell.window.isDestroyed()) shell.window.destroy()
+    }
+    // After the window, like every other native child: a `WebContentsView` whose
+    // parent is already destroyed has nothing left to detach from, and this call
+    // is then only closing whatever web contents outlived it.
+    browserHost.dispose()
+    browserTabs.dispose()
+    // Bounded, because `before-quit` has already cancelled the real quit and is
+    // waiting on this: an unbounded await here is how "the window closed but the
+    // process is still running" happens. Timing out is not a failure to report to
+    // the user — there is no UI left — so it goes to stderr like every other
+    // main-process diagnostic.
+    const outcome = await directory.shutdownAll('app-quit', { timeoutMs: SHUTDOWN_DEADLINE_MS })
+    if (outcome === 'timed-out') {
+      console.error(`[hanekawa] shutdown did not drain in ${SHUTDOWN_DEADLINE_MS}ms; quitting anyway`)
+    }
+  } finally {
+    disposeBackground()
   }
 }
 
@@ -1262,6 +1423,7 @@ async function teardown(): Promise<void> {
  * the single-window equivalent of raising that project's window.
  */
 function focusProject(project: ProjectEntry): void {
+  if (!canAcceptAction()) return
   const built = shell
   if (!built || built.window.isDestroyed()) return
   focusWindow(built.window)
@@ -1285,26 +1447,48 @@ async function openCoordinationLane(
 
 /** A coordination notice as an OS notification; clicking it brings that session's lane forward. */
 function notifyCoordination(notice: { title: string; body: string; sessionId: string }): void {
-  if (!Notification.isSupported()) return
-  const notification = new Notification({ title: notice.title, body: notice.body })
-  liveNotifications.add(notification)
-  notification.on('click', () => {
-    liveNotifications.delete(notification)
-    const built = shell
-    if (!built || built.window.isDestroyed()) return
-    focusWindow(built.window)
-    const lane = built.host.laneForSessionId(notice.sessionId)
-    if (lane !== undefined) built.host.requestActivate(lane)
-  })
-  notification.on('close', () => {
-    liveNotifications.delete(notification)
-  })
-  notification.show()
+  systemNotifications.coordination(notice.title, notice.body, () => activateNotificationSession(notice.sessionId))
+}
+
+function activateNotificationSession(sessionId: string): void {
+  if (!canAcceptAction()) return
+  const built = shell
+  if (!built || built.window.isDestroyed()) return
+  focusWindow(built.window)
+  const lane = built.host.laneForSessionId(sessionId)
+  if (lane !== undefined) built.host.requestActivate(lane)
+}
+
+function mainWindowFocused(): boolean {
+  const window = liveWindow()
+  return window !== undefined && window.isVisible() && !window.isMinimized() && window.isFocused()
 }
 
 function focusWindow(window: BrowserWindow): void {
-  if (window.isMinimized()) window.restore()
-  window.focus()
+  focusBackgroundWindow(window)
+}
+
+function showMainWindow(): void {
+  if (!canAcceptAction()) return
+  const window = liveWindow()
+  if (window && !creatingShell) focusWindow(window)
+  else reopenWindow()
+}
+
+function resumePowerSave(): void { powerSave.resume() }
+
+function handleSystemEnd(): void {
+  systemEnding = true
+  void teardown().catch((error) => console.error('[hanekawa] 系统结束时未完成排空：', error))
+}
+
+function disposeBackground(): void {
+  powerMonitor.removeListener('resume', resumePowerSave)
+  powerMonitor.removeListener('shutdown', handleSystemEnd)
+  powerSave.dispose()
+  tray.dispose()
+  interactionAttention.dispose()
+  systemNotifications.dispose()
 }
 
 /**
@@ -1372,8 +1556,7 @@ async function promptTrustMcpServer(
   // Parented when a window exists (a project opened after the first): a sheet
   // on macOS, a modal owned by the window on Windows. The first project's
   // servers are asked before any window is built, so that one floats.
-  const parent = liveWindow()
-  const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+  const { response } = await showMessageBox(options)
   return response === 0
 }
 
@@ -1401,8 +1584,7 @@ async function promptSkillImport(prompt: SkillImportPrompt): Promise<boolean> {
       prompt.willBeDisabled ? '导入后默认关闭，在详情页读过内容再打开。' : undefined,
     ].filter(Boolean).join('\n\n'),
   }
-  const parent = liveWindow()
-  const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options)
+  const { response } = await showMessageBox(options)
   return response === 0
 }
 

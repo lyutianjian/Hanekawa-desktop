@@ -30,6 +30,61 @@ class FakeContents extends EventEmitter {
 
 const caller = { sessionId: 'browser-session', turnId: 'browser-turn' }
 
+test('input waits for a first frame once per document and retries after capture failure', async () => {
+  const contents = new FakeContents()
+  let generation = 1, fail = true, captures = 0
+  contents.debugger.sendCommand = async (method: string) => {
+    contents.debugger.sent.push(method)
+    await contents.debugger.wait?.()
+    if (method === 'Page.captureScreenshot') {
+      captures++
+      if (fail) throw new Error('not painted')
+      return { data: Buffer.from('frame').toString('base64') }
+    }
+    return {}
+  }
+  const noop = () => {}
+  const host = new DesktopBrowserHost({
+    laneForSession: () => 'lane',
+    tabs: {
+      onTakeOver: () => noop, onUserInput: () => noop, onRelease: () => noop,
+      describe: () => [{ tabId: 'tab', lane: 'lane', url: 'https://browser.test', loading: false }],
+      pageFor: () => ({ tabId: 'tab', contents, generation, domReady: true }),
+      setTakenOver: noop, setAgentActive: noop,
+    } as unknown as BrowserTabHost,
+  })
+  try {
+    await assert.rejects(host.pressKey(caller, 'tab', { keys: ['Enter'] }), { code: 'PAGE_NOT_READY' })
+    assert.equal(contents.debugger.sent.some((method) => method.startsWith('Input.')), false)
+    fail = false
+    await host.pressKey(caller, 'tab', { keys: ['Enter'] })
+    const firstInput = contents.debugger.sent.findIndex((method) => method.startsWith('Input.'))
+    assert.ok(firstInput > contents.debugger.sent.lastIndexOf('Page.captureScreenshot'))
+    await host.pressKey(caller, 'tab', { keys: ['Enter'] })
+    assert.equal(captures, 2)
+    generation++
+    await host.pressKey(caller, 'tab', { keys: ['Enter'] })
+    assert.equal(captures, 3)
+    generation++
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => { release = resolve })
+    contents.debugger.wait = () => gate
+    const abort = new AbortController()
+    const inputCount = () => contents.debugger.sent.filter((method) => method.startsWith('Input.')).length
+    const before = inputCount()
+    const pending = host.pressKey(caller, 'tab', { keys: ['Enter'], signal: abort.signal })
+    await new Promise((resolve) => setImmediate(resolve))
+    abort.abort()
+    await assert.rejects(pending, { code: 'OPERATION_ABORTED' })
+    release()
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.equal(inputCount(), before, 'a frame arriving after Stop cannot dispatch input')
+  } finally {
+    host.dispose()
+    contents.debugger.detach()
+  }
+})
+
 test('the browser host propagates Stop through emulation and restoration before another action can run', { timeout: 2_000 }, async () => {
   const contents = new FakeContents()
   const noop = () => {}

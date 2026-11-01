@@ -172,6 +172,7 @@ test('the stylesheet parses exactly, so nothing below can pass vacuously', () =>
   assert.deepEqual(
     atRules.map((match) => match[0].replace(/\s+/g, ' ').trim()),
     [
+      '@media (max-height: 700px) {',
       '@container composer-bar (inline-size < 320px) {',
       '@media (hover: none), (pointer: coarse) {',
       '@media (prefers-reduced-motion: reduce) {',
@@ -200,6 +201,14 @@ test('the page links the stylesheet and carries no CSS of its own', () => {
   assert.match(html, /<link\s+rel="stylesheet"\s+href="\.\/styles\.css"\s*\/?>/)
   assert.doesNotMatch(html, /<style[\s>]/, 'CSS belongs in styles.css')
   assert.doesNotMatch(html, /\sstyle="/, 'no inline style attribute; add a rule instead')
+})
+
+test('the task panel keeps its own title outside the scrolling groups', () => {
+  const headStart = html.indexOf('<div id="tasks-head"')
+  assert.ok(headStart >= 0, 'the panel title must not be replaced by the first group heading')
+  const headEnd = html.indexOf('</div>', headStart)
+  assert.match(html.slice(headStart, headEnd), /<h2 class="tasks-title">后台任务<\/h2>/)
+  assert.ok(headEnd < html.indexOf('<div id="side-sections"'), 'scrolling tasks must not move the title away')
 })
 
 test('title bar uses measured native insets and keeps entire menus clickable', () => {
@@ -388,8 +397,8 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-5': '24px',
       '--space-6': '32px',
       '--space-7': '48px',
-      '--radius-lg': '18px',
-      '--radius-panel': '14px',
+      '--radius-lg': 'var(--radius-panel)',
+      '--radius-panel': '16px',
       '--radius-md': '12px',
       '--radius-row': '8px',
       '--radius-sm': '6px',
@@ -466,6 +475,7 @@ test('the palette is the one that was agreed, value for value', () => {
       // The context indicator's ring, fourth of the same kind: a fraction of
       // the usable window written per paint by `dom/composerView.ts`.
       '--context-ratio': '0',
+      '--effort-ratio': '0',
       '--ctx-share': '0',
       '--canvas-shift': '0px',
       // The transcript's bottom pad, fifth of the same kind: the room the newest
@@ -555,8 +565,8 @@ test('the palette is the one that was agreed, value for value', () => {
       '--space-5': '24px',
       '--space-6': '32px',
       '--space-7': '48px',
-      '--radius-lg': '18px',
-      '--radius-panel': '14px',
+      '--radius-lg': 'var(--radius-panel)',
+      '--radius-panel': '16px',
       '--radius-md': '12px',
       '--radius-row': '8px',
       '--radius-sm': '6px',
@@ -633,6 +643,7 @@ test('the palette is the one that was agreed, value for value', () => {
       // The context indicator's ring, fourth of the same kind: a fraction of
       // the usable window written per paint by `dom/composerView.ts`.
       '--context-ratio': '0',
+      '--effort-ratio': '0',
       '--ctx-share': '0',
       '--canvas-shift': '0px',
       // The transcript's bottom pad, fifth of the same kind: the room the newest
@@ -915,7 +926,12 @@ test('accents are for icons and state rules, never for fills', () => {
    */
   const ACCENT_FILL_EXCEPTIONS: readonly { selector: string; prop: string }[] = [
     { selector: '.settings-toggle.on', prop: 'background' },
+    // The effort track encodes the selected level, like the toggle track.
+    { selector: '.chip-effort-fill', prop: 'background' },
     { selector: '#submit', prop: 'background' },
+    // Rewind has one soft confirmation action, without a coloured outline.
+    { selector: '#rewind-panel .dialog-btn.primary', prop: 'background' },
+    { selector: '#rewind-panel .dialog-btn.primary:hover:enabled', prop: 'background' },
     { selector: '.ask-chip', prop: 'background' },
     // A 6px pending-input indicator, not the jump button's surface (T19).
     { selector: '.jump-request-dot', prop: 'background' },
@@ -1085,7 +1101,6 @@ test('the serif is display-only, and only in the whitelisted spots', () => {
     '.welcome-title', // the home page's greeting
     '.thread-panel-empty-title', // 线程's empty state, the same kind of greeting
     '.overview-title', // 线程's head over a project's threads
-    '#rewind-panel .title',
   ]
 
   const seen = new Set<string>()
@@ -1371,14 +1386,9 @@ test('the window material tints the frame on every platform that can draw one', 
 })
 
 test('the settings screen scrolls full width and reads in a column', () => {
-  // todo V7: two nodes, two jobs. Merging them back into one gives the reading
-  // measure a scrollbar of its own, floating mid-canvas.
   const column = blockFor('.settings-column')
-  assert.ok(
-    column.decls.some((decl) => decl.prop === 'max-width'),
-    '.settings-column is the reading measure and must bound its width',
-  )
-  assert.ok(declares(column, 'margin', '0 auto'), '.settings-column must be centred in its scroller')
+  assert.ok(declares(column, 'width', '100%'), '.settings-column must use the pane’s available width')
+  assert.ok(!column.decls.some((decl) => decl.prop === 'max-width'), '.settings-column must not leave a centred gutter')
   assert.ok(
     !column.decls.some((decl) => decl.prop.startsWith('overflow')),
     '.settings-column is on an open dropdown’s ancestor chain and must not clip',
@@ -1625,7 +1635,19 @@ test('the hover marquee loops in one direction, inside the clip', () => {
   )
 })
 
-test('the search box and the composer chips are grooves at rest, not outlined fields', () => {
+test('a running session highlights only its glyphs without a blurred glow layer', () => {
+  const sheen = blockFor('.session-row.running .session-title-run, .session-row.running .session-title-echo')
+  assert.ok(declares(sheen, 'background-clip', 'text'))
+  assert.ok(declares(sheen, 'color', 'transparent'))
+  assert.ok(sheen.decls.some((decl) => decl.prop === 'animation' && decl.value.startsWith('sheen-row ')))
+  const titleEffects = blocks.filter((block) => block.selector.includes('.session-title-run') || block.selector.includes('.session-title-echo'))
+  assert.ok(!titleEffects.some((block) => block.selector.includes('::after')),
+    'a second, blurred copy spreads the highlight onto the row background')
+  assert.ok(!titleEffects.some((block) => block.decls.some((decl) => ['filter', 'text-shadow', 'box-shadow'].includes(decl.prop))),
+    'the steady running title must not cast a halo outside its glyphs')
+})
+
+test('the search box and the permission pill are grooves at rest, and the model chip shades instead of outlining', () => {
   // design_guidance 六.2 / 六.4. Three bordered capsules — the search box on the
   // sidebar's paper, the two chips over the composer's own hairline — read as
   // line noise; the fill alone says "this is a control". The border stays in the
@@ -1638,22 +1660,49 @@ test('the search box and the composer chips are grooves at rest, not outlined fi
     'focus rings the groove with a shadow, not a border that would resize the box',
   )
 
-  for (const chip of ['#chip-permission', '#chip-runtime']) {
-    const rest = blockFor(chip)
-    assert.ok(declares(rest, 'background', 'var(--surface-card)'), `${chip} is a card capsule`)
-    assert.ok(
-      declares(rest, 'border', '1px solid transparent'),
-      `${chip} must reserve its border, or hover reflows the composer's bottom row`,
-    )
-    assert.ok(
-      declares(blockFor(`${chip}:hover:enabled`), 'border-color', 'var(--border-subtle)'),
-      `${chip} raises a hairline on hover`,
-    )
-    assert.ok(
-      declares(blockFor(`${chip}.open`), 'border-color', 'var(--border-strong)'),
-      `${chip} raises a strong hairline while its menu is open`,
-    )
-  }
+  // The permission pill states a mode, so it can rest as the groove it shares
+  // with the composer and answer the pointer by firming its own hairline.
+  const permission = blockFor('#chip-permission')
+  assert.ok(declares(permission, 'background', 'var(--surface-card)'), 'the permission pill is a card groove')
+  assert.ok(
+    declares(permission, 'border', '1px solid transparent'),
+    'the permission pill must reserve its border, or hover reflows the composer\'s bottom row',
+  )
+  assert.ok(
+    declares(blockFor('#chip-permission:hover:enabled'), 'border-color', 'var(--border-subtle)'),
+    '#chip-permission raises a hairline on hover',
+  )
+  assert.ok(
+    declares(blockFor('#chip-permission.open'), 'border-color', 'var(--border-strong)'),
+    '#chip-permission raises a strong hairline while its menu is open',
+  )
+
+  // The model chip is plain text at rest — the values themselves, the way the
+  // reference's row reads — and the capsule is the pointer's and the menu's. It
+  // never colours its reserved border, which is what makes "a capsule, not an
+  // outline" checkable rather than a matter of taste.
+  const runtime = blockFor('#chip-runtime')
+  assert.ok(declares(runtime, 'background', 'transparent'), 'the model chip rests as plain text')
+  assert.ok(
+    declares(runtime, 'border', '1px solid transparent'),
+    'it reserves its border, so the row cannot move',
+  )
+  assert.ok(declares(runtime, 'border-radius', 'var(--radius-pill)'), 'the reference draws the capsule fully rounded')
+  assert.ok(
+    declares(blockFor('#chip-runtime:hover:enabled, #chip-runtime.open'), 'background', 'var(--surface-hover)'),
+    'the pointer fills the capsule, and an open menu keeps that fill',
+  )
+  assert.ok(
+    declares(blockFor('#chip-runtime.open'), 'box-shadow', 'var(--shadow-float)'),
+    'the opened pill is the one the menu hangs over, so it lifts on the float shadow',
+  )
+  assert.ok(
+    !blocks.some(
+      (block) =>
+        block.selector.startsWith('#chip-runtime') && block.decls.some((decl) => decl.prop === 'border-color'),
+    ),
+    'the model chip never colours its reserved border',
+  )
 
   const context = blockFor('#composer-context')
   assert.ok(declares(context, 'background', 'var(--surface-card)'), 'the context indicator is the same card groove')
@@ -1682,8 +1731,8 @@ test('a composer row too narrow for the model name swaps it for an icon, not for
     'the narrow row shows the icon',
   )
   assert.ok(
-    declares(blockIn(CONDITION, '.chip-model-label, .chip-effort-label'), 'display', 'none'),
-    'both labels go together — an effort level with no model beside it names nothing',
+    declares(blockIn(CONDITION, '.chip-model-label, .chip-effort-label, .chip-prompt-label, .chip-chevron'), 'display', 'none'),
+    'the words go together — an icon alone still says the chip is there, whichever two or one it was showing',
   )
   // The other controls are round and fixed at every width; only the chip gives.
   for (const selector of ['#composer-attach', '#composer-permission', '#submit, #stop']) {
@@ -1742,6 +1791,14 @@ test('the readouts draw their own rounded hover card with measured typography', 
   assert.ok(
     declares(value, 'font-variant-numeric', 'tabular-nums'),
     'aligned figures keep the key-value rows readable',
+  )
+  // The figures are the card's rightmost content, and the readout's right edge is
+  // where the statistics line beneath it ends. Hung flush, the card's border
+  // lands on that edge and its figures one padding short of it, so this card
+  // rides out by exactly that padding. Any other card keeps the plain anchor.
+  assert.ok(
+    declares(blockFor('.hover-card.usage-card'), 'right', 'calc(-1 * var(--canvas-shift) - var(--space-3))'),
+    'the token card hangs out by its own padding so its figures end on the readout edge',
   )
   assert.ok(
     declares(blockFor('.hover-card-note'), 'font-size', 'var(--type-meta)'),
@@ -1866,17 +1923,6 @@ test('a collapsed sidebar is gone, and the column inside it does not resize with
       'var(--space-1) var(--sidebar-scrollbar-overhang) var(--space-1) 0',
     ),
     'the rows keep the shell width; only the scrollbar moves',
-  )
-  // The rail's own slider is read against the sash, so it hugs the scroller's
-  // right edge instead of stopping at the global thumb's 3px inset.
-  const thumb = blockFor(':root:not([data-platform="darwin"]) .sidebar-list::-webkit-scrollbar-thumb')
-  assert.ok(
-    declares(thumb, 'border-right-width', '0'),
-    "the rail's thumb must reach its column's edge",
-  )
-  assert.ok(
-    declares(thumb, 'border-left-width', '6px'),
-    'and keep its 4px thickness: the inset it dropped on the right moves to the left',
   )
 })
 
@@ -2127,16 +2173,13 @@ test('every floating menu is lifted off the page it covers', () => {
   // The dropdowns are the same object at several sizes, and a menu without the
   // float shadow does not look wrong so much as *flat*: in light mode
   // `--surface-card` is a hair off the body it covers, and the border alone is
-  // not enough to say the panel is above rather than in the text. `.settings-menu`
-  // was the one that shipped without it. `.chip-flyout` is the one that floats
-  // over another menu rather than over the page, and needs it most.
+  // not enough to say the panel is above rather than in the text.
   for (const selector of [
     '.titlebar-menu',
     '.canvas-menu',
     '.composer-menu',
     '.settings-menu',
     '.chip-menu',
-    '.chip-flyout',
   ]) {
     assert.ok(
       declares(blockFor(selector), 'box-shadow', 'var(--shadow-float)'),
@@ -2149,7 +2192,7 @@ test('depth is two steps: menus float, modals sit deeper, and the composer joins
   // Three surfaces, two shadows. Menus and the focused composer are *over the
   // page*; the two dialog panels are over a dimmed app and carry the heavier
   // `--shadow-modal`. Anything that reaches for a third depth is inventing one.
-  for (const selector of ['.titlebar-menu', '.canvas-menu', '.composer-menu', '.settings-menu', '.chip-menu', '.chip-flyout', '.project-menu']) {
+  for (const selector of ['.titlebar-menu', '.canvas-menu', '.composer-menu', '.settings-menu', '.chip-menu', '.project-menu']) {
     assert.ok(
       declares(blockFor(selector), 'border-radius', 'var(--radius-md)'),
       `${selector} is a menu card and takes the menu radius`,
@@ -2198,7 +2241,6 @@ test('depth is two steps: menus float, modals sit deeper, and the composer joins
     // The welcome pickers sat on layer 1 — under a hover card that happened to
     // overlap them. They are menus like the rest.
     ['.branch-picker, .project-picker', 'popover'],
-    ['.chip-flyout', 'flyout'],
     ['.context-popover', 'flyout'],
     ['#rewind', 'rewind'],
     ['#toasts', 'toast'],
@@ -2210,7 +2252,7 @@ test('depth is two steps: menus float, modals sit deeper, and the composer joins
   // Every popover here is absolute against one of these shells; an `overflow`
   // on any of them clips the card the moment it hangs past the shell's box.
   for (const selector of [
-    '.chip-menu-shell',
+    '#composer-chip',
     '.canvas-menu-shell',
     '.settings-menu-shell',
     '.titlebar-menu-shell',
@@ -2712,7 +2754,7 @@ test('every menu is one card and every menu row one height', () => {
   // panel radius and a fainter hairline than the pickers right beside them,
   // and rows 4, 6 or 8px tall in padding. One card, one row.
   const CARDS = [
-    '.titlebar-menu', '.canvas-menu', '.project-menu', '.thread-menu', '.chip-menu', '.chip-flyout',
+    '.titlebar-menu', '.canvas-menu', '.project-menu', '.thread-menu', '.chip-menu',
     '.composer-menu', '.settings-menu', '.branch-picker, .project-picker', '#surface', '#suggestions',
   ]
   for (const selector of CARDS) {
@@ -2727,7 +2769,7 @@ test('every menu is one card and every menu row one height', () => {
     }
   }
   const ROWS = [
-    '.titlebar-menu-item', '.canvas-menu-item', '.project-menu-item', '.thread-menu-item', '.chip-flyout-item',
+    '.titlebar-menu-item', '.canvas-menu-item', '.project-menu-item', '.thread-menu-item', '.chip-model-option',
     '.composer-menu-item', '.settings-menu-item', '.branch-picker-row, .project-picker-row',
   ]
   for (const selector of ROWS) {
@@ -2746,11 +2788,14 @@ test('buttons answer the pointer and the keyboard, and there is one primary', ()
   // One primary, the inverted fill: the rewind panel's and the failure card's
   // were two more versions of it. The empty canvas's 「新建会话」 joins the
   // dialog list rather than starting a sixth.
-  for (const selector of ['#rewind-panel .dialog-btn.primary, .no-session .dialog-btn.primary, #composer-request .dialog-btn.primary', '.failure-action.primary']) {
+  for (const selector of ['.no-session .dialog-btn.primary, #composer-request .dialog-btn.primary', '.failure-action.primary']) {
     const primary = blockFor(selector)
     assert.ok(declares(primary, 'background', 'var(--text-primary)'), `${selector} is the inverted fill`)
     assert.ok(declares(primary, 'color', 'var(--surface-base)'), `${selector} is the inverted fill`)
   }
+  const rewind = blockFor('#rewind-panel .dialog-btn.primary')
+  assert.ok(declares(rewind, 'border', 'none'), 'the coloured confirmation has no thin outline')
+  assert.ok(declares(rewind, 'color', 'var(--accent-brand-text)'))
   // The thread menu's rows were the only menu rows with no hover and no
   // keyboard highlight.
   assert.ok(declares(blockFor('.thread-menu-item:hover:enabled'), 'background', 'var(--surface-hover)'))
@@ -2826,23 +2871,17 @@ test('brand text and metadata clear 4.5:1 on every surface they sit on', () => {
   }
 })
 
-test('scrollbars: drawn on Windows and Linux, the system’s own overlay on macOS', () => {
-  // Chromium 121+ ignores `::-webkit-scrollbar` on any element with
-  // `scrollbar-width` or `scrollbar-color` set, and a blanket `*` rule set both,
-  // so the drawn thumb was dead and the bar was not the width the sidebar's
-  // overhang is cut to. macOS keeps its overlay bars: any webkit style would
-  // force always-on classic ones.
-  assert.ok(!declarations.some((d) => d.prop === 'scrollbar-width' || d.prop === 'scrollbar-color'),
-    'a standard scrollbar property would switch the drawn thumb off')
-  const webkit = blocks.filter((block) => block.selector.includes('::-webkit-scrollbar'))
-  assert.ok(webkit.length >= 5)
-  for (const block of webkit) {
-    assert.ok(block.selector.startsWith(':root:not([data-platform="darwin"]) '), `${block.selector} must leave macOS's overlay bars alone`)
-  }
-  assert.ok(declares(blockFor(':root:not([data-platform="darwin"]) ::-webkit-scrollbar'), 'width', '10px'),
-    'the gutter --sidebar-scrollbar-overhang is measured against')
-  assert.ok(declares(blockFor(':root:not([data-platform="darwin"]) .transcript'), 'scrollbar-gutter', 'stable both-edges'),
-    'the reading column does not jump when its bar appears')
+test('scrollbars stay thin and transparent across platforms, including always-visible bars', () => {
+  const global = blockFor(':where(*)')
+  assert.ok(declares(global, 'scrollbar-width', 'thin'))
+  assert.ok(declares(global, 'scrollbar-color', 'color-mix(in srgb, var(--text-primary) 20%, transparent) transparent'),
+    'a theme-aware translucent thumb must not paint an opaque system track')
+  assert.ok(declares(blockFor('*:hover'), 'scrollbar-color', 'color-mix(in srgb, var(--text-primary) 32%, transparent) transparent'),
+    'hover improves the thumb contrast without changing its width or track')
+  assert.ok(!blocks.some((block) => block.selector.includes('::-webkit-scrollbar')),
+    'do not mix standard scrollbar properties with ignored webkit overrides')
+  assert.ok(declares(blockFor('.transcript'), 'scrollbar-gutter', 'stable both-edges'),
+    'the reading column stays centred even when macOS always shows scrollbars')
 })
 
 test('an empty list says so in one voice', () => {

@@ -175,6 +175,12 @@ test('the nav draws one section per group, labelled, in order', (t) => {
     groups.map((group) => findAll(group, 'settings-nav-item').map((item) => item.text)),
     [['通用', '个性化', '外观'], ['模型与服务商', '技能和 MCP'], ['权限']],
   )
+  for (const item of findAll(nav, 'settings-nav-item')) {
+    const icons = findAll(item, 'icon')
+    assert.equal(icons.length, 1)
+    assert.equal(icons[0]!.attributes.get('aria-hidden'), 'true')
+    assert.ok(icons[0]!.children.length > 0)
+  }
 })
 
 test('the close button sits in the card, outside the replaced region', (t) => {
@@ -255,10 +261,7 @@ test('an unmatched page says so in the body', (t) => {
   assert.match(findOne(body, 'settings-empty').text, /zzz-nothing/)
 })
 
-test('the body scrolls and the column inside it holds the reading measure', (t) => {
-  // todo V7: the scroller has to stay full width or its scrollbar detaches from
-  // the canvas edge, so the 880px measure lives on a node of its own — the same
-  // split as `.transcript-column` inside the transcript's scroller.
+test('the body scrolls and its content fills the available width', (t) => {
   const { view, apply } = mount(t)
   const body = region(view(), 'settings-body')
 
@@ -279,9 +282,9 @@ test('the body scrolls and the column inside it holds the reading measure', (t) 
 
   // Non-vacuity: a class no rule ever mentions would make the node decorative.
   const widths = rulesFor('settings-column').flatMap((block) =>
-    block.decls.filter((decl) => decl.prop === 'max-width'),
+    block.decls.filter((decl) => decl.prop === 'width'),
   )
-  assert.equal(widths.length, 1, '.settings-column must carry exactly one max-width')
+  assert.deepEqual(widths.map((decl) => decl.value), ['100%'])
 })
 
 // --- the pill dropdown -------------------------------------------------------
@@ -518,6 +521,26 @@ test('picking an option emits that row’s own change intent', (t) => {
   stub.click(inherit.node)
 
   assert.deepEqual(intents, [{ kind: 'set-routing', role: 'main', value: 'inherit' }])
+})
+
+test('the notifications card renders independent switches and three completion policies', (t) => {
+  const { view, stub, intents, apply } = mount(t, stateOf({ category: 'general' }))
+  const card = findAll(view(), 'settings-card').find((candidate) => candidate.text.includes('轮次完成通知'))
+  assert.ok(card)
+  const switches = findAll(card, 'settings-toggle')
+  assert.equal(switches.length, 2)
+  stub.click(switches[0]!.node)
+  stub.click(switches[1]!.node)
+  assert.deepEqual(intents, [
+    { kind: 'set-permission-notifications', enabled: false },
+    { kind: 'set-question-notifications', enabled: false },
+  ])
+  apply({ kind: 'toggle-menu', menu: 'row:notifications:turn-completion' })
+  const options = findAll(view(), 'settings-menu-item')
+  assert.deepEqual(options.map((option) => option.text), ['从不', '始终', '窗口未聚焦时'])
+  intents.length = 0
+  stub.click(options[1]!.node)
+  assert.deepEqual(intents, [{ kind: 'set-turn-completion-notification', value: 'always' }])
 })
 
 test('the arrow keys walk an open menu and wrap', (t) => {

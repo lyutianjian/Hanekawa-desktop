@@ -1,5 +1,7 @@
 import { z } from 'zod/v3'
+import { zodToJsonSchema } from 'zod-to-json-schema'
 import type { Tool } from '../../harness/types.js'
+import type { JsonSchema } from '../../harness/toolValidation.js'
 import type { ReadSessionInput, SessionReferenceHost } from '../../runtime/protocol/sessionReferences.js'
 import { parseSessionReference } from '../../runtime/sessionReferenceText.js'
 import { DESCRIPTION, READ_SESSION_TOOL_NAME } from './prompt.js'
@@ -39,6 +41,19 @@ export const readSessionInputSchema = z.discriminatedUnion('action', [
   }
 })
 
+// Providers require an object at the schema root. Publish both actions' fields;
+// the strict union above still enforces each action's required/allowed fields.
+const [searchInput, readInput] = readSessionInputSchema.innerType().options
+const { $schema: _schema, ...readSessionApiInputSchema } = zodToJsonSchema(z.object({
+  ...searchInput.shape,
+  ...readInput.shape,
+  action: z.enum([searchInput.shape.action.value, readInput.shape.action.value])
+    .describe('search finds saved conversations; read opens saved visible history. See the tool description for each action’s fields.'),
+  query: searchInput.shape.query.optional().describe('Required for search only. Title query or literal content keyword, up to 1024 characters.'),
+  ref: readInput.shape.ref.optional().describe('Required for read only. Complete session UUID or hanekawa://session/<UUID>.'),
+  limit: readInput.shape.limit.describe('Search: default 10, maximum 20. Read: default 20, maximum 50.'),
+}).strict(), { $refStrategy: 'none' }) as JsonSchema & { $schema?: string }
+
 function target(input: unknown): string {
   if (!input || typeof input !== 'object') return ''
   const value = input as { action?: unknown; query?: unknown; ref?: unknown }
@@ -52,6 +67,7 @@ export function createReadSessionTool(host?: SessionReferenceHost): Tool {
     name: READ_SESSION_TOOL_NAME,
     description: DESCRIPTION,
     inputSchema: readSessionInputSchema,
+    apiInputSchema: readSessionApiInputSchema,
     riskLevel: 'safe',
     isReadOnly: true,
     isConcurrencySafe: true,

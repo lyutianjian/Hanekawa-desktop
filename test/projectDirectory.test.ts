@@ -68,6 +68,26 @@ function directory(): ProjectDirectory<FakeProject, FakeWorkspace> {
   return new ProjectDirectory<FakeProject, FakeWorkspace>()
 }
 
+test('lifecycle callbacks cover closing projects and run once on shutdown failure', async () => {
+  const seen: string[] = []
+  const dir = new ProjectDirectory<FakeProject, FakeWorkspace>({
+    onAdded: (entry) => { seen.push(`add:${entry.cwd}`) },
+    onClosed: (entry) => { seen.push(`closed:${entry.cwd}`) },
+  })
+  let reject!: (error: Error) => void
+  const closing = new Promise<void>((_resolve, fail) => { reject = fail })
+  const entry = dir.add({ ...fakeProject('/tmp/lifecycle'), shutdown: () => closing }, fakeWorkspace('/tmp/lifecycle'))
+  const run = dir.closeProject(entry, 'test')
+  const failed = assert.rejects(run, /shutdown failed/)
+  assert.equal(dir.size, 0)
+  assert.deepEqual(seen, ['add:/tmp/lifecycle'])
+  void dir.closeProject(entry, 'duplicate')
+  reject(new Error('shutdown failed'))
+  await failed
+  await dir.whenClosed(entry.cwd)
+  assert.deepEqual(seen, ['add:/tmp/lifecycle', 'closed:/tmp/lifecycle'])
+})
+
 test('a project is keyed by its resolved root, so the same directory is one project', () => {
   const dir = directory()
   const root = process.cwd()

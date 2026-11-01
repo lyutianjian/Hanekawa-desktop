@@ -579,8 +579,6 @@ export function createSidebarView(
     // is then a node of its own, which is what anything reading this row — a
     // test, a screen reader following `aria-hidden` — should land on.
     const run = el('span', 'session-title-run', row.title)
-    // The running sheen's glow draws a blurred copy of the name from this.
-    run.dataset.text = row.title
     const revealedAt = reveals.get(row.sessionId)
     if (revealedAt !== undefined) revealText(run, row.title, revealedAt)
     track.appendChild(run)
@@ -858,7 +856,7 @@ export function createSidebarView(
         // Replaces the session count. Last in the row, after `⋯`.
         const add = button('project-new', '', canCreate ? `在 ${group.projectName} 新建会话` : CREATE_BLOCKED_HINT, () =>
           onIntent(newSessionIntent(group.projectRoot)),
-          { enabled: canCreate, icon: 'plus' },
+          { enabled: canCreate, icon: 'square-pen' },
         )
         add.dataset.focusKey = `n:${group.projectRoot}`
         actions.appendChild(add)
@@ -1042,7 +1040,7 @@ export function createSidebarView(
             // Through the model, so this and `Ctrl+T` cannot disagree about *which*
             // project — the same rule the row buttons follow via `activateRow`.
             () => onIntent(newSessionIntent(view.activeProjectRoot)),
-            { enabled: view.canCreate, icon: 'plus' },
+            { enabled: view.canCreate, icon: 'square-pen' },
           ),
           button(
             'sidebar-nav-item',

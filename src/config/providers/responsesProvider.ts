@@ -1,6 +1,6 @@
 import OpenAI from 'openai'
 import type { ModelConfig } from '../service.js'
-import type { ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent } from '../../harness/types.js'
+import type { ModelProvider, ModelRequest, ModelResponse, ModelStreamEvent, TokenUsage } from '../../harness/types.js'
 import {
   checkResponseForCacheBreak,
   recordPromptState,
@@ -19,7 +19,7 @@ import {
   assertRequestImageCapability,
   resolveImageRequestGuardLimits,
 } from './imageRequestGuard.js'
-import { normalizeResponsesUsage } from './usage.js'
+import { normalizeResponsesUsage, reportProviderUsage } from './usage.js'
 
 const REPLAYED_ITEM_TYPES = new Set(['reasoning', 'message', 'function_call'])
 /** A sticky-routing token a Codex backend hands out; sent back for the rest of that turn. */
@@ -95,28 +95,37 @@ export class ResponsesProvider implements ModelProvider {
     debugProviderPayload('openai-responses', payload, request)
 
     const collector = new ResponsesStreamCollector(request)
-    const { data: stream, response: httpResponse } = await this.client.responses.create(
-      payload as OpenAI.Responses.ResponseCreateParamsStreaming,
-      {
-        headers: {
-          'session-id': conversationId,
-          'thread-id': conversationId,
-          'x-client-request-id': conversationId,
-          ...(turnState && turnState.turnId === request.turnId ? { [TURN_STATE_HEADER]: turnState.state } : {}),
+    request.retry?.signal?.throwIfAborted()
+    let failure: unknown
+    try {
+      const { data: stream, response: httpResponse } = await this.client.responses.create(
+        payload as OpenAI.Responses.ResponseCreateParamsStreaming,
+        {
+          headers: {
+            'session-id': conversationId,
+            'thread-id': conversationId,
+            'x-client-request-id': conversationId,
+            ...(turnState && turnState.turnId === request.turnId ? { [TURN_STATE_HEADER]: turnState.state } : {}),
+          },
+          ...(request.retry?.signal ? { signal: request.retry.signal } : {}),
         },
-        ...(request.retry?.signal ? { signal: request.retry.signal } : {}),
-      },
-    ).withResponse()
-    const nextTurnState = httpResponse.headers.get(TURN_STATE_HEADER)
-    if (nextTurnState && request.turnId) this.turnStates.set(conversationId, { turnId: request.turnId, state: nextTurnState })
-    await consumeWithIdleTimeout(stream, (event) => collector.add(event), request.onStreamEvent)
-    const response = collector.finish()
-    debugProviderResponse('openai-responses', response)
+      ).withResponse()
+      const nextTurnState = httpResponse.headers.get(TURN_STATE_HEADER)
+      if (nextTurnState && request.turnId) this.turnStates.set(conversationId, { turnId: request.turnId, state: nextTurnState })
+      await consumeWithIdleTimeout(stream, (event) => collector.add(event), request.onStreamEvent)
+      const response = collector.finish()
+      debugProviderResponse('openai-responses', response)
 
-    const cacheBreak = response.usage
-      ? checkResponseForCacheBreak(response.usage.cacheReadInputTokens, response.usage.inputTokens, cacheSource)
-      : null
-    return { ...response, ...(cacheBreak ? { cacheBreak } : {}) }
+      const cacheBreak = response.usage
+        ? checkResponseForCacheBreak(response.usage.cacheReadInputTokens, response.usage.inputTokens, cacheSource)
+        : null
+      return { ...response, ...(cacheBreak ? { cacheBreak } : {}) }
+    } catch (error) {
+      failure = error
+      throw error
+    } finally {
+      reportProviderUsage(request, collector.getUsage(), failure)
+    }
   }
 }
 
@@ -171,6 +180,7 @@ export class ResponsesStreamCollector {
         this.final = event.response
         return
       case 'response.failed': {
+        this.final = event.response
         const failure = event.response.error
         throw Object.assign(new Error(`Response failed${failure ? `: ${failure.code} ${failure.message}` : ''}`), { code: failure?.code })
       }
@@ -179,6 +189,10 @@ export class ResponsesStreamCollector {
       default:
         return
     }
+  }
+
+  getUsage(): TokenUsage | undefined {
+    return this.final?.usage ? normalizeResponsesUsage(this.final.usage) : undefined
   }
 
   finish(): ModelResponse {

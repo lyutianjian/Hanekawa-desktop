@@ -34,10 +34,12 @@
 import { copyFileSync, cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { copyComputerAssets } from './copy-computer-assets.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = join(here, '..')
 const destRoot = process.argv[2] ? resolve(process.argv[2]) : join(repoRoot, 'dist')
+copyComputerAssets(destRoot)
 
 const sources = [
   ['src/desktop/renderer/index.html', 'desktop/renderer/index.html'],
@@ -46,6 +48,7 @@ const sources = [
 ]
 
 const directories = [
+  ['src/desktop/assets', 'desktop/assets'],
   ['src/desktop/renderer/fonts', 'desktop/renderer/fonts'],
   ['src/desktop/renderer/sprites', 'desktop/renderer/sprites'],
 ]

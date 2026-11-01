@@ -710,6 +710,10 @@ test('loose items paint as items: messages, notices and 已中断; the duration 
     ['item', 'notice', 'interrupt'],
   ])
   assert.deepEqual(items().map((item) => item.text), ['hi显示更多', '上下文已压缩', 'boom', '用时 1 秒', '已中断'])
+  for (const at of [1, 2, 4]) {
+    assert.equal(items()[at]?.children[0]?.tagName.toLowerCase(), 'svg')
+    assert.ok(items()[at]?.children[1]?.classes.includes('notice-text'))
+  }
 })
 
 test('a duration made from a streaming turn’s records is not drawn until the turn ends', (t) => {

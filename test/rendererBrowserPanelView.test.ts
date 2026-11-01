@@ -137,12 +137,15 @@ test('being covered keeps the rect but stops the page painting', (t) => {
   assert.deepEqual(r.bounds.at(-1), { tabId: 't1', rect: HOLE_RECT, visible: false })
 })
 
-test('a hidden window stops the page painting too', (t) => {
+test('hiding and restoring the window preserves panel intent without geometry pushes', (t) => {
   const r = render(t)
   r.paint()
   r.stub.setHidden(true)
   r.view.measure()
-  assert.equal(r.bounds.at(-1)?.visible, false)
+  assert.deepEqual(r.bounds, [{ tabId: 't1', rect: HOLE_RECT, visible: true }])
+  r.stub.setHidden(false)
+  r.view.measure()
+  assert.equal(r.bounds.length, 1)
 })
 
 test('a closed panel stops the page painting', (t) => {

@@ -7,7 +7,8 @@ import { migrateLegacyProjectData, type LegacyDataFinding } from './legacyProjec
 import { readJsonFile, writeJsonFile, parseJsonLines, parseJsonLinesWithDiagnostics } from '../utils/json.js'
 import type { CoordinationRole, SessionRecord, TokenUsage } from '../harness/types.js'
 import type { EffortLevel } from '../config/effort.js'
-import type { MetricUsage, SessionMetricInput, SessionMetric } from '../harness/metrics.js'
+import { metricTokenUsage, inferTurnInputTokens, type SessionMetricInput, type SessionMetric } from '../harness/metrics.js'
+export { inferTurnInputTokens } from '../harness/metrics.js'
 import { EMPTY_TOKEN_USAGE, addTokenUsage, promptTokens } from '../harness/usage.js'
 import { OtlpMetricExporter } from '../harness/otlp.js'
 import { checkSessionInvariants, ensureToolResultPairing } from './invariants.js'
@@ -522,6 +523,20 @@ export class SessionStore {
       }
       const session = await this.resolve(sessionIdOrPrefix)
       const sessionId = session?.id ?? sessionIdOrPrefix
+      this.appendSessionMetric(sessionId, metric)
+    } catch {
+      // Metrics are best-effort and must never affect the agent loop.
+    }
+  }
+
+  /** Commit a resolved session's metric before publishing its live usage. */
+  appendSessionMetric(sessionId: string, metric: SessionMetricInput): void {
+    try {
+      const draft = this.resolveDraft(sessionId)
+      if (draft) {
+        draft.metrics.push(metric)
+        return
+      }
       const record: SessionMetric = {
         created_at: new Date().toISOString(),
         session_id: sessionId,
@@ -610,15 +625,32 @@ export class SessionStore {
     try {
       if (this.resolveDraft(sessionIdOrPrefix)) return null
       const session = await this.resolve(sessionIdOrPrefix)
-      const sessionId = session?.id ?? sessionIdOrPrefix
+      return this.loadSessionUsage(session?.id ?? sessionIdOrPrefix)?.total ?? null
+    } catch {
+      return null
+    }
+  }
+
+  /** One disk snapshot for an already resolved session id, before live deltas. */
+  loadSessionUsage(sessionId: string): { lastRequest: TokenUsage | null; total: TokenUsage } | null {
+    try {
+      if (this.resolveDraft(sessionId)) return null
       const metricsPath = this.sessionMetricsPath(sessionId)
       if (!existsSync(metricsPath)) return null
       let total: TokenUsage | null = null
+      let lastRequest: TokenUsage | null = null
       for (const metric of parseJsonLines<SessionMetric>(readFileSync(metricsPath, 'utf-8'))) {
         const usage = metricTokenUsage(metric)
         if (usage) total = addTokenUsage(total ?? EMPTY_TOKEN_USAGE, usage)
+        if (metric.event === 'turn') {
+          const restored = metricTokenUsage({ ...metric, usageRecorded: undefined })
+          if (restored) {
+            const { cost: _cost, ...counts } = restored
+            lastRequest = counts
+          }
+        }
       }
-      return total
+      return total ? { lastRequest, total } : null
     } catch {
       return null
     }
@@ -1329,39 +1361,6 @@ function failedAfterLastUserMessage(records: readonly SessionRecord[]): boolean 
 
 /** How much of the first message names the session. */
 const SESSION_TITLE_LENGTH = 60
-
-/** What one metric spent, or undefined for an event that carries no usage. */
-function metricTokenUsage(metric: SessionMetric): TokenUsage | undefined {
-  const fields: MetricUsage | undefined = metric.event === 'turn'
-    ? { ...metric, input_tokens: inferTurnInputTokens(metric) }
-    : metric.event === 'compact' || metric.event === 'subagent_usage' || metric.event === 'aux_usage'
-      ? metric.usage
-      : undefined
-  if (!fields) return undefined
-  const usage: TokenUsage = {
-    inputTokens: Math.max(0, fields.input_tokens),
-    ...(typeof fields.cache_creation_tokens === 'number'
-      ? { cacheCreationInputTokens: Math.max(0, fields.cache_creation_tokens) }
-      : {}),
-    cacheReadInputTokens: Math.max(0, fields.cache_read_tokens),
-    outputTokens: Math.max(0, fields.response_tokens),
-  }
-  if (fields.cost) return { ...usage, cost: fields.cost }
-  return promptTokens(usage) + usage.outputTokens > 0 ? { ...usage, cost: { amounts: {}, legacy: true } } : usage
-}
-
-export function inferTurnInputTokens(turn: Extract<SessionMetric, { event: 'turn' }>): number {
-  if (typeof turn.input_tokens === 'number' && Number.isFinite(turn.input_tokens)) {
-    return Math.max(0, turn.input_tokens)
-  }
-  if (turn.cache_hit_rate && turn.cache_hit_rate > 0) {
-    // The rate's denominator is the whole prompt, so what is left after the
-    // reads is input *and* writes; subtract the writes when they were recorded.
-    const total = turn.cache_read_tokens / turn.cache_hit_rate
-    return Math.max(0, total - turn.cache_read_tokens - (turn.cache_creation_tokens ?? 0))
-  }
-  return 0
-}
 
 function normalizeCacheBreakCause(reason: string): string {
   const parenIndex = reason.indexOf('(')

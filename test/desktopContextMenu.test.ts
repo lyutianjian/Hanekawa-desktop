@@ -28,7 +28,8 @@ function recorder(): { actions: ContextMenuActions; calls: string[] } {
     actions: {
       replaceMisspelling: (word) => calls.push(`replace:${word}`),
       addToDictionary: (word) => calls.push(`add:${word}`),
-      copyText: (text) => calls.push(`copy:${text}`),
+      copyText: async (text) => { calls.push(`copy:${text}`) },
+      onCopyError: (error) => calls.push(`error:${String(error)}`),
       copyImageAt: (x, y) => calls.push(`image:${x},${y}`),
     },
   }
@@ -75,7 +76,7 @@ test('a misspelling leads with at most five suggestions and 添加到词典', ()
   assert.equal(none[0]!.enabled, false)
 })
 
-test('links and images add their own groups, separated from the rest', () => {
+test('links and images add their own groups, separated from the rest', async () => {
   const { actions, calls } = recorder()
   const template = contextMenuTemplate(
     input({ selectionText: 'see', linkURL: 'https://example.com/', mediaType: 'image', hasImageContents: true }),
@@ -83,9 +84,29 @@ test('links and images add their own groups, separated from the rest', () => {
     actions,
   )
   assert.deepEqual(labels(template), ['复制', '—', '复制链接地址', '—', '复制图片'])
-  ;(template[2]!.click as () => void)()
+  await (template[2]!.click as () => Promise<void>)()
   ;(template[4]!.click as () => void)()
   assert.deepEqual(calls, ['copy:https://example.com/', 'image:10,20'])
   // An image with nothing loaded has nothing to copy.
   assert.deepEqual(contextMenuTemplate(input({ mediaType: 'image' }), 'win32', actions), [])
+})
+
+test('copy link waits for the asynchronous clipboard and reports a rejected write', async () => {
+  const { actions, calls } = recorder()
+  let finish!: () => void
+  actions.copyText = () => new Promise<void>((resolve) => { finish = resolve })
+  const template = contextMenuTemplate(input({ linkURL: 'https://example.com/' }), 'darwin', actions)
+  const click = template[0]!.click as () => Promise<void>
+  let completed = false
+  const pending = click().then(() => { completed = true })
+  await Promise.resolve()
+  assert.equal(completed, false)
+  finish()
+  await pending
+  assert.equal(completed, true)
+  assert.deepEqual(calls, [])
+
+  actions.copyText = async () => { throw new Error('clipboard unavailable') }
+  await click()
+  assert.deepEqual(calls, ['error:Error: clipboard unavailable'])
 })

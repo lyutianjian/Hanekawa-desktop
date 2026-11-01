@@ -13,6 +13,16 @@ const MIGRATED_ENTRIES = ['window-state.json', 'Preferences', 'Local Storage'] a
 
 export type UserDataMigrationOutcome = 'moved' | 'copied' | 'absent' | 'failed'
 
+export function fixUserDataPaths(app: {
+  getPath(name: 'appData'): string
+  setPath(name: 'userData' | 'sessionData', value: string): void
+}): void {
+  const directory = path.join(app.getPath('appData'), 'hanekawa')
+  mkdirSync(directory, { recursive: true })
+  app.setPath('userData', directory)
+  app.setPath('sessionData', directory)
+}
+
 export function legacyUserDataPath(appData: string): string {
   return path.join(appData, LEGACY_USER_DATA_DIR)
 }

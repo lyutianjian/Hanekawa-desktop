@@ -76,7 +76,7 @@ test('/cost reports cache summary when available', async () => {
   }))
 
   assert.match(output, /Session cache:/)
-  assert.match(output, /Cache hit rate:\s+62\.5%/)
+  assert.match(output, /Cache hit rate:\s+50%/, 'the rate uses all session usage, matching the status hover')
   assert.match(output, /First break turn:\s+3/)
   assert.match(output, /Avg compact interval:\s+4\.5 turns/)
 })
