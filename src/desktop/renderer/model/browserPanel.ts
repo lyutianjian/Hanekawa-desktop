@@ -26,6 +26,7 @@ import type { SideMode } from './sidePanel.js'
 
 export const SIDE_WIDTH_STORAGE_KEYS: Readonly<Record<SideMode, string>> = {
   browser: 'hanekawa.browserPanelWidth.v3',
+  files: 'hanekawa.filesPanelWidth.v1',
   // The task page took over the overview's column, and its width with it.
   tasks: 'hanekawa.overviewPanelWidth.v1',
   threads: 'hanekawa.threadsPanelWidth.v1',
@@ -35,6 +36,7 @@ export const SIDE_WIDTH_STORAGE_KEYS: Readonly<Record<SideMode, string>> = {
 /** The CSS custom properties the panel rule reads, one per mode. */
 export const SIDE_WIDTH_VARIABLES: Readonly<Record<SideMode, string>> = {
   browser: '--browser-panel-width',
+  files: '--files-panel-width',
   tasks: '--tasks-panel-width',
   threads: '--threads-panel-width',
   changes: '--changes-panel-width',

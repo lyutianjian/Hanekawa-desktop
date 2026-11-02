@@ -4,7 +4,7 @@ This file provides implementation guidance for Codex and other coding agents whe
 
 ## Commands
 
-Requires Node.js 24+. Desktop runtime is pinned to Electron 45.2.1 (macOS 13+, 64-bit platforms). Run `npm install`.
+Requires Node.js 24+. Desktop runtime is pinned to Electron 45.2.1 (macOS 13+, 64-bit platforms). Run `npm install`
 
 ```bash
 npm run start:desktop

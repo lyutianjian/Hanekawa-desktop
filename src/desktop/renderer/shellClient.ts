@@ -53,6 +53,9 @@ import type {
  * module, and ids come from the global `crypto`, never `node:crypto`.
  */
 export class ShellClient {
+  private prepareFileQuit: (() => Promise<boolean>) | undefined
+  onPrepareFileQuit(handler: () => Promise<boolean>): void { this.prepareFileQuit = handler }
+
   private readonly channel: RuntimeChannel
   private readonly replies = new PendingRequests<
     { ok: true; result: unknown } | { ok: false; message: string }
@@ -526,6 +529,10 @@ export class ShellClient {
     if (!event || typeof event !== 'object' || typeof event.type !== 'string') return
 
     switch (event.type) {
+      case 'prepare-file-quit':
+        void (this.prepareFileQuit?.() ?? Promise.resolve(true)).catch(() => false).then((approved) =>
+          this.send({ type: 'file-quit-result', id: crypto.randomUUID(), requestId: event.requestId, approved })).catch(() => {})
+        return
       case 'lanes':
         this.applyLanes(event.lanes)
         return

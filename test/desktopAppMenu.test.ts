@@ -84,7 +84,7 @@ test('command items are labels plus a click: the accelerator is shown, never reg
   }
   assert.deepEqual(
     [...ran].sort(),
-    ['close-session', 'new-session', 'open-project', 'open-settings', 'toggle-browser', 'toggle-sidebar'],
+    ['close-session', 'new-session', 'open-project', 'open-settings', 'toggle-browser', 'toggle-files', 'toggle-sidebar'],
   )
   assert.deepEqual(template.map((menu) => menu.label), ['Hanekawa', '文件', '编辑', '视图', '窗口'])
 })

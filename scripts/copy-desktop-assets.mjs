@@ -111,3 +111,14 @@ for (const name of readdirSync(join(katexDist, 'fonts'))) {
   katexFaces += 1
 }
 console.log(`copied ${katexFaces} katex woff2 -> ${katexFontsDest}`)
+
+// The PDF worker runs locally; data and bundled font/CMap resources arrive over IPC.
+copyFileSync(join(repoRoot, 'node_modules/pdfjs-dist/build/pdf.worker.mjs'), join(destRoot, 'desktop/renderer/pdf.worker.mjs'))
+const filePreviewPackages = Object.keys(JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8')).dependencies)
+  .filter((name) => name.startsWith('@codemirror/') || ['@pierre/trees', '@lezer/highlight', 'pdfjs-dist'].includes(name))
+for (const name of filePreviewPackages) {
+  const source = join(repoRoot, 'node_modules', name)
+  const target = join(destRoot, 'desktop/renderer/licenses', name.replace('/', '-'))
+  mkdirSync(target, { recursive: true })
+  for (const file of readdirSync(source).filter((file) => /^(LICENSE|NOTICE)/i.test(file))) copyFileSync(join(source, file), join(target, file))
+}

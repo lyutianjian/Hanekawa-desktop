@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { createSessionReferenceHost } from '../runtime/sessionReferences.js'
 import { z } from 'zod/v3'
 import path from 'node:path'
@@ -802,6 +803,7 @@ const SHELL_COMMAND_SCHEMAS = {
       title: z.string(),
     })
     .strict(),
+  'file-quit-result': z.object({ type: z.literal('file-quit-result'), id: commandId, requestId: z.string(), approved: z.boolean() }).strict(),
   'open-in-editor': z
     .object({
       type: z.literal('open-in-editor'),
@@ -1044,6 +1046,19 @@ export class ShellHost<
   private readonly threadBroadcasts = new Map<string, ReturnType<typeof setTimeout>>()
   private disposed = false
   private readonly usageScanner = new UsageScanner()
+  private fileQuit: { id: string; settle: (approved: boolean) => void } | undefined
+
+  prepareFileQuit(): Promise<boolean> {
+    if (this.disposed || this.fileQuit) return Promise.resolve(false)
+    return new Promise((resolve) => {
+      const id = randomUUID()
+      const timer = setTimeout(() => settle(false), 30_000)
+      const settle = (approved: boolean) => { clearTimeout(timer); this.fileQuit = undefined; resolve(approved) }
+      this.fileQuit = { id, settle }
+      this.post({ type: 'prepare-file-quit', requestId: id })
+    })
+  }
+
 
   constructor(private readonly deps: ShellHostDeps<P, PaneT, W>) {
     this.channel = deps.mux.lane(SHELL_LANE)
@@ -1349,6 +1364,9 @@ export class ShellHost<
   /** Exhaustive by `assertNever`: an unhandled variant must not compile. */
   private async execute(command: ShellCommand): Promise<unknown> {
     switch (command.type) {
+      case 'file-quit-result':
+        if (this.fileQuit?.id === command.requestId) this.fileQuit.settle(command.approved)
+        return { ok: true }
       case 'panes':
         return { lanes: this.describeLanes() } satisfies WireShellPanesResult
       case 'open-session': {
@@ -2378,6 +2396,7 @@ export class ShellHost<
 
   /** Drops the pending pushes; the window (and its renderer) is gone. */
   dispose(): void {
+    this.fileQuit?.settle(false)
     this.disposed = true
     for (const timer of this.threadBroadcasts.values()) clearTimeout(timer)
     this.threadBroadcasts.clear()

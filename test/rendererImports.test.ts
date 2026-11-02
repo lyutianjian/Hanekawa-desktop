@@ -95,6 +95,8 @@ const ALLOWED_SHARED_IMPORTS = [
  * string are used.
  */
 const ALLOWED_PACKAGES = ['@shikijs/core', '@shikijs/engine-javascript', '@shikijs/langs/shellscript', 'diff', 'fuse.js', 'katex', 'marked']
+// File previews load these DOM libraries on first use; the desktop build covers their browser exports.
+ALLOWED_PACKAGES.push('@pierre/trees', '@lezer/highlight', '@codemirror/state', '@codemirror/view', '@codemirror/commands', '@codemirror/search', '@codemirror/language', '@codemirror/lang-javascript', '@codemirror/lang-json', '@codemirror/lang-html', '@codemirror/lang-css', '@codemirror/lang-markdown', '@codemirror/lang-python')
 
 const FORBIDDEN_LAYERS = /(^|\/)(harness|services|sessions|commands|tui)\//
 
@@ -102,7 +104,7 @@ function rendererFiles(dir = rendererRoot): string[] {
   return readdirSync(dir).flatMap((entry) => {
     const full = path.join(dir, entry)
     if (statSync(full).isDirectory()) return rendererFiles(full)
-    return full.endsWith('.ts') ? [full] : []
+    return full.endsWith('.ts') && !full.endsWith('.d.ts') ? [full] : []
   })
 }
 

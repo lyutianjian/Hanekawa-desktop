@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { createUiBridges } from '../src/runtime/bridges.js'
@@ -512,6 +512,26 @@ async function waitFor<T>(read: () => T | undefined, what: string): Promise<T> {
 }
 
 const fakeTool = { name: 'Bash', riskLevel: 'confirm' } as unknown as Tool
+
+test('workspace files use the lane working directory and reject another session identity', async () => {
+  const workingDir = await mkdtemp(path.join(tmpdir(), 'file-worktree-'))
+  const h = await createHarness({ workingDir })
+  try {
+    await writeFile(path.join(h.cwd, 'same.txt'), 'project')
+    await writeFile(path.join(workingDir, 'same.txt'), 'worktree')
+    h.send({ type: 'workspace-read', id: 'read-file', sessionId: h.sessionId, path: 'same.txt' })
+    const reply = await waitFor(() => h.received.find((e) => e.type === 'reply' && e.id === 'read-file'), 'file read')
+    assert.ok(reply.type === 'reply')
+    const file = reply.result as { content: string; revision: string }
+    assert.equal(file.content, 'worktree')
+    h.send({ type: 'workspace-save', id: 'save-file', sessionId: h.sessionId, path: 'same.txt', content: 'edited', expectedRevision: file.revision })
+    await waitFor(() => h.received.find((e) => e.type === 'reply' && e.id === 'save-file'), 'file save')
+    assert.equal(await readFile(path.join(workingDir, 'same.txt'), 'utf8'), 'edited')
+    assert.equal(await readFile(path.join(h.cwd, 'same.txt'), 'utf8'), 'project')
+    h.send({ type: 'workspace-read', id: 'wrong-session', sessionId: 'another', path: 'same.txt' })
+    await waitFor(() => h.received.find((e) => e.type === 'fail' && e.id === 'wrong-session'), 'stale identity rejection')
+  } finally { h.dispose() }
+})
 
 function permissionRequest(overrides: Partial<PermissionRequest> = {}): PermissionRequest {
   return {

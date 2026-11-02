@@ -134,6 +134,13 @@ const COMMAND_SCHEMAS = {
   // `cursorPos` is a plain number, not a bounded index: `extractAtCompletionToken`
   // slices with it and an out-of-range value simply yields no token. Narrowing
   // content is the job of the code that suffers from it; this validates shape.
+  'workspace-list': z.object({ type: z.literal('workspace-list'), id: commandId, sessionId: z.string(), path: z.string(), offset: z.number().int().nonnegative() }).strict(),
+  'workspace-search': z.object({ type: z.literal('workspace-search'), id: commandId, sessionId: z.string(), path: z.string(), query: z.string().max(500) }).strict(),
+  'workspace-read': z.object({ type: z.literal('workspace-read'), id: commandId, sessionId: z.string(), path: z.string() }).strict(),
+  'workspace-save': z.object({ type: z.literal('workspace-save'), id: commandId, sessionId: z.string(), path: z.string(), content: z.string().max(5 * 1024 * 1024), expectedRevision: z.string() }).strict(),
+  'workspace-watch': z.object({ type: z.literal('workspace-watch'), id: commandId, sessionId: z.string(), paths: z.array(z.string()).max(128) }).strict(),
+  'workspace-open': z.object({ type: z.literal('workspace-open'), id: commandId, sessionId: z.string(), path: z.string() }).strict(),
+  'workspace-pdf-resource': z.object({ type: z.literal('workspace-pdf-resource'), id: commandId, sessionId: z.string(), kind: z.enum(['cMapUrl', 'standardFontDataUrl', 'wasmUrl']), name: z.string() }).strict(),
   'file-suggestions': z
     .object({
       type: z.literal('file-suggestions'),

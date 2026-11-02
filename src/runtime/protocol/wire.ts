@@ -1,3 +1,4 @@
+import type { WorkspaceFileCommand, WorkspaceFilesChanged } from './workspaceFiles.js'
 import type { EffortLevel } from '../../config/effort.js'
 import type { CommandView } from '../../commands/types.js'
 import type { DestructiveCommandWarning } from '../../harness/destructiveCommands.js'
@@ -75,6 +76,7 @@ export type HostEvent =
    * shell, which would otherwise be an IPC firehose.
    */
   | { type: 'background-tasks'; tasks: BackgroundTaskSnapshot[] }
+  | { type: 'workspace-files-changed'; sessionId: string; change: WorkspaceFilesChanged }
   /**
    * The session the host is now bound to.
    *
@@ -111,6 +113,7 @@ export type HostEvent =
 // --- client → host ----------------------------------------------------------
 
 export type HostCommand =
+  | WorkspaceFileCommand
   /** Client attached. The host replays both snapshots so the UI can paint. */
   | { type: 'hello'; id: string }
   /**

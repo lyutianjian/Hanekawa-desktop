@@ -69,6 +69,7 @@ export interface WireEditorTarget {
 // --- renderer → main ---------------------------------------------------------
 
 export type ShellCommand =
+  | { type: 'file-quit-result'; id: string; requestId: string; approved: boolean }
   /** The full lane topology, across every open project. */
   | { type: 'panes'; id: string }
   /**
@@ -740,6 +741,7 @@ export type SettingsChange =
 // --- main → renderer ---------------------------------------------------------
 
 export type ShellEvent =
+  | { type: 'prepare-file-quit'; requestId: string }
   /**
    * The lane topology changed. Pushed on every open, close and session switch
    * (a switch moves `paneId` under a lane, which is a topology change even
@@ -788,6 +790,7 @@ export type WireMenuAction =
   | 'open-settings'
   | 'toggle-sidebar'
   | 'toggle-browser'
+  | 'toggle-files'
   | 'close-session'
 
 // --- reply payloads ----------------------------------------------------------

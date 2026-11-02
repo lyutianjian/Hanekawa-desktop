@@ -265,6 +265,8 @@ const browserTabs = new BrowserTabHost()
 let shell: Shell | undefined
 let creatingShell: Promise<Shell> | undefined
 let systemEnding = false
+let checkingFileQuit = false
+let fileQuitApproved = false
 let nativeInteractions = 0
 const isExiting = (): boolean => systemEnding || quit.isQuitting()
 const canAcceptAction = (): boolean => !isExiting() && !rendererRecovery.isRecovering()
@@ -468,6 +470,19 @@ if (!app.requestSingleInstanceLock()) {
 
   app.on('before-quit', (event) => {
     if (systemEnding) return
+    if (!quit.isQuitting() && !fileQuitApproved && !rendererRecovery.isRecovering() && shell && !shell.window.isDestroyed() && !shell.window.webContents.isCrashed()) {
+      event.preventDefault()
+      if (!checkingFileQuit) {
+        checkingFileQuit = true
+        void shell.host.prepareFileQuit().then((approved) => {
+          checkingFileQuit = false
+          if (!approved) return
+          fileQuitApproved = true
+          app.quit()
+        }).catch(() => { checkingFileQuit = false })
+      }
+      return
+    }
     // Electron will not wait for an async handler, so every request is
     // cancelled until the drain settles; the gate then lets the single
     // `app.quit()` it issues afterwards through. This also covers
@@ -1196,8 +1211,9 @@ async function createShell(): Promise<Shell> {
         // Electron-free, so `shell.openPath` lives here. The path is
         // host-derived from a registered `(session, imageId)` pair — never a
         // renderer-supplied `file://` value.
-        onOpenAttachment: (filePath) => {
-          void electronShell.openPath(filePath)
+        onOpenAttachment: async (filePath) => {
+          const error = await electronShell.openPath(filePath)
+          if (error) throw new Error(error)
         },
         // The shell answers from its lane map so every row the renderer draws
         // is a row it can switch to.

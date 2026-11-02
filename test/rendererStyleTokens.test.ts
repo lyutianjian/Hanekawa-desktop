@@ -172,6 +172,7 @@ test('the stylesheet parses exactly, so nothing below can pass vacuously', () =>
   assert.deepEqual(
     atRules.map((match) => match[0].replace(/\s+/g, ' ').trim()),
     [
+      '@container (max-width: 620px) {',
       '@media (max-height: 700px) {',
       '@container composer-bar (inline-size < 320px) {',
       '@media (hover: none), (pointer: coarse) {',
@@ -449,6 +450,12 @@ test('the palette is the one that was agreed, value for value', () => {
       '--browser-panel-width': 'clamp(240px, (100vw - var(--sidebar-width)) / 2, 900px)',
       '--tasks-panel-width': '320px',
       '--threads-panel-width': '320px',
+      '--files-panel-width': 'clamp(420px, (100vw - var(--sidebar-width)) * 0.48, 680px)',
+      '--file-tree-width': '190px',
+      '--file-preview-width': 'auto',
+      '--file-preview-max-width': '100%',
+      '--file-pdf-width': 'auto',
+      '--file-pdf-height': 'auto',
       '--changes-panel-width': 'clamp(300px, (100vw - var(--sidebar-width)) * 0.45, 640px)',
       '--titlebar-inset-left': '0px',
       '--titlebar-inset-right': '138px',
@@ -617,6 +624,12 @@ test('the palette is the one that was agreed, value for value', () => {
       '--browser-panel-width': 'clamp(240px, (100vw - var(--sidebar-width)) / 2, 900px)',
       '--tasks-panel-width': '320px',
       '--threads-panel-width': '320px',
+      '--files-panel-width': 'clamp(420px, (100vw - var(--sidebar-width)) * 0.48, 680px)',
+      '--file-tree-width': '190px',
+      '--file-preview-width': 'auto',
+      '--file-preview-max-width': '100%',
+      '--file-pdf-width': 'auto',
+      '--file-pdf-height': 'auto',
       '--changes-panel-width': 'clamp(300px, (100vw - var(--sidebar-width)) * 0.45, 640px)',
       '--titlebar-inset-left': '0px',
       '--titlebar-inset-right': '138px',
@@ -2606,6 +2619,10 @@ test('a diff is the only block in a turn that scrolls sideways', () => {
   // the choice is a scrollbar or a clipped formula. It is `overflow-x: auto`
   // with `overflow-y: hidden`, so only the one axis is in play.
   const SCROLLS_BOTH_AXES = [
+    // File tabs, code differences and zoomable media live outside the transcript.
+    '.file-tabs',
+    '.file-difference',
+    '.file-preview-stage',
     '.request-block, #composer-request .block',
     '.md .md-math-display',
     '.diff',

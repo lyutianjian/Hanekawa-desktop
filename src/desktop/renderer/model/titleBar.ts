@@ -76,6 +76,7 @@ export function titleBarMenus(platform: DesktopPlatform): readonly TitleBarMenu[
         // No chord: the browser panel has no accelerator yet, and inventing one
         // here would show the user a shortcut nothing listens for. Same reason
         // 快捷键 below carries an empty one.
+        { action: 'toggle-files', label: '显示 / 隐藏文件', chord: '' },
         { action: 'toggle-browser', label: '显示 / 隐藏浏览器', chord: '' },
       ],
     },

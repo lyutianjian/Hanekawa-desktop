@@ -1,3 +1,4 @@
+import { FileExplorerPanel } from './dom/fileExplorerView.js'
 import { parseSessionReferences, sessionReferenceMarkdown } from '../../runtime/sessionReferenceText.js'
 import { SESSION_REFERENCE_MIME } from './model/sessionReferenceTransfer.js'
 /**
@@ -346,6 +347,7 @@ const composer = createComposerView({
   onLoadContextBreakdown: () => activePane()?.client.getContextBreakdown() ?? Promise.resolve({}),
 })
 const form = required<HTMLFormElement>('input-row')
+const filesPanel = new FileExplorerPanel(required('files-view'), (error) => reportError({ action: '文件操作' }, error))
 const sidebarContainer = required('sidebar')
 const canvas = required('canvas')
 const rewindPanel = createRewindView(required('rewind'), required('rewind-panel'), (intent) => {
@@ -591,6 +593,8 @@ function removePaneSession(lane: string): void {
   lastActiveTick.delete(lane)
   evicting.delete(lane)
   panelOpenLanes.delete(lane)
+  const fileSessionId = session.client.getSession()?.id
+  if (fileSessionId) filesPanel.release(fileSessionId)
   session.dispose()
   if (activeLane === lane) {
     activeLane = undefined
@@ -653,7 +657,7 @@ function applyPaneBudget(): void {
     lane,
     active: lane === activeLane,
     streaming: statuses.get(lane)?.streaming ?? false,
-    pending: !session.client.getSession() || session.client.getQueuedMessages().length > 0,
+    pending: !session.client.getSession() || session.client.getQueuedMessages().length > 0 || filesPanel.hasPending(session.client.getSession()?.id ?? ''),
     blocked: statuses.get(lane)?.blocked ?? false,
     processes: statuses.get(lane)?.processes ?? false,
     tabs: tabsForLane(tabs, lane).length > 0,
@@ -1122,6 +1126,7 @@ function assertNeverIntent(value: never): void {
  * invites a second Enter.
  */
 async function deleteSession(projectRoot: string, sessionId: string): Promise<void> {
+  if (!await filesPanel.guard(sessionId)) return
   pendingDelete = undefined
   // The row goes *now*, not when the host answers. Deleting a session detaches
   // its lane, releases a runtime and re-lists the store, and leaving the row on
@@ -1152,6 +1157,7 @@ async function deleteSession(projectRoot: string, sessionId: string): Promise<vo
  * about to disappear, and one still asking invites a second answer.
  */
 async function removeProject(projectRoot: string): Promise<void> {
+  for (const lane of shellClient.getLanes()) if (lane.projectRoot === projectRoot && !await filesPanel.guard(lane.sessionId)) return
   pendingRemoveProject = undefined
   projectMenu = undefined
   // Same rule as `deleteSession`: the group leaves on the click, not on the
@@ -1798,6 +1804,9 @@ function runTitleBarAction(action: TitleBarAction): void {
     case 'toggle-changes':
       toggleSide('changes')
       return
+    case 'toggle-files':
+      toggleSide('files')
+      return
     case 'toggle-browser':
       toggleSide('browser')
       return
@@ -1822,7 +1831,7 @@ function applySideWidth(mode: SideMode, px: number | undefined): void {
   // An empty value removes the declaration (CSSOM `setProperty`).
   document.documentElement.style.setProperty(SIDE_WIDTH_VARIABLES[mode], px === undefined ? '' : `${clampSideWidth(px)}px`)
 }
-for (const mode of ['tasks', 'threads', 'changes', 'browser'] as const) {
+for (const mode of ['tasks', 'threads', 'changes', 'files', 'browser'] as const) {
   applySideWidth(mode, parseSideWidth(localStorage.getItem(SIDE_WIDTH_STORAGE_KEYS[mode])))
 }
 
@@ -2101,11 +2110,16 @@ function renderSubagents(): void {
   const visible = view.open && !projectsOpen
   show(sidePanel, visible)
   show(sideResizer, visible)
-  for (const mode of ['tasks', 'threads', 'changes'] as const) sidePanel.classList.toggle(mode, view.mode === mode)
+  for (const mode of ['tasks', 'threads', 'changes', 'files'] as const) sidePanel.classList.toggle(mode, view.mode === mode)
   show(sideClose, visible)
   const onBrowser = visible && view.mode === 'browser'
-  show(browserMaximize, onBrowser)
-  document.body.classList.toggle('browser-maximized', onBrowser && browserMaximized)
+  const onFiles = visible && view.mode === 'files' && !settingsState.open && !imageViewerOpen
+  filesPanel.retain(new Set(shellClient.getLanes().map((lane) => lane.sessionId)))
+  const fileSession = activePane()?.client.getSession()
+  show(required('files-view'), onFiles)
+  filesPanel.render(onFiles && fileSession && activePane() ? { client: activePane()!.client, sessionId: fileSession.id, label: activeLaneInfo()?.projectName ?? '工作目录' } : undefined)
+  show(browserMaximize, onBrowser || onFiles)
+  document.body.classList.toggle('browser-maximized', (onBrowser || onFiles) && browserMaximized)
   const maximizeLabel = browserMaximized ? '还原' : '放大'
   if (browserMaximize.title !== maximizeLabel) {
     browserMaximize.title = maximizeLabel
@@ -2340,8 +2354,12 @@ window.addEventListener('pagehide', () => {
   document.removeEventListener('visibilitychange', syncMotion)
   clearInterval(timeTicker)
   syncMotion()
+  filesPanel.dispose()
   for (const pane of paneSessions.values()) pane.dispose()
 })
+
+window.addEventListener('focus', () => filesPanel.refresh())
+shellClient.onPrepareFileQuit(() => filesPanel.guard())
 
 // --- the rail's drag handle ---------------------------------------------------
 

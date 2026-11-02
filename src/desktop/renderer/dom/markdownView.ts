@@ -1,7 +1,7 @@
 import katex from 'katex'
 
 import type { MdBlock, MdInline, MdListItem } from '../model/markdown.js'
-import { parseMarkdownBlocks, parseMarkdownSegments } from '../model/markdown.js'
+import { parseMarkdownBlocks, parseMarkdownSegments, parseFileMarkdownBlocks } from '../model/markdown.js'
 import { REDUCED_MOTION_QUERY } from '../model/reducedMotion.js'
 import { isShellLang } from '../model/syntax.js'
 import { el, append } from './dom.js'
@@ -25,6 +25,10 @@ import { shellNodes } from './syntaxView.js'
  * (`renderToString`) — the one this file could not use — is never produced. See
  * `mathNode` for the options that keep it that way.
  */
+export function fileMarkdownNode(content: string): HTMLElement {
+  return el('div', 'md', ...parseFileMarkdownBlocks(content).map(blockNode))
+}
+
 export function markdownNode(content: string, className = 'md'): HTMLElement {
   return el('div', className, ...markdownChildren(content))
 }
@@ -303,6 +307,12 @@ function inlineNode(inline: MdInline): Node {
 
     case 'del':
       return el('del', undefined, ...inlineNodes(inline.children))
+
+    case 'image': {
+      const placeholder = el('span', 'file-markdown-image', inline.alt)
+      placeholder.dataset.fileImage = inline.href
+      return placeholder
+    }
 
     case 'link': {
       // `target="_blank"` so the click reaches `setWindowOpenHandler` in

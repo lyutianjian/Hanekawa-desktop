@@ -36,6 +36,24 @@ function createHarness(): Harness {
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0))
 
+test('session-changing commands wait for file saves and cancellation never reaches the host', async () => {
+  const h = createHarness()
+  h.client.setFileGuard(async () => false)
+  await assert.rejects(h.client.runCommand('/clear'), /文件仍有未保存/)
+  assert.equal(h.sent.length, 0)
+  let approve!: (value: boolean) => void
+  h.client.setFileGuard(() => new Promise((resolve) => { approve = resolve }))
+  const pending = h.client.runCommand('/clear')
+  await settle()
+  assert.equal(h.sent.length, 0)
+  approve(true)
+  await settle()
+  assert.equal(h.sent[0]?.type, 'run-command')
+  h.post({ type: 'reply', id: h.sent[0]!.id, result: {} })
+  await pending
+  h.client.dispose()
+})
+
 test('retractMessage returns the persisted message and leaves queue updates authoritative', async () => {
   const harness = createHarness()
   const pending = harness.client.retractMessage('q1')

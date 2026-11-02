@@ -1,3 +1,4 @@
+import type { WorkspaceFilesChanged, WorkspaceListing, WorkspaceFile, WorkspaceSaveResult, WorkspaceSearchResult, PdfResourceKind } from './workspaceFiles.js'
 import { randomUUID } from 'node:crypto'
 import type { SessionRecord, TaskDisplaySnapshot, UsageCost } from '../../harness/types.js'
 import type { MessageQueuePriority, PersistedQueuedMessage } from '../../harness/types.js'
@@ -89,6 +90,36 @@ export interface SessionClientHandlers {
  * swapping, restoring the invariant the React contract needs.
  */
 export class SessionClient {
+  private readonly fileListeners = new Set<(sessionId: string, change: WorkspaceFilesChanged) => void>()
+  private fileGuard: (() => Promise<boolean>) | undefined
+
+  setFileGuard(guard: (() => Promise<boolean>) | undefined): void { this.fileGuard = guard }
+  onWorkspaceFilesChanged(listener: (sessionId: string, change: WorkspaceFilesChanged) => void): () => void {
+    this.fileListeners.add(listener)
+    return () => { this.fileListeners.delete(listener) }
+  }
+  listWorkspaceFiles(sessionId: string, path: string, offset = 0): Promise<WorkspaceListing> {
+    return this.send({ type: 'workspace-list', id: randomUUID(), sessionId, path, offset }) as Promise<WorkspaceListing>
+  }
+  searchWorkspaceFiles(sessionId: string, path: string, query: string): Promise<WorkspaceSearchResult> {
+    return this.send({ type: 'workspace-search', id: randomUUID(), sessionId, path, query }) as Promise<WorkspaceSearchResult>
+  }
+  readWorkspaceFile(sessionId: string, path: string): Promise<WorkspaceFile> {
+    return this.send({ type: 'workspace-read', id: randomUUID(), sessionId, path }) as Promise<WorkspaceFile>
+  }
+  saveWorkspaceFile(sessionId: string, path: string, content: string, expectedRevision: string): Promise<WorkspaceSaveResult> {
+    return this.send({ type: 'workspace-save', id: randomUUID(), sessionId, path, content, expectedRevision }) as Promise<WorkspaceSaveResult>
+  }
+  watchWorkspaceFiles(sessionId: string, paths: string[]): Promise<{ error?: string }> {
+    return this.send({ type: 'workspace-watch', id: randomUUID(), sessionId, paths }) as Promise<{ error?: string }>
+  }
+  openWorkspaceFile(sessionId: string, path: string): Promise<unknown> {
+    return this.send({ type: 'workspace-open', id: randomUUID(), sessionId, path })
+  }
+  readPdfResource(sessionId: string, kind: PdfResourceKind, name: string): Promise<Uint8Array> {
+    return this.send({ type: 'workspace-pdf-resource', id: randomUUID(), sessionId, kind, name }) as Promise<Uint8Array>
+  }
+
   private readonly channel: RuntimeChannel
   private readonly replies = new PendingRequests<{ ok: true; result: unknown } | { ok: false; message: string }>()
   private readonly eventListeners = new Set<(event: SessionEvent) => void>()
@@ -707,6 +738,8 @@ export class SessionClient {
     this.queuedMessages = EMPTY_QUEUE
     this.eventListeners.clear()
     this.effectListeners.clear()
+    this.fileListeners.clear()
+    this.fileGuard = undefined
     this.paneListeners.clear()
     this.queueListeners.clear()
     this.listeners.clear()
@@ -715,6 +748,10 @@ export class SessionClient {
   // --- plumbing ---------------------------------------------------------
 
   private async send(command: Exclude<HostCommand, { type: 'ui-response' }>): Promise<unknown> {
+    if (this.fileGuard && (command.type === 'close-pane' || command.type === 'retarget' || command.type === 'shutdown'
+      || command.type === 'create-session' || (command.type === 'run-command' && /^\/(?:clear|resume)(?:\s|$)/.test(command.input)))) {
+      if (!await this.fileGuard()) throw new Error('已取消操作：文件仍有未保存内容')
+    }
     if (this.disposed) throw new Error('The client was disposed.')
     if (this.hostGone) throw new Error('The host disconnected.')
     const pending = this.replies.create(command.id)
@@ -746,6 +783,9 @@ export class SessionClient {
       case 'runtime-snapshot':
         this.runtimeSnapshot = event.snapshot
         this.notify()
+        return
+      case 'workspace-files-changed':
+        for (const listener of [...this.fileListeners]) listener(event.sessionId, event.change)
         return
       case 'background-tasks':
         this.applyBackgroundTasks(event.tasks)

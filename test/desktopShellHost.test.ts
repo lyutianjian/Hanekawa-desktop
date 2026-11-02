@@ -708,6 +708,7 @@ test('the structural shell halves are satisfied by the real runtime types', () =
 })
 
 const COMMAND_SAMPLES = {
+  'file-quit-result': { type: 'file-quit-result', id: 'q', requestId: 'q1', approved: true },
   panes: { type: 'panes', id: 'a' },
   'open-session': { type: 'open-session', id: 'b', sessionId: 's1', title: 'T', projectRoot: 'r' },
   'open-project': { type: 'open-project', id: 'c' },
@@ -853,6 +854,21 @@ test('a settings change with an unknown field is rejected', () => {
   assert.equal(parsed.ok, false, '.strict() must reject an extra field')
 })
 
+test('explicit quit waits for the renderer file guard and can be cancelled before teardown', async () => {
+  const h = createHarness()
+  let approve!: (value: boolean) => void
+  h.client.onPrepareFileQuit(() => new Promise((resolve) => { approve = resolve }))
+  const pending = h.host.prepareFileQuit()
+  await settle()
+  assert.deepEqual(h.disposed, [])
+  approve(false)
+  assert.equal(await pending, false)
+  h.client.onPrepareFileQuit(async () => true)
+  assert.equal(await h.host.prepareFileQuit(), true)
+  h.client.dispose()
+  h.host.dispose()
+})
+
 test('every shell command variant round-trips through its schema', () => {
   for (const command of Object.values(COMMAND_SAMPLES)) {
     const parsed = parseShellCommand(command)
@@ -875,6 +891,7 @@ test('every shell command variant round-trips through its schema', () => {
       'coordination-survey',
       'coordination-threads',
       'delete-session',
+      'file-quit-result',
       'get-settings',
       'list-sessions',
       'model-names',

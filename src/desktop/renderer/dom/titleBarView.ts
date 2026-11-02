@@ -182,5 +182,6 @@ const SIDE_ICONS: Readonly<Record<SideMode, IconName>> = {
   tasks: 'tasks',
   threads: 'network',
   changes: 'diff',
+  files: 'folder-open',
   browser: 'globe',
 }

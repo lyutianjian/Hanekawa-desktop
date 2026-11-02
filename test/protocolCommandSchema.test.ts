@@ -16,6 +16,13 @@ import type { HostCommand } from '../src/runtime/protocol/wire.js'
 
 /** One minimal valid instance of every variant. */
 const SAMPLES = {
+  'workspace-list': { type: 'workspace-list', id: '1', sessionId: 's', path: '', offset: 0 },
+  'workspace-search': { type: 'workspace-search', id: '1', sessionId: 's', path: '', query: 'a' },
+  'workspace-read': { type: 'workspace-read', id: '1', sessionId: 's', path: 'a.txt' },
+  'workspace-save': { type: 'workspace-save', id: '1', sessionId: 's', path: 'a.txt', content: 'new', expectedRevision: 'hash' },
+  'workspace-watch': { type: 'workspace-watch', id: '1', sessionId: 's', paths: [''] },
+  'workspace-open': { type: 'workspace-open', id: '1', sessionId: 's', path: 'a.pdf' },
+  'workspace-pdf-resource': { type: 'workspace-pdf-resource', id: '1', sessionId: 's', kind: 'cMapUrl', name: 'a.bcmap' },
   hello: { type: 'hello', id: '1' },
   submit: { type: 'submit', id: '1', input: 'hi' },
   interrupt: { type: 'interrupt', id: '1', reason: 'user-cancel' },
@@ -74,7 +81,8 @@ test('the schema covers exactly the variants wire.ts declares', () => {
   const end = source.indexOf('export type InterruptReason')
   assert.ok(start >= 0 && end > start, 'could not slice the HostCommand union out of wire.ts')
 
-  const declared = [...source.slice(start, end).matchAll(/type: '([a-z-]+)'/g)].map((match) => match[1])
+  const fileCommands = readFileSync(fileURLToPath(new URL('../src/runtime/protocol/workspaceFiles.ts', import.meta.url)), 'utf8')
+  const declared = [...(source.slice(start, end) + fileCommands).matchAll(/type: '([a-z-]+)'/g)].map((match) => match[1])
   assert.ok(declared.length > 15, `only parsed ${declared.length} variants; the regex probably broke`)
 
   assert.deepEqual([...declared].sort(), [...hostCommandSchema.optionsMap.keys()].sort())

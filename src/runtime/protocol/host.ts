@@ -1,3 +1,4 @@
+import { WorkspaceFiles, readPdfResource } from '../../services/workspaceFiles/workspaceFiles.js'
 import { randomUUID } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
 import path from 'node:path'
@@ -240,7 +241,7 @@ export interface SessionHostDeps {
    * `shell.openPath` on Electron — because this module is Electron-free by
    * rule. The path arrives host-resolved; the renderer never sees it.
    */
-  onOpenAttachment?: (filePath: string) => void
+  onOpenAttachment?: (filePath: string) => void | Promise<void>
   /**
    * The whole pane topology, when the shell knows more panes than this host's
    * project does.
@@ -322,6 +323,13 @@ function queueCompensation(
 }
 
 export class SessionHost implements CoordinationLaneControl {
+  private workspaceFiles: WorkspaceFiles | undefined
+
+  private filesFor(sessionId: string): WorkspaceFiles {
+    if (sessionId !== this.session.id) throw new Error('文件所属会话已切换，请重新打开')
+    return this.workspaceFiles ??= new WorkspaceFiles(this.scope.workingDir, (change) => this.post({ type: 'workspace-files-changed', sessionId, change }))
+  }
+
   private readonly channel: RuntimeChannel
   private readonly controller: SessionController
   private readonly runtimeSlot: RuntimeSlot
@@ -332,7 +340,7 @@ export class SessionHost implements CoordinationLaneControl {
   private readonly onPaneClosed: (paneId: string) => void
   private readonly onFocusPane: ((paneId: string) => boolean) | undefined
   private readonly onOpenProject: (() => void) | undefined
-  private readonly onOpenAttachment: ((filePath: string) => void) | undefined
+  private readonly onOpenAttachment: ((filePath: string) => void | Promise<void>) | undefined
   private readonly describePanes: (() => WirePaneInfo[]) | undefined
   private readonly onPaneListChanged: (() => void) | undefined
 
@@ -430,6 +438,7 @@ export class SessionHost implements CoordinationLaneControl {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.workspaceFiles?.dispose()
     this.discardPendingWake('detached')
     if (this.taskPostTimer !== undefined) {
       clearTimeout(this.taskPostTimer)
@@ -867,6 +876,20 @@ export class SessionHost implements CoordinationLaneControl {
 
   private async execute(command: Exclude<HostCommand, { type: 'ui-response' }>): Promise<unknown> {
     switch (command.type) {
+      case 'workspace-list': return this.filesFor(command.sessionId).list(command.path, command.offset)
+      case 'workspace-search': return this.filesFor(command.sessionId).search(command.path, command.query)
+      case 'workspace-read': return this.filesFor(command.sessionId).read(command.path)
+      case 'workspace-save': return this.filesFor(command.sessionId).save(command.path, command.content, command.expectedRevision)
+      case 'workspace-watch': return this.filesFor(command.sessionId).setWatch(command.paths)
+      case 'workspace-pdf-resource':
+        this.filesFor(command.sessionId)
+        return readPdfResource(command.kind, command.name)
+      case 'workspace-open': {
+        const target = await this.filesFor(command.sessionId).resolve(command.path)
+        if (!this.onOpenAttachment) throw new Error('无法打开外部应用')
+        await this.onOpenAttachment(target)
+        return { ok: true }
+      }
       case 'hello': {
         const records = [...this.ledger.list()]
         const toolDisplays = projectToolDisplays(records, this.memoryDir)
@@ -1295,10 +1318,9 @@ export class SessionHost implements CoordinationLaneControl {
         const stored = await this.requireAttachments().resolveRef(this.attachmentLookup(command.imageId))
         if (!stored.ok) return { ok: false, reason: stored.reason, message: stored.message }
         // Same pattern as `open-project`: this module is Electron-free, so the
-        // shell owns `shell.openPath`, and the open itself is fire-and-forget —
-        // the reply says the shell took it, not that an image viewer appeared.
+        // shell owns `shell.openPath`; an OS failure settles this request too.
         if (!this.onOpenAttachment) throw new Error('This shell cannot open attachments')
-        this.onOpenAttachment(stored.value.metadata.localPath)
+        await this.onOpenAttachment(stored.value.metadata.localPath)
         return { ok: true } satisfies WireOpenAttachmentResult
       }
     }
@@ -1530,6 +1552,8 @@ export class SessionHost implements CoordinationLaneControl {
   }
 
   private applySessionSwitch(result: SessionSwitchResult): WireSessionSwitchResult {
+    this.workspaceFiles?.dispose()
+    this.workspaceFiles = undefined
     this.session = result.session
     this.ledger.rebase(result.records)
     const notices = this.startupNotices(result.diagnostics)

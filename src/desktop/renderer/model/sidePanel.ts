@@ -14,7 +14,7 @@
 import type { WireCoordinationThreads } from '../../shellProtocol.js'
 import { coordinationCounts, threadBlocked } from './coordinationStatus.js'
 
-export type SideMode = 'tasks' | 'threads' | 'changes' | 'browser'
+export type SideMode = 'tasks' | 'threads' | 'changes' | 'files' | 'browser'
 export type SideSection = 'plan' | 'running' | 'finished'
 
 export const SIDE_SECTIONS: readonly SideSection[] = ['plan', 'running', 'finished']
@@ -23,6 +23,7 @@ export const SIDE_MODE_LABELS: Readonly<Record<SideMode, string>> = {
   tasks: '任务',
   threads: '线程',
   changes: '改动',
+  files: '文件',
   browser: '浏览器',
 }
 
@@ -111,7 +112,7 @@ export interface SidePanelView {
 
 export function sidePanelView(input: SidePanelInput): SidePanelView {
   const sections = SIDE_SECTIONS.filter((section) => input.has[section])
-  const modes: SideMode[] = input.coordinated ? ['tasks', 'threads', 'changes', 'browser'] : ['tasks', 'changes', 'browser']
+  const modes: SideMode[] = input.coordinated ? ['tasks', 'threads', 'changes', 'files', 'browser'] : ['tasks', 'changes', 'files', 'browser']
   const mode = modes.includes(input.mode) ? input.mode : 'tasks'
   return { open: input.coordinated ? !input.panelClosed : input.laneOpen, mode, modes, sections }
 }

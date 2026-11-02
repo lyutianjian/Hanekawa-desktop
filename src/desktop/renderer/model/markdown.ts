@@ -31,6 +31,7 @@ import type { Rules, Token, TokenizerAndRendererExtension, TokenizerThis, Tokens
  */
 
 export type MdInline =
+  | { readonly kind: 'image'; readonly href: string; readonly alt: string }
   | { readonly kind: 'text'; readonly text: string }
   | { readonly kind: 'code'; readonly text: string }
   | { readonly kind: 'strong'; readonly children: readonly MdInline[] }
@@ -263,6 +264,10 @@ function hashContent(value: string): string {
   return `${hash >>> 0}:${value.length}`
 }
 
+export function parseFileMarkdownBlocks(content: string): MdBlock[] {
+  return lexer.lexer(content).flatMap((token) => blockFrom(token, true))
+}
+
 export function parseMarkdownBlocks(content: string): MdBlock[] {
   return parsedMarkdown(content).blocks
 }
@@ -347,7 +352,7 @@ export function resetMarkdownCache(): void {
   draft = undefined
 }
 
-function blockFrom(token: Token): MdBlock[] {
+function blockFrom(token: Token, filePreview = false): MdBlock[] {
   switch (token.type) {
     case 'space':
     // A link reference definition renders nothing; its target is already folded
@@ -360,7 +365,7 @@ function blockFrom(token: Token): MdBlock[] {
       return [{
         kind: 'heading',
         level: Math.min(Math.max(heading.depth, 1), 6),
-        inline: inlineFrom(heading.tokens),
+        inline: inlineFrom(heading.tokens, filePreview),
       }]
     }
 
@@ -371,7 +376,7 @@ function blockFrom(token: Token): MdBlock[] {
 
     case 'blockquote': {
       const quote = token as Tokens.Blockquote
-      return [{ kind: 'quote', blocks: quote.tokens.flatMap(blockFrom) }]
+      return [{ kind: 'quote', blocks: quote.tokens.flatMap((child) => blockFrom(child, filePreview)) }]
     }
 
     case 'list': {
@@ -380,7 +385,7 @@ function blockFrom(token: Token): MdBlock[] {
         kind: 'list',
         ordered: list.ordered,
         start: typeof list.start === 'number' ? list.start : 1,
-        items: list.items.map(listItemFrom),
+        items: list.items.map((item) => listItemFrom(item, filePreview)),
       }]
     }
 
@@ -388,8 +393,8 @@ function blockFrom(token: Token): MdBlock[] {
       const table = token as Tokens.Table
       return [{
         kind: 'table',
-        header: table.header.map((cell) => inlineFrom(cell.tokens)),
-        rows: table.rows.map((row) => row.map((cell) => inlineFrom(cell.tokens))),
+        header: table.header.map((cell) => inlineFrom(cell.tokens, filePreview)),
+        rows: table.rows.map((row) => row.map((cell) => inlineFrom(cell.tokens, filePreview))),
       }]
     }
 
@@ -406,7 +411,7 @@ function blockFrom(token: Token): MdBlock[] {
     case 'paragraph':
     case 'text': {
       const block = token as Tokens.Paragraph | Tokens.Text
-      const inline = block.tokens ? inlineFrom(block.tokens) : [plainText(block.text)]
+      const inline = block.tokens ? inlineFrom(block.tokens, filePreview) : [plainText(block.text)]
       return inline.length === 0 ? [] : [{ kind: 'paragraph', inline }]
     }
 
@@ -417,39 +422,39 @@ function blockFrom(token: Token): MdBlock[] {
   }
 }
 
-function listItemFrom(item: Tokens.ListItem): MdListItem {
+function listItemFrom(item: Tokens.ListItem, filePreview = false): MdListItem {
   // The `checkbox` token carries the state; the item's own `checked` agrees, and
   // the token itself must not fall through to the raw-text default.
   const tokens = item.tokens.filter((token) => token.type !== 'checkbox')
-  const blocks = tokens.flatMap(blockFrom)
+  const blocks = tokens.flatMap((child) => blockFrom(child, filePreview))
   return item.task ? { blocks, checked: item.checked === true } : { blocks }
 }
 
-function inlineFrom(tokens: readonly Token[]): MdInline[] {
-  return tokens.flatMap(inlineOne)
+function inlineFrom(tokens: readonly Token[], filePreview = false): MdInline[] {
+  return tokens.flatMap((token) => inlineOne(token, filePreview))
 }
 
-function inlineOne(token: Token): MdInline[] {
+function inlineOne(token: Token, filePreview = false): MdInline[] {
   switch (token.type) {
     case 'text':
     case 'escape': {
       const text = token as Tokens.Text | Tokens.Escape
       // A `text` token can itself carry children (a list item's body does).
       const nested = (text as Tokens.Text).tokens
-      return nested ? inlineFrom(nested) : [plainText(text.text)]
+      return nested ? inlineFrom(nested, filePreview) : [plainText(text.text)]
     }
 
     case 'codespan':
       return [{ kind: 'code', text: (token as Tokens.Codespan).text }]
 
     case 'strong':
-      return [{ kind: 'strong', children: inlineFrom((token as Tokens.Strong).tokens) }]
+      return [{ kind: 'strong', children: inlineFrom((token as Tokens.Strong).tokens, filePreview) }]
 
     case 'em':
-      return [{ kind: 'em', children: inlineFrom((token as Tokens.Em).tokens) }]
+      return [{ kind: 'em', children: inlineFrom((token as Tokens.Em).tokens, filePreview) }]
 
     case 'del':
-      return [{ kind: 'del', children: inlineFrom((token as Tokens.Del).tokens) }]
+      return [{ kind: 'del', children: inlineFrom((token as Tokens.Del).tokens, filePreview) }]
 
     case 'br':
       return [{ kind: 'break' }]
@@ -463,8 +468,8 @@ function inlineOne(token: Token): MdInline[] {
 
     case 'link': {
       const link = token as Tokens.Link
-      const children = inlineFrom(link.tokens)
-      const href = safeHref(link.href)
+      const children = inlineFrom(link.tokens, filePreview)
+      const href = safeHref(link.href) ?? (filePreview && !/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(link.href) ? link.href : undefined)
       // An unsafe target keeps the words and loses the anchor.
       return href === undefined ? children : [{ kind: 'link', href, children }]
     }
@@ -472,6 +477,7 @@ function inlineOne(token: Token): MdInline[] {
     case 'image': {
       const image = token as Tokens.Image
       const alt = image.text || 'image'
+      if (filePreview) return [{ kind: 'image', href: image.href, alt }]
       return [plainText(image.href ? `${alt} (${image.href})` : alt)]
     }
 

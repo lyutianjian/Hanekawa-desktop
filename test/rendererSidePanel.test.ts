@@ -33,7 +33,7 @@ function input(overrides: Overrides = {}): SidePanelInput {
 }
 
 test('an ordinary session follows its lane switch and always offers its three pages', () => {
-  const pages = ['tasks', 'changes', 'browser']
+  const pages = ['tasks', 'changes', 'files', 'browser']
   const cases: Array<[Overrides, unknown]> = [
     [{}, { open: false, mode: 'tasks', modes: pages, sections: [] }],
     [{ laneOpen: true, mode: 'browser' }, { open: true, mode: 'browser', modes: pages, sections: [] }],
@@ -46,7 +46,7 @@ test('an ordinary session follows its lane switch and always offers its three pa
 })
 
 test('a coordination session follows its project switch, whatever the lane switch says', () => {
-  const pages = ['tasks', 'threads', 'changes', 'browser']
+  const pages = ['tasks', 'threads', 'changes', 'files', 'browser']
   const cases: Array<[Overrides, unknown]> = [
     [{ mode: 'threads' }, { open: true, mode: 'threads', modes: pages, sections: [] }],
     [{ mode: 'threads', panelClosed: true }, { open: false, mode: 'threads', modes: pages, sections: [] }],

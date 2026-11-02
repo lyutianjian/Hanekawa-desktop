@@ -137,6 +137,7 @@ export function appMenuTemplate(options: AppMenuOptions): MenuItemConstructorOpt
       label: '视图',
       submenu: [
         command('收起 / 展开侧栏', 'toggle-sidebar', options),
+        command('显示 / 隐藏文件', 'toggle-files', options),
         command('显示 / 隐藏浏览器', 'toggle-browser', options),
         { type: 'separator' },
         { role: 'togglefullscreen', label: '切换全屏幕' },
