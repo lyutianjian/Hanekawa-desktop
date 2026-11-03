@@ -14,7 +14,10 @@
     "verify:sharp": "node scripts/verify-sharp.mjs",
     "verify:sharp:electron": "electron scripts/verify-sharp-electron.mjs",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.preload.json && tsc --noEmit -p tsconfig.renderer.json && tsc --noEmit -p tsconfig.domtest.json",
-    "test": "node scripts/test.mjs"
+    "test": "node scripts/test.mjs",
+    "icons": "node scripts/make-icons.mjs",
+    "pack:mac": "npm run clean:dist && npm run build:desktop && electron-builder --mac --arm64 --dir --publish never",
+    "dist:mac": "npm run clean:dist && npm run build:desktop && electron-builder --mac --arm64 --publish never"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "latest",
@@ -61,9 +64,12 @@
     "@types/react": "^19.2.14",
     "@types/turndown": "^5.0.5",
     "electron": "45.2.1",
+    "electron-builder": "26.18.0",
     "esbuild": "^0.28.2",
     "fast-check": "^3.23.2",
     "tsx": "latest",
     "typescript": "7.0.2"
-  }
+  },
+  "description": "Self-hosted coding agent with an Electron desktop app",
+  "author": "lyutianjian"
 }

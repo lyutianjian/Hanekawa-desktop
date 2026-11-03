@@ -328,7 +328,7 @@ const browserHost = new DesktopBrowserHost({
 })
 const browserTool = createBrowserTool(browserHost)
 const computerHost = new DesktopComputerHost({
-  nativeDir: join(bundleDir, 'computer', 'native'),
+  nativeDir: join(app.isPackaged ? process.resourcesPath : bundleDir, 'computer', 'native'),
   stateDir: join(getGlobalHanekawaDir(), 'computer'),
 })
 const computerTool = createComputerTool(computerHost)
