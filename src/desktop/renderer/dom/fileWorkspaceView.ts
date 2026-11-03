@@ -231,6 +231,7 @@ export class FileWorkspace {
       const item = el('div', `file-tab${this.selected === tab.path ? ' selected' : ''}`)
       item.dataset.path = tab.path
       item.append(button('file-tab-select', tab.path.split('/').at(-1)!, tab.path, () => { void this.open(tab.path) }),
+        el('span', 'file-tab-dirty', '•'),
         button('file-tab-close', '', `关闭 ${tab.path}`, () => { void this.closeTab(tab.path) }, { icon: 'close' }))
       this.tabBar.append(item)
       tab.element.hidden = tab.path !== this.selected

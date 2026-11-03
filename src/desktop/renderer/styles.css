@@ -1253,40 +1253,68 @@ body:has(> #browser-panel.files:not([hidden])) { background-size: calc(var(--fil
   height: 100%;
 }
 .file-workspace { --file-tree-width: 190px; container-type: inline-size; }
-.file-explorer-header { display: flex; align-items: center; gap: 8px; padding: 6px 76px 6px 12px; min-height: 38px; border-bottom: 1px solid var(--border-subtle); }
-.file-explorer-title { font-size: var(--type-dense); font-weight: 600; margin-right: auto; }
+/* The same 36px head as 改动 and 线程, so the ✕ and 放大 laid over its right
+   end share one centre line with every other panel's. */
+.file-explorer-header { display: flex; align-items: center; gap: var(--space-2); height: 36px; padding: 0 76px 0 var(--space-3); border-bottom: 1px solid var(--border-subtle); }
+.file-explorer-title { font-size: var(--type-ui); font-weight: 600; margin-right: auto; }
 .file-button { border: 0; background: transparent; color: var(--text-secondary); padding: 4px 7px; border-radius: var(--radius-sm); font: inherit; font-size: var(--type-meta); cursor: pointer; white-space: nowrap; }
 .file-button:hover { background: var(--surface-hover); color: var(--text-primary); }
 .file-workspace-body { display: flex; min-height: 0; flex: 1; }
 .file-document-column { display: flex; flex-direction: column; flex: 1; min-width: 0; min-height: 0; }
-.file-tree-column { display: flex; flex-direction: column; width: var(--file-tree-width); flex: 0 0 var(--file-tree-width); min-height: 0; padding: 10px 6px 0; overflow: hidden; }
-.file-tree { min-height: 0; flex: 1; --trees-fg-override: var(--text-primary); --trees-fg-muted-override: var(--text-tertiary); --trees-bg-override: var(--surface-card); --trees-bg-muted-override: var(--surface-hover); --trees-font-family-override: var(--font-ui); --trees-font-size-override: var(--type-dense); --trees-selected-bg-override: var(--surface-active); --trees-border-color-override: var(--border-subtle); }
-.file-tree-resizer { width: 5px; flex: 0 0 5px; border-left: 1px solid var(--border-subtle); cursor: col-resize; }
-.file-tree-resizer:hover { background: var(--surface-active); }
+.file-tree-column { display: flex; flex-direction: column; width: var(--file-tree-width); flex: 0 0 var(--file-tree-width); min-height: 0; padding: var(--space-2) var(--space-1) 0; overflow: hidden; }
+.file-tree { min-height: 0; flex: 1; --trees-fg-override: var(--text-primary); --trees-fg-muted-override: var(--text-tertiary); --trees-bg-override: var(--surface-card); --trees-bg-muted-override: var(--surface-hover); --trees-font-family-override: var(--font-ui); --trees-font-size-override: var(--type-dense); --trees-selected-bg-override: var(--surface-active); --trees-border-color-override: var(--border-subtle); --trees-border-radius-override: var(--radius-row); }
+/* A hairline inset from both ends, strengthening under the pointer. A 1px seam
+   the height of the card cut the panel into two squares — the one straight
+   full-length line the card's rounded shape cannot absorb. */
+.file-tree-resizer { position: relative; width: var(--space-2); flex: 0 0 var(--space-2); cursor: col-resize; }
+.file-tree-resizer::after { content: ''; position: absolute; top: var(--space-4); bottom: var(--space-4); left: calc(50% - 0.5px); width: 1px; background: var(--border-strong); opacity: 0; transition: opacity var(--motion-micro) var(--ease-out), width var(--motion-micro) var(--ease-out); }
+.file-tree-resizer:hover::after { opacity: 1; }
+.file-tree-resizer:focus-visible { outline: none; }
+.file-tree-resizer:focus-visible::after { opacity: 1; width: 2px; background: var(--focus-ring); }
 .file-tree-hidden .file-tree-column, .file-tree-hidden .file-tree-resizer { display: none; }
-.file-filter { min-width: 0; width: 100%; box-sizing: border-box; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--surface-card); color: var(--text-primary); padding: 7px 9px; font: inherit; font-size: var(--type-meta); }
+/* The same groove as the browser's address row and the sidebar's search: on the
+   panel's own card a card-filled field disappears, so this one steps down to
+   the base rung and carries only an inset hairline. */
+.file-filter { min-width: 0; width: 100%; box-sizing: border-box; border: 0; border-radius: var(--radius-row); background: var(--surface-base); box-shadow: inset 0 0 0 1px var(--border-subtle); color: var(--text-primary); padding: var(--space-1) var(--space-3); font: inherit; font-size: var(--type-meta); }
+.file-filter:focus { outline: none; box-shadow: 0 0 0 1px var(--focus-ring); }
 .file-filter-tools { display: flex; align-items: center; gap: 2px; min-height: 30px; }
 .file-filter-scope { flex: 1; min-width: 0; font-size: var(--type-meta); color: var(--text-tertiary); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.file-tabs { display: flex; overflow-x: auto; flex-shrink: 0; border-bottom: 1px solid var(--border-subtle); }
-.file-tab { display: flex; align-items: center; padding: 4px 3px 4px 8px; border-right: 1px solid var(--border-subtle); color: var(--text-secondary); }
+/* Chips, not a tab strip cut into the card: an open file is a row the way a
+   browser tab is, and the square tab with a divider beside it was the last
+   place the panel still looked like an embedded editor. The strip has no
+   hairline of its own — the breadcrumb row below owns the first line — and an
+   empty strip takes no height at all. */
+.file-tabs { display: flex; align-items: center; gap: 2px; padding: var(--space-1); overflow-x: auto; flex-shrink: 0; }
+.file-tabs:empty { display: none; }
+.file-tab { display: flex; align-items: center; flex: 0 1 auto; min-width: 80px; height: var(--control-md); padding: 0 2px 0 var(--space-2); border-radius: var(--radius-row); color: var(--text-secondary); }
+.file-tab:hover { background: var(--surface-hover); }
 .file-tab.selected { background: var(--surface-active); color: var(--text-primary); }
-.file-tab.unsaved .file-tab-select::after { content: ' •'; color: var(--accent-warn); }
+/* Its own element, not a `::after` on the label: a narrowed tab ellipsizes its
+   label, and the marker must survive that — it is the only sign an unselected
+   tab holds unsaved edits. */
+.file-tab-dirty { display: none; margin-left: 1px; color: var(--accent-warn); }
+.file-tab.unsaved .file-tab-dirty { display: inline; }
 .file-tab-select, .file-tab-close { font: inherit; font-size: var(--type-meta); color: inherit; cursor: pointer; border: 0; background: transparent; }
-.file-tab-select { max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 4px; }
-.file-tab-close { padding: 4px 7px; }
-.file-breadcrumb { display: flex; align-items: center; gap: 8px; padding: 6px 12px; color: var(--text-secondary); font-size: var(--type-meta); min-height: 32px; border-bottom: 1px solid var(--border-subtle); }
+.file-tab-select { flex: 0 1 auto; min-width: 0; max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0; }
+.file-tab-close { display: inline-flex; align-items: center; justify-content: center; width: var(--control-xs); height: var(--control-xs); margin-left: var(--space-1); border-radius: var(--radius-sm); color: var(--text-tertiary); }
+.file-tab-close:hover { background: var(--surface-active); color: var(--text-primary); }
+.file-tab.selected .file-tab-close:hover { background: var(--surface-hover); }
+.file-breadcrumb { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-1) var(--space-3); color: var(--text-secondary); font-size: var(--type-meta); min-height: 32px; border-bottom: 1px solid var(--border-subtle); }
 .file-current-path { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-content { display: flex; flex-direction: column; flex: 1; min-height: 0; overflow: hidden; }
-.file-document-toolbar, .file-preview-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 5px 10px; font-size: var(--type-meta); border-bottom: 1px solid var(--border-subtle); }
-.file-save-status { color: var(--text-tertiary); margin-left: auto; font-size: var(--type-meta); }
+.file-document-toolbar, .file-preview-controls { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-1); font-size: var(--type-meta); border-bottom: 1px solid var(--border-subtle); }
+.file-save-status { color: var(--text-tertiary); margin-left: auto; padding-right: var(--space-1); font-size: var(--type-meta); }
 .file-save-status[data-state="error"], .file-save-status[data-state="conflict"] { color: var(--accent-warn); }
-.file-notice, .file-conflict { padding: 8px 12px; font-size: var(--type-meta); color: var(--text-secondary); background: var(--surface-hover); }
-.file-conflict { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Rows, not bands: a full-width fill squared off its own corners inside a card
+   whose every other surface is rounded. */
+.file-notice { margin: var(--space-2) var(--space-3) 0; padding: var(--space-2) var(--space-3); border-radius: var(--radius-row); font-size: var(--type-meta); color: var(--text-secondary); background: var(--surface-hover); }
+.file-conflict { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: 0 var(--space-3) var(--space-2); padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3); border-radius: var(--radius-row); font-size: var(--type-meta); color: var(--text-secondary); background: var(--surface-hover); }
+.file-conflict .file-button:hover { background: var(--surface-active); color: var(--text-primary); }
 .file-conflict > span { flex-basis: 100%; }
 .file-code { flex: 1; min-height: 0; overflow: hidden; }
 .file-markdown { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 18px 22px; }
 .file-markdown-image img { display: block; max-width: 100%; height: auto; }
-.file-difference { flex: 1; min-height: 80px; max-height: 40%; margin: 0; padding: 12px; overflow: auto; font: 400 var(--type-meta)/var(--leading-dense) var(--font-mono); background: var(--surface-canvas); }
+.file-difference { flex: 1; min-height: 80px; max-height: 40%; margin: var(--space-2) var(--space-3); padding: var(--space-3); overflow: auto; font: 400 var(--type-meta)/var(--leading-dense) var(--font-mono); background: var(--surface-canvas); border-radius: var(--radius-row); box-shadow: inset 0 0 0 1px var(--border-subtle); }
 .file-preview-stage { min-height: 0; flex: 1; overflow: auto; padding: 16px; text-align: center; }
 .file-preview-image { width: var(--file-preview-width); max-width: var(--file-preview-max-width); height: auto; vertical-align: middle; }
 .file-empty { margin: auto; padding: 32px 20px; font-size: var(--type-dense); line-height: var(--leading-prose); color: var(--text-tertiary); text-align: center; }

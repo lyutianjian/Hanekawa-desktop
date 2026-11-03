@@ -17,6 +17,17 @@ npm run build:desktop
 npm run start:desktop
 ```
 
+Apple Silicon 安装包可从 [GitHub Releases](https://github.com/lyutianjian/Hanekawa-desktop/releases) 下载，打开 DMG 后将 Hanekawa 拖入 Applications。安装版自带 Electron／Node.js 运行时；Bash、Git、ripgrep 和外部 MCP 服务等工具仍需自行安装。当前预发布包使用 ad-hoc 签名，未做 Developer ID 签名与 Apple 公证，首次打开可能被 macOS Gatekeeper 阻止。
+
+在 Apple Silicon Mac 上从源码构建 DMG：
+
+```bash
+npm ci
+npm run dist:mac
+```
+
+产物位于 `release/Hanekawa-<版本>-arm64.dmg`。`npm run pack:mac` 只生成展开的 `.app`，用于安装版检查；两条命令都会先清理 `dist/`。图标源图在 `build/icon-source.png`，更换后在 macOS 运行 `npm run icons` 更新 ICNS。当前只提供 macOS arm64 打包配置。
+
 `build:desktop` 用 `tsc` 编译主进程，用 esbuild 打包 preload 和渲染进程，再把渲染进程资源复制到 `dist/`。`start:desktop` 让 Electron 运行这份 `dist/`，所以改了源码要重新构建。
 
 Windows 和 macOS 的关闭窗口按钮会隐藏窗口，正在执行的回合、后台任务和 MCP 连接继续保留。Windows 点击系统托盘图标恢复，macOS 点击 Dock 图标恢复；恢复的是原窗口和原会话。Windows 托盘不可用时会保留窗口并提示。结束应用请使用 Windows 托盘菜单的「退出 Hanekawa」或 macOS 菜单退出／⌘Q，应用会先停止会话、后台任务和 MCP；关闭会话面板、关闭项目仍遵循原来的清理规则，最后一个面板关闭后应用保留空窗口。
@@ -29,11 +40,11 @@ Windows 和 macOS 的关闭窗口按钮会隐藏窗口，正在执行的回合�
 - **启用权限通知**、**启用问题通知**：独立开关，默认开启。主窗口未聚焦且会话等待操作批准（包括计划模式确认）或问题回答时提醒；同一请求只提醒一次，多个待处理请求合并提醒。切到其他应用、最小化和隐藏窗口都算未聚焦。
 - 点击通知恢复主窗口并定位相关会话；请求已经解决或关闭提醒开关后，待处理通知会关闭。系统拒绝通知时，开启的待处理提醒会尝试 Dock／任务栏提示，仍可恢复窗口处理。
 
-macOS 的 Electron 45 通知使用系统 UNNotification API，需要应用签名；未签名开发宿主可能发送失败。Windows 需要带匹配 AppUserModelID 的开始菜单快捷方式，发行标识为 `com.hanekawa.desktop`，开发模式使用 Electron 可执行文件路径。安装包应注册对应的快捷方式与系统通知激活信息；本仓库当前尚未配置正式签名和安装器。应用内开关不替代系统的通知权限，系统勿扰和通知设置仍然生效。
+macOS 的 Electron 45 通知使用系统 UNNotification API，需要应用签名；未签名开发宿主可能发送失败。Windows 需要带匹配 AppUserModelID 的开始菜单快捷方式，发行标识为 `com.hanekawa.desktop`，开发模式使用 Electron 可执行文件路径。Windows 安装包应注册对应的快捷方式与系统通知激活信息；当前仅配置 macOS arm64 安装包，尚未配置正式签名和 Windows 安装器。应用内开关不替代系统的通知权限，系统勿扰和通知设置仍然生效。
 
 防休眠不拦截手动睡眠、合盖、关机或系统电源政策，也不唤醒已睡眠的电脑。Windows Modern Standby 在电池供电时限制电源请求，不能保证长任务持续执行；实际效果须在目标设备和供电模式下验证。系统恢复后应用按仍在执行的工作刷新请求，不自动重跑失败的回合。
 
-Electron 偏好与 Chromium 数据固定在 `appData/hanekawa`（macOS 为 `~/Library/Application Support/hanekawa`，Windows 为 `%APPDATA%/hanekawa`），业务数据仍在 `~/.hanekawa`，保留已有迁移。发行构建前可运行 `npm run clean:dist`，它只清理仓库的 `dist/`；正式图标与安装包配置仍待后续阶段完成。开发模式下终端或开发宿主退出可能终止应用，不能代替安装版后台留存验收。
+Electron 偏好与 Chromium 数据固定在 `appData/hanekawa`（macOS 为 `~/Library/Application Support/hanekawa`，Windows 为 `%APPDATA%/hanekawa`），业务数据仍在 `~/.hanekawa`，保留已有迁移。发行构建前的 `npm run clean:dist` 只清理仓库的 `dist/`。开发模式下终端或开发宿主退出可能终止应用，不能代替安装版后台留存验收。
 
 回合进行时，Claude Code 风格的动态标记、活动描述、计时和本轮输出 token 显示在当前的工作行中；工具组无论收起还是展开，动态标记、计时和计数均固定在组头状态行；展开后正在执行的工具用文字流光标识，已完成的工具恢复普通文字。思考状态行显示当前思考段的第一句话，默认收起；点击同一条状态行可在其下方展开或收起思考正文，不另外绘制上方的“思考过程”入口。工具结束后的请求空档保留在最后一个工具行，直到下一步接替，避免底部重复显示同一活动。没有对应步骤时，底部显示处理、输出、参数准备、重试或上下文压缩状态。计时从本轮开始，满两秒后显示；工具、思考、审批、提问及重试期间均保留计时和已有的 token 计数。工作行内部切换过滤 250 毫秒的短暂变化，工具描述至少保留两秒；审批、提问、失败和回合结束立即更新。回合结束直接收起动态状态，保留正常的回合统计；仍在运行的后台任务保留独立入口。
 

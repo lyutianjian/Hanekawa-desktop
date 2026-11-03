@@ -1,0 +1,32 @@
+appId: com.hanekawa.desktop
+productName: Hanekawa
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**/*
+  - package.json
+  - '!**/*.map'
+  - '!**/{test,tests}/**'
+  - '!dist/desktop/computer/native/**'
+  - '!node_modules/agent-desktop/**'
+extraResources:
+  - from: dist/desktop/computer/native
+    to: computer/native
+asar: true
+asarUnpack:
+  - node_modules/sharp/**
+  - node_modules/@img/**
+npmRebuild: false
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  identity: '-'
+  hardenedRuntime: false
+  notarize: false
+  minimumSystemVersion: '13.0'
+  target:
+    - target: dmg
+      arch: [arm64]
+artifactName: '${productName}-${version}-${arch}.${ext}'
+publish: null
