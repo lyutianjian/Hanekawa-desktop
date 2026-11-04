@@ -1,0 +1,23 @@
+# Integration template only. electron-builder is intentionally not an installed dependency here.
+# Merge into the owning project's release configuration and verify its tool version.
+appId: com.example.computerusereference
+productName: Computer Use Reference
+asar: true
+directories:
+  output: release
+files:
+  - dist/main/**
+  - dist/preload/**
+  - dist/renderer/**
+  - package.json
+extraResources:
+  - from: resources/bin/mac-ax-bridge
+    to: bin/mac-ax-bridge
+mac:
+  minimumSystemVersion: "14.4"
+  category: public.app-category.developer-tools
+  hardenedRuntime: true
+  target:
+    - dir
+# Do not ship this example appId. Compile the matching architecture's helper before packaging.
+# Configure identities, entitlements and notarization in your actual release pipeline.

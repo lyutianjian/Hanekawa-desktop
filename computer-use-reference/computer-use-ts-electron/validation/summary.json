@@ -1,0 +1,17 @@
+{
+  "date": "2026-11-04",
+  "timezone": "Asia/Shanghai",
+  "platform": "darwin-arm64",
+  "typecheck": "passed",
+  "build": "passed",
+  "nodeTests": {
+    "passed": 19,
+    "failed": 0
+  },
+  "mockCli": "passed",
+  "electronIntegration": "passed",
+  "swiftCompile": "passed",
+  "swiftInputSelfTest": "passed",
+  "nativeGUI": "not-run",
+  "signedPackage": "not-run"
+}

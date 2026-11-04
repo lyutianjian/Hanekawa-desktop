@@ -1,0 +1,23 @@
+// C16: installed source, /Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac/click.js
+// Formatting only. Imports keep their original relative paths; this extracted copy is for reading.
+import { __awaiter as o } from "../../../../../../lib/js/oai_js/node_modules/tslib/tslib.es6.js";
+import { withComputerUsePolicy as i } from "./computer-use-policy.js";
+import { getClient as t } from "./lazy-client.js";
+function e(e) {
+  return o(this, void 0, void 0, function* () {
+    return i("click", e, i => o(this, void 0, void 0, function* () {
+      const o = yield t();
+      yield o.click({
+        app: i.app,
+        clickCount: i.click_count,
+        elementIndex: i.element_index,
+        key: i.key,
+        duration: i.duration,
+        mouseButton: i.mouse_button,
+        x: i.x,
+        y: i.y
+      });
+    }));
+  });
+}
+export { e as click };

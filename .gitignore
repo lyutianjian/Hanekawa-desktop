@@ -39,3 +39,6 @@ archive/
 *_MOCKUP.html
 todo.md
 prototype/
+
+# Share the Computer Use plan with its versioned reference materials.
+!/computer-use-reference/**/*_PLAN.md

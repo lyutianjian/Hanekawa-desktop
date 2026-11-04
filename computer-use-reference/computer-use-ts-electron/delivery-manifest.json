@@ -1,0 +1,195 @@
+{
+  "scope": "Independently authored source, design documents and validation evidence. Dependencies and generated executables are excluded.",
+  "files": [
+    {
+      "path": ".gitignore",
+      "bytes": 57,
+      "sha256": "780528f18da7850ad561c7ae7acb08e28028826994f3eba3326aa60b15506f35"
+    },
+    {
+      "path": "README.md",
+      "bytes": 3789,
+      "sha256": "203d54d082d8cddd40c0058613880e09defd6469756302cf205568a47085ffb7"
+    },
+    {
+      "path": "docs/工程化设计.md",
+      "bytes": 13672,
+      "sha256": "a0d9891b8a21c56b37a22410978bce5f089442c2a986c9b34813fb1707dbb78f"
+    },
+    {
+      "path": "docs/接入与验收.md",
+      "bytes": 6813,
+      "sha256": "fb80c45758aa6f990e194f3de5f9d928a8752913debd0e44b3285afcabb1a939"
+    },
+    {
+      "path": "docs/来源与替换清单.md",
+      "bytes": 4253,
+      "sha256": "98977057e77596ec3f5787402c479452791a0e1cb1ca338bc857382f2cbb9f74"
+    },
+    {
+      "path": "native/MacAXBridge.swift",
+      "bytes": 8628,
+      "sha256": "94ad913f3d0520ff29b2a38dd6ce0d30fdb215b76c4743d3b348ad6e92b0dd76"
+    },
+    {
+      "path": "package-lock.json",
+      "bytes": 32413,
+      "sha256": "62cafdb96aed25dca2755cf5372f9858e469745a92e05339829b51d0a1949020"
+    },
+    {
+      "path": "package.json",
+      "bytes": 767,
+      "sha256": "a1e2623b1adc9fa84f58cd5970af6772ffa9538ffa4fb6ec67b61751ae6ae263"
+    },
+    {
+      "path": "packaging/electron-builder.example.yml",
+      "bytes": 772,
+      "sha256": "00c3ab0bf82b9f5b5c2b253092d3a9af8a8f5d006dd5c486c9af38685f87a750"
+    },
+    {
+      "path": "scripts/build-native.mjs",
+      "bytes": 538,
+      "sha256": "68110b79a07fe543d8fa6c2db39e684c540ecf12a8c6e5cde0edc1da9e461714"
+    },
+    {
+      "path": "scripts/build.mjs",
+      "bytes": 1180,
+      "sha256": "97566a0db168734485abfc8cf1dc473ac2128c3b2b2ee1de76c7a652763a9a88"
+    },
+    {
+      "path": "src/automation/driver.ts",
+      "bytes": 648,
+      "sha256": "d44c5c23275c5a686c612dbe2fe1546cc2e8718c74991ba0ade7f9d8e4080849"
+    },
+    {
+      "path": "src/automation/session.ts",
+      "bytes": 5597,
+      "sha256": "8ed2b55253f35b72422e1ccc6d40179b338790170cba44c234543c1a50666e1b"
+    },
+    {
+      "path": "src/demo.ts",
+      "bytes": 847,
+      "sha256": "0487c68988ead1a43d301d8fe6824db8ebe6fbe13799598f76cbad755b93473a"
+    },
+    {
+      "path": "src/drivers/browser/README.md",
+      "bytes": 589,
+      "sha256": "71e7a644929227bccc93b35fc8d47b783424aa769fcceaf30b927d10f173ee86"
+    },
+    {
+      "path": "src/drivers/macos/driver.ts",
+      "bytes": 2276,
+      "sha256": "83bfe44e19f651c576d53efae6fd398207b4956dff380a7079efba69fd866d6a"
+    },
+    {
+      "path": "src/drivers/macos/jsonl-client.ts",
+      "bytes": 5575,
+      "sha256": "0f569d7248a3fca4582e5a0c9d0861618a7a6ee680af787d00d3f6fbb7381896"
+    },
+    {
+      "path": "src/drivers/mock.ts",
+      "bytes": 1966,
+      "sha256": "5e157e587612b3b293e48b9467fe4987191f166359ecdf49d1f9b5a274d898e4"
+    },
+    {
+      "path": "src/main/index.ts",
+      "bytes": 5120,
+      "sha256": "88898419abb33e052fd075194b3db225f62ac897aa621dd570f579afc10bcd4a"
+    },
+    {
+      "path": "src/main/manager.ts",
+      "bytes": 3146,
+      "sha256": "3ed7a1390baf8c7e8d6ca7d3b4fe077847efe552f69d13333d192ac51d03cf46"
+    },
+    {
+      "path": "src/main/sender.ts",
+      "bytes": 463,
+      "sha256": "e76a20de5db7520293275d144d0db4ca4e74f16c45f204751fac1a83d8cb74c1"
+    },
+    {
+      "path": "src/preload/index.ts",
+      "bytes": 619,
+      "sha256": "2a27eb1d8df9669398d3693bebe9d74d37ef3016e2d644033fd05b0dd4adc59d"
+    },
+    {
+      "path": "src/renderer/index.html",
+      "bytes": 1940,
+      "sha256": "ce6bc9e08d33348f6885ab510cb5c0e25bf95cc88261543d9c4eef71a403452b"
+    },
+    {
+      "path": "src/renderer/index.ts",
+      "bytes": 4624,
+      "sha256": "cd29799bd5b78f64b28e43903bdf1728c8410d53c429dd39c455980fabfbf605"
+    },
+    {
+      "path": "src/renderer/style.css",
+      "bytes": 1867,
+      "sha256": "aa584d01f39cd4c3edbbb69e61b16c4faedf82f845e02fafca331b0bac80f5d6"
+    },
+    {
+      "path": "src/shared/contracts.ts",
+      "bytes": 2634,
+      "sha256": "0339cedcfd106853404274ad585f422f04fbb39b98074cf5f9eefad0bc8ea17f"
+    },
+    {
+      "path": "src/shared/errors.ts",
+      "bytes": 789,
+      "sha256": "2fe622decd56565300773491f2bd55e6bdc93f3f29df15d7335f18c341c852d1"
+    },
+    {
+      "path": "src/shared/validation.ts",
+      "bytes": 3255,
+      "sha256": "de37876a49ccbf4369daad4b331cf4f37c943872fcfa941b38478fd383e50cb8"
+    },
+    {
+      "path": "tests/boundaries.test.ts",
+      "bytes": 2380,
+      "sha256": "f2e94d4617bdbe0751cc96e6db28e12d786725d08cd6ce3f1323d407af63a7e6"
+    },
+    {
+      "path": "tests/electron-smoke.cjs",
+      "bytes": 4544,
+      "sha256": "d8cb4fc126f6e839253ef12cc1697750e01e5a7fac287e6646e70a8714026ac5"
+    },
+    {
+      "path": "tests/native-client.test.ts",
+      "bytes": 2893,
+      "sha256": "a85f14adc986edf61670007a1797a004ea7a2c3fa94cf00bc4adb1af9ee769a9"
+    },
+    {
+      "path": "tests/session.test.ts",
+      "bytes": 5911,
+      "sha256": "421c2571ebbd7cff09e37025236d3cf374ce41a3fd7c7273d194bf6f4d9e5c6a"
+    },
+    {
+      "path": "tsconfig.json",
+      "bytes": 329,
+      "sha256": "58a8e98d4381989bdbbb1c4cac211706ac3a5fe9a22b84cbe1d4a822b98ce3a6"
+    },
+    {
+      "path": "validation/electron-smoke.json",
+      "bytes": 533,
+      "sha256": "6a2898a3f5b12621fad78a0233024b8026a1d17188f7b1f1e4bdd4d424a61c84"
+    },
+    {
+      "path": "validation/electron-smoke.png",
+      "bytes": 179561,
+      "sha256": "a3d5283d077174470297ec9662938419ba7dae39efacd09130128067bdb9fce0"
+    },
+    {
+      "path": "validation/source-manifest.json",
+      "bytes": 1581,
+      "sha256": "b26407ac14b7747f939547b09041174580cbbbc17786101442cc28860f0d9edd"
+    },
+    {
+      "path": "validation/summary.json",
+      "bytes": 366,
+      "sha256": "789d6517bb07b3fd7810f2b13bae7bc3e0021aec7c7c252aea1f8a886c6e2ed0"
+    },
+    {
+      "path": "validation/验证记录.md",
+      "bytes": 3726,
+      "sha256": "b662eb93e01eb2316519f79b901ce267dc91ed1bf120a46f458de27db0fd262e"
+    }
+  ]
+}

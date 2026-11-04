@@ -1,0 +1,61 @@
+{
+  "scope": "original installed JS with in-memory mock transport; no OS control",
+  "checks": [
+    {
+      "name": "UTF-8 byte lengths, fragmented and concatenated frames",
+      "status": "passed"
+    },
+    {
+      "name": "8 MiB upper bound and incomplete header handling",
+      "status": "passed"
+    },
+    {
+      "name": "Actual MacComputerUseClient: version ping, schema and serialized execution",
+      "status": "passed"
+    },
+    {
+      "name": "App binding: milliseconds to seconds, app pinning and platform restrictions",
+      "status": "passed"
+    },
+    {
+      "name": "Actual policy wrapper: app canonicalization, frozen input and blocked app",
+      "status": "passed"
+    },
+    {
+      "name": "Actual policy wrapper rejects accessor input without invoking the getter",
+      "status": "passed"
+    },
+    {
+      "name": "Transport close rejects an outstanding request",
+      "status": "passed"
+    }
+  ],
+  "requestExample": {
+    "id": 2,
+    "jsonrpc": "2.0",
+    "method": "request",
+    "params": {
+      "clientApiVersion": "CodexComputerUseIPC-5",
+      "codexTurnMetadata": {
+        "call_id": "mock-call",
+        "turn_id": "mock-turn"
+      },
+      "deadlineUnixMilliseconds": 1793764163845,
+      "request": {
+        "app": "mock.calculator",
+        "action": {
+          "click": {
+            "at": {
+              "elementID": {
+                "_0": "18"
+              }
+            },
+            "clickCount": 1,
+            "mouseButton": 0
+          }
+        }
+      },
+      "requestType": "ComputerUseIPCAppPerformActionRequest"
+    }
+  }
+}

@@ -328,8 +328,8 @@ const browserHost = new DesktopBrowserHost({
 })
 const browserTool = createBrowserTool(browserHost)
 const computerHost = new DesktopComputerHost({
-  nativeDir: join(app.isPackaged ? process.resourcesPath : bundleDir, 'computer', 'native'),
-  stateDir: join(getGlobalHanekawaDir(), 'computer'),
+  executable: join(app.isPackaged ? process.resourcesPath : bundleDir, 'computer', 'native', 'hanekawa-computer'),
+  laneForSession: (sessionId) => shell?.host.laneForSessionId(sessionId),
 })
 const computerTool = createComputerTool(computerHost)
 
@@ -1221,6 +1221,7 @@ async function createShell(): Promise<Shell> {
         // The host just told its own lane; every other lane and the shell lane
         // are ours to tell.
         onPaneListChanged: () => {
+          void computerHost.reapClosedSessions()
           shellHost?.broadcastLanes()
         },
       })
@@ -1338,6 +1339,7 @@ async function createShell(): Promise<Shell> {
       else window.flashFrame(true)
     },
     browser: browserTabs,
+    computer: computerHost,
     coordination,
     coordinationMigrationFindings: () => coordinationMigrationFindings,
     isQuitting: () => isExiting(),
@@ -1405,7 +1407,7 @@ async function createShell(): Promise<Shell> {
 
 async function teardown(): Promise<void> {
   try {
-    computerHost.dispose()
+    await computerHost.dispose()
     // Lanes first, in the fixed order inside `workspace.close`
     // (`interrupt('exit')` → controller → slot → scope), then the projects: a
     // project shut down under a live pane pulls the tools out from beneath a turn

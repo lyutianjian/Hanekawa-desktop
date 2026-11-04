@@ -1,0 +1,184 @@
+{
+  "checks": [
+    {
+      "file": "core/formatted/01-bootstrap.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/02-unified-api.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/03-mac-app-binding.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/04-trusted-sky-proxy.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/05-trusted-service-dispatch.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/06-app-policy-and-approval.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/07-native-request-schema.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/08-native-pipe-transport.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/09-skyshot-result.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/10-native-error-codes.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/11-browser-tab-binding.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/12-browser-selection-and-claim.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/13-documentation-emitter.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/14-sky-rpc-client.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/15-observation-entry.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/16-click-entry.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/17-repl-environment.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/formatted/18-browser-bootstrap.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/01-bootstrap.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/02-unified-api.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/03-mac-app-binding.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/04-trusted-sky-proxy.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/05-trusted-service-dispatch.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/06-app-policy-and-approval.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/07-native-request-schema.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/08-native-pipe-transport.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/09-skyshot-result.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/10-native-error-codes.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/11-browser-tab-binding.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/12-browser-selection-and-claim.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/13-documentation-emitter.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/14-sky-rpc-client.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/15-observation-entry.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/16-click-entry.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/17-repl-environment.js",
+      "passed": true,
+      "error": null
+    },
+    {
+      "file": "core/readable/18-browser-bootstrap.js",
+      "passed": true,
+      "error": null
+    }
+  ]
+}

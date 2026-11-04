@@ -1,0 +1,12 @@
+{
+  "compile": {
+    "status": "passed",
+    "command": "swiftc -parse-as-library -module-cache-path work/swift-cache outputs/codex-computeruse-reverse/mac-ax-bridge.swift -o work/mac-ax-bridge",
+    "compiler": "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0"
+  },
+  "selfTest": {
+    "selfTest": "passed",
+    "scope": "input validation only; no desktop access"
+  },
+  "guiValidation": "not run for independent prototype; production CUA experiment is recorded separately"
+}

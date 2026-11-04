@@ -1,0 +1,95 @@
+{
+  "babelVersion": "7.28.0",
+  "validation": [
+    {
+      "id": "C01",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C02",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C03",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C04",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C05",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C06",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C07",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C08",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C09",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C10",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C11",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C12",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C13",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C14",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C15",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C16",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C17",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    },
+    {
+      "id": "C18",
+      "formattedAstMatchesOriginal": true,
+      "readableParses": true
+    }
+  ]
+}

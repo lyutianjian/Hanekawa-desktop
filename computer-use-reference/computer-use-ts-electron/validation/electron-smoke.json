@@ -1,0 +1,22 @@
+{
+  "passed": true,
+  "scope": "real Electron renderer + preload + main + mock driver; no desktop AX",
+  "electron": "45.2.1",
+  "preferences": {
+    "sandbox": true,
+    "contextIsolation": true,
+    "nodeIntegration": false
+  },
+  "tree": "0 AXWindow Mock Counter\n  1 AXButton Increment\n  2 AXTextField Count 1",
+  "url": "cu-app://ui/index.html",
+  "apiMethods": [
+    "targets",
+    "start",
+    "observe",
+    "act",
+    "cancel"
+  ],
+  "rendererNodeAccess": false,
+  "otherWindowDenied": true,
+  "cancel": "会话已取消"
+}

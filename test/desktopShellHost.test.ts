@@ -529,6 +529,7 @@ function createHarness(
     withForgetProject?: boolean
     /** The host-side coordination commands. */
     coordination?: ShellCoordination
+    computer?: { closeLane(lane: string): void }
     /** The native folder picker's answer. */
     pickDirectory?: () => Promise<string | undefined>
   } = {},
@@ -630,6 +631,7 @@ function createHarness(
           },
         }),
     ...(options.coordination ? { coordination: options.coordination } : {}),
+    ...(options.computer ? { computer: options.computer } : {}),
     ...(options.pickDirectory ? { onPickDirectory: options.pickDirectory } : {}),
     onRevealPath: (target: string) => {
       revealedPaths.push(target)
@@ -3610,4 +3612,20 @@ test('session references find closed projects and global history without opening
     assert.deepEqual(await h.client.panes(), [])
     assert.equal(await readFile(path.join(getSessionsDir(closed), 'index.json'), 'utf8'), before)
   } finally { await rm(closed, { recursive: true, force: true }) }
+})
+
+
+test('lane teardown releases native computer bindings after disposing its occupant', async () => {
+  const closed: string[] = []
+  const h = createHarness({ computer: { closeLane: lane => {
+    assert.ok(h.disposed.includes(lane), 'stop the session before closing its native bindings')
+    closed.push(lane)
+  } } })
+  const first = await h.host.openLane(h.entry)
+  const second = await h.host.openLane(h.entry)
+  h.host.detachLane(first.lane, 'test')
+  h.host.detachLane(first.lane, 'duplicate-close')
+  assert.deepEqual(closed, [first.lane])
+  h.host.detachLane(second.lane, 'test')
+  assert.deepEqual(closed, [first.lane, second.lane])
 })

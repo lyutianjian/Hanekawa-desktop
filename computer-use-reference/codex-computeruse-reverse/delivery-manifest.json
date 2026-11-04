@@ -1,0 +1,265 @@
+{
+  "date": "2026-11-04",
+  "files": [
+    {
+      "path": "README.md",
+      "bytes": 3873,
+      "sha256": "6c5a5a879e3ff3f77be0d59ab4a130e60f09b680102b87c9e08de3e8757345fe"
+    },
+    {
+      "path": "core/browser-excerpts.txt",
+      "bytes": 11879,
+      "sha256": "54e42100656979b11d9c15564b0fb46fa244a1ca75f78bb32897cfeed6b2d812"
+    },
+    {
+      "path": "core/formatted/01-bootstrap.js",
+      "bytes": 912,
+      "sha256": "e8251be9e5a0bef86a366930f4b3efdf4d0166e71757ef1ae3e8772b401cfa04"
+    },
+    {
+      "path": "core/formatted/02-unified-api.js",
+      "bytes": 5493,
+      "sha256": "369044e3a3b5eb3d6dcc9d36fc8222aafcd86303b086265d0e2fbaf725bb7fdc"
+    },
+    {
+      "path": "core/formatted/03-mac-app-binding.js",
+      "bytes": 3933,
+      "sha256": "b25e99cb1d166a4ca9ffa6de8dca079dc8b260e9eba7a7c21eb2647f77690606"
+    },
+    {
+      "path": "core/formatted/04-trusted-sky-proxy.js",
+      "bytes": 1859,
+      "sha256": "22306f9fa18f62a7e10c43495869907ca14f445dde19a789ed8943033f001b54"
+    },
+    {
+      "path": "core/formatted/05-trusted-service-dispatch.js",
+      "bytes": 5013,
+      "sha256": "cfef1b0b7ed8297e45e25ff2f9d0813137441b63429c82ae5e2695d974dab37a"
+    },
+    {
+      "path": "core/formatted/06-app-policy-and-approval.js",
+      "bytes": 8955,
+      "sha256": "f9fef4dedfd345dca83e899c1f19326f3f3c4d2b2fa8eca04cadaa990f19f045"
+    },
+    {
+      "path": "core/formatted/07-native-request-schema.js",
+      "bytes": 7265,
+      "sha256": "83a5467ce34b7a6481b50b1c9d3571e43f2e593af0787cf3439f6d2755609492"
+    },
+    {
+      "path": "core/formatted/08-native-pipe-transport.js",
+      "bytes": 12419,
+      "sha256": "91b87d31a80280873655d02f378e77f9f3fc199620f2d92367fafe395abf68b3"
+    },
+    {
+      "path": "core/formatted/09-skyshot-result.js",
+      "bytes": 2065,
+      "sha256": "d9a7c7dc49ca101b19bd5021f8532c787327f3909bbd2d65830c751a724d26a6"
+    },
+    {
+      "path": "core/formatted/10-native-error-codes.js",
+      "bytes": 1549,
+      "sha256": "529db38584f6095fda5856d66bb59b3449d263f4a3d8aff0a3855781a23d70b1"
+    },
+    {
+      "path": "core/formatted/11-browser-tab-binding.js",
+      "bytes": 3358,
+      "sha256": "fcca2e6367e3583c637c2fdb81ee300e2c7ab747886ccfc9ce81aaff4c4f2878"
+    },
+    {
+      "path": "core/formatted/12-browser-selection-and-claim.js",
+      "bytes": 8549,
+      "sha256": "9e05015cbb5f2bb2d9d4a181680260ad9ae5117d76dfc7192580c8347a9df465"
+    },
+    {
+      "path": "core/formatted/13-documentation-emitter.js",
+      "bytes": 2771,
+      "sha256": "436f1adfed3cc09e1d0fe33ae0d788f9a4acdac71f1f0e5e7e68ddf12e7f8893"
+    },
+    {
+      "path": "core/formatted/14-sky-rpc-client.js",
+      "bytes": 1687,
+      "sha256": "2f8651b26c17cd3713cb60b55f047f185ae81bb96041be04f9bade0cc0313b35"
+    },
+    {
+      "path": "core/formatted/15-observation-entry.js",
+      "bytes": 872,
+      "sha256": "7cacb589f5669dd86eb426f52d714caebe39eccaa551a4ae327bf073ea73386c"
+    },
+    {
+      "path": "core/formatted/16-click-entry.js",
+      "bytes": 919,
+      "sha256": "e643eda85d636939d085d307f4e52a37508da9ffaac779d02ac506b8ae852382"
+    },
+    {
+      "path": "core/formatted/17-repl-environment.js",
+      "bytes": 2251,
+      "sha256": "e302f8d9a7c179b4ede6ad23f7d6d772cbbf6d83175fee38d2bd1381cf09be0c"
+    },
+    {
+      "path": "core/formatted/18-browser-bootstrap.js",
+      "bytes": 910,
+      "sha256": "39875421a681c4c387b784def0ab390d66fc0cd4e6f22bf8edbbcaa4b1871648"
+    },
+    {
+      "path": "core/host-excerpts.txt",
+      "bytes": 5620,
+      "sha256": "925355292bf2d38d8d52f4929d13ed419fc5eb1f2fb5df43ff73ece6c5457c85"
+    },
+    {
+      "path": "core/readable/01-bootstrap.js",
+      "bytes": 937,
+      "sha256": "aa3d7eb6210ded40da4c86fcb0264b093feb9ed42db065a635c1b3a77496e0f1"
+    },
+    {
+      "path": "core/readable/02-unified-api.js",
+      "bytes": 5690,
+      "sha256": "7901e1d5b79f3653fd707927d154851a1c450072f587fc4f564e09adf53efc92"
+    },
+    {
+      "path": "core/readable/03-mac-app-binding.js",
+      "bytes": 4026,
+      "sha256": "40b8b22bdbffe91a005b7d3887b9cc1c4820d87bd54d2f65773d11c85057b6fe"
+    },
+    {
+      "path": "core/readable/04-trusted-sky-proxy.js",
+      "bytes": 1920,
+      "sha256": "650d5b1a70547fb2cc35fd8c7c74b9308b06899ed0f4beff7f88fea2b5f01c17"
+    },
+    {
+      "path": "core/readable/05-trusted-service-dispatch.js",
+      "bytes": 5132,
+      "sha256": "258c5bf02b40d3cbc8369ab74d18daa8c6c5d235a59d1c101bf6128b05c5ed56"
+    },
+    {
+      "path": "core/readable/06-app-policy-and-approval.js",
+      "bytes": 9609,
+      "sha256": "bd32835af6b5b123080641d507587e63527d3ba576463460da9ade9cf8b97c56"
+    },
+    {
+      "path": "core/readable/07-native-request-schema.js",
+      "bytes": 7936,
+      "sha256": "109fb5b7d0a9c0c1eaf8a90d6c31e4234bee54df27e85768506e5de13734ebe2"
+    },
+    {
+      "path": "core/readable/08-native-pipe-transport.js",
+      "bytes": 15088,
+      "sha256": "910b7d3ad4841f29f11a912863a8baa9bd515337cb3880b9eed7564cbde82c8a"
+    },
+    {
+      "path": "core/readable/09-skyshot-result.js",
+      "bytes": 2086,
+      "sha256": "bee4bf4d3499729c2f81a1ac37e98cc638d008c8e1ef03b0a2e708e354bc123b"
+    },
+    {
+      "path": "core/readable/10-native-error-codes.js",
+      "bytes": 1629,
+      "sha256": "a7ee9f35594d5e18a9e70ef94c84bb5283725b75e13fd14b2eb4dec31bd70550"
+    },
+    {
+      "path": "core/readable/11-browser-tab-binding.js",
+      "bytes": 3454,
+      "sha256": "a3f23784800352017a371f10ef2c9b4c051ea21a019e01b724324a81a82fceda"
+    },
+    {
+      "path": "core/readable/12-browser-selection-and-claim.js",
+      "bytes": 8687,
+      "sha256": "0f2c8d22d5ea46b606817181f963842e4b55bb56f3f16da4cc3567a025d34c8e"
+    },
+    {
+      "path": "core/readable/13-documentation-emitter.js",
+      "bytes": 2816,
+      "sha256": "b55821105f25d9f47a46e8cc0fedcc4bb915ec10b27835861dec4d3690b6f449"
+    },
+    {
+      "path": "core/readable/14-sky-rpc-client.js",
+      "bytes": 1735,
+      "sha256": "fc0d22d4093056f52cbf528c4cad566d4d7a3d40f352c9bb10a5860f127126b9"
+    },
+    {
+      "path": "core/readable/15-observation-entry.js",
+      "bytes": 929,
+      "sha256": "1272942c918e79776d1160e9c6f5981ead83acfe4c23d51f18a6367a3063fb61"
+    },
+    {
+      "path": "core/readable/16-click-entry.js",
+      "bytes": 963,
+      "sha256": "357a0381b059d3d280cdc52fad6d4a01f69f739dfc174a3cf79ce759a84be869"
+    },
+    {
+      "path": "core/readable/17-repl-environment.js",
+      "bytes": 2305,
+      "sha256": "12518f7c6e8075893fd4a0c9554e793c3c649c367fb10b34da4d2740b73211ac"
+    },
+    {
+      "path": "core/readable/18-browser-bootstrap.js",
+      "bytes": 934,
+      "sha256": "a9fc37b1379ef111c7d550913075c314162a95f4db87edce5aa837c6fdd606d1"
+    },
+    {
+      "path": "dynamic-experiment.md",
+      "bytes": 2965,
+      "sha256": "c97275a5e671222dc3e83732ba857f5c52b02b9ebfc379dade41b76f45f49477"
+    },
+    {
+      "path": "evidence.json",
+      "bytes": 11567,
+      "sha256": "8a060e2772f3edc074560c0745a8fc56668e5d8f0c5b2676f545bcc2e6dfd675"
+    },
+    {
+      "path": "extract-core.cjs",
+      "bytes": 11460,
+      "sha256": "6dec1221e1a3febeaaf6c69723a6770c6703b7fe51d3fb8c56c22796f0bdb766"
+    },
+    {
+      "path": "inspect-local.py",
+      "bytes": 4455,
+      "sha256": "d40dd5bb4bed81324077a06f200dd5d97e6d5d45637d081bb21178359532d598"
+    },
+    {
+      "path": "local-inspection.json",
+      "bytes": 7809,
+      "sha256": "d128501b607aa7809d2cdfa490819995900efb00fb33f33b548b484c0d8e72f4"
+    },
+    {
+      "path": "mac-ax-bridge.swift",
+      "bytes": 9230,
+      "sha256": "961ff18e5f0e428bb6f972e54d00d7ef6c549efdbaabdd6a75c883196674d82c"
+    },
+    {
+      "path": "native-prototype-validation.json",
+      "bytes": 528,
+      "sha256": "b7f7c2e0e78a8989c710b6593a4e2bb7f5107a3f898e723147e8c765da71ab34"
+    },
+    {
+      "path": "reproduction-tests.mjs",
+      "bytes": 7003,
+      "sha256": "be74cffd1cc2ab0f3ec00a242b10130e743a9d802cf5f89373b6dcffdc8edaf5"
+    },
+    {
+      "path": "source-validation.json",
+      "bytes": 1925,
+      "sha256": "07d75bedf8c3c644525c663723096da72abbe4a6d6c3d33ebec16a4104744ab7"
+    },
+    {
+      "path": "syntax-validation.json",
+      "bytes": 4017,
+      "sha256": "fc463b2cd4b46551101f0fd87023fa391acdd02c582bf9356d4126b833501fd8"
+    },
+    {
+      "path": "test-results.json",
+      "bytes": 1597,
+      "sha256": "e80a02fb6635ff4f9ab527c3c0cd969d924195223454931eae723548d48cfd83"
+    },
+    {
+      "path": "技术文档.md",
+      "bytes": 33843,
+      "sha256": "809e0ca7016767af22d2d1f0471b66b2fc2efd085846dd635dc6b47c0528cbfb"
+    },
+    {
+      "path": "核心代码导读.md",
+      "bytes": 14784,
+      "sha256": "cf4bed0071d71497f3c06045ebb3691a7505954ed75e3e5a96ad2c4d9b21d23e"
+    }
+  ]
+}

@@ -610,29 +610,29 @@ Responses 的加密推理本地计数沿用 Codex 的估算：从编码长度回
 
 ### 电脑操作（Computer）
 
-`Computer` 的原生桌面控制引擎来自 Vercel Labs 的开源项目 [vercel-labs/agent-desktop](https://github.com/vercel-labs/agent-desktop)，当前内置版本为 **1.0.2**。上游采用 **Apache-2.0** 许可证，原始许可证保留在 [third-party/agent-desktop-LICENSE](third-party/agent-desktop-LICENSE)，并随原生程序一起分发。Hanekawa 负责工具接口、权限判定、会话隔离、取消执行和截图附件接入；这部分实现也随 Hanekawa 开源，源码见 [ComputerTool](src/tools/ComputerTool/) 和 [桌面宿主](src/desktop/computer/)。感谢上游项目及其贡献者。
+桌面端通过自有 macOS 原生 helper 控制已运行的应用，使用公开 Accessibility、CoreGraphics 和 ScreenCaptureKit API。安装依赖后运行 `npm run build:desktop` 会用 Xcode Command Line Tools 的 Swift 编译器构建 helper；无需安装额外 CLI、配置 MCP 或提供 API Key。网页操作继续使用内置 `Browser`。当前原生后端支持 macOS 13+，窗口截图需要 macOS 14.4+；Windows/Linux 仅保留 Browser 能力。
 
-安装依赖并执行 `npm run build:desktop` 后即可使用，无需全局安装 CLI、配置 MCP 或提供额外 API Key。模型通过工具搜索发现 `Computer`，可列出应用/窗口、读取可访问性界面树、查找元素、点击、输入、按快捷键、滚动、拖动、截图、管理窗口、读写文本剪贴板及处理通知。网页操作优先使用内置 `Browser`。
+模型通过工具搜索发现 `Computer`，直接传结构化参数。先用 `list_apps` 找到应用，再用 `bind` 取得本会话的持久 `appId` 和初始 AX 界面树，不需要阅读 CLI 文档或拼接字符串参数。例如：
 
-`Computer` 使用上游操作名和独立字符串参数，例如 `{"operation":"snapshot","args":["--app","Finder","-i","--compact"]}`，之后以返回的完整 `@<snapshot>:e<N>` 引用操作元素。首次使用先检查 `status`，通过 `docs` 读取随二进制内置的平台文档，`help` 查看指定操作的参数；这些步骤由模型完成。快照引用按会话隔离，桌面调用在应用内串行执行，操作后重新观察确认。上游返回的投递状态与重试建议保留在工具结果中；超时或取消不代表操作没有发生，应用不自动重试。
+```json
+{"operation":"bind","app":"com.apple.calculator"}
+```
 
-默认使用不移动鼠标的语义操作。`headed: true` 允许物理鼠标/键盘输入和切换前台；模型应先得到用户对物理操作的许可。观察按只读权限处理，语义修改按普通操作处理，物理输入、强制快捷键及关闭应用按高风险处理，沿用当前权限模式；可通过 `Computer` 的 allow/ask/deny 规则控制整个工具。电脑操作可以触及项目目录之外的应用与文件，文件工具的路径规则和 `/rewind` 不覆盖其他应用内的修改。
+`bind` 只绑定已运行的应用，不启动、激活或退出应用。应用有多个窗口时返回 `windows`，由 `get_state` 的 `windowId` 选择；选择后持续沿用该窗口。元素引用格式是 `s<快照 UUID>:e<索引>`，必须来自最新 AX 观察。`click` 使用 AXPress，`set_value` 设置可写 AXValue，`perform_action` 调用该元素实际暴露的 AX 动作。这些语义操作不移动鼠标。动作自动返回新的 AX 状态；模型应检查状态是否符合任务目标，不能把事件发出视为完成。
 
-macOS 需要为启动原生程序的应用授予「辅助功能」权限，截图还需要「屏幕录制」；开发模式通常显示为 Electron 或启动它的终端。`Computer` 的 `permissions` 操作可以检查，`args: ["--guide"]` 可打开上游授权指引，最终必须由用户在系统设置中授权。Windows 只能控制相同或更低权限的应用；Linux 需要图形会话与 AT-SPI，鼠标、剪贴板和截图受 X11/Wayland 能力限制。支持 macOS、Windows、Linux 的 x64/ARM64，具体能力以 `docs` 的平台说明为准。
+`get_state` 默认显示差分；未变化的元素索引需换用结果头部的新快照前缀。`disableDiffing: true` 返回完整树。观察受深度、节点数、时间和输出长度限制，`complete: false` 或 `truncated: true` 表示尚未读完，可用最新 `rootRef` 读取子树。每次观察和每次动作尝试都会让旧引用失效；截图也会清除 AX 引用。
 
-截图通过会话现有附件存储传给支持图片的模型，文本记录不保存 base64；临时截图导入后删除。鼠标坐标是操作系统的绝对屏幕坐标，不能直接套用经过缩放、或仅包含窗口的截图像素。原生状态存放在 `~/.hanekawa/computer/`，不会写进项目。停止会话会取消等待中的调用并终止当前 CLI，已经交给系统的操作无法撤销。上游 macOS 私有命令宿主可能在无调用后保留至其空闲退出时间。
+`click_at`、`press_key`、`type_text` 和 `scroll` 是物理输入，会激活并抬起目标窗口，可能移动鼠标；它们需要最新 `snapshotId`，按高风险操作走现有权限模式。普通 AX 修改按普通操作处理，观察、绑定和释放按只读处理。`Computer` 的 allow/ask/deny 规则继续生效。工具不会把失败的 AX 动作自动降级为鼠标操作。物理输入前检查前台应用、选中窗口和窗口位置；用户切走窗口时停止后续输入，但这些检查不能保证操作与用户输入完全原子化。
 
-构建把当前平台原生程序、helper、说明与 Apache-2.0 许可证复制到 `dist/desktop/computer/native/`。发布安装包时必须把该目录作为可直接执行的外部资源保留（不能装进 ASAR），并在目标平台构建。工具不提供任意批处理、跟踪文件、外部截图路径、应用启动参数/环境注入、图片/文件剪贴板和长按按键/鼠标按钮；这些限制不会通过 shell 绕过。
+`screenshot` 通过会话附件存储传递真实 PNG，仅支持可接收图片的模型。截图窗口按进程和窗口几何信息与 AX 窗口严格匹配，无法唯一匹配时拒绝截图。结果包含 `boundsInPoints`、`imageSizeInPixels` 和 `coordinateSpace`。`click_at` 使用窗口内的点坐标：将模型看到的附件像素 x/y 分别乘以窗口点宽/附件宽、窗口点高/附件高；系统屏幕坐标可以为负，不能直接套用截图像素。
 
-工具声明 `name`、`description`、`inputSchema`、`execute()`，以及可选的 `isReadOnly`、`isConcurrencySafe`、`classifyRisk`、`sessionRoles`、`shouldDefer` 等字段。权限判定看的是上面的风险等级；`riskLevel`（`safe` / `confirm` / `dangerous`）只在工具没有专门分级逻辑时作为兜底，分别对应 `readonly` / `normal` / `risky`。
+macOS 需要为 Hanekawa 授予「辅助功能」，截图还需要「屏幕录制」。开发模式的权限归属可能显示为 Electron 或启动它的终端。`status` 检查权限并返回系统设置入口，不自动弹出权限申请或修改系统授权数据。重新构建、安装路径或签名变化后应再次检查权限。打包版本的 TCC 归属和真实桌面行为需要在授权后的 Hanekawa 中验收。
 
-#### ToolSearch
+原生调用跨会话串行执行；同一应用进程同时租给一个会话，其他会话需等待前一个调用 `release` 或关闭。`release` 只回收绑定/helper，不关闭目标应用。停止正在执行的调用、超时、清空/切换会话、关闭会话及退出应用都会回收受影响的 helper；截止时间包含排队。未知投递或动作后观察失败时保留投递状态，绝不自动重试。取消不能撤销已送达系统的操作；恢复后先重新绑定并观察。
 
-- `HANEKAWA_TOOL_SEARCH`：模式。`true`/`1`/不设置=始终开启，`false`/`0`=关闭，`auto`=自动，`auto:N`=阈值为 N% 的自动模式
-- `HANEKAWA_TOOL_SEARCH_AUTO_PERCENT`：自动模式阈值百分比（默认 10）；`auto:N` 优先于它
-- `HANEKAWA_DISABLE_EXPERIMENTAL_BETAS=1`：关闭仅 beta 可用的动态 ToolSearch 字段
+桌面修改不受文件工具的项目路径限制保护，也不能通过 `/rewind` 撤销。工具不暴露任意 JavaScript、shell 参数、应用启动参数、拖动/长按、剪贴板和通知管理；API 的持久对象与观察机制由受信宿主实现。源码见 [ComputerTool](src/tools/ComputerTool/)、[桌面宿主](src/desktop/computer/) 和 [Swift helper](native/computer/ComputerBridge.swift)。helper 不监听网络，不保存跨会话 AX 状态，截图经私有 stdio 交给附件存储；文本记录不保存 base64。
 
-动态 ToolSearch 只在支持 `tool_reference` 的原生 Anthropic 服务商上启用，使用 `advanced-tool-use-2025-11-20` beta 请求头。OpenAI 和 Anthropic 兼容代理端点回退为内联完整的工具定义，不做动态加载。
+构建产物 `dist/desktop/computer/native/hanekawa-computer` 放在 ASAR 外的 `Resources/computer/native/`，由现有 electron-builder 流程分发；构建会清除旧 agent-desktop 原生资源。实现参考了 Codex 逆向分析中的持久绑定、版本化引用、差分观察和受信执行边界，独立编写公开 API 驱动，不依赖 Codex 的专有服务或提取代码。
 
 ### 会话
 

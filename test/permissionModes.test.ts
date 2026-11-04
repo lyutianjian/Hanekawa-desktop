@@ -36,16 +36,22 @@ const readTool = fileTool('Read', true)
 const writeTool = fileTool('Write', false)
 const editTool = fileTool('Edit', false)
 
-test('Computer observations, semantic actions and physical/forced actions follow permission modes and deny rules', async (t) => {
+test('Computer structured reads, semantic actions and physical input follow permission modes and deny rules', async (t) => {
   const cwd = await scratch(t)
   const tool = createComputerTool({ run: async () => ({ envelope: { ok: true } }) })
+  const appId = 'app-11111111-1111-4111-8111-111111111111'
+  const snapshotId = 's11111111-1111-4111-8111-111111111111'
+  const ref = `${snapshotId}:e1`
   const cases = [
-    [{ operation: 'snapshot', args: ['--app', 'Finder'] }, ['allow', 'allow', 'allow', 'allow', 'allow']],
-    [{ operation: 'click', args: ['@s1:e1'] }, ['ask', 'ask', 'allow', 'allow', 'deny']],
-    [{ operation: 'click', args: ['@s1:e1'], headed: true }, ['ask', 'ask', 'ask', 'allow', 'deny']],
-    [{ operation: 'press', args: ['--force', 'cmd+q'] }, ['ask', 'ask', 'ask', 'allow', 'deny']],
-    [{ operation: 'close-app', args: ['TextEdit'] }, ['ask', 'ask', 'ask', 'allow', 'deny']],
-    [{ operation: 'permissions', args: ['--guide'] }, ['ask', 'ask', 'allow', 'allow', 'deny']],
+    [{ operation: 'get_state', appId }, ['allow', 'allow', 'allow', 'allow', 'allow']],
+    [{ operation: 'bind', app: 'Finder' }, ['allow', 'allow', 'allow', 'allow', 'allow']],
+    [{ operation: 'click', appId, ref }, ['ask', 'ask', 'allow', 'allow', 'deny']],
+    [{ operation: 'set_value', appId, ref, value: 'hello' }, ['ask', 'ask', 'allow', 'allow', 'deny']],
+    [{ operation: 'perform_action', appId, ref, action: 'AXExpand' }, ['ask', 'ask', 'allow', 'allow', 'deny']],
+    [{ operation: 'click_at', appId, snapshotId, x: 10, y: 10 }, ['ask', 'ask', 'ask', 'allow', 'deny']],
+    [{ operation: 'press_key', appId, snapshotId, key: 'cmd+s' }, ['ask', 'ask', 'ask', 'allow', 'deny']],
+    [{ operation: 'type_text', appId, snapshotId, text: 'hello' }, ['ask', 'ask', 'ask', 'allow', 'deny']],
+    [{ operation: 'scroll', appId, snapshotId, direction: 'down' }, ['ask', 'ask', 'ask', 'allow', 'deny']],
   ] as const
   const modes: PermissionMode[] = ['default', 'plan', 'auto', 'bypass', 'readonly']
   for (const [input, expected] of cases) {

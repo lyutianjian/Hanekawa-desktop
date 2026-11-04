@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Computer Use Reference</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header><span class="eyebrow">ENGINEERING REFERENCE / 01</span><h1>Computer Use</h1><p>TypeScript + Electron · 观察、操作、验证</p></header>
+  <main>
+    <section class="controls">
+      <h2>会话</h2>
+      <label for="target">选择应用</label><select id="target"></select>
+      <div class="buttons"><button id="start">开始会话</button><button id="observe" disabled>读取 AX</button><button id="cancel" disabled>取消会话</button></div>
+      <p id="status" role="status">准备中</p>
+      <p class="hint">Mock Counter 可直接运行。macOS 模式需先编译 helper、打开计算器并正常授予辅助功能权限；仅支持一个窗口。</p>
+      <h2>元素操作</h2>
+      <label for="element">从本次观察选择元素</label><select id="element" disabled></select>
+      <label for="value">设置值（适用于可编辑元素）</label><input id="value" maxlength="4096" value="7">
+      <div class="buttons"><button id="press" disabled>AXPress</button><button id="set" disabled>设置值</button></div>
+      <p class="hint">动作后自动重新观察。请核对右侧结果；动作回执仅表示驱动返回成功。</p>
+    </section>
+    <section class="observation"><div class="bar"><h2>当前观察</h2><span id="revision">尚无快照</span></div><pre id="tree">开始会话，然后读取应用状态。</pre><h2>事件</h2><pre id="events" aria-live="polite"></pre></section>
+  </main>
+  <script src="index.js" defer></script>
+</body>
+</html>

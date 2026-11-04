@@ -1,0 +1,32 @@
+{
+  "referenceThreadId": "01a1a4a2-c08a-76a2-a594-b6973206a3fa",
+  "sampleDate": "2026-11-04",
+  "note": "Source pointers and hashes only. This implementation is independently authored. Source assertions keep their original evidence limits.",
+  "files": [
+    {
+      "name": "技术文档.md",
+      "sourcePath": "/Users/lizhi/Documents/Codex/2026-11-04/codex-computeruse/outputs/codex-computeruse-reverse/技术文档.md",
+      "sha256": "809e0ca7016767af22d2d1f0471b66b2fc2efd085846dd635dc6b47c0528cbfb"
+    },
+    {
+      "name": "核心代码导读.md",
+      "sourcePath": "/Users/lizhi/Documents/Codex/2026-11-04/codex-computeruse/outputs/codex-computeruse-reverse/核心代码导读.md",
+      "sha256": "cf4bed0071d71497f3c06045ebb3691a7505954ed75e3e5a96ad2c4d9b21d23e"
+    },
+    {
+      "name": "mac-ax-bridge.swift",
+      "sourcePath": "/Users/lizhi/Documents/Codex/2026-11-04/codex-computeruse/outputs/codex-computeruse-reverse/mac-ax-bridge.swift",
+      "sha256": "961ff18e5f0e428bb6f972e54d00d7ef6c549efdbaabdd6a75c883196674d82c"
+    },
+    {
+      "name": "evidence.json",
+      "sourcePath": "/Users/lizhi/Documents/Codex/2026-11-04/codex-computeruse/outputs/codex-computeruse-reverse/evidence.json",
+      "sha256": "8a060e2772f3edc074560c0745a8fc56668e5d8f0c5b2676f545bcc2e6dfd675"
+    },
+    {
+      "name": "test-results.json",
+      "sourcePath": "/Users/lizhi/Documents/Codex/2026-11-04/codex-computeruse/outputs/codex-computeruse-reverse/test-results.json",
+      "sha256": "e80a02fb6635ff4f9ab527c3c0cd969d924195223454931eae723548d48cfd83"
+    }
+  ]
+}

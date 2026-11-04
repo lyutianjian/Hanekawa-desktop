@@ -1,0 +1,23 @@
+{
+  "name": "computer-use-ts-electron-reference",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Independent TypeScript + Electron computer-use reference; mock by default",
+  "main": "dist/main/index.cjs",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit",
+    "start": "npm run build && electron .",
+    "test": "npm run build && node --test dist/tests/*.test.cjs",
+    "demo": "npm run build && node dist/demo.cjs",
+    "test:electron": "npm run build && electron tests/electron-smoke.cjs",
+    "native:build": "node scripts/build-native.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "electron": "45.2.1",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  },
+  "engines": { "node": ">=24" }
+}

@@ -247,13 +247,14 @@ test('copy-desktop-assets mirrors the renderer assets next to the bundle', async
 
   await run(process.execPath, ['scripts/copy-desktop-assets.mjs', buildRoot], { cwd: repoRoot })
   const computerDir = join(buildRoot, 'desktop', 'computer', 'native')
-  const binaryName = process.platform === 'win32' ? 'agent-desktop.exe' : 'agent-desktop'
-  assert.ok(statSync(join(computerDir, binaryName)).size > 0)
-  if (process.platform !== 'win32') assert.ok(statSync(join(computerDir, binaryName)).mode & 0o100)
-  if (process.platform === 'darwin') assert.ok(statSync(join(computerDir, 'agent-desktop-macos-helper')).size > 0)
-  if (process.platform === 'linux') assert.ok(statSync(join(computerDir, 'agent-desktop-linux-clipboard-owner')).size > 0)
-  assert.match(readFileSync(join(computerDir, 'LICENSE'), 'utf8'), /Apache License/)
-  assert.ok(statSync(join(computerDir, 'agent-desktop-README.md')).size > 0)
+  if (process.platform === 'darwin') {
+    const executable = join(computerDir, 'hanekawa-computer')
+    assert.ok(statSync(executable).size > 0)
+    assert.ok(statSync(executable).mode & 0o100)
+    const { stdout } = await run(executable, ['--self-test'])
+    assert.equal(JSON.parse(stdout).passed, true)
+    assert.deepEqual(readdirSync(computerDir), ['hanekawa-computer'])
+  } else assert.equal(existsSync(computerDir), false)
   const tray = readFileSync(join(buildRoot, 'desktop/assets/tray.png'))
   assert.deepEqual(tray.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))
   assert.ok(tray.readUInt32BE(16) >= 16)

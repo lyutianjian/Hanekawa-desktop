@@ -1,0 +1,337 @@
+Browser service AST-extracted excerpts. Method fragments are reading material, not standalone modules.
+Source: /Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs
+Byte offsets in original source are recorded as anchors in evidence.json; ranges below refer to the reproducibly formatted source.
+
+===== B04 WASM索引到身份映射 | formatted chars 985763-986201 =====
+identityForElement(t) {
+        if (!Number.isSafeInteger(t)) throw new TypeError("Accessibility element ID must be a safe integer");
+        if (t < -2147483648 || t > 2147483647) return;
+        let r = this.#r,
+          n = this.#t.exports.computer_use_browser_wasm_revision_identity_length(r, t);
+        if (!(n < 0)) return this.#e(n, (o, i) => this.#t.exports.computer_use_browser_wasm_revision_copy_identity(r, t, o, i));
+      }
+
+===== B01 元素索引解析与旧页面校验 | formatted chars 1969277-1969902 =====
+targetForElement(t, r) {
+      let n = this.currentState(t),
+        o = n.accessibilityRevision?.identityForElement(r),
+        i = o == null ? void 0 : n.targets.get(o);
+      if (i == null || i.javaScriptDialog != null && this.cdp.getJsDialog(t)?.id !== i.javaScriptDialog.dialogID) throw new Error(`Accessibility element ${r} is stale or missing`);
+      if (n.documentKey !== Nr(n.mainFrameId, n.loaderId)) throw new Error(`Accessibility element ${r} belongs to a previous page`);
+      return {
+        ...i,
+        id: r,
+        isValueSettable: n.accessibilityRevision?.isValueSettableForElement?.(r)
+      };
+    }
+
+===== B02 AX候选树构建 | formatted chars 1981920-1983917 =====
+async buildAXCandidate(t, r) {
+      let [{
+          frameTree: n
+        }, o, i] = await Promise.all([this.cdp.call(t.tabId, "Page.getFrameTree"), this.getTab?.(t.tabId), this.cdp.callTarget({
+          tabId: t.tabId
+        }, "DOMSnapshot.captureSnapshot", {
+          computedStyles: [],
+          includePaintOrder: !1,
+          includeDOMRects: !1
+        })]),
+        s = [],
+        a = await this.captureSessions(t, n, i, s),
+        l = await this.captureDocuments(t, a, s),
+        u = ZL(l, s),
+        d = Nr(n.frame.id, n.frame.loaderId),
+        m = new Map(),
+        h = new Map(l.map(C => [C.frame.frameId, C])),
+        g = new Map(l.map(C => [C.frame.frameId, C.frame])),
+        b = [];
+      for (let C of u) {
+        let {
+            frameId: S,
+            ...P
+          } = C,
+          k = h.get(S),
+          B = k?.frame;
+        B != null && (b.push(P), C.backendDOMNodeID != null && m.set(W0(t.tabId, P), {
+          actionDescriptions: P.properties.expanded?.value === !0 ? ["Collapse"] : P.properties.expanded?.value === !1 ? ["Expand"] : [],
+          target: B.target,
+          backendNodeId: C.backendDOMNodeID,
+          isOptionElement: k?.metadata.get(C.backendDOMNodeID)?.tagName === "option",
+          frameId: B.frameId,
+          loaderId: B.loaderId
+        }));
+      }
+      let _ = {
+          capturedAt: new Date().toISOString(),
+          tab: {
+            id: t.tabId,
+            title: o?.title ?? null,
+            url: o?.url ?? n.frame.url ?? t.url ?? null,
+            active: o?.active ?? !1
+          },
+          nodes: b,
+          warnings: s
+        },
+        x = this.accessibilityCore.buildRevision(t.accessibilityRevision, _, {
+          mode: r.disableDiffing ? "full" : "auto"
+        });
+      return {
+        tab: _.tab,
+        rendered: x.text,
+        elementCount: b.length,
+        url: n.frame.url,
+        documentKey: d,
+        frames: g,
+        targets: m,
+        accessibilityRevision: x
+      };
+    }
+
+===== B03 多Frame的CDP AX捕获 | formatted chars 1987928-1990565 =====
+async captureDocuments(t, r, n) {
+      let o = new Set(r.map(d => d.frameTree.frame.id)),
+        i = new Map(),
+        s = new Map();
+      for (let d of r) {
+        let m = (h, g) => {
+          let b = h.frame.id,
+            _ = h.frame.parentId ?? i.get(b)?.parentFrameId ?? (b === d.frameTree.frame.id ? d.parentFrameId : g);
+          if (i.set(b, {
+            frameId: b,
+            target: d.target,
+            loaderId: h.frame.loaderId,
+            parentFrameId: _
+          }), !(b !== d.frameTree.frame.id && o.has(b))) {
+            s.set(b, d);
+            for (let x of h.childFrames ?? []) m(x, b);
+          }
+        };
+        m(d.frameTree);
+      }
+      let a = [...i.values()].sort((d, m) => G0(d, i) - G0(m, i)),
+        l = await Promise.all(a.map(async d => {
+          let m = s.get(d.frameId);
+          if (m != null) try {
+            let {
+                nodes: h
+              } = await this.cdp.callTarget(m.target, "Accessibility.getFullAXTree", {
+                frameId: d.frameId
+              }),
+              g = new Set(h.map(_ => _.backendDOMNodeId).filter(_ => _ != null)),
+              b = YL(m.domSnapshot, g);
+            if (d.parentFrameId != null) {
+              let _ = i.get(d.parentFrameId);
+              if (_ == null) throw new Error(`Parent frame ${d.parentFrameId} has no debugger session`);
+              let x = await this.cdp.callTarget(_.target, "DOM.getFrameOwner", {
+                frameId: d.frameId
+              });
+              d.ownerBackendNodeId = x.backendNodeId;
+            }
+            return {
+              frame: d,
+              targetId: m.targetId,
+              actionTargetId: m.actionTargetId,
+              nodes: h,
+              metadata: b
+            };
+          } catch (h) {
+            if (d.parentFrameId == null) throw h;
+            return {
+              frameId: d.frameId,
+              error: h
+            };
+          }
+        })),
+        u = [];
+      for (let d of l) {
+        if (d == null) continue;
+        if ("error" in d) {
+          n.push(`Iframe ${d.frameId} accessibility unavailable: ${d.error instanceof Error ? d.error.message : String(d.error)}`);
+          continue;
+        }
+        let m = d.frame;
+        if (m.parentFrameId != null) {
+          let h = u.find(b => b.frame.frameId === m.parentFrameId),
+            g = m.ownerBackendNodeId == null ? void 0 : h?.metadata.get(m.ownerBackendNodeId)?.bounds;
+          g != null && (m.size = {
+            width: g[2],
+            height: g[3]
+          });
+        }
+        u.push(d);
+      }
+      return this.throwPendingError(t.tabId), u;
+    }
+
+===== B-Wo Wo | formatted chars 2470411-2470599 =====
+var Wo = class extends cs {
+  constructor(t) {
+    super(t, {
+      decodeMessage: b3
+    });
+  }
+  static async create(t) {
+    return await NT(t, {
+      decodeMessage: b3
+    });
+  }
+};
+
+===== B-cs cs | formatted chars 2464273-2466943 =====
+var ls = 4,
+  db = class extends Error {
+    constructor(r, n) {
+      super("native pipe message exceeds frame limit");
+      this.messageBytes = r;
+      this.maxFrameBytes = n;
+    }
+    messageBytes;
+    maxFrameBytes;
+  },
+  cs = class {
+    constructor(t, r) {
+      this.socket = t;
+      this.options = r;
+      this.frameDecoder = new pb(r.maxFrameBytes, r.singleResponse);
+      let n = this.socket;
+      n != null && (n.on("data", o => {
+        this.socket === n && this.handleData(o);
+      }), n.on("error", o => {
+        this.socket === n && this.close(o);
+      }), n.on("close", () => {
+        if (this.socket === n) {
+          if (this.pendingResponse != null) {
+            try {
+              this.messageCallback?.(this.pendingResponse.message), this.markClosed();
+            } catch (o) {
+              this.markClosed(h3(o));
+            }
+            return;
+          }
+          this.markClosed(new Error(this.options.closedBeforeResponseMessage ?? "native pipe closed before response"));
+        }
+      }));
+    }
+    socket;
+    options;
+    closeListeners = new Set();
+    frameDecoder;
+    messageCallback = null;
+    closePromise = null;
+    terminalClose = null;
+    pendingResponse = null;
+    sendMessage(t) {
+      if (this.socket == null) throw new Error("native pipe is closed");
+      this.socket.write(MT(JSON.stringify(t), this.options.maxFrameBytes));
+    }
+    setMessageCallback(t) {
+      this.messageCallback = t;
+    }
+    addCloseListener(t) {
+      return this.closeListeners.add(t), this.terminalClose != null && Promise.resolve().then(() => t(this.terminalClose?.error)).catch(() => {}), () => {
+        this.closeListeners.delete(t);
+      };
+    }
+    isClosed() {
+      return this.terminalClose != null;
+    }
+    async close(t) {
+      this.closePromise ??= (async () => {
+        let r = this.socket;
+        if (await this.markClosed(t), r != null) try {
+          this.options.closeSocket != null ? this.options.closeSocket() : r.end();
+        } catch {}
+      })(), await this.closePromise;
+    }
+    handleData(t) {
+      try {
+        for (let r of this.frameDecoder.push(t)) {
+          let n = this.options.decodeMessage(JSON.parse(r));
+          n !== void 0 && (this.options.singleResponse ? this.pendingResponse = {
+            message: n
+          } : this.messageCallback?.(n));
+        }
+      } catch (r) {
+        this.close(h3(r));
+      }
+    }
+    async markClosed(t) {
+      this.terminalClose == null && (this.terminalClose = {
+        error: t
+      }, this.socket = null, this.pendingResponse = null, await Promise.allSettled([...this.closeListeners].map(async r => r(t))));
+    }
+  };
+
+===== B-pb pb | formatted chars 2467139-2469621 =====
+var pb = class {
+  constructor(t = 4294967295, r = !1) {
+    this.maxFrameBytes = t;
+    this.singleResponse = r;
+  }
+  maxFrameBytes;
+  singleResponse;
+  chunks = [];
+  byteLength = 0;
+  chunkStart = 0;
+  responseReceived = !1;
+  push(t) {
+    if (this.singleResponse && this.responseReceived && t.byteLength !== 0) throw new Error("native pipe expected one response frame");
+    this.append(t);
+    let r = [];
+    for (; this.byteLength >= ls;) {
+      let n = Jle(this.peekBytes(ls));
+      if (n > this.maxFrameBytes) throw new Error("native pipe frame exceeds limit");
+      let o = ls + n;
+      if (this.byteLength < o) break;
+      let i = this.consumeBytes(o);
+      r.push(i.subarray(ls).toString("utf8"));
+    }
+    if (this.singleResponse && r.length > 0) {
+      if (r.length !== 1 || this.byteLength !== 0) throw new Error("native pipe expected one response frame");
+      this.responseReceived = !0;
+    }
+    return r;
+  }
+  append(t) {
+    if (t.byteLength === 0) return;
+    let r = ld.from(t.buffer, t.byteOffset, t.byteLength);
+    this.chunks.push(r), this.byteLength += r.byteLength;
+  }
+  peekBytes(t) {
+    let r = this.chunks[this.chunkStart];
+    if (r && r.byteLength >= t) return r.subarray(0, t);
+    let n = ld.allocUnsafe(t),
+      o = 0;
+    for (let i = this.chunkStart; i < this.chunks.length; i += 1) {
+      let s = this.chunks[i];
+      if (!s) throw new Error("native pipe frame decoder underflow");
+      let a = s.copy(n, o, 0, t - o);
+      if (o += a, o === t) break;
+    }
+    return n;
+  }
+  consumeBytes(t) {
+    let r = this.chunks[this.chunkStart];
+    if (r && r.byteLength >= t) {
+      let i = r.subarray(0, t);
+      return r.byteLength === t ? this.discardFirstChunk() : this.chunks[this.chunkStart] = r.subarray(t), this.byteLength -= t, i;
+    }
+    let n = ld.allocUnsafe(t),
+      o = 0;
+    for (; o < t;) {
+      let i = this.chunks[this.chunkStart];
+      if (!i) throw new Error("native pipe frame decoder underflow");
+      let s = i.copy(n, o, 0, t - o);
+      o += s, this.byteLength -= s, s === i.byteLength ? this.discardFirstChunk() : this.chunks[this.chunkStart] = i.subarray(s);
+    }
+    return n;
+  }
+  discardFirstChunk() {
+    if (this.chunkStart += 1, this.chunkStart === this.chunks.length) {
+      this.chunks.length = 0, this.chunkStart = 0;
+      return;
+    }
+    this.chunkStart > 1024 && this.chunkStart * 2 > this.chunks.length && (this.chunks.splice(0, this.chunkStart), this.chunkStart = 0);
+  }
+};
+

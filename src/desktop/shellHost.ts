@@ -476,6 +476,8 @@ export interface ShellHostDeps<
     releaseTab(tabId: string): void
     setBounds(tabId: string, rect: WireBrowserRect, visible: boolean): void
   }
+  /** Native computer bindings share the lane lifecycle with browser tabs. */
+  computer?: { closeLane(lane: string): void }
   /** Project coordination. Without it the coordination commands reject. */
   coordination?: ShellCoordination
 }
@@ -1135,6 +1137,7 @@ export class ShellHost<
     // dies with it — but only once the session that could still be driving it
     // has stopped. The renderer's pane budget does reach this path, which is
     // why it never evicts a lane that owns tabs.
+    this.deps.computer?.closeLane(key)
     this.deps.browser?.closeLane(key)
     this.deps.mux.closeLane(key)
     entry.project.workspace.close(entry.pane)

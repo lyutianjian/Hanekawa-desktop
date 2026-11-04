@@ -1,0 +1,154 @@
+Host ASAR excerpts. Original functions/classes, formatting only; external bundle symbols are unresolved.
+
+===== H02 managed native service lifecycle | .vite/build/early-bootstrap-45-628adb74a9c47df1.js | original byte 229706 =====
+class lO {
+  logger = (0, em.vB9)("managed-computer-use-service");
+  appshotsEnabled = !1;
+  computerUseEnabled = !1;
+  skysightEnabled = !1;
+  disposed = !1;
+  hasSpawnedService = !1;
+  servicePid = null;
+  pendingOperation = Promise.resolve();
+  isExpectedServiceProcess;
+  isProcessRunning;
+  onServiceAvailable;
+  onServiceRespawned;
+  serviceExecutablePath;
+  spawnService;
+  constructor(e, {
+    isExpectedServiceProcess: t = oR,
+    isProcessRunning: r = lF,
+    onServiceAvailable: n = () => {},
+    onServiceRespawned: i = () => {},
+    spawnService: s = oP
+  } = {}) {
+    this.isExpectedServiceProcess = t, this.isProcessRunning = r, this.onServiceAvailable = n, this.onServiceRespawned = i, this.serviceExecutablePath = ei().join(e, "Contents", "MacOS", "SkyComputerUseService"), this.spawnService = s;
+  }
+  setAppshotsEnabled(e) {
+    return this.setEnabledFeatures({
+      appshotsEnabled: e,
+      computerUseEnabled: this.computerUseEnabled,
+      skysightEnabled: this.skysightEnabled
+    });
+  }
+  setEnabledFeatures({
+    appshotsEnabled: e,
+    computerUseEnabled: t,
+    skysightEnabled: r
+  }) {
+    return this.appshotsEnabled === e && this.computerUseEnabled === t && this.skysightEnabled === r ? Promise.resolve() : (this.appshotsEnabled = e, this.computerUseEnabled = t, this.skysightEnabled = r, this.runSerialized(async () => {
+      this.disposed || this.enabled && (await this.ensureServicePidForEnabledFeatures());
+    }));
+  }
+  ensureServicePid() {
+    return this.runSerialized(async () => {
+      if (this.disposed || !this.enabled) throw Error("Managed Computer Use service is not enabled");
+      return this.ensureServicePidForEnabledFeatures();
+    });
+  }
+  getServiceProcessIdentifier() {
+    return this.servicePid;
+  }
+  invalidateServicePid(e) {
+    return this.runSerialized(async () => {
+      if (!this.disposed && this.enabled && this.servicePid === e) {
+        if (this.isProcessRunning(e) && this.isExpectedServiceProcess(e, this.serviceExecutablePath)) return void this.logger().debug("Preserving live managed service after invalidation", {
+          safe: {
+            processIdentifier: e
+          }
+        });
+        this.logger().info("Invalidating stale managed service", {
+          safe: {
+            processIdentifier: e
+          }
+        }), this.servicePid = null;
+      }
+    });
+  }
+  dispose() {
+    this.disposed = !0, this.appshotsEnabled = !1, this.computerUseEnabled = !1, this.skysightEnabled = !1;
+  }
+  runSerialized(e) {
+    let t = this.pendingOperation.then(e, e);
+    return this.pendingOperation = t.then(() => {}, () => {}), t;
+  }
+  get enabled() {
+    return this.appshotsEnabled || this.computerUseEnabled || this.skysightEnabled;
+  }
+  async ensureServicePidForEnabledFeatures() {
+    let e = this.servicePid,
+      t = null != e && this.isProcessRunning(e);
+    if (null != e && t && this.isExpectedServiceProcess(e, this.serviceExecutablePath)) return e;
+    null != e && this.logger().info("Replacing stale managed service", {
+      safe: {
+        processIdentifier: e,
+        reason: t ? "executable-mismatch" : "process-exited"
+      }
+    }), this.servicePid = null;
+    let r = this.hasSpawnedService,
+      n = await this.spawnService(this.serviceExecutablePath);
+    if (null == n || !Number.isSafeInteger(n) || n <= 0) throw this.logger().warning("Failed to spawn managed service", {
+      safe: {
+        isRespawn: r
+      }
+    }), Error("Failed to spawn managed Computer Use service");
+    return this.servicePid = n, this.hasSpawnedService = !0, this.logger().info("Managed service available", {
+      safe: {
+        processIdentifier: n,
+        isRespawn: r
+      }
+    }), this.onServiceAvailable(n), r && this.onServiceRespawned(), n;
+  }
+}
+
+===== H01 socket peer authorization | .vite/build/early-bootstrap-45-628adb74a9c47df1.js | original byte 256384 =====
+function cR() {
+  let e;
+  if ("darwin" !== process.platform) return () => ({
+    authorized: !0
+  });
+  let t = eH.x.readFromPackageMetadata(),
+    r = null != t && eH.x.shouldIncludeBrowserUsePeerAuthorization(t, process.platform),
+    n = !r && "1" === process.env.CODEX_BROWSER_USE_PEER_AUTHORIZATION;
+  if (ea.app?.isPackaged === !0 && null == t) return c_().warning("browser-use native pipe peer authorization disabled", {
+    safe: {
+      reason: "missing-package-build-flavor"
+    },
+    sensitive: {}
+  }), () => ({
+    authorized: !1,
+    reason: "missing-package-build-flavor"
+  });
+  if (!r && !n) return () => ({
+    authorized: !0
+  });
+  let i = n ? (0, tZ.b)({
+    isPackaged: ea.app.isPackaged,
+    env: process.env,
+    resourcesPath: process.resourcesPath
+  }) : process.resourcesPath;
+  if (null == i) throw Error("Browser-use peer authorization requires resourcesPath");
+  try {
+    e = cP((0, en.join)(i, "native", "browser-use-peer-authorization.node"));
+  } catch (e) {
+    throw Error("Failed to load browser-use peer authorization addon", {
+      cause: e
+    });
+  }
+  return c_().info("browser-use native pipe peer authorization enabled", {
+    safe: {
+      mode: n ? "dev" : "packaged"
+    },
+    sensitive: {}
+  }), t => {
+    let r,
+      i,
+      s = (r = t._handle, "number" == typeof (i = r?.fd) && Number.isInteger(i) && i >= 0 ? i : null);
+    return null == s ? {
+      authorized: !1,
+      reason: "missing-socket-file-descriptor"
+    } : e.authorizeSocketPeer(s, n);
+  };
+}
+

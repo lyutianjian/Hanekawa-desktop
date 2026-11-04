@@ -1,0 +1,276 @@
+{
+  "capturedAt": "2026-11-04 Asia/Shanghai",
+  "host": "macOS arm64",
+  "method": "Read-only local installed artifacts; no author source maps assumed",
+  "files": [
+    {
+      "id": "C01",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/globals.js",
+      "bytes": 583,
+      "sha256": "18b8039f846a6e00206128530c5f59ff05bd361c655a858a4a27059ec0f63d23",
+      "formatted": "core/formatted/01-bootstrap.js",
+      "readable": "core/readable/01-bootstrap.js",
+      "formattedLines": 18,
+      "readableLines": 19
+    },
+    {
+      "id": "C02",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/create_tinysky_alt.js",
+      "bytes": 3234,
+      "sha256": "d6940dd2fee85628fdff0d1bdbaeefaec358db20a5c6dfb00359ce9a1d364c0b",
+      "formatted": "core/formatted/02-unified-api.js",
+      "readable": "core/readable/02-unified-api.js",
+      "formattedLines": 153,
+      "readableLines": 154
+    },
+    {
+      "id": "C03",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/bind_mac_app.js",
+      "bytes": 2539,
+      "sha256": "1c210ebf411e196622c6fa294fd255df10ddbb44038ab4523e68d2dcc351ea14",
+      "formatted": "core/formatted/03-mac-app-binding.js",
+      "readable": "core/readable/03-mac-app-binding.js",
+      "formattedLines": 120,
+      "readableLines": 121
+    },
+    {
+      "id": "C04",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/sky.js",
+      "bytes": 1269,
+      "sha256": "91a38110155e2d48ca376752cd66918e77fbf9457605c3fccc4ca3097684517a",
+      "formatted": "core/formatted/04-trusted-sky-proxy.js",
+      "readable": "core/readable/04-trusted-sky-proxy.js",
+      "formattedLines": 56,
+      "readableLines": 57
+    },
+    {
+      "id": "C05",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/service.js",
+      "bytes": 3494,
+      "sha256": "efd97700bc9d87fc6c2e7ef262d49eb638123c52fff92ff680ebd1bbb0e7cb81",
+      "formatted": "core/formatted/05-trusted-service-dispatch.js",
+      "readable": "core/readable/05-trusted-service-dispatch.js",
+      "formattedLines": 112,
+      "readableLines": 113
+    },
+    {
+      "id": "C06",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac/computer-use-policy.js",
+      "bytes": 6109,
+      "sha256": "b1591c30de7a51d0fb5a842a78096920427e1c96bda8199589b3c8de417cd897",
+      "formatted": "core/formatted/06-app-policy-and-approval.js",
+      "readable": "core/readable/06-app-policy-and-approval.js",
+      "formattedLines": 265,
+      "readableLines": 266
+    },
+    {
+      "id": "C07",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac/client.js",
+      "bytes": 5138,
+      "sha256": "71134f10354fe9f7be23a62df52789908a8592151685286a7965b297a81cef8f",
+      "formatted": "core/formatted/07-native-request-schema.js",
+      "readable": "core/readable/07-native-request-schema.js",
+      "formattedLines": 256,
+      "readableLines": 257
+    },
+    {
+      "id": "C08",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac/native-pipe.js",
+      "bytes": 8221,
+      "sha256": "60b3653f7ee052007b02a79e11416a89d424d73dac450e429a93b214839c267f",
+      "formatted": "core/formatted/08-native-pipe-transport.js",
+      "readable": "core/readable/08-native-pipe-transport.js",
+      "formattedLines": 311,
+      "readableLines": 312
+    },
+    {
+      "id": "C09",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac/window_result.js",
+      "bytes": 1408,
+      "sha256": "9169daf53e7516eecd2ba8680e990bc6570d16d955f0ffed183572202c5d5448",
+      "formatted": "core/formatted/09-skyshot-result.js",
+      "readable": "core/readable/09-skyshot-result.js",
+      "formattedLines": 53,
+      "readableLines": 54
+    },
+    {
+      "id": "C10",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac/errors.js",
+      "bytes": 1049,
+      "sha256": "9dd27e4cf0ea4456b3ad472fab8cbbe093ad1184d0cb25a8c05e738ee00cfd43",
+      "formatted": "core/formatted/10-native-error-codes.js",
+      "readable": "core/readable/10-native-error-codes.js",
+      "formattedLines": 44,
+      "readableLines": 45
+    },
+    {
+      "id": "C11",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/bind_tab.js",
+      "bytes": 2309,
+      "sha256": "a693e078ecbaa34020cf0caa373edb9c525dad87fd3ada62706a07eadaa6dc2a",
+      "formatted": "core/formatted/11-browser-tab-binding.js",
+      "readable": "core/readable/11-browser-tab-binding.js",
+      "formattedLines": 97,
+      "readableLines": 98
+    },
+    {
+      "id": "C12",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/create_browser_api.js",
+      "bytes": 5890,
+      "sha256": "9bd1b3af46ec3f91e51d319d7b277d463ce9a077335ef84a8697b318f1baa006",
+      "formatted": "core/formatted/12-browser-selection-and-claim.js",
+      "readable": "core/readable/12-browser-selection-and-claim.js",
+      "formattedLines": 196,
+      "readableLines": 197
+    },
+    {
+      "id": "C13",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/create_bootstrap_emitter.js",
+      "bytes": 1768,
+      "sha256": "1272257bc91109db07ffb1a823c6e07272649e4120c7065d83f35f12496e656f",
+      "formatted": "core/formatted/13-documentation-emitter.js",
+      "readable": "core/readable/13-documentation-emitter.js",
+      "formattedLines": 66,
+      "readableLines": 67
+    },
+    {
+      "id": "C14",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/sky_service_rpc.js",
+      "bytes": 1109,
+      "sha256": "87b037bfa736500f6700824099d569cb8add10140c66ad6039e6d21f3f5c2f7d",
+      "formatted": "core/formatted/14-sky-rpc-client.js",
+      "readable": "core/readable/14-sky-rpc-client.js",
+      "formattedLines": 47,
+      "readableLines": 48
+    },
+    {
+      "id": "C15",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac/get_app_state.js",
+      "bytes": 506,
+      "sha256": "7b7fe2af461c7cd348c07535b1deae9ea14837dbdac9985ba479eb2e53e5248d",
+      "formatted": "core/formatted/15-observation-entry.js",
+      "readable": "core/readable/15-observation-entry.js",
+      "formattedLines": 19,
+      "readableLines": 20
+    },
+    {
+      "id": "C16",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/dist/project/cua/sky_js/src/targets/mac/click.js",
+      "bytes": 510,
+      "sha256": "d122645123afdc7aeb1114681adb1bff0d2e6acc41d7a09e449835c80e3e7348",
+      "formatted": "core/formatted/16-click-entry.js",
+      "readable": "core/readable/16-click-entry.js",
+      "formattedLines": 24,
+      "readableLines": 25
+    },
+    {
+      "id": "C17",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/dist/lib/js/oai_js_cua_repl/src/environment.js",
+      "bytes": 1656,
+      "sha256": "0160beba37aa314e2f04a6febaa1a633b59fd59ff65b4e2282dc0926070d40ab",
+      "formatted": "core/formatted/17-repl-environment.js",
+      "readable": "core/readable/17-repl-environment.js",
+      "formattedLines": 48,
+      "readableLines": 49
+    },
+    {
+      "id": "C18",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/dist/lib/js/oai_js_cua/src/tinysky_alt/setup_browser.js",
+      "bytes": 540,
+      "sha256": "a1cf70b2ec89d51f9bc33b056dbe31af9cc6fd605c365e93f5d0649d12748216",
+      "formatted": "core/formatted/18-browser-bootstrap.js",
+      "readable": "core/readable/18-browser-bootstrap.js",
+      "formattedLines": 18,
+      "readableLines": 19
+    },
+    {
+      "id": "P01",
+      "source": "/Users/lizhi/.codex/plugins/cache/openai-bundled/unified-computer-use/26.1029.61003/.mcp.json",
+      "bytes": 7570,
+      "sha256": "b5593d3759892cfded92260459fdbb247633bc59b0f46f2e329b302c838a4f69"
+    },
+    {
+      "id": "P02",
+      "source": "/Users/lizhi/.codex/plugins/cache/openai-bundled/unified-computer-use/26.1029.61003/.codex-plugin/plugin.json",
+      "bytes": 1398,
+      "sha256": "601778b36af64eeab8a4955c0c1abd5f5c5dcde82b164f4afd87d1f9c992d9e3"
+    },
+    {
+      "id": "P03",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/manifest.json",
+      "bytes": 424,
+      "sha256": "e93f94064d13961aef566933543a515459845f16f7d661da13fc078b23e5b4b4"
+    },
+    {
+      "id": "P04",
+      "source": "/Applications/ChatGPT.app/Contents/Info.plist",
+      "bytes": 20787,
+      "sha256": "ddf7fcfc46735752c327e2917247c6afb3bf256213508d853de1e38642eaf2f0"
+    },
+    {
+      "id": "P05",
+      "source": "/Users/lizhi/.codex/computer-use/Codex Computer Use.app/Contents/Info.plist",
+      "bytes": 2475,
+      "sha256": "37f298a984be2405faa33db46424a1ca3a7fabe3caadf1a1c76039b9223ca5a3"
+    },
+    {
+      "id": "B00",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/scripts/browser-service.mjs",
+      "bytes": 2126583,
+      "sha256": "ff48f49dae194da13d03427af5130fd67c183cf76f007309afc9f3e60179cb0f",
+      "excerpts": "core/browser-excerpts.txt",
+      "anchors": [
+        {
+          "key": "Accessibility.getFullAXTree",
+          "byteOffset": 1538611
+        },
+        {
+          "key": "DOMSnapshot.captureSnapshot",
+          "byteOffset": 1534373
+        },
+        {
+          "key": "Input.dispatchMouseEvent",
+          "byteOffset": 1506043
+        },
+        {
+          "key": "Input.insertText",
+          "byteOffset": 1052846
+        },
+        {
+          "key": "computer_use_browser_wasm_revision_create",
+          "byteOffset": 789144
+        },
+        {
+          "key": "targetForElement(t,r)",
+          "byteOffset": 1501816
+        },
+        {
+          "key": "identityForElement(t)",
+          "byteOffset": 794128
+        },
+        {
+          "key": "c7e=8*1024*1024",
+          "byteOffset": 1961150
+        },
+        {
+          "key": "cs=class",
+          "byteOffset": 1957142
+        }
+      ]
+    },
+    {
+      "id": "H02",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/app.asar::.vite/build/early-bootstrap-45-628adb74a9c47df1.js",
+      "entrySha256": "b799f597bb0be309b49eac7c4e4b972f2bb8b5dd82a4e44bede43add38568820",
+      "byteOffsetInEntry": 229706,
+      "excerpts": "core/host-excerpts.txt"
+    },
+    {
+      "id": "H01",
+      "source": "/Applications/ChatGPT.app/Contents/Resources/app.asar::.vite/build/early-bootstrap-45-628adb74a9c47df1.js",
+      "entrySha256": "b799f597bb0be309b49eac7c4e4b972f2bb8b5dd82a4e44bede43add38568820",
+      "byteOffsetInEntry": 256384,
+      "excerpts": "core/host-excerpts.txt"
+    }
+  ]
+}

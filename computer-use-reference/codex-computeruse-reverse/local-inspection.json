@@ -1,0 +1,217 @@
+{
+  "app": {
+    "CFBundleIdentifier": "com.openai.codex",
+    "CFBundleDisplayName": "ChatGPT",
+    "CFBundleShortVersionString": "26.1029.61003",
+    "CFBundleVersion": "24614"
+  },
+  "system": "ProductName:\t\tmacOS\nProductVersion:\t\t27.2\nBuildVersion:\t\t26B123\n",
+  "runtime": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "target": "darwin-arm64",
+    "node_version": "24.22.1-cua.1",
+    "node_binary_version": "24.22.1",
+    "node_archive_path": "v24.22.1-cua.1/node-v24.22.1-darwin-arm64.tar.gz",
+    "runtime_archive_name": "cua-node-local-darwin-arm64.tar.gz",
+    "runtime_archive_version": "local",
+    "node_path": "bin/node",
+    "node_modules": "lib/node_modules",
+    "node_repl_path": "bin/node_repl"
+  },
+  "packages": {
+    "cua": {
+      "version": "0.2.6",
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua/package.json",
+      "bytes": 1060,
+      "sha256": "6ccd4c5f97bbf308e0bf071ef5d9d32619d168f5544f4b4dbc29388a103acc4a"
+    },
+    "cua-repl": {
+      "version": "0.1.3",
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/cua-repl/package.json",
+      "bytes": 918,
+      "sha256": "8fae8a470a8223f90766c027c2629c5cef0a27b99a3da321fbfec805dceb568c"
+    },
+    "sky": {
+      "version": "0.7.17",
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/sky/package.json",
+      "bytes": 3073,
+      "sha256": "60ccac638c3551fc9638303da17ade8814ba4a47f4e44293e16b43b71ec85a1a"
+    },
+    "browser-desktop": {
+      "version": "0.1.1",
+      "path": "/Applications/ChatGPT.app/Contents/Resources/cua_node/lib/node_modules/@oai/browser-desktop/package.json",
+      "bytes": 308,
+      "sha256": "a7bfc13a4f9a8a22fd4a275adedf352e5f10ea57f8259301b905c3e997bc3b63"
+    }
+  },
+  "nativeService": {
+    "info": {
+      "CFBundleIdentifier": "com.openai.sky.CUAService",
+      "CFBundleShortVersionString": "26.1027.1001730",
+      "CFBundleVersion": "1001730",
+      "LSMinimumSystemVersion": "14.4"
+    },
+    "path": "/Users/lizhi/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService",
+    "bytes": 25617760,
+    "sha256": "b64e219f30c655407e485d5fab47d354ea6398842fc49a6bad917810df54c862",
+    "selectedUndefinedSymbols": [
+      "_AXUIElementCopyActionDescription",
+      "_AXUIElementCopyActionNames",
+      "_AXUIElementCopyAttributeNames",
+      "_AXUIElementCopyAttributeValue",
+      "_AXUIElementCopyAttributeValues",
+      "_AXUIElementCopyElementAtPosition",
+      "_AXUIElementCopyMultipleAttributeValues",
+      "_AXUIElementCopyParameterizedAttributeNames",
+      "_AXUIElementCopyParameterizedAttributeValue",
+      "_AXUIElementCreateApplication",
+      "_AXUIElementCreateSystemWide",
+      "_AXUIElementGetAttributeValueCount",
+      "_AXUIElementGetPid",
+      "_AXUIElementGetTypeID",
+      "_AXUIElementIsAttributeSettable",
+      "_AXUIElementPerformAction",
+      "_AXUIElementSetAttributeValue",
+      "_AXValueCreate",
+      "_AXValueGetType",
+      "_AXValueGetTypeID",
+      "_AXValueGetValue",
+      "_CGWindowLevelForKey",
+      "_CGWindowListCopyWindowInfo",
+      "_CGWindowListCreate",
+      "_CGWindowListCreateDescriptionFromArray",
+      "_OBJC_CLASS_$_SCContentFilter",
+      "_OBJC_CLASS_$_SCScreenshotManager",
+      "_SecCodeCopyGuestWithAttributes",
+      "_SecCodeCopySelf",
+      "_SecCodeCopySigningInformation",
+      "_SecCodeCopyStaticCode",
+      "_audit_token_to_pid",
+      "_kCGWindowBounds",
+      "_kCGWindowIsOnscreen",
+      "_kCGWindowLayer",
+      "_kCGWindowName",
+      "_kCGWindowNumber",
+      "_kCGWindowOwnerName",
+      "_kCGWindowOwnerPID",
+      "_kSecCodeInfoIdentifier",
+      "_kSecCodeInfoTeamIdentifier",
+      "_xpc_dictionary_get_audit_token"
+    ],
+    "selectedStringEvidence": [
+      {
+        "byteOffset": 18261632,
+        "text": "RefetchableSkyshotAXTree"
+      },
+      {
+        "byteOffset": 18262528,
+        "text": "DifferenceBaseline"
+      },
+      {
+        "byteOffset": 19123440,
+        "text": "SAILockScreenGuardianXPCProtocol"
+      },
+      {
+        "byteOffset": 19143760,
+        "text": "needsUISettleBeforeSkyshot"
+      },
+      {
+        "byteOffset": 19157808,
+        "text": "computer_use_ipc_has_trusted_ancestor"
+      },
+      {
+        "byteOffset": 19170224,
+        "text": "ComputerUse/RefetchableSkyshotAXTree.swift"
+      },
+      {
+        "byteOffset": 19170272,
+        "text": "_TtC11ComputerUse24RefetchableSkyshotAXTree"
+      },
+      {
+        "byteOffset": 19441682,
+        "text": "So32SAILockScreenGuardianXPCProtocol_p"
+      },
+      {
+        "byteOffset": 19466376,
+        "text": "$s11ComputerUse32SAILockScreenGuardianXPCProtocolP"
+      },
+      {
+        "byteOffset": 19602442,
+        "text": "So28SAIComputerUseIPCXPCProtocol_p"
+      },
+      {
+        "byteOffset": 19862080,
+        "text": "needsUISettleBeforeSkyshot"
+      },
+      {
+        "byteOffset": 20344890,
+        "text": "SAIComputerUseIPCXPCProtocol"
+      },
+      {
+        "byteOffset": 23132366,
+        "text": "positionElement_27cursorNextInteractionTiming6axTree13animateCursorSb20AccessibilitySupport17UIElementProtocol_p_AA0abN0C0nhiJ0OSgAA24RefetchableSkyshotAXTreeCSbtYaKF"
+      },
+      {
+        "byteOffset": 23133015,
+        "text": "prepareToInteract4with27cursorNextInteractionTiming15positionElement13animateCursorAA24RefetchableSkyshotAXTreeC_20AccessibilitySupport17UIElementProtocol_ptSi_AA0abP0C0pjkL0OSgS2btYaKF"
+      },
+      {
+        "byteOffset": 23134259,
+        "text": "6needsUISettleBeforeSkyshot33_227D423D33BF05902090F41EA12C551CLLSbvpfi"
+      },
+      {
+        "byteOffset": 23134333,
+        "text": "7createVirtualCursorIfNeededAA0abG0CyF"
+      },
+      {
+        "byteOffset": 23160544,
+        "text": "DifferenceBaselineO"
+      },
+      {
+        "byteOffset": 23184120,
+        "text": "RefetchableSkyshotAXTreeC"
+      },
+      {
+        "byteOffset": 24420467,
+        "text": "postToPid_3pidySo0C3Refa_s5Int32VtFZ"
+      },
+      {
+        "byteOffset": 25031794,
+        "text": "12WithSkyLight9windowIDs4rectSo10CGImageRefaSgSays6UInt32VG_So6CGRectVtFZ"
+      }
+    ]
+  },
+  "asarEvidence": {
+    "archive": "/Applications/ChatGPT.app/Contents/Resources/app.asar",
+    "dataOffset": 5260692,
+    "entries": [
+      {
+        "entry": ".vite/build/early-bootstrap-45-628adb74a9c47df1.js",
+        "sha256": "b799f597bb0be309b49eac7c4e4b972f2bb8b5dd82a4e44bede43add38568820",
+        "anchors": [
+          {
+            "key": "authorizeSocketPeer",
+            "byteOffsetInEntry": 257546,
+            "context": "s?{authorized:!1,reason:\"missing-socket-file-descriptor\"}:e.authorizeSocketPeer(s,n)}}let cE=eU.object({environmentId:eU.string().min(1),cwd:eU.string().min(1)."
+          },
+          {
+            "key": "browser-use-peer-authorization.node",
+            "byteOffsetInEntry": 257143,
+            "context": "n requires resourcesPath\");try{e=cP((0,en.join)(i,\"native\",\"browser-use-peer-authorization.node\"))}catch(e){throw Error(\"Failed to load browser-use peer authori"
+          },
+          {
+            "key": "NODE_REPL_HOST_SERVICES_PIPE_PATH",
+            "byteOffsetInEntry": 146868,
+            "context": ")}let sb=(0,em.vB9)(\"computer-use-native-pipe\"),sS=null,sk=\"NODE_REPL_HOST_SERVICES_PIPE_PATH\";var sC=r(74487),sI=r(84698);let sx=(0,sC.$C)(\"ComputerAudio\"),sT="
+          },
+          {
+            "key": "Managed Computer Use service is not enabled",
+            "byteOffsetInEntry": 231001,
+            "context": "ized(async()=>{if(this.disposed||!this.enabled)throw Error(\"Managed Computer Use service is not enabled\");return this.ensureServicePidForEnabledFeatures()})}get"
+          }
+        ]
+      }
+    ]
+  }
+}

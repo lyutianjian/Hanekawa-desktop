@@ -39,7 +39,6 @@
     "@shikijs/core": "^4.5.0",
     "@shikijs/engine-javascript": "^4.5.0",
     "@shikijs/langs": "^4.5.0",
-    "agent-desktop": "1.0.2",
     "diff": "^9.0.0",
     "fast-glob": "latest",
     "fuse.js": "^7.4.1",

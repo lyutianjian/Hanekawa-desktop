@@ -9,7 +9,6 @@ files:
   - '!**/*.map'
   - '!**/{test,tests}/**'
   - '!dist/desktop/computer/native/**'
-  - '!node_modules/agent-desktop/**'
 extraResources:
   - from: dist/desktop/computer/native
     to: computer/native
