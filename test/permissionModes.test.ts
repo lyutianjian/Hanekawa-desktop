@@ -44,8 +44,13 @@ test('Computer structured reads, semantic actions and physical input follow perm
   const ref = `${snapshotId}:e1`
   const cases = [
     [{ operation: 'get_state', appId }, ['allow', 'allow', 'allow', 'allow', 'allow']],
+    [{ operation: 'wait_for', appId, condition: { kind: 'element', state: 'present', labelIncludes: 'Ready' } }, ['allow', 'allow', 'allow', 'allow', 'allow']],
     [{ operation: 'bind', app: 'Finder' }, ['allow', 'allow', 'allow', 'allow', 'allow']],
     [{ operation: 'click', appId, ref }, ['ask', 'ask', 'allow', 'allow', 'deny']],
+    [{ operation: 'focus', appId, ref }, ['ask', 'ask', 'allow', 'allow', 'deny']],
+    [{ operation: 'select_text', appId, ref, selection: { text: 'hello' } }, ['ask', 'ask', 'allow', 'allow', 'deny']],
+    [{ operation: 'get_state', appId, scope: 'application' }, ['allow', 'allow', 'allow', 'allow', 'allow']],
+    [{ operation: 'get_state', appId, includeScreenshot: true }, ['allow', 'allow', 'allow', 'allow', 'allow']],
     [{ operation: 'set_value', appId, ref, value: 'hello' }, ['ask', 'ask', 'allow', 'allow', 'deny']],
     [{ operation: 'perform_action', appId, ref, action: 'AXExpand' }, ['ask', 'ask', 'allow', 'allow', 'deny']],
     [{ operation: 'click_at', appId, snapshotId, x: 10, y: 10 }, ['ask', 'ask', 'ask', 'allow', 'deny']],

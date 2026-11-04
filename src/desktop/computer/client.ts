@@ -20,9 +20,13 @@ export class ComputerClient {
   private nextId = 1
   private pending?: { id: number; resolve(value: unknown): void; reject(error: unknown): void; detach(): void }
 
-  constructor(executable: string) {
+  get isBroken(): boolean { return this.broken }
+
+  constructor(executable: string, onSpawn?: (elapsedMs: number) => void) {
+    const start = performance.now()
     this.child = spawn(executable, [], { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
       env: { PATH: '/usr/bin:/bin', LANG: 'en_US.UTF-8' } })
+    this.child.once('spawn', () => onSpawn?.(performance.now() - start))
     this.exited = new Promise(resolve => {
       // close follows both exit and stdio shutdown; a killed helper cannot race
       // the next physical desktop operation on the global host queue.

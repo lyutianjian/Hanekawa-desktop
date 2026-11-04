@@ -5,7 +5,7 @@ import AppKit
 import ApplicationServices
 import ScreenCaptureKit
 
-let protocolVersion = "hanekawa-computer/1"
+let protocolVersion = "hanekawa-computer/4"
 struct BridgeFailure: Error {
     let code: String
     let message: String
@@ -27,11 +27,25 @@ func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
     var result: CFTypeRef?
     return AXUIElementCopyAttributeValue(element, name as CFString, &result) == .success ? result : nil
 }
-func stringAttribute(_ element: AXUIElement, _ name: String, limit: Int = 200) -> String {
+func boundedText(_ text: String, limit: Int) -> String {
+    var result = ""
+    var length = 0
+    for character in text {
+        let count = String(character).utf16.count
+        if count > limit - length { break }
+        result.append(character)
+        length += count
+    }
+    return result
+}
+func attributeText(_ element: AXUIElement, _ name: String) -> String {
     guard let value = attribute(element, name) else { return "" }
     guard CFGetTypeID(value) == CFStringGetTypeID() || CFGetTypeID(value) == CFNumberGetTypeID() else { return "" }
+    return String(describing: value)
+}
+func stringAttribute(_ element: AXUIElement, _ name: String, limit: Int = 200) -> String {
     // Keep the UTF-16 length within the TS protocol's string budget too.
-    return String(String(describing: value).prefix(limit))
+    return boundedText(attributeText(element, name), limit: limit)
 }
 func rect(_ element: AXUIElement) -> CGRect? {
     guard let p = attribute(element, kAXPositionAttribute), CFGetTypeID(p) == AXValueGetTypeID(),
@@ -49,12 +63,14 @@ func sameRect(_ a: CGRect, _ b: CGRect) -> Bool {
 }
 func secure(_ element: AXUIElement) -> Bool { stringAttribute(element, kAXSubroleAttribute) == "AXSecureTextField" }
 func fingerprint(_ element: AXUIElement) -> [String] {
-    [kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXIdentifierAttribute, kAXValueAttribute].map { stringAttribute(element, $0) }
+    if secure(element) { return [stringAttribute(element, kAXRoleAttribute), "AXSecureTextField"] }
+    // Private comparison only: a change beyond the displayed prefix also invalidates identity/ref.
+    return [kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXIdentifierAttribute, kAXValueAttribute].map { attributeText(element, $0) }
 }
 func actionNames(_ element: AXUIElement) -> [String] {
     var names: CFArray?
     guard AXUIElementCopyActionNames(element, &names) == .success else { return [] }
-    return Array((names as? [String] ?? []).prefix(32)).map { String($0.prefix(50)) }
+    return Array((names as? [String] ?? []).prefix(32)).map { boundedText($0, limit: 50) }
 }
 func requireAX() throws {
     guard AXIsProcessTrusted() else { throw failure("PERMISSION_REQUIRED", "Grant Accessibility to Hanekawa (or Electron/its launching terminal during development) in System Settings > Privacy & Security > Accessibility.") }
@@ -68,15 +84,24 @@ func requireAX() throws {
     var revision = 0
     var elements: [AXUIElement] = []
     var fingerprints: [[String]] = []
+    var elementWindows: [AXUIElement?] = []
+    var elementBounds: [CGRect?] = []
+    var observedScope: String?
     var observedWindow: AXUIElement?
     var observedBounds: CGRect?
     var observedWindowID: String?
+    let identities = ElementIdentityRegistry()
 
-    func invalidate() { elements.removeAll(); fingerprints.removeAll(); observedWindow = nil; observedBounds = nil; observedWindowID = nil }
+    func invalidate() { elements.removeAll(); fingerprints.removeAll(); elementWindows.removeAll(); elementBounds.removeAll(); observedScope = nil; observedWindow = nil; observedBounds = nil; observedWindowID = nil }
     func app() throws -> NSRunningApplication {
-        guard let app = pinnedApp, !app.isTerminated,
-              let live = NSRunningApplication(processIdentifier: app.processIdentifier), live.launchDate == launchDate,
-              live.bundleIdentifier == app.bundleIdentifier else { invalidate(); throw failure("TARGET_CHANGED", "Target process exited or restarted. Bind it again.") }
+        guard let app = pinnedApp else { throw failure("TARGET_CHANGED", "No target process is bound.") }
+        guard !app.isTerminated else { invalidate(); throw failure("TARGET_CHANGED", "The pinned target process terminated. Bind it again.") }
+        guard let live = NSRunningApplication(processIdentifier: app.processIdentifier) else { invalidate(); throw failure("TARGET_CHANGED", "The target process is no longer registered. Bind it again.") }
+        guard live.bundleIdentifier == app.bundleIdentifier else { invalidate(); throw failure("TARGET_CHANGED", "The target bundle identity changed. Bind it again.") }
+        guard live.launchDate == launchDate else {
+            invalidate()
+            throw failure("TARGET_CHANGED", "Target launch identity changed. Bind it again.")
+        }
         return live
     }
     func bind(_ target: String) throws -> [String: Any] {
@@ -88,16 +113,19 @@ func requireAX() throws {
         guard matches.count == 1, let selected = matches.first else { throw failure("TARGET_CHANGED", "App must already be running and uniquely identified. Use list_apps and its bundleId.") }
         pinnedApp = selected; launchDate = selected.launchDate
         let rows = try listWindows()
-        return ["protocol": protocolVersion, "bundleId": selected.bundleIdentifier!, "name": String((selected.localizedName ?? "").prefix(200)), "processId": selected.processIdentifier, "windows": rows]
+        return ["protocol": protocolVersion, "bundleId": selected.bundleIdentifier!, "name": boundedText(selected.localizedName ?? "", limit: 200), "processId": selected.processIdentifier, "windows": rows]
     }
     func listWindows() throws -> [[String: Any]] {
         try requireAX()
-        let root = AXUIElementCreateApplication(try app().processIdentifier)
+        let pid = try app().processIdentifier
+        let root = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(root, 0.5)
         guard let live = attribute(root, kAXWindowsAttribute) as? [AXUIElement] else { throw failure("NATIVE_ERROR", "Application did not expose its AX windows.") }
         guard live.count <= 100 else { throw failure("UNSUPPORTED", "Too many application windows.") }
         var current: [(String, AXUIElement)] = []
         for element in live {
+            var owner: pid_t = 0
+            guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { continue }
             AXUIElementSetMessagingTimeout(element, 0.5)
             guard rect(element) != nil else { continue }
             if let previous = windows.first(where: { CFEqual($0.1, element) }) { current.append(previous) }
@@ -106,7 +134,7 @@ func requireAX() throws {
         windows = current
         return current.compactMap { id, element -> [String: Any]? in
             guard let bounds = rect(element) else { return nil }
-            return ["id": id, "title": stringAttribute(element, kAXTitleAttribute), "bounds": jsonRect(bounds)]
+            return ["id": id, "title": stringAttribute(element, kAXTitleAttribute), "role": stringAttribute(element, kAXRoleAttribute, limit: 100), "bounds": jsonRect(bounds)]
         }
     }
     func window(_ id: String) throws -> AXUIElement {
@@ -114,71 +142,30 @@ func requireAX() throws {
         guard let selected = windows.first(where: { $0.0 == id })?.1 else { throw failure("TARGET_CHANGED", "Selected window closed. Read get_state and choose a current window.") }
         return selected
     }
-    func observe(_ input: [String: Any]) throws -> [String: Any] {
-        let priorElements = elements; let priorWindow = observedWindow
-        let rootIndex = integer(input["rootIndex"])
-        let oldRevision = integer(input["revision"])
-        invalidate()
-        guard let id = input["windowId"] as? String else { throw failure("INVALID_INPUT", "windowId is required.") }
-        let selected = try window(id)
-        var root = selected
-        if let index = rootIndex {
-            guard oldRevision == revision, priorElements.indices.contains(index), let old = priorWindow, CFEqual(old, selected) else { throw failure("STALE_SNAPSHOT", "Subtree reference expired.") }
-            root = priorElements[index]
-        }
-        guard let bounds = rect(selected) else { throw failure("TARGET_CHANGED", "Window bounds are unavailable.") }
-        revision += 1
-        observedWindow = selected; observedBounds = bounds; observedWindowID = id
-        var nodes: [[String: Any]] = []
-        var truncated = false
-        let start = ProcessInfo.processInfo.systemUptime
-        var seen: [CFHashCode: [AXUIElement]] = [:]
-        func walk(_ element: AXUIElement, _ depth: Int) {
-            guard depth <= 24, elements.count < 1000, ProcessInfo.processInfo.systemUptime - start < 3 else { truncated = true; return }
-            let hash = CFHash(element)
-            guard !(seen[hash] ?? []).contains(where: { CFEqual($0, element) }) else { return }
-            seen[hash, default: []].append(element)
-            AXUIElementSetMessagingTimeout(element, 0.25)
-            let index = elements.count; elements.append(element)
-            fingerprints.append(fingerprint(element))
-            let password = secure(element)
-            let role = stringAttribute(element, kAXRoleAttribute, limit: 50)
-            let label = password ? "[secure field]" : [stringAttribute(element, kAXTitleAttribute, limit: 100), stringAttribute(element, kAXDescriptionAttribute, limit: 100)].filter { !$0.isEmpty }.joined(separator: " ")
-            var settable: DarwinBoolean = false
-            if !password { AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) }
-            var node: [String: Any] = ["index": index, "depth": depth, "role": role, "label": label,
-                "value": password ? "[redacted]" : stringAttribute(element, kAXValueAttribute),
-                "actions": password ? [] : actionNames(element), "settable": settable.boolValue,
-                "enabled": (attribute(element, kAXEnabledAttribute) as? Bool) ?? true]
-            if let b = rect(element) { node["bounds"] = jsonRect(b) }
-            nodes.append(node)
-            if !password, let children = attribute(element, kAXChildrenAttribute) as? [AXUIElement] {
-                for child in children {
-                    if elements.count >= 1000 || ProcessInfo.processInfo.systemUptime - start >= 3 { truncated = true; break }
-                    walk(child, depth + 1)
-                }
-            }
-        }
-        walk(root, 0)
-        return ["revision": revision, "processId": try app().processIdentifier, "windowId": id,
-            "windows": try listWindows(), "bounds": jsonRect(bounds), "nodes": nodes, "truncated": truncated]
-    }
-    func checkedSnapshot(_ input: [String: Any]) throws -> (AXUIElement, CGRect, AXUIElement?) {
+    func checkedSnapshot(_ input: [String: Any]) throws -> (AXUIElement?, CGRect?, AXUIElement?) {
         try requireAX()
-        guard integer(input["revision"]) == revision, let old = observedWindow, let bounds = observedBounds,
-              let id = observedWindowID else { throw failure("STALE_SNAPSHOT", "Read fresh state before acting.") }
-        let current = try window(id)
-        guard CFEqual(current, old), let liveBounds = rect(current), sameRect(bounds, liveBounds) else { throw failure("TARGET_CHANGED", "Window moved, resized or changed. Observe again.") }
+        _ = try app()
+        guard integer(input["revision"]) == revision, let scope = observedScope else { throw failure("STALE_SNAPSHOT", "Read fresh state before acting.") }
+        var current: AXUIElement?
+        var bounds: CGRect?
+        if scope == "window" {
+            guard let old = observedWindow, let priorBounds = observedBounds, let id = observedWindowID else { throw failure("STALE_SNAPSHOT", "Read a window snapshot before acting.") }
+            let live = try window(id)
+            guard CFEqual(live, old), let liveBounds = rect(live), sameRect(priorBounds, liveBounds) else { throw failure("TARGET_CHANGED", "Window moved, resized or changed. Observe again.") }
+            current = live; bounds = liveBounds
+        }
         var element: AXUIElement?
         if let index = input["index"] {
             guard let i = integer(index), elements.indices.contains(i) else { throw failure("STALE_SNAPSHOT", "Invalid AX index.") }
             element = elements[i]
-            guard fingerprints.indices.contains(i), fingerprints[i] == fingerprint(element!) else { throw failure("STALE_SNAPSHOT", "AX element content changed since observation. Read fresh state.") }
-            if let ownerWindow = attribute(element!, kAXWindowAttribute), CFGetTypeID(ownerWindow) == AXUIElementGetTypeID(), !CFEqual(ownerWindow, current) {
-                throw failure("TARGET_CHANGED", "Element moved to a different window.")
-            }
+            guard fingerprints[i] == fingerprint(element!) else { throw failure("STALE_SNAPSHOT", "AX element content changed since observation. Read fresh state.") }
+            let owner = ownerWindow(element!)
+            if let current, let owner, !CFEqual(current, owner) { throw failure("TARGET_CHANGED", "Element belongs to a different window.") }
+            if let prior = elementWindows[i] {
+                guard let owner, CFEqual(prior, owner), let before = elementBounds[i], let now = rect(owner), sameRect(before, now) else { throw failure("TARGET_CHANGED", "Element window changed. Observe again.") }
+            } else if owner != nil { throw failure("TARGET_CHANGED", "Element acquired a different window. Observe again.") }
             var pid: pid_t = 0
-            guard !secure(element!), AXUIElementGetPid(element!, &pid) == .success, pid == (try app()).processIdentifier,
+            guard !hasSecureAncestor(element!), AXUIElementGetPid(element!, &pid) == .success, pid == (try app()).processIdentifier,
                   !stringAttribute(element!, kAXRoleAttribute).isEmpty else { throw failure("TARGET_CHANGED", "Element is secure, missing or no longer owned by this app.") }
             guard (attribute(element!, kAXEnabledAttribute) as? Bool) != false else { throw failure("UNSUPPORTED", "Element is disabled.") }
         }
@@ -187,6 +174,9 @@ func requireAX() throws {
     func act(_ method: String, _ input: [String: Any]) async throws -> [String: Any] {
         defer { invalidate() }
         let (window, bounds, element) = try checkedSnapshot(input)
+        // AXPress may synchronously finish a sheet animation before replying.
+        // The short observation timeout must not become the action timeout.
+        if let element { AXUIElementSetMessagingTimeout(element, 1.0) }
         let status: AXError
         switch method {
         case "click", "perform_action":
@@ -194,12 +184,46 @@ func requireAX() throws {
             let action = method == "click" ? kAXPressAction : input["action"] as? String ?? ""
             guard actionNames(element).contains(action) else { throw failure("UNSUPPORTED", "Element does not expose the requested AX action. Read its actions list.") }
             status = AXUIElementPerformAction(element, action as CFString)
+        case "focus", "select_text":
+            guard let element else { throw failure("INVALID_INPUT", "An element ref is required.") }
+            let name = method == "focus" ? kAXFocusedAttribute : kAXSelectedTextRangeAttribute
+            var settable: DarwinBoolean = false
+            guard AXUIElementIsAttributeSettable(element, name as CFString, &settable) == .success, settable.boolValue else {
+                throw failure("UNSUPPORTED", "Requested AX attribute is not writable. No keyboard fallback was attempted.")
+            }
+            if method == "focus" { status = AXUIElementSetAttributeValue(element, name as CFString, kCFBooleanTrue) }
+            else {
+                guard let selection = input["selection"] as? [String: Any],
+                      let raw = attribute(element, kAXValueAttribute), CFGetTypeID(raw) == CFStringGetTypeID() else { throw failure("UNSUPPORTED", "Element does not expose a text value.") }
+                var range = try textSelection(String(describing: raw), selection)
+                guard let value = AXValueCreate(.cfRange, &range) else { throw failure("NATIVE_ERROR", "Cannot encode AX text selection.") }
+                status = AXUIElementSetAttributeValue(element, name as CFString, value)
+            }
         case "set_value":
             guard let element, let value = input["value"] as? String, value.utf16.count <= 4096 else { throw failure("INVALID_INPUT", "Invalid set_value input.") }
             var settable: DarwinBoolean = false
             guard AXUIElementIsAttributeSettable(element, kAXValueAttribute as CFString, &settable) == .success, settable.boolValue else { throw failure("UNSUPPORTED", "AXValue is not writable.") }
             status = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFString)
         case "click_at", "press_key", "type_text", "scroll":
+            guard let window, let bounds else { throw failure("UNSUPPORTED", "Physical input requires a window snapshot; read get_state with window scope first.") }
+            let keyboard = method == "press_key" || method == "type_text"
+            let appRoot = AXUIElementCreateApplication(try app().processIdentifier)
+            func focusedElement() -> AXUIElement? {
+                guard let value = attribute(appRoot, kAXFocusedUIElementAttribute), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
+                return unsafeBitCast(value, to: AXUIElement.self)
+            }
+            // Finder exposes its rename editor in AXWindows, without AXWindow
+            // or AXFocusedWindow. It must already be the exact focused surface.
+            let topLevelEditor = stringAttribute(window, kAXRoleAttribute) == kAXTextFieldRole
+            if topLevelEditor {
+                guard keyboard else { throw failure("UNSUPPORTED", "Top-level text editors support keyboard input only; select a real window for pointer input.") }
+                guard let focused = focusedElement(), CFEqual(focused, window),
+                      element == nil || CFEqual(element!, window) else {
+                    throw failure("TARGET_CHANGED", "The selected top-level editor is not the keyboard focus. Observe again.")
+                }
+            } else if stringAttribute(window, kAXRoleAttribute) != kAXWindowRole {
+                throw failure("UNSUPPORTED", "This AX top-level surface does not support physical input.")
+            }
             // Validate all payloads before any foreground/focus side effect.
             let key = method == "press_key" ? try parseKey(input["key"] as? String ?? "") : nil
             let text = input["text"] as? String ?? ""
@@ -215,7 +239,7 @@ func requireAX() throws {
                 if method == "scroll" {
                     guard let b = rect(element), bounds.intersects(b) else { throw failure("TARGET_CHANGED", "Scroll target has no visible bounds.") }
                     point = CGPoint(x: b.intersection(bounds).midX, y: b.intersection(bounds).midY)
-                } else {
+                } else if !topLevelEditor {
                     let focused = AXUIElementSetAttributeValue(element, kAXFocusedAttribute as CFString, kCFBooleanTrue)
                     guard focused == .success else { throw failure("UNSUPPORTED", "Cannot focus this AX element.", "unknown") }
                 }
@@ -223,19 +247,46 @@ func requireAX() throws {
             let target = try app()
             // Bring exactly this window forward. Never send global input to a
             // different foreground application after user takeover.
-            guard target.activate(options: []) else { throw failure("NATIVE_ERROR", "Cannot activate target application.", "unknown") }
-            guard AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success else { throw failure("UNSUPPORTED", "Cannot raise selected window.", "unknown") }
-            for _ in 0..<20 {
-                if NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier { break }
-                try await Task.sleep(nanoseconds: 25_000_000)
+            if !topLevelEditor {
+                guard target.activate(options: []) else { throw failure("NATIVE_ERROR", "Cannot activate target application.", "unknown") }
+                guard AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success else { throw failure("UNSUPPORTED", "Cannot raise selected window.", "unknown") }
+                for _ in 0..<20 {
+                    if NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier { break }
+                    try await Task.sleep(nanoseconds: 25_000_000)
+                }
             }
             func foreground() throws {
+                // A top-level rename field resizes as text arrives. Keyboard
+                // delivery follows its exact focus/identity, never coordinates.
                 guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
-                      let live = rect(window), sameRect(bounds, live) else { throw failure("TARGET_CHANGED", "User changed the foreground app/window. Input stopped.", "unknown") }
-                let appRoot = AXUIElementCreateApplication(target.processIdentifier)
+                      let live = rect(window), topLevelEditor || sameRect(bounds, live) else { throw failure("TARGET_CHANGED", "User changed the foreground app/window. Input stopped.", "unknown") }
+                if topLevelEditor {
+                    guard let focused = focusedElement(), CFEqual(focused, window),
+                          let live = attribute(appRoot, kAXWindowsAttribute) as? [AXUIElement], live.contains(where: { CFEqual($0, window) }) else {
+                        throw failure("TARGET_CHANGED", "Top-level editor focus or identity changed. Input stopped.", "unknown")
+                    }
+                    return
+                }
                 guard let focused = attribute(appRoot, kAXFocusedWindowAttribute), CFGetTypeID(focused) == AXUIElementGetTypeID(), CFEqual(focused, window) else { throw failure("TARGET_CHANGED", "Selected window is no longer focused. Input stopped.", "unknown") }
             }
             try foreground()
+            let expectedFocus = keyboard ? (element ?? focusedElement()) : nil
+            func keyboardFocus() throws {
+                try foreground()
+                let current = focusedElement()
+                if let expectedFocus {
+                    var owner: pid_t = 0
+                    guard let current, CFEqual(current, expectedFocus),
+                          AXUIElementGetPid(current, &owner) == .success, owner == target.processIdentifier,
+                          !hasSecureAncestor(current),
+                          (topLevelEditor ? CFEqual(current, window) : ownerWindow(current).map { CFEqual($0, window) } == true) else {
+                        throw failure("TARGET_CHANGED", "Keyboard focus changed, is secure or cannot be verified in the selected window. Input stopped.", "unknown")
+                    }
+                } else if current != nil || method == "type_text" {
+                    throw failure("UNSUPPORTED", "Cannot verify the keyboard target. No keyboard input was sent.", "unknown")
+                }
+            }
+            if keyboard { try keyboardFocus() }
             if method == "click_at" {
                 let button: CGMouseButton = input["button"] as? String == "right" ? .right : .left
                 let down: CGEventType = button == .right ? .rightMouseDown : .leftMouseDown
@@ -251,19 +302,10 @@ func requireAX() throws {
             } else if method == "press_key", let (code, flags) = key {
                 guard let d = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true), let u = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else { throw failure("NATIVE_ERROR", "Cannot create key events.", "unknown") }
                 d.flags = flags; u.flags = flags
+                try keyboardFocus()
                 d.post(tap: .cghidEventTap); u.post(tap: .cghidEventTap)
             } else if method == "type_text" {
-                // Unicode events, rather than temporary clipboard replacement.
-                for character in text {
-                    try foreground()
-                    let units = Array(String(character).utf16)
-                    guard let d = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true), let u = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: false) else { throw failure("NATIVE_ERROR", "Cannot create text events.", "unknown") }
-                    units.withUnsafeBufferPointer { buffer in
-                        d.keyboardSetUnicodeString(stringLength: units.count, unicodeString: buffer.baseAddress)
-                        u.keyboardSetUnicodeString(stringLength: units.count, unicodeString: buffer.baseAddress)
-                    }
-                    d.post(tap: .cghidEventTap); u.post(tap: .cghidEventTap)
-                }
+                try await sendUnicodeText(text, checkFocus: keyboardFocus)
             } else if method == "scroll" {
                 let amount = integer(input["amount"]) ?? 400
                 guard (1...2000).contains(amount) else { throw failure("INVALID_INPUT", "Invalid scroll amount.", "unknown") }
@@ -278,9 +320,6 @@ func requireAX() throws {
         default: throw failure("UNSUPPORTED", "Unsupported native action.")
         }
         guard status == .success else { throw failure("NATIVE_ERROR", "AX action returned \(status.rawValue). Observe before repeating.", "unknown") }
-        // Allow dispatched input to reach the app before the host observes.
-        // Bounded; cancellation kills this helper rather than leaving a waiter.
-        try await Task.sleep(nanoseconds: 120_000_000)
         return ["performed": true, "observeRequired": true]
     }
     func screenshot(_ input: [String: Any]) async throws -> [String: Any] {
@@ -304,8 +343,8 @@ func requireAX() throws {
         let image = try await SCScreenshotManager.captureImage(contentFilter: SCContentFilter(desktopIndependentWindow: captured), configuration: config)
         guard let current = rect(try window(id)), sameRect(bounds, current), try app().processIdentifier == pid else { throw failure("TARGET_CHANGED", "Window changed during capture.") }
         guard let png = NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:]), png.count < 16_000_000 else { throw failure("NATIVE_ERROR", "Cannot encode bounded window PNG.") }
-        revision += 1; observedWindow = selected; observedBounds = bounds; observedWindowID = id
-        return ["revision": revision, "processId": pid, "windowId": id, "bounds": jsonRect(bounds), "windowNumber": captured.windowID,
+        revision += 1; observedScope = "window"; observedWindow = selected; observedBounds = bounds; observedWindowID = id
+        return ["revision": revision, "processId": pid, "windowId": id, "bounds": jsonRect(bounds), "sampledAt": Date().timeIntervalSince1970 * 1000, "windowNumber": captured.windowID,
             "width": image.width, "height": image.height, "png": png.base64EncodedString()]
     }
 }
@@ -335,8 +374,18 @@ func parseKey(_ key: String) throws -> (CGKeyCode, CGEventFlags) {
             precondition(integer(NSNumber(value: true)) == nil && integer(NSNumber(value: 1.5)) == nil && integer(NSNumber(value: 2)) == 2)
             precondition(number(NSNumber(value: true)) == nil)
             precondition((try? parseKey("cmd+s"))?.0 == 1 && (try? parseKey("bad+s")) == nil)
+            let family = "👨‍👩‍👧‍👦"
+            precondition(boundedText(String(repeating: family, count: 200), limit: 200) == String(repeating: family, count: 18))
+            precondition(boundedText("a😀b", limit: 3) == "a😀")
+            precondition(boundedText("e\u{301}x", limit: 1).isEmpty)
+            testElementIdentities()
+            testTextSelection()
+            try! await testKeyboardInput()
             print("{\"passed\":true,\"scope\":\"protocol helpers only; no GUI access\"}"); return
         }
+        // ScreenCaptureKit window filters require AppKit/WindowServer initialization.
+        let application = NSApplication.shared
+        application.setActivationPolicy(.prohibited)
         let session = AppSession()
         while let line = readLine() {
             var response: [String: Any] = ["id": NSNull()]
@@ -353,15 +402,16 @@ func parseKey(_ key: String) throws -> (CGKeyCode, CGEventFlags) {
                     result = ["protocol": protocolVersion, "accessibility": AXIsProcessTrusted(), "screenRecording": CGPreflightScreenCaptureAccess(), "screenshotSupported": supported]
                 case "list_apps":
                     result = Array(NSWorkspace.shared.runningApplications.filter { !$0.isTerminated && $0.bundleIdentifier != nil && $0.activationPolicy == .regular }.prefix(500)).map {
-                        ["bundleId": String($0.bundleIdentifier!.prefix(500)), "name": String(($0.localizedName ?? "").prefix(200)), "processId": $0.processIdentifier] as [String: Any]
+                        ["bundleId": boundedText($0.bundleIdentifier!, limit: 500), "name": boundedText($0.localizedName ?? "", limit: 200), "processId": $0.processIdentifier] as [String: Any]
                     }
                 case "bind":
                     guard let target = input["app"] as? String else { throw failure("INVALID_INPUT", "app is required.") }
                     result = try session.bind(target)
                 case "list_windows": result = try session.listWindows()
                 case "observe": result = try session.observe(input)
+                case "observe_with_screenshot": result = try await session.observeWithScreenshot(input)
                 case "screenshot": result = try await session.screenshot(input)
-                case "click", "set_value", "perform_action", "click_at", "press_key", "type_text", "scroll": result = try await session.act(method, input)
+                case "click", "focus", "select_text", "set_value", "perform_action", "click_at", "press_key", "type_text", "scroll": result = try await session.act(method, input)
                 default: throw failure("UNSUPPORTED", "Unknown native operation.")
                 }
                 response["result"] = result

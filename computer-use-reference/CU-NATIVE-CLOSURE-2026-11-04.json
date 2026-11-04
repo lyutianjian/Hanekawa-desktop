@@ -1,0 +1,320 @@
+{
+  "date": "2026-11-04",
+  "timezone": "Asia/Taipei",
+  "scope": "real native fixture through production Computer; not model, full Hanekawa UI or installer acceptance",
+  "initialHead": "9feebcad428ae680cf6028c1e1e2de7a774033aa",
+  "branch": "codex/rebuild-computer-use",
+  "node": "24.21.0",
+  "swift": "6.4.2",
+  "final": {
+    "scope": "real native fixture + deterministic production Computer driver; no model task; no full Hanekawa UI",
+    "fixtureOnly": false,
+    "electron": "45.2.1",
+    "arch": "arm64",
+    "checks": [
+      {
+        "name": "production Computer status",
+        "status": "passed"
+      },
+      {
+        "name": "compile isolated AppKit bundle",
+        "status": "passed"
+      },
+      {
+        "name": "launch two real AppKit windows and independently inspect initial controls",
+        "status": "passed"
+      },
+      {
+        "name": "explicit full refresh revision metadata checked",
+        "status": "passed"
+      },
+      {
+        "name": "secure input redaction",
+        "status": "passed"
+      },
+      {
+        "name": "selected-window click and stale reference refusal",
+        "status": "passed"
+      },
+      {
+        "name": "mixed Unicode multiline AXValue independently read back",
+        "status": "passed"
+      },
+      {
+        "name": "AX text selection with adjacent context; ambiguous text refused without content change",
+        "status": "passed"
+      },
+      {
+        "name": "Unicode keyboard input, selected text replacement, shortcut and ignored AX focus independently checked",
+        "status": "passed"
+      },
+      {
+        "name": "emoji-rich AX output stays bounded without truncating actual input",
+        "status": "passed"
+      },
+      {
+        "name": "list insertion, reorder and control replacement",
+        "status": "passed"
+      },
+      {
+        "name": "production wait_for observes delayed update, independently checked",
+        "status": "passed"
+      },
+      {
+        "name": "unsatisfied wait_for returns local timeout and last snapshot",
+        "status": "passed"
+      },
+      {
+        "name": "production wait_for observes asynchronous sheet, independently checked",
+        "status": "passed"
+      },
+      {
+        "name": "production application/menu scope -> sheet text -> explicit confirmation chain",
+        "status": "passed"
+      },
+      {
+        "name": "native combined AX/PNG provenance and pixel-to-point coordinate click (not model vision/attachment resizing)",
+        "status": "passed"
+      },
+      {
+        "name": "active cancellation drops binding without retry",
+        "status": "passed"
+      },
+      {
+        "name": "app restart rejects old binding and allows fresh bind",
+        "status": "passed"
+      },
+      {
+        "name": "owned fixture process reaped",
+        "status": "passed"
+      },
+      {
+        "name": "isolated files removed",
+        "status": "passed"
+      }
+    ],
+    "helperSha256": "7c9e1fa1295dac50d4f680dec718799a3cf718a0419aebcd249fca0abbf0cfa4",
+    "fixtureSha256": "4c00c9a344ad348feda79609b4fdebd8ce8c1c245d398fb76fed5c9dccced3a7",
+    "os": "27.2",
+    "permissions": {
+      "protocol": "hanekawa-computer/3",
+      "accessibility": true,
+      "screenRecording": true,
+      "screenshotSupported": true,
+      "permissionSettings": {
+        "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+      }
+    },
+    "windowSelections": [
+      {
+        "appId": "app-90bbf0ae-3c81-4d68-bd2a-61a1ad1f646a",
+        "a": "w2",
+        "b": "w1"
+      },
+      {
+        "appId": "app-d2fabfb9-d6f2-41d2-9af0-a3f48bf85298",
+        "a": "w1",
+        "b": "w2"
+      }
+    ],
+    "unverified": [
+      "Initial AX output incomplete; native diff baseline assertion skipped"
+    ],
+    "status": "passed"
+  },
+  "earlierAttempts": [
+    {
+      "status": "failed",
+      "error": "Error: Timed out: explicit keyboard shortcut selection\n    at until (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-native.mjs:32:9)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-native.mjs:243:5",
+      "helperSha256": "250393196438d2b6ab6cbb714b7ab69131e54adbe2e121a4c207dbed757f73c6",
+      "fixtureSha256": "907d8d07641dde4a85a0b3edc7e052f4558cb14b5e1efb0c14ed86dd361233b6",
+      "attempt": "test",
+      "passedChecks": [
+        "production Computer status",
+        "compile isolated AppKit bundle",
+        "launch two real AppKit windows and independently inspect initial controls",
+        "explicit full refresh revision metadata checked",
+        "secure input redaction",
+        "selected-window click and stale reference refusal",
+        "mixed Unicode multiline AXValue independently read back",
+        "AX text selection with adjacent context; ambiguous text refused without content change",
+        "owned fixture process reaped",
+        "isolated files removed"
+      ]
+    },
+    {
+      "status": "failed",
+      "error": "Error: Timed out: long emoji input retained in the control\n    at until (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-native.mjs:32:9)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-native.mjs:262:5",
+      "helperSha256": "250393196438d2b6ab6cbb714b7ab69131e54adbe2e121a4c207dbed757f73c6",
+      "fixtureSha256": "4c00c9a344ad348feda79609b4fdebd8ce8c1c245d398fb76fed5c9dccced3a7",
+      "attempt": "test-2",
+      "passedChecks": [
+        "production Computer status",
+        "compile isolated AppKit bundle",
+        "launch two real AppKit windows and independently inspect initial controls",
+        "explicit full refresh revision metadata checked",
+        "secure input redaction",
+        "selected-window click and stale reference refusal",
+        "mixed Unicode multiline AXValue independently read back",
+        "AX text selection with adjacent context; ambiguous text refused without content change",
+        "Unicode keyboard input, selected text replacement, shortcut and ignored AX focus independently checked",
+        "owned fixture process reaped",
+        "isolated files removed"
+      ]
+    },
+    {
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Expected one AX ref for Increment\n\n0 !== 1\n\n    at ref (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-native.mjs:179:14)\n    at click (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-native.mjs:184:66)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-native.mjs:277:5",
+      "helperSha256": "250393196438d2b6ab6cbb714b7ab69131e54adbe2e121a4c207dbed757f73c6",
+      "fixtureSha256": "4c00c9a344ad348feda79609b4fdebd8ce8c1c245d398fb76fed5c9dccced3a7",
+      "windowSelections": [
+        {
+          "appId": "app-2f4a3e99-076a-44c2-bea9-adb06723ad15",
+          "a": "w2",
+          "b": "w1"
+        },
+        {
+          "appId": "app-1c88897e-bba9-4b47-afbd-8822fe35a030",
+          "a": "w1",
+          "b": "w2"
+        }
+      ],
+      "attempt": "test-3",
+      "passedChecks": [
+        "production Computer status",
+        "compile isolated AppKit bundle",
+        "launch two real AppKit windows and independently inspect initial controls",
+        "explicit full refresh revision metadata checked",
+        "secure input redaction",
+        "selected-window click and stale reference refusal",
+        "mixed Unicode multiline AXValue independently read back",
+        "AX text selection with adjacent context; ambiguous text refused without content change",
+        "Unicode keyboard input, selected text replacement, shortcut and ignored AX focus independently checked",
+        "emoji-rich AX output stays bounded without truncating actual input",
+        "owned fixture process reaped",
+        "isolated files removed"
+      ]
+    },
+    {
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: AX action returned -25204. Observe before repeating.\nDelivery: unknown. Bind again and observe the live UI before deciding whether to repeat an action. The action may already have happened; do not blindly repeat it.\n\nfalse !== true\n\n    at call (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-native.mjs:79:14)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async click (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-native.mjs:184:21)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-native.mjs:298:5",
+      "helperSha256": "250393196438d2b6ab6cbb714b7ab69131e54adbe2e121a4c207dbed757f73c6",
+      "fixtureSha256": "4c00c9a344ad348feda79609b4fdebd8ce8c1c245d398fb76fed5c9dccced3a7",
+      "windowSelections": [
+        {
+          "appId": "app-5b781bd1-66ba-4c15-8a61-2fd4b93728f5",
+          "a": "w2",
+          "b": "w1"
+        },
+        {
+          "appId": "app-9824821a-91e0-40b2-b932-7982407c6498",
+          "a": "w1",
+          "b": "w2"
+        }
+      ],
+      "attempt": "test-4",
+      "passedChecks": [
+        "production Computer status",
+        "compile isolated AppKit bundle",
+        "launch two real AppKit windows and independently inspect initial controls",
+        "explicit full refresh revision metadata checked",
+        "secure input redaction",
+        "selected-window click and stale reference refusal",
+        "mixed Unicode multiline AXValue independently read back",
+        "AX text selection with adjacent context; ambiguous text refused without content change",
+        "Unicode keyboard input, selected text replacement, shortcut and ignored AX focus independently checked",
+        "emoji-rich AX output stays bounded without truncating actual input",
+        "list insertion, reorder and control replacement",
+        "production wait_for observes delayed update, independently checked",
+        "unsatisfied wait_for returns local timeout and last snapshot",
+        "owned fixture process reaped",
+        "isolated files removed"
+      ]
+    },
+    {
+      "status": "failed",
+      "error": "Error: Computer helper output closed.\n    at Socket.<anonymous> (file:///Users/miyano/Documents/code/Hanekawa/dist/desktop/computer/client.js:44:53)\n    at Socket.emit (node:events:526:24)\n    at endReadableNT (node:internal/streams/readable:1783:12)\n    at process.processTicksAndRejections (node:internal/process/task_queues:90:21)",
+      "helperSha256": "54254dde8927aaa63f6f78fc3c0cb067c09113153dcb528c8e158aa8c01e9b00",
+      "fixtureSha256": "4c00c9a344ad348feda79609b4fdebd8ce8c1c245d398fb76fed5c9dccced3a7",
+      "windowSelections": [
+        {
+          "appId": "app-2fa18488-d399-4834-a83d-c95c1abf93a3",
+          "a": "w2",
+          "b": "w1"
+        },
+        {
+          "appId": "app-a6c619f7-dfcd-4485-84e3-0f4c5c3a4095",
+          "a": "w1",
+          "b": "w2"
+        }
+      ],
+      "failureState": {
+        "A": {
+          "count": 2,
+          "textUnits": 2200,
+          "sheetVisible": false,
+          "sheetTextUnits": 10
+        },
+        "B": {
+          "count": 0,
+          "textUnits": 0,
+          "sheetVisible": false,
+          "sheetTextUnits": 0
+        }
+      },
+      "attempt": "test-5",
+      "passedChecks": [
+        "production Computer status",
+        "compile isolated AppKit bundle",
+        "launch two real AppKit windows and independently inspect initial controls",
+        "explicit full refresh revision metadata checked",
+        "secure input redaction",
+        "selected-window click and stale reference refusal",
+        "mixed Unicode multiline AXValue independently read back",
+        "AX text selection with adjacent context; ambiguous text refused without content change",
+        "Unicode keyboard input, selected text replacement, shortcut and ignored AX focus independently checked",
+        "emoji-rich AX output stays bounded without truncating actual input",
+        "list insertion, reorder and control replacement",
+        "production wait_for observes delayed update, independently checked",
+        "unsatisfied wait_for returns local timeout and last snapshot",
+        "production wait_for observes asynchronous sheet, independently checked",
+        "production application/menu scope -> sheet text -> explicit confirmation chain",
+        "owned fixture process reaped",
+        "isolated files removed"
+      ]
+    }
+  ],
+  "screenCaptureReproduction": {
+    "operation": "construct SCContentFilter; no screenshot captured",
+    "withoutAppKit": {
+      "exitCode": 134,
+      "stderr": "Assertion failed: (did_initialize), function CGS_REQUIRE_INIT, file CGInitialization.c, line 44."
+    },
+    "withNSApplicationShared": {
+      "exitCode": 0,
+      "stdout": "filter constructed; no screenshot taken"
+    }
+  },
+  "fullSuite": {
+    "tests": 4826,
+    "passed": 4823,
+    "failed": 1,
+    "skipped": 2,
+    "failure": "rendererOverlayView: .session-drag-preview absent from expected fixed selectors",
+    "headReproduction": "same assertion failed on unmodified HEAD snapshot"
+  },
+  "permissionAttribution": {
+    "source": "read-only com.apple.TCC system log",
+    "responsibleIdentifier": "com.openai.codex",
+    "responsiblePath": "/Applications/ChatGPT.app",
+    "before": {
+      "accessibility": false,
+      "screenRecording": true
+    },
+    "after": {
+      "accessibility": true,
+      "screenRecording": true
+    }
+  }
+}

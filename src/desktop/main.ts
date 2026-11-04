@@ -123,6 +123,7 @@ import { BrowserTabHost } from './browser/tabs.js'
 import { DesktopBrowserHost } from './browser/host.js'
 import { createBrowserTool } from '../tools/BrowserTool/BrowserTool.js'
 import { DesktopComputerHost } from './computer/host.js'
+import { watchComputerDesktop } from './computer/lifecycle.js'
 import { createComputerTool } from '../tools/ComputerTool/ComputerTool.js'
 import { createCoordinationTools } from '../tools/coordinationTools.js'
 import { CoordinationService } from '../runtime/coordination/service.js'
@@ -332,6 +333,7 @@ const computerHost = new DesktopComputerHost({
   laneForSession: (sessionId) => shell?.host.laneForSessionId(sessionId),
 })
 const computerTool = createComputerTool(computerHost)
+let unwatchComputerDesktop: (() => void) | undefined
 
 /**
  * The global config, as the coordination path reads it.
@@ -495,6 +497,7 @@ if (!app.requestSingleInstanceLock()) {
   })
 
   void app.whenReady().then(async () => {
+    unwatchComputerDesktop = watchComputerDesktop(computerHost, powerMonitor)
     powerMonitor.on('resume', resumePowerSave)
     if (process.platform === 'darwin') powerMonitor.on('shutdown', handleSystemEnd)
     tray.create(process.platform, join(bundleDir, 'assets', 'tray.png'))
@@ -1501,6 +1504,7 @@ function handleSystemEnd(): void {
 }
 
 function disposeBackground(): void {
+  unwatchComputerDesktop?.()
   powerMonitor.removeListener('resume', resumePowerSave)
   powerMonitor.removeListener('shutdown', handleSystemEnd)
   powerSave.dispose()

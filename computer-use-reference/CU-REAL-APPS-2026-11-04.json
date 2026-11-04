@@ -1,0 +1,2739 @@
+{
+  "date": "2026-11-04",
+  "timezone": "Asia/Taipei",
+  "gitBase": "9feebcad428ae680cf6028c1e1e2de7a774033aa",
+  "branch": "codex/rebuild-computer-use",
+  "protocol": "hanekawa-computer/4",
+  "sourceSha256": {
+    "native/computer/ComputerBridge.swift": "76aadb1c606f4d0e05e0500cc3ea777a23e52891a28705c1ae603bab1c2d9578",
+    "native/computer/Observation.swift": "8b87095295851e7d156739819a5536a272680cf921d1bb2db9baf1c82116ae49",
+    "src/desktop/computer/host.ts": "d10fa7f9d9ca2e853f1c0a087548e1df58bdf65f75bb434d8eaae9c16543bae3",
+    "src/desktop/computer/nativeSchema.ts": "32dfc1c60f6d37edd427f7754ffa47348906bf7c184c24a1f948a81ad3a2dd96",
+    "scripts/test-computer-apps.mjs": "331dd0079f370e85a6c907a35b9f0b08efa061344aefecc74192bf94378b5c0a"
+  },
+  "finalApplications": {
+    "calculator": {
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "calculator",
+      "repetitions": 3,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "43834477de4e38d5f94cf5fe8ec4f78e94f608ba6df3ac4bd4daf1c04b61318d",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/4",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "passed",
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true,
+      "attempts": [
+        {
+          "scenario": "AX-01",
+          "run": 1,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 63486,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3319,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 2,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 63497,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3182,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 3,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 63509,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3302,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        }
+      ]
+    },
+    "textedit": {
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "textedit",
+      "repetitions": 3,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "43834477de4e38d5f94cf5fe8ec4f78e94f608ba6df3ac4bd4daf1c04b61318d",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/4",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "passed",
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true,
+      "attempts": [
+        {
+          "scenario": "TXT-01",
+          "run": 1,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 63542,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "31498a576206459a943ac62dc3763adc147da55c3875a6ce158dedc621124ead"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 38,
+            "observations": 14,
+            "queueMs": 0,
+            "hostElapsedMs": 1815,
+            "textChars": 13545,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 2,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 63554,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "38bc3fbe77731a0e50139831b2b49170cfdb868ded9a11159d5b7ee662e87191"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 6,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 41,
+            "observations": 15,
+            "queueMs": 0,
+            "hostElapsedMs": 1833,
+            "textChars": 13639,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 3,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 63565,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "c1778229c80643cbb5bf4cd3bdc325e7c58bc8a9fa35668697f1b72789651275"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 39,
+            "observations": 15,
+            "queueMs": 0,
+            "hostElapsedMs": 1812,
+            "textChars": 15936,
+            "imageBytes": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    "finder": {
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "finder",
+      "repetitions": 3,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "43834477de4e38d5f94cf5fe8ec4f78e94f608ba6df3ac4bd4daf1c04b61318d",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/4",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "passed",
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true,
+      "attempts": [
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "passed",
+          "operations": {
+            "bind": 1,
+            "get_state": 10,
+            "press_key": 4,
+            "click_at": 1,
+            "type_text": 2,
+            "wait_for": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 54,
+            "observations": 21,
+            "queueMs": 0,
+            "hostElapsedMs": 3717,
+            "textChars": 201816,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": true
+            },
+            {
+              "operation": "type_text",
+              "code": "STALE_SNAPSHOT",
+              "delivery": "not_delivered",
+              "expected": true
+            }
+          ]
+        },
+        {
+          "scenario": "FS-01",
+          "run": 2,
+          "status": "passed",
+          "operations": {
+            "bind": 1,
+            "get_state": 10,
+            "press_key": 4,
+            "click_at": 1,
+            "type_text": 2,
+            "wait_for": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 58,
+            "observations": 23,
+            "queueMs": 0,
+            "hostElapsedMs": 3885,
+            "textChars": 201818,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": true
+            },
+            {
+              "operation": "type_text",
+              "code": "STALE_SNAPSHOT",
+              "delivery": "not_delivered",
+              "expected": true
+            }
+          ]
+        },
+        {
+          "scenario": "FS-01",
+          "run": 3,
+          "status": "passed",
+          "operations": {
+            "bind": 1,
+            "get_state": 10,
+            "press_key": 4,
+            "click_at": 1,
+            "type_text": 2,
+            "wait_for": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 56,
+            "observations": 22,
+            "queueMs": 0,
+            "hostElapsedMs": 3687,
+            "textChars": 202743,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": true
+            },
+            {
+              "operation": "type_text",
+              "code": "STALE_SNAPSHOT",
+              "delivery": "not_delivered",
+              "expected": true
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "finalFixtureRepeats": [
+    {
+      "scope": "real native fixture + deterministic production Computer driver; no model task; no full Hanekawa UI",
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "checks": [
+        {
+          "name": "production Computer status",
+          "status": "passed"
+        },
+        {
+          "name": "compile isolated AppKit bundle",
+          "status": "passed"
+        },
+        {
+          "name": "launch two real AppKit windows and independently inspect initial controls",
+          "status": "passed"
+        },
+        {
+          "name": "explicit full refresh revision metadata checked",
+          "status": "passed"
+        },
+        {
+          "name": "secure input redaction",
+          "status": "passed"
+        },
+        {
+          "name": "selected-window click and stale reference refusal",
+          "status": "passed"
+        },
+        {
+          "name": "mixed Unicode multiline AXValue independently read back",
+          "status": "passed"
+        },
+        {
+          "name": "AX text selection with adjacent context; ambiguous text refused without content change",
+          "status": "passed"
+        },
+        {
+          "name": "Unicode keyboard input, selected text replacement, shortcut and ignored AX focus independently checked",
+          "status": "passed"
+        },
+        {
+          "name": "emoji-rich AX output stays bounded without truncating actual input",
+          "status": "passed"
+        },
+        {
+          "name": "list insertion, reorder and control replacement",
+          "status": "passed"
+        },
+        {
+          "name": "production wait_for observes delayed update, independently checked",
+          "status": "passed"
+        },
+        {
+          "name": "unsatisfied wait_for returns local timeout and last snapshot",
+          "status": "passed"
+        },
+        {
+          "name": "production wait_for observes asynchronous sheet, independently checked",
+          "status": "passed"
+        },
+        {
+          "name": "production application/menu scope -> sheet text -> explicit confirmation chain",
+          "status": "passed"
+        },
+        {
+          "name": "native combined AX/PNG provenance and pixel-to-point coordinate click (not model vision/attachment resizing)",
+          "status": "passed"
+        },
+        {
+          "name": "active cancellation drops binding without retry",
+          "status": "passed"
+        },
+        {
+          "name": "app restart rejects old binding and allows fresh bind",
+          "status": "passed"
+        },
+        {
+          "name": "owned fixture process reaped",
+          "status": "passed"
+        },
+        {
+          "name": "isolated files removed",
+          "status": "passed"
+        }
+      ],
+      "helperSha256": "43834477de4e38d5f94cf5fe8ec4f78e94f608ba6df3ac4bd4daf1c04b61318d",
+      "fixtureSha256": "4c00c9a344ad348feda79609b4fdebd8ce8c1c245d398fb76fed5c9dccced3a7",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/4",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "unverified": [
+        "Initial AX output incomplete; native diff baseline assertion skipped"
+      ],
+      "status": "passed",
+      "attempts": []
+    },
+    {
+      "scope": "real native fixture + deterministic production Computer driver; no model task; no full Hanekawa UI",
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "checks": [
+        {
+          "name": "production Computer status",
+          "status": "passed"
+        },
+        {
+          "name": "compile isolated AppKit bundle",
+          "status": "passed"
+        },
+        {
+          "name": "launch two real AppKit windows and independently inspect initial controls",
+          "status": "passed"
+        },
+        {
+          "name": "explicit full refresh revision metadata checked",
+          "status": "passed"
+        },
+        {
+          "name": "secure input redaction",
+          "status": "passed"
+        },
+        {
+          "name": "selected-window click and stale reference refusal",
+          "status": "passed"
+        },
+        {
+          "name": "mixed Unicode multiline AXValue independently read back",
+          "status": "passed"
+        },
+        {
+          "name": "AX text selection with adjacent context; ambiguous text refused without content change",
+          "status": "passed"
+        },
+        {
+          "name": "Unicode keyboard input, selected text replacement, shortcut and ignored AX focus independently checked",
+          "status": "passed"
+        },
+        {
+          "name": "emoji-rich AX output stays bounded without truncating actual input",
+          "status": "passed"
+        },
+        {
+          "name": "list insertion, reorder and control replacement",
+          "status": "passed"
+        },
+        {
+          "name": "production wait_for observes delayed update, independently checked",
+          "status": "passed"
+        },
+        {
+          "name": "unsatisfied wait_for returns local timeout and last snapshot",
+          "status": "passed"
+        },
+        {
+          "name": "production wait_for observes asynchronous sheet, independently checked",
+          "status": "passed"
+        },
+        {
+          "name": "production application/menu scope -> sheet text -> explicit confirmation chain",
+          "status": "passed"
+        },
+        {
+          "name": "native combined AX/PNG provenance and pixel-to-point coordinate click (not model vision/attachment resizing)",
+          "status": "passed"
+        },
+        {
+          "name": "active cancellation drops binding without retry",
+          "status": "passed"
+        },
+        {
+          "name": "app restart rejects old binding and allows fresh bind",
+          "status": "passed"
+        },
+        {
+          "name": "owned fixture process reaped",
+          "status": "passed"
+        },
+        {
+          "name": "isolated files removed",
+          "status": "passed"
+        }
+      ],
+      "helperSha256": "43834477de4e38d5f94cf5fe8ec4f78e94f608ba6df3ac4bd4daf1c04b61318d",
+      "fixtureSha256": "4c00c9a344ad348feda79609b4fdebd8ce8c1c245d398fb76fed5c9dccced3a7",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/4",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "unverified": [
+        "Initial AX output incomplete; native diff baseline assertion skipped"
+      ],
+      "status": "passed",
+      "attempts": []
+    },
+    {
+      "scope": "real native fixture + deterministic production Computer driver; no model task; no full Hanekawa UI",
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "checks": [
+        {
+          "name": "production Computer status",
+          "status": "passed"
+        },
+        {
+          "name": "compile isolated AppKit bundle",
+          "status": "passed"
+        },
+        {
+          "name": "launch two real AppKit windows and independently inspect initial controls",
+          "status": "passed"
+        },
+        {
+          "name": "explicit full refresh revision metadata checked",
+          "status": "passed"
+        },
+        {
+          "name": "secure input redaction",
+          "status": "passed"
+        },
+        {
+          "name": "selected-window click and stale reference refusal",
+          "status": "passed"
+        },
+        {
+          "name": "mixed Unicode multiline AXValue independently read back",
+          "status": "passed"
+        },
+        {
+          "name": "AX text selection with adjacent context; ambiguous text refused without content change",
+          "status": "passed"
+        },
+        {
+          "name": "Unicode keyboard input, selected text replacement, shortcut and ignored AX focus independently checked",
+          "status": "passed"
+        },
+        {
+          "name": "emoji-rich AX output stays bounded without truncating actual input",
+          "status": "passed"
+        },
+        {
+          "name": "list insertion, reorder and control replacement",
+          "status": "passed"
+        },
+        {
+          "name": "production wait_for observes delayed update, independently checked",
+          "status": "passed"
+        },
+        {
+          "name": "unsatisfied wait_for returns local timeout and last snapshot",
+          "status": "passed"
+        },
+        {
+          "name": "production wait_for observes asynchronous sheet, independently checked",
+          "status": "passed"
+        },
+        {
+          "name": "production application/menu scope -> sheet text -> explicit confirmation chain",
+          "status": "passed"
+        },
+        {
+          "name": "native combined AX/PNG provenance and pixel-to-point coordinate click (not model vision/attachment resizing)",
+          "status": "passed"
+        },
+        {
+          "name": "active cancellation drops binding without retry",
+          "status": "passed"
+        },
+        {
+          "name": "app restart rejects old binding and allows fresh bind",
+          "status": "passed"
+        },
+        {
+          "name": "owned fixture process reaped",
+          "status": "passed"
+        },
+        {
+          "name": "isolated files removed",
+          "status": "passed"
+        }
+      ],
+      "helperSha256": "43834477de4e38d5f94cf5fe8ec4f78e94f608ba6df3ac4bd4daf1c04b61318d",
+      "fixtureSha256": "4c00c9a344ad348feda79609b4fdebd8ce8c1c245d398fb76fed5c9dccced3a7",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/4",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "unverified": [
+        "Initial AX output incomplete; native diff baseline assertion skipped"
+      ],
+      "status": "passed",
+      "attempts": []
+    }
+  ],
+  "injectedCleanup": {
+    "expectedExitCode": 1,
+    "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+    "scenario": "finder",
+    "repetitions": 1,
+    "electron": "45.2.1",
+    "arch": "arm64",
+    "helperSha256": "43834477de4e38d5f94cf5fe8ec4f78e94f608ba6df3ac4bd4daf1c04b61318d",
+    "os": "27.2",
+    "permissions": {
+      "protocol": "hanekawa-computer/4",
+      "accessibility": true,
+      "screenRecording": true,
+      "screenshotSupported": true,
+      "permissionSettings": {
+        "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+        "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+      }
+    },
+    "status": "failed",
+    "error": "Error: Injected driver failure while the test rename editor is open\n    at file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:183:54\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+    "failureProcessAlive": [],
+    "ownedApplicationsReaped": true,
+    "isolatedFilesRemoved": true,
+    "attempts": [
+      {
+        "scenario": "FS-01",
+        "run": 1,
+        "status": "failed",
+        "app": {
+          "bundleId": "com.apple.finder",
+          "processId": 648,
+          "version": "27.2"
+        },
+        "operations": {
+          "bind": 1,
+          "get_state": 5,
+          "press_key": 1,
+          "click_at": 1,
+          "type_text": 1
+        },
+        "measurements": {
+          "nativeRequests": 26,
+          "observations": 10,
+          "queueMs": 0,
+          "hostElapsedMs": 1707,
+          "textChars": 65971,
+          "imageBytes": 0
+        },
+        "errors": [
+          {
+            "operation": "click_at",
+            "code": "UNSUPPORTED",
+            "delivery": "not_delivered",
+            "expected": false
+          }
+        ]
+      }
+    ]
+  },
+  "earlierTrials": [
+    {
+      "trial": "hanekawa-textedit-result",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "textedit",
+      "repetitions": 1,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "7c9e1fa1295dac50d4f680dec718799a3cf718a0419aebcd249fca0abbf0cfa4",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Target process exited or restarted. Bind it again.\nDelivery: not_delivered. Bind the live app again and explicitly select the intended window.\n\nfalse !== true\n\n    at call (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:73:14)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async until (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:31:19)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:133:19",
+      "attempts": [
+        {
+          "scenario": "TXT-01",
+          "run": 1,
+          "status": "failed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 32607,
+            "version": "1.21"
+          },
+          "operations": {
+            "list_apps": 2,
+            "bind": 1,
+            "get_state": 1
+          },
+          "measurements": {
+            "nativeRequests": 7,
+            "observations": 2,
+            "queueMs": 0,
+            "hostElapsedMs": 387,
+            "textChars": 2485,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "get_state",
+              "code": "TARGET_CHANGED",
+              "delivery": "not_delivered",
+              "expected": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-finder-result",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "finder",
+      "repetitions": 1,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "7c9e1fa1295dac50d4f680dec718799a3cf718a0419aebcd249fca0abbf0cfa4",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Expected one AXTextField ; found 0\n\n0 !== 1\n\n    at one (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:45:10)\n    at file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:162:86\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+      "attempts": [
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "failed",
+          "operations": {
+            "bind": 1,
+            "get_state": 3,
+            "press_key": 1
+          },
+          "measurements": {
+            "nativeRequests": 16,
+            "observations": 6,
+            "queueMs": 0,
+            "hostElapsedMs": 1680,
+            "textChars": 63591,
+            "imageBytes": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-finder-result2",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "finder",
+      "repetitions": 1,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "7c9e1fa1295dac50d4f680dec718799a3cf718a0419aebcd249fca0abbf0cfa4",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Expected one AXTextField ; found 0\n\n0 !== 1\n\n    at one (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:45:10)\n    at file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:162:86\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+      "attempts": [
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "failed",
+          "operations": {
+            "bind": 1,
+            "get_state": 4,
+            "press_key": 1
+          },
+          "measurements": {
+            "nativeRequests": 17,
+            "observations": 7,
+            "queueMs": 0,
+            "hostElapsedMs": 2336,
+            "textChars": 91627,
+            "imageBytes": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-finder-owner",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "finder",
+      "repetitions": 1,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "7c9e1fa1295dac50d4f680dec718799a3cf718a0419aebcd249fca0abbf0cfa4",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Expected one AXTextField ; found 0\n\n0 !== 1\n\n    at one (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:45:10)\n    at file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:162:86\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+      "attempts": [
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "failed",
+          "operations": {
+            "bind": 1,
+            "get_state": 4,
+            "press_key": 1
+          },
+          "measurements": {
+            "nativeRequests": 17,
+            "observations": 7,
+            "queueMs": 0,
+            "hostElapsedMs": 2308,
+            "textChars": 91922,
+            "imageBytes": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-finder-owner2",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "finder",
+      "repetitions": 1,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "7c9e1fa1295dac50d4f680dec718799a3cf718a0419aebcd249fca0abbf0cfa4",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Expected one AXTextField ; found 0\n\n0 !== 1\n\n    at one (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:45:10)\n    at file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:162:86\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+      "attempts": [
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "failed",
+          "operations": {
+            "bind": 1,
+            "get_state": 4,
+            "press_key": 1
+          },
+          "measurements": {
+            "nativeRequests": 15,
+            "observations": 6,
+            "queueMs": 0,
+            "hostElapsedMs": 2096,
+            "textChars": 92794,
+            "imageBytes": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-finder-fixed",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "finder",
+      "repetitions": 1,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "64cf83200c996d07663f20892e13fa4a90e65259326c959c98ceb027a318ad80",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Action delivered, but fresh observation failed: Selected window closed. Read get_state and choose a current window.\nDelivery: delivered_unverified. Bind the live app again and explicitly select the intended window. The action may already have happened; do not blindly repeat it.\n\nfalse !== true\n\n    at call (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:75:14)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:169:7",
+      "windowCleanupError": "Error: App binding is missing or belongs to another chat. Bind again.",
+      "attempts": [
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "failed",
+          "operations": {
+            "bind": 1,
+            "get_state": 5,
+            "press_key": 2,
+            "type_text": 1
+          },
+          "measurements": {
+            "nativeRequests": 28,
+            "observations": 11,
+            "queueMs": 0,
+            "hostElapsedMs": 1809,
+            "textChars": 65466,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "press_key",
+              "code": "TARGET_CHANGED",
+              "delivery": "delivered_unverified",
+              "expected": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-real-apps-final",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "all",
+      "repetitions": 3,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "d2867f6210195dd38c1ea3019fa5a6185b8b55afc244c6a51e7068e814d81eb2",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Unicode input stopped after dispatching 3 UTF-16 units (not readback verification). User changed the foreground app/window. Input stopped.\nDelivery: unknown. Bind the live app again and explicitly select the intended window. The action may already have happened; do not blindly repeat it.\n\nfalse !== true\n\n    at call (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:81:14)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:176:7",
+      "windowCleanupError": "Error: App binding is missing or belongs to another chat. Bind again.",
+      "attempts": [
+        {
+          "scenario": "AX-01",
+          "run": 1,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 33305,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 67,
+            "observations": 28,
+            "queueMs": 0,
+            "hostElapsedMs": 4396,
+            "textChars": 73672,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 2,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 34192,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 69,
+            "observations": 29,
+            "queueMs": 0,
+            "hostElapsedMs": 4181,
+            "textChars": 73672,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 3,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 37455,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 71,
+            "observations": 30,
+            "queueMs": 0,
+            "hostElapsedMs": 4078,
+            "textChars": 73472,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 1,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 37720,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "31498a576206459a943ac62dc3763adc147da55c3875a6ce158dedc621124ead"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 4,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 38,
+            "observations": 15,
+            "queueMs": 0,
+            "hostElapsedMs": 2036,
+            "textChars": 15842,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 2,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 37804,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "38bc3fbe77731a0e50139831b2b49170cfdb868ded9a11159d5b7ee662e87191"
+          },
+          "operations": {
+            "list_apps": 5,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 43,
+            "observations": 16,
+            "queueMs": 0,
+            "hostElapsedMs": 2821,
+            "textChars": 15936,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 3,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 37945,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "c1778229c80643cbb5bf4cd3bdc325e7c58bc8a9fa35668697f1b72789651275"
+          },
+          "operations": {
+            "list_apps": 4,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 40,
+            "observations": 15,
+            "queueMs": 0,
+            "hostElapsedMs": 2741,
+            "textChars": 15936,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "failed",
+          "operations": {
+            "bind": 1,
+            "get_state": 5,
+            "press_key": 1,
+            "click_at": 1,
+            "type_text": 1
+          },
+          "measurements": {
+            "nativeRequests": 18,
+            "observations": 6,
+            "queueMs": 0,
+            "hostElapsedMs": 2240,
+            "textChars": 65320,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": false
+            },
+            {
+              "operation": "type_text",
+              "code": "TARGET_CHANGED",
+              "delivery": "unknown",
+              "expected": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-finder-user-reproduction",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "finder",
+      "repetitions": 1,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "d2867f6210195dd38c1ea3019fa5a6185b8b55afc244c6a51e7068e814d81eb2",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Unicode input stopped after dispatching 4 UTF-16 units (not readback verification). User changed the foreground app/window. Input stopped.\nDelivery: unknown. Bind the live app again and explicitly select the intended window. The action may already have happened; do not blindly repeat it.\n\nfalse !== true\n\n    at call (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:81:14)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:176:7",
+      "windowCleanupError": "Error: App binding is missing or belongs to another chat. Bind again.",
+      "attempts": [
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "failed",
+          "operations": {
+            "bind": 1,
+            "get_state": 5,
+            "press_key": 1,
+            "click_at": 1,
+            "type_text": 1
+          },
+          "measurements": {
+            "nativeRequests": 20,
+            "observations": 7,
+            "queueMs": 0,
+            "hostElapsedMs": 1530,
+            "textChars": 64933,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": false
+            },
+            {
+              "operation": "type_text",
+              "code": "TARGET_CHANGED",
+              "delivery": "unknown",
+              "expected": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-finder-fixed-final",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "finder",
+      "repetitions": 1,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "1e031048aa1d12854bb5890ddcfcf1e387b9aa4092c6d314611797e550475c8c",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: renamed folder visible in AX\n    at file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:187:14\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true,
+      "attempts": [
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "failed",
+          "operations": {
+            "bind": 1,
+            "get_state": 8,
+            "press_key": 2,
+            "click_at": 1,
+            "type_text": 2
+          },
+          "measurements": {
+            "nativeRequests": 38,
+            "observations": 15,
+            "queueMs": 0,
+            "hostElapsedMs": 2475,
+            "textChars": 93806,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": false
+            },
+            {
+              "operation": "type_text",
+              "code": "STALE_SNAPSHOT",
+              "delivery": "not_delivered",
+              "expected": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-finder-fixed-final2",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "finder",
+      "repetitions": 1,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "1e031048aa1d12854bb5890ddcfcf1e387b9aa4092c6d314611797e550475c8c",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Action delivered, but fresh observation failed: Window changed during AX sampling.\nDelivery: delivered_unverified. Bind the live app again and explicitly select the intended window. The action may already have happened; do not blindly repeat it.\n\nfalse !== true\n\n    at call (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:83:14)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:180:7",
+      "windowCleanupError": "AssertionError [ERR_ASSERTION]: retain files while a rename editor remains unclaimed",
+      "ownedApplicationsReaped": true,
+      "attempts": [
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "failed",
+          "operations": {
+            "bind": 1,
+            "get_state": 5,
+            "press_key": 1,
+            "click_at": 1,
+            "type_text": 1
+          },
+          "measurements": {
+            "nativeRequests": 23,
+            "observations": 8,
+            "queueMs": 0,
+            "hostElapsedMs": 1566,
+            "textChars": 65053,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": false
+            },
+            {
+              "operation": "type_text",
+              "code": "TARGET_CHANGED",
+              "delivery": "delivered_unverified",
+              "expected": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-finder-fixed-final3",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "finder",
+      "repetitions": 1,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "a6e34213505dcbf8edd7b46cadb34e3a8bd80920336e096f4c7fb31e791f1c83",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "passed",
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true,
+      "attempts": [
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "passed",
+          "operations": {
+            "bind": 1,
+            "get_state": 10,
+            "press_key": 4,
+            "click_at": 1,
+            "type_text": 2,
+            "wait_for": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 56,
+            "observations": 22,
+            "queueMs": 0,
+            "hostElapsedMs": 3995,
+            "textChars": 202054,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": true
+            },
+            {
+              "operation": "type_text",
+              "code": "STALE_SNAPSHOT",
+              "delivery": "not_delivered",
+              "expected": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-real-apps-verified",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "all",
+      "repetitions": 3,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "a6e34213505dcbf8edd7b46cadb34e3a8bd80920336e096f4c7fb31e791f1c83",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "passed",
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true,
+      "attempts": [
+        {
+          "scenario": "AX-01",
+          "run": 1,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 48075,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3290,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 2,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 48089,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3308,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 3,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 48099,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3297,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 1,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 48109,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "31498a576206459a943ac62dc3763adc147da55c3875a6ce158dedc621124ead"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 40,
+            "observations": 15,
+            "queueMs": 0,
+            "hostElapsedMs": 1842,
+            "textChars": 13545,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 2,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 48120,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "38bc3fbe77731a0e50139831b2b49170cfdb868ded9a11159d5b7ee662e87191"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 40,
+            "observations": 15,
+            "queueMs": 0,
+            "hostElapsedMs": 1890,
+            "textChars": 13545,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 3,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 48131,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "c1778229c80643cbb5bf4cd3bdc325e7c58bc8a9fa35668697f1b72789651275"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 38,
+            "observations": 14,
+            "queueMs": 0,
+            "hostElapsedMs": 2225,
+            "textChars": 13545,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "passed",
+          "operations": {
+            "bind": 1,
+            "get_state": 10,
+            "press_key": 4,
+            "click_at": 1,
+            "type_text": 2,
+            "wait_for": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 54,
+            "observations": 21,
+            "queueMs": 0,
+            "hostElapsedMs": 3514,
+            "textChars": 202012,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": true
+            },
+            {
+              "operation": "type_text",
+              "code": "STALE_SNAPSHOT",
+              "delivery": "not_delivered",
+              "expected": true
+            }
+          ]
+        },
+        {
+          "scenario": "FS-01",
+          "run": 2,
+          "status": "passed",
+          "operations": {
+            "bind": 1,
+            "get_state": 10,
+            "press_key": 4,
+            "click_at": 1,
+            "type_text": 2,
+            "wait_for": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 54,
+            "observations": 21,
+            "queueMs": 0,
+            "hostElapsedMs": 3415,
+            "textChars": 201427,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": true
+            },
+            {
+              "operation": "type_text",
+              "code": "STALE_SNAPSHOT",
+              "delivery": "not_delivered",
+              "expected": true
+            }
+          ]
+        },
+        {
+          "scenario": "FS-01",
+          "run": 3,
+          "status": "passed",
+          "operations": {
+            "bind": 1,
+            "get_state": 10,
+            "press_key": 4,
+            "click_at": 1,
+            "type_text": 2,
+            "wait_for": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 58,
+            "observations": 23,
+            "queueMs": 0,
+            "hostElapsedMs": 3936,
+            "textChars": 201821,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": true
+            },
+            {
+              "operation": "type_text",
+              "code": "STALE_SNAPSHOT",
+              "delivery": "not_delivered",
+              "expected": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-finder-cleanup-injected",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "finder",
+      "repetitions": 1,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "a6e34213505dcbf8edd7b46cadb34e3a8bd80920336e096f4c7fb31e791f1c83",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/3",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "Error: Injected driver failure while the test rename editor is open\n    at file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:181:54\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)",
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true,
+      "attempts": [
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "failed",
+          "operations": {
+            "bind": 1,
+            "get_state": 5,
+            "press_key": 1,
+            "click_at": 1,
+            "type_text": 1
+          },
+          "measurements": {
+            "nativeRequests": 26,
+            "observations": 10,
+            "queueMs": 0,
+            "hostElapsedMs": 1750,
+            "textChars": 66011,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-real-apps-v4",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "all",
+      "repetitions": 3,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "810f26a981e071971c0db3f91fa434d8c2ab33093c8e668bcf3ce26633011e49",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/4",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Action delivered, but fresh observation failed: [\n  {\n    \"code\": \"too_small\",\n    \"minimum\": 1,\n    \"type\": \"string\",\n    \"inclusive\": true,\n    \"exact\": false,\n    \"message\": \"String must contain at least 1 character(s)\",\n    \"path\": [\n      6,\n      \"role\"\n    ]\n  }\n]\nDelivery: delivered_unverified. Bind again and observe the live UI before deciding whether to repeat an action. The action may already have happened; do not blindly repeat it.\n\nfalse !== true\n\n    at call (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:83:14)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:183:7",
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true,
+      "attempts": [
+        {
+          "scenario": "AX-01",
+          "run": 1,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 55500,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3267,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 2,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 55521,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3231,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 3,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 55531,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3164,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 1,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 55543,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "31498a576206459a943ac62dc3763adc147da55c3875a6ce158dedc621124ead"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 39,
+            "observations": 15,
+            "queueMs": 0,
+            "hostElapsedMs": 1689,
+            "textChars": 15936,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 2,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 55554,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "38bc3fbe77731a0e50139831b2b49170cfdb868ded9a11159d5b7ee662e87191"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 43,
+            "observations": 17,
+            "queueMs": 0,
+            "hostElapsedMs": 1831,
+            "textChars": 15936,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 3,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 55567,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "c1778229c80643cbb5bf4cd3bdc325e7c58bc8a9fa35668697f1b72789651275"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 41,
+            "observations": 16,
+            "queueMs": 0,
+            "hostElapsedMs": 2196,
+            "textChars": 15936,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "FS-01",
+          "run": 1,
+          "status": "passed",
+          "operations": {
+            "bind": 1,
+            "get_state": 10,
+            "press_key": 4,
+            "click_at": 1,
+            "type_text": 2,
+            "wait_for": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 52,
+            "observations": 20,
+            "queueMs": 0,
+            "hostElapsedMs": 3182,
+            "textChars": 201617,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": true
+            },
+            {
+              "operation": "type_text",
+              "code": "STALE_SNAPSHOT",
+              "delivery": "not_delivered",
+              "expected": true
+            }
+          ]
+        },
+        {
+          "scenario": "FS-01",
+          "run": 2,
+          "status": "failed",
+          "operations": {
+            "bind": 1,
+            "get_state": 7,
+            "press_key": 2,
+            "click_at": 1,
+            "type_text": 1
+          },
+          "measurements": {
+            "nativeRequests": 32,
+            "observations": 12,
+            "queueMs": 0,
+            "hostElapsedMs": 1789,
+            "textChars": 66164,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "click_at",
+              "code": "UNSUPPORTED",
+              "delivery": "not_delivered",
+              "expected": false
+            },
+            {
+              "operation": "press_key",
+              "code": "DRIVER_LOST",
+              "delivery": "delivered_unverified",
+              "expected": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-real-apps-accepted",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "all",
+      "repetitions": 3,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "810f26a981e071971c0db3f91fa434d8c2ab33093c8e668bcf3ce26633011e49",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/4",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Target process exited or restarted. Bind it again.\nDelivery: not_delivered. Bind the live app again and explicitly select the intended window.\n\nfalse !== true\n\n    at call (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:83:14)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:118:23",
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true,
+      "attempts": [
+        {
+          "scenario": "AX-01",
+          "run": 1,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 55770,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3271,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 2,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 55780,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 71,
+            "observations": 30,
+            "queueMs": 0,
+            "hostElapsedMs": 4698,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 3,
+          "status": "failed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 56640,
+            "version": "12.0"
+          },
+          "operations": {
+            "list_apps": 2,
+            "bind": 1
+          },
+          "measurements": {
+            "nativeRequests": 5,
+            "observations": 1,
+            "queueMs": 0,
+            "hostElapsedMs": 850,
+            "textChars": 0,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "bind",
+              "code": "TARGET_CHANGED",
+              "delivery": "not_delivered",
+              "expected": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-real-apps-delivery",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "all",
+      "repetitions": 3,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "60d324ecc92a33c908aee4e7ac704db92ad2c8fa04fd5b917716a7ec9fafbf3a",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/4",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "failed",
+      "error": "AssertionError [ERR_ASSERTION]: Target process exited or restarted. Bind it again.\nDelivery: not_delivered. Bind the live app again and explicitly select the intended window.\n\nfalse !== true\n\n    at call (file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:83:14)\n    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async file:///Users/miyano/Documents/code/Hanekawa/scripts/test-computer-apps.mjs:147:7",
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true,
+      "attempts": [
+        {
+          "scenario": "AX-01",
+          "run": 1,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 62869,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3267,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 2,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 62880,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3288,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "AX-01",
+          "run": 3,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.calculator",
+            "processId": 62891,
+            "version": "12.0"
+          },
+          "screenshot": {
+            "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+            "bytes": 86892
+          },
+          "axResult": "46",
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 8,
+            "click": 7,
+            "get_state_with_screenshot": 1,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 75,
+            "observations": 32,
+            "queueMs": 0,
+            "hostElapsedMs": 3277,
+            "textChars": 80901,
+            "imageBytes": 86892
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 1,
+          "status": "failed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 62901,
+            "version": "1.21"
+          },
+          "operations": {
+            "list_apps": 2,
+            "bind": 1,
+            "get_state": 1,
+            "type_text": 1
+          },
+          "measurements": {
+            "nativeRequests": 8,
+            "observations": 2,
+            "queueMs": 0,
+            "hostElapsedMs": 393,
+            "textChars": 4970,
+            "imageBytes": 0
+          },
+          "errors": [
+            {
+              "operation": "type_text",
+              "code": "TARGET_CHANGED",
+              "delivery": "not_delivered",
+              "expected": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "trial": "hanekawa-launch-diagnostic",
+      "scope": "real macOS apps; deterministic production Computer driver, no model/full Hanekawa UI",
+      "scenario": "textedit",
+      "repetitions": 5,
+      "electron": "45.2.1",
+      "arch": "arm64",
+      "helperSha256": "352a96b1ce5523087d4cde2ef5d293bd85318f41a693225a6f1edee5090e6dc1",
+      "os": "27.2",
+      "permissions": {
+        "protocol": "hanekawa-computer/4",
+        "accessibility": true,
+        "screenRecording": true,
+        "screenshotSupported": true,
+        "permissionSettings": {
+          "accessibility": "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+          "screenRecording": "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture"
+        }
+      },
+      "status": "passed",
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true,
+      "attempts": [
+        {
+          "scenario": "TXT-01",
+          "run": 1,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 63030,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "31498a576206459a943ac62dc3763adc147da55c3875a6ce158dedc621124ead"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 39,
+            "observations": 15,
+            "queueMs": 0,
+            "hostElapsedMs": 1711,
+            "textChars": 15936,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 2,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 63045,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "38bc3fbe77731a0e50139831b2b49170cfdb868ded9a11159d5b7ee662e87191"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 41,
+            "observations": 16,
+            "queueMs": 0,
+            "hostElapsedMs": 1801,
+            "textChars": 15936,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 3,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 63057,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "c1778229c80643cbb5bf4cd3bdc325e7c58bc8a9fa35668697f1b72789651275"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 41,
+            "observations": 16,
+            "queueMs": 0,
+            "hostElapsedMs": 1830,
+            "textChars": 15936,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 4,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 63070,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "3b73e283345736dd197ab1fe6ce3a6282f854238e8d9b55fb5b40e38e10b8663"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 39,
+            "observations": 15,
+            "queueMs": 0,
+            "hostElapsedMs": 1811,
+            "textChars": 15936,
+            "imageBytes": 0
+          },
+          "errors": []
+        },
+        {
+          "scenario": "TXT-01",
+          "run": 5,
+          "status": "passed",
+          "app": {
+            "bundleId": "com.apple.TextEdit",
+            "processId": 63081,
+            "version": "1.21"
+          },
+          "file": {
+            "bytes": 37,
+            "sha256": "16537ac81b03af6f516c4063c72b6bcf67337ccc87d9d3a5265941c910fe5df7"
+          },
+          "operations": {
+            "list_apps": 3,
+            "bind": 1,
+            "get_state": 5,
+            "type_text": 1,
+            "press_key": 2,
+            "release": 1
+          },
+          "measurements": {
+            "nativeRequests": 39,
+            "observations": 15,
+            "queueMs": 0,
+            "hostElapsedMs": 1828,
+            "textChars": 15936,
+            "imageBytes": 0
+          },
+          "errors": []
+        }
+      ]
+    }
+  ],
+  "regression": {
+    "typecheck": "passed",
+    "desktopBuild": "passed",
+    "fullSuite": {
+      "total": 4831,
+      "passed": 4828,
+      "failed": 1,
+      "skipped": 2,
+      "failure": "rendererOverlayView: .session-drag-preview fixed-position baseline assertion; same original HEAD reproduced in CU-NATIVE-CLOSURE-2026-11-04.md"
+    },
+    "focusedBeforeFinalRoleRegression": {
+      "passed": 244
+    },
+    "roleAndProtocolRegression": "passed"
+  },
+  "desktopCleanup": {
+    "testWindowsClosed": true,
+    "originalFinderWindowPreserved": "computer-use-reference",
+    "warning8072Visible": false,
+    "ownedTestAppsRunning": []
+  },
+  "limitations": [
+    "Occasional TARGET_CHANGED before the first input was reproduced with the starting helper too; root cause not established; no input replay.",
+    "Native fixture full-diff assertion remains unverified because its initial AX output is incomplete.",
+    "No full Hanekawa/packaged app three-state permission acceptance, signing, notarization or natural-language model task acceptance."
+  ],
+  "calculatorVisualEvidence": {
+    "path": "validation-assets/calculator-46.png",
+    "sha256": "3dc3267cff3389bc0820b1c2f09d5bddcc3345f501c34b7dbaab09874489b708",
+    "inspection": "Final PNG manually inspected in this chat: 12+34 and 46; AX independently reports 46."
+  },
+  "temporaryCleanup": {
+    "removedEntries": 58,
+    "bytes": 4270805,
+    "names": [
+      "hanekawa-app-probe.mjs",
+      "hanekawa-ax-owner.swift",
+      "hanekawa-ax-owner",
+      "hanekawa-evidence-build.py",
+      "hanekawa-textedit-result.log",
+      "hanekawa-textedit-result2.log",
+      "hanekawa-calculator-result.log",
+      "hanekawa-finder-result.log",
+      "hanekawa-finder-result2.log",
+      "hanekawa-finder-owner.log",
+      "hanekawa-finder-owner2.log",
+      "hanekawa-finder-fixed.log",
+      "hanekawa-closure-regression-before.log",
+      "hanekawa-computer-focused.log",
+      "hanekawa-computer-build.log",
+      "hanekawa-computer-typecheck.log",
+      "hanekawa-computer-full.log",
+      "hanekawa-real-apps-final.log",
+      "hanekawa-computer-build-final.log",
+      "hanekawa-computer-full-unrestricted.log",
+      "hanekawa-finder-user-reproduction.log",
+      "hanekawa-finder-fixed-final.log",
+      "hanekawa-finder-fixed-final2.log",
+      "hanekawa-native-rebuild.log",
+      "hanekawa-finder-fixed-final3.log",
+      "hanekawa-computer-typecheck-final.log",
+      "hanekawa-real-apps-verified.log",
+      "hanekawa-finder-cleanup-injected.log",
+      "hanekawa-computer-focused-final.log",
+      "hanekawa-native-fixture-repeat1.log",
+      "hanekawa-computer-v4-build.log",
+      "hanekawa-computer-v4-full.log",
+      "hanekawa-computer-v4-typecheck.log",
+      "hanekawa-v4-compatibility.log",
+      "hanekawa-real-apps-v4.log",
+      "hanekawa-v4-role-regression.log",
+      "hanekawa-real-apps-accepted.log",
+      "hanekawa-computer-accepted-full.log",
+      "hanekawa-computer-accepted-typecheck.log",
+      "hanekawa-launch-ready-build.log",
+      "hanekawa-real-apps-delivery.log",
+      "hanekawa-launch-identity-build.log",
+      "hanekawa-launch-diagnostic.log",
+      "hanekawa-delivery-build.log",
+      "hanekawa-final-typecheck.log",
+      "hanekawa-final-finder.log",
+      "hanekawa-final-native-1.log",
+      "hanekawa-final-native-2.log",
+      "hanekawa-final-native-3.log",
+      "hanekawa-final-calculator.log",
+      "hanekawa-final-textedit.log",
+      "hanekawa-final-cleanup.log",
+      "hanekawa-m0-images",
+      "hanekawa-m0-final-images",
+      "hanekawa-m0-v4-images",
+      "hanekawa-m0-accepted-images",
+      "hanekawa-m0-delivery-images",
+      "hanekawa-final-calculator-images"
+    ],
+    "scope": "only explicit temporary paths created in this chat; unrelated earlier Hanekawa diagnostics preserved"
+  }
+}

@@ -618,19 +618,53 @@ Responses 的加密推理本地计数沿用 Codex 的估算：从编码长度回
 {"operation":"bind","app":"com.apple.calculator"}
 ```
 
-`bind` 只绑定已运行的应用，不启动、激活或退出应用。应用有多个窗口时返回 `windows`，由 `get_state` 的 `windowId` 选择；选择后持续沿用该窗口。元素引用格式是 `s<快照 UUID>:e<索引>`，必须来自最新 AX 观察。`click` 使用 AXPress，`set_value` 设置可写 AXValue，`perform_action` 调用该元素实际暴露的 AX 动作。这些语义操作不移动鼠标。动作自动返回新的 AX 状态；模型应检查状态是否符合任务目标，不能把事件发出视为完成。
+`bind` 只绑定已运行的应用，不启动、激活或退出应用。应用有多个窗口时返回 `windows`（含实际 AX `role`），由 `get_state` 的 `windowId` 选择；选择后持续沿用该窗口。元素引用格式是 `s<快照 UUID>:e<索引>`，必须来自最新 AX 观察。`click` 使用 AXPress，`set_value` 设置可写 AXValue，`perform_action` 调用该元素实际暴露的 AX 动作。这些语义操作不移动鼠标。动作自动返回新的 AX 状态；模型应检查状态是否符合任务目标，不能把事件发出视为完成。
 
-`get_state` 默认显示差分；未变化的元素索引需换用结果头部的新快照前缀。`disableDiffing: true` 返回完整树。观察受深度、节点数、时间和输出长度限制，`complete: false` 或 `truncated: true` 表示尚未读完，可用最新 `rootRef` 读取子树。每次观察和每次动作尝试都会让旧引用失效；截图也会清除 AX 引用。
+`get_state` 默认显示差分；未变化的元素索引需换用结果头部的新快照前缀。`disableDiffing: true` 返回完整树。观察受深度、节点数、时间和输出长度限制，`complete: false` 或 `truncated: true` 表示尚未读完，可用最新 `rootRef` 读取子树。文本输出超出预算时优先保留浅层节点和分支入口，再按原遍历顺序输出，保留原索引；行与行之间可能省略后代，避免长列表遮蔽后续浅层控件。原生读取截断时返回本次读到的树，不把未读到的元素报告为删除。截断结果和子树结果不会作为下次窗口差分的基线，恢复窗口读取时重新返回完整树（仍受上述限制）。每次观察和每次动作尝试都会让旧引用失效；截图也会清除 AX 引用。
 
-`click_at`、`press_key`、`type_text` 和 `scroll` 是物理输入，会激活并抬起目标窗口，可能移动鼠标；它们需要最新 `snapshotId`，按高风险操作走现有权限模式。普通 AX 修改按普通操作处理，观察、绑定和释放按只读处理。`Computer` 的 allow/ask/deny 规则继续生效。工具不会把失败的 AX 动作自动降级为鼠标操作。物理输入前检查前台应用、选中窗口和窗口位置；用户切走窗口时停止后续输入，但这些检查不能保证操作与用户输入完全原子化。
+AX 结果携带 `revision`、`mode: full / diff` 和 `baseRevision`（完整树为 null）；差分只基于上一份实际发布的完整可用结果，不基于内部等待样本。内部身份按同一 AX 对象、窗口、父级及内容指纹保守匹配，不能用作操作引用；标题相同不代表同一个元素。内容变化或控件被复用时会换身份，可能显示为删除/新增。重排会标记 `(from 上一快照ref)`；删除也使用上一快照的完整 ref。先从旧基线清除删除项和移动来源，再按新索引应用输出行，最后统一使用新快照前缀。原生协议已升级为 `hanekawa-computer/4`，旧 helper 会被明确拒绝，需重新构建并重启。
+
+`get_state` 另有 `scope: "application"`，读取该应用的菜单栏、聚焦的弹出界面及窗口；无需先选窗口，也可用于没有窗口的应用。`wait_for` 的元素条件也可指定该 scope。应用观察不提供窗口坐标，不能用于物理输入；需要点击坐标或按键时，先用默认 `scope: "window"` 选择窗口并重新观察。切换 scope 返回完整树。跨进程的系统选择器不会被当作原应用控件读取；安全字段及其子树不输出正文。自有 AppKit 已完成菜单 → sheet → 输入 → 明确确认的真实链路；系统托管选择器、其他弹窗和 Electron 兼容性仍待分别验收。
+
+节点输出实际暴露的 `actions`、`writableAttributes`（限 `AXValue / AXFocused / AXSelectedTextRange`）以及可取得的所属 `windowId`。`focus` 单独设置可写 `AXFocused`，不隐式激活应用或发送按键。`select_text` 单独设置可写的 AX 文本选区：`selection: {start, length}` 使用 UTF-16 单位，零长度用于移动光标；`selection: {text, prefix?, suffix?}` 查找唯一的精确文本，前后文必须相邻。重复、未找到、越界或切开 emoji 代理对时在修改前拒绝；不自动改走键盘。结果包含可读取的 `selectedTextRange`。选择和设置字段值不等于追加输入；现有 `type_text` 仍发送 Unicode 键盘事件。范围/匹配规则已通过无 GUI 自检及自有 AppKit 控件的实际选区读回。 `type_text` 在当前光标处输入或替换当前选区，长度上限是 4096 个 UTF-16 单元；每个 Unicode 字素使用成对的按下/释放事件，显式清空修饰键标志并核对编码，不改剪贴板。中途失败会说明已派发的 UTF-16 数量，这不是应用内容读回结果，不能据此重复输入。混合中文、emoji、组合字符、换行与长 emoji 的事件编码及中断规则通过无 GUI 自检；自有 AppKit 控件的实际混合文本输入、选区替换、cmd+a 和拒绝聚焦分支已通过独立状态读回；不能据此扩大为所有应用或输入法均已验证。
+
+动作后不再固定等待 120ms，而是按 100ms 间隔采样：完整 AX 树连续至少 200ms 不变时返回 `wait.status: settled`；最多使用 1000ms 的局部采样预算，持续变化返回 `timed_out`，原生观察不完整时返回 `unsupported`。三种结果都保留最后观察；`action.verified` 仍为 false，界面暂时稳定不证明业务完成。内部采样只在最终结果发布一次新引用和差分，不重复写入模型上下文。
+
+`wait_for` 是只读操作，可等待元素出现/消失（`role`、`labelIncludes`、`valueIncludes`，所填条件须在同一节点满足），或窗口出现/关闭（`windowId` 或 `titleIncludes`）。窗口级元素条件需要先选择窗口，应用菜单可指定 `scope: "application"`；窗口标题条件不自动选中匹配窗口。字符串片段大小写敏感，只匹配实际暴露的 AX 文本前缀，不能读取安全字段或证明整篇长文的内容。返回 `wait.status: matched / timed_out / unsupported`；原生截断树不能证明元素消失。`waitMs` 默认 5000ms、范围 100–60000，用于限制继续采样；已开始的 AX 请求和全部排队、动作、采样仍共用原有 `timeoutMs` 总截止时间。局部超时保留最后快照；总截止时间到期继续报错并回收 helper。等待不重复投递动作。例如：
+
+```json
+{"operation":"wait_for","appId":"<bind 返回的 appId>","condition":{"kind":"element","state":"present","valueIncludes":"保存完成"},"waitMs":5000}
+```
+
+上述等待逻辑已通过协议模拟、权限回归和构建验证；自有 AppKit 应用中的真实延迟更新和永久不满足条件已分别核对 matched / timed_out。异步 sheet 的出现、关闭及输入/确认也在自有 AppKit 通过；真实业务应用及完整产品流程仍须分别验收。
+
+窗口条件只读取窗口列表，不因选中窗口的 AX 树读取失败而失败；这类等待只返回窗口证据，不生成 AX ref，需要操作时再 `get_state`。内部身份、重排差分及版本基线已有协议回归和原生规则自检，真实 AX 对象相等性及虚拟化列表兼容性仍待更完整的真实场景验证。
+
+`click_at`、`press_key`、`type_text` 和 `scroll` 是物理输入，会激活并抬起目标窗口，可能移动鼠标；它们需要最新 `snapshotId`，按高风险操作走现有权限模式。普通 AX 修改按普通操作处理，观察、绑定和释放按只读处理。`Computer` 的 allow/ask/deny 规则继续生效。工具不会把失败的 AX 动作自动降级为鼠标操作。物理输入前检查前台应用、选中窗口和窗口位置。键盘输入还读回实际聚焦的 AX 控件，核对应用、所属窗口及安全字段祖先；传入 `ref` 时必须与该控件一致，不能只依据系统返回“聚焦成功”。连续文本每个字符事件对之前重新核对焦点，焦点变化时停止后续字符并失效绑定，已排队的旧绑定输入会拒绝；这些检查仍不保证操作与用户输入完全原子化，也不等于完整的用户接管检测。
+
+访达等应用可能把重命名编辑框直接列为 `role: "AXTextField"` 的独立顶层对象，而不放在主窗口树内。选择该对象自己的 `windowId` 并重新观察后，才能使用键盘输入；它必须已经是前台应用的实际焦点，工具不会为它抢焦点或抬起窗口，也不允许在这种对象上使用坐标点击或滚动。输入导致的编辑框自动伸缩不会中断同一焦点的键盘输入。提交后编辑框消失时，宿主核对其已从同一进程移除，保留 `delivered_unverified` 回执和当前窗口列表，不生成旧编辑框引用、不重发回车；下一步须重新选择并观察窗口。
 
 `screenshot` 通过会话附件存储传递真实 PNG，仅支持可接收图片的模型。截图窗口按进程和窗口几何信息与 AX 窗口严格匹配，无法唯一匹配时拒绝截图。结果包含 `boundsInPoints`、`imageSizeInPixels` 和 `coordinateSpace`。`click_at` 使用窗口内的点坐标：将模型看到的附件像素 x/y 分别乘以窗口点宽/附件宽、窗口点高/附件高；系统屏幕坐标可以为负，不能直接套用截图像素。
 
-macOS 需要为 Hanekawa 授予「辅助功能」，截图还需要「屏幕录制」。开发模式的权限归属可能显示为 Electron 或启动它的终端。`status` 检查权限并返回系统设置入口，不自动弹出权限申请或修改系统授权数据。重新构建、安装路径或签名变化后应再次检查权限。打包版本的 TCC 归属和真实桌面行为需要在授权后的 Hanekawa 中验收。
+也可用 `get_state` 的 `includeScreenshot: true` 一次取得窗口 AX 与截图，仅在需要图片时使用；不支持与应用 scope 或 `rootRef` 合用。返回一份当前可操作的 AX 快照，图片另带 `screenshot.revision / sampledAt / windowId / processId`，AX 自身携带 `revision / sampledAt`。`atomic: false` 明确表示它们是依次采样；采样间窗口身份或几何位置改变会拒绝结果。该契约已通过模拟回归，并在本机自有 AppKit 窗口完成真实 PNG 来源和像素到点换算点击核对；附件降采样、多显示器及移动窗口等场景仍未完成。
 
-原生调用跨会话串行执行；同一应用进程同时租给一个会话，其他会话需等待前一个调用 `release` 或关闭。`release` 只回收绑定/helper，不关闭目标应用。停止正在执行的调用、超时、清空/切换会话、关闭会话及退出应用都会回收受影响的 helper；截止时间包含排队。未知投递或动作后观察失败时保留投递状态，绝不自动重试。取消不能撤销已送达系统的操作；恢复后先重新绑定并观察。
+工具结果中的 `diagnostics` 记录请求/会话/绑定/快照标识、排队和原生方法耗时、观察次数、输出字符数及图片字节数；错误记录保留 code 和 delivery。`helper_spawn` 只表示进程启动，不表示 AX 已就绪；`stability_wait / condition_wait` 包含内部采样，与原生方法耗时重叠，不能直接相加。附件导入另计时。诊断不另存 AX 全文、输入正文、图片或密钥，原有会话工具记录不变；目前没有真实模型任务级统计或性能收益结论。`press_key` 的字符键表示 US ANSI 物理键位，名称不区分大小写，大写须显式 `shift`；字符输出受当前键盘布局影响，Unicode 内容应使用 `type_text`。
+
+macOS 需要为 Hanekawa 授予「辅助功能」，截图还需要「屏幕录制」。开发模式的权限可能归属 Electron，也可能归属启动它的应用或终端；不能只看 Electron 的开关。当前从 Codex 启动的隔离测试曾由系统归属到 `/Applications/ChatGPT.app`，开启该宿主的辅助功能后，正式 helper 才返回已授权。其他启动方式应重新核对，不能套用这个路径。`status` 检查权限并返回系统设置入口，不自动弹出权限申请或修改系统授权数据。重新构建、安装路径或签名变化后应再次检查权限。打包版本的 TCC 归属和真实桌面行为需要在授权后的 Hanekawa 中验收。
+
+开发时可在构建后运行 `npm run verify:computer:electron`：它使用隔离的临时 Electron 配置，通过正式宿主和 helper 只读检查权限，不创建业务窗口或申请授权。命令成功表示这条检查链路可用；应另看输出的权限布尔值。它不替代完整 Hanekawa 或安装包中的真实 GUI 验收。
+
+需要主动申请开发环境辅助功能权限时，运行 `npm run verify:computer:electron -- --request-accessibility`：它只在明确传入该参数时请求 Electron 的系统授权提示，打开对应设置并在 Finder 定位开发用 `Electron.app`，最多等待 120 秒供用户确认；未自动列出时，可在设置中点「＋」添加该应用。开关仍由用户操作，脚本不会修改 TCC。若 Electron 已开启而 helper 仍返回未授权，还需检查启动它的应用或终端。最终仍通过正式 helper 检查实际权限，不能只依据 Electron 自身的授权返回值判断成功。
+
+原生测试单独运行 `npm run test:computer:native`，不包含在默认 `npm test` 中。脚本在临时目录编译、启动自有 AppKit 测试应用，通过生产 `ComputerTool → DesktopComputerHost → helper` 执行确定性操作，再独立读取测试应用状态核对结果；只针对本次启动的测试应用。缺辅助功能权限时报告 `blocked` 并以 77 退出，不把跳过操作算作通过。可用 `npm run test:computer:native -- --fixture-only` 仅检查测试应用的编译、双窗口启动、初始控件、重启和回收；该模式退出 0 不表示 AX 操作已验证。测试不申请系统授权，临时应用和数据退出后清理；本机首次完整原生闭环的成功、失败和剩余范围见 [验证记录](computer-use-reference/CU-NATIVE-CLOSURE-2026-11-04.md)。它不是完整 Hanekawa 权限流程、安装包或真实模型任务验收。
+
+原生调用跨会话串行执行；同一应用进程同时租给一个会话，其他会话需等待前一个调用 `release` 或关闭。`release` 只回收绑定/helper，不关闭目标应用。停止正在执行的调用、超时、清空/切换会话、关闭会话及退出应用都会回收受影响的 helper；截止时间包含排队。未知投递或动作后观察失败时保留投递状态，绝不自动重试。运行中收到权限不足时会回收该绑定和 helper、释放应用占用并拒绝已排队的旧绑定调用，重新授权后需重新绑定。已收到动作投递确认后，后续观察被取消、超时或发现权限不足时仍返回 `delivered_unverified`。取消不能撤销已送达系统的操作；恢复后先重新绑定并观察。
+
+桌面收到休眠、恢复、锁屏或解锁事件时，会撤销所有 Computer 绑定、回收 helper，并取消事件发生前已排队的调用；恢复后不会自动重放输入。已知休眠或锁屏期间的新调用返回 `DESKTOP_UNAVAILABLE / not_delivered`，无需启动 helper；恢复系统后重新核对锁屏状态，锁屏与休眠各自解除后才接受新调用。应用启动时也检查锁屏状态。helper 空闲时崩溃或通信关闭，后续调用会清理失效绑定、等待进程退出并释放应用租约，避免其他会话被旧占用挡住。已获确认的动作保留 `delivered_unverified`，执行中尚未获确认的动作保留 `unknown`，仍在排队的调用为 `not_delivered`。这套行为已通过模拟 helper 和隔离 Electron 的注入事件验证；没有自动触发真实锁屏或休眠，系统事件时序和强制终止时的系统级输入释放仍待真实验收。可运行 `npm run verify:computer:electron -- --verify-lifecycle` 重跑隔离验证；它不会实际锁屏、解锁或休眠电脑。
 
 桌面修改不受文件工具的项目路径限制保护，也不能通过 `/rewind` 撤销。工具不暴露任意 JavaScript、shell 参数、应用启动参数、拖动/长按、剪贴板和通知管理；API 的持久对象与观察机制由受信宿主实现。源码见 [ComputerTool](src/tools/ComputerTool/)、[桌面宿主](src/desktop/computer/) 和 [Swift helper](native/computer/ComputerBridge.swift)。helper 不监听网络，不保存跨会话 AX 状态，截图经私有 stdio 交给附件存储；文本记录不保存 base64。
+
+可用 `npm run test:computer:apps` 重跑真实计算器、文本编辑和访达的确定性基准，默认每项 3 轮；也可指定 `-- --scenario=finder --repetitions=1`。计算器/文本编辑已有用户实例时测试会停止并保留该实例，访达只操作专用临时目录。`--evidence-dir=<目录>` 可保存计算器 PNG；图片结果需单独目视核对。测试会先确认测试窗口关闭、进程退出，再删除资料；无法安全关闭时保留临时目录并报告路径，避免重命名期间删除目录引发访达 -8072。`-- --scenario=finder --repetitions=1 --interrupt-rename` 故意在重命名中途失败，用于检查清理，预期退出码为 1。这些是生产驱动的确定性测试，不代表安装包或自然语言模型任务验收。
 
 构建产物 `dist/desktop/computer/native/hanekawa-computer` 放在 ASAR 外的 `Resources/computer/native/`，由现有 electron-builder 流程分发；构建会清除旧 agent-desktop 原生资源。实现参考了 Codex 逆向分析中的持久绑定、版本化引用、差分观察和受信执行边界，独立编写公开 API 驱动，不依赖 Codex 的专有服务或提取代码。
 
