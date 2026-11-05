@@ -9,9 +9,12 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createTestEnvironment, killTestProcess, onTestExit } from './test-environment.mjs'
+import { assertCompleteFull, restoreCompleteDiff, assertRestoredDiff, refFromCompleteDiff, assertTruncatedFull, fixtureBusinessWindows } from './computer-native-observation.mjs'
+import { summarizeFixtureState, summarizeProcessSample } from './computer-native-diagnostics.mjs'
 
 const args = process.argv.slice(2)
 const fixtureOnly = args.includes('--fixture-only')
+const compactItems = Array.from({ length: 4 }, (_, i) => `item-${i}`)
 const environment = createTestEnvironment('hanekawa-computer-native-')
 const profile = join(environment.root, 'electron')
 mkdirSync(profile)
@@ -26,12 +29,15 @@ const passed = name => {
 }
 
 async function until(read, predicate, description, timeoutMs = 5000) {
-  const end = performance.now() + timeoutMs
+  const started = performance.now(), end = started + timeoutMs
+  let polls = 0
   while (performance.now() < end) {
     const value = await read()
+    polls += 1
     if (predicate(value)) return value
     await delay(25)
   }
+  report.failedWait = { description, timeoutMs, polls, elapsedMs: Math.round(performance.now() - started) }
   throw new Error(`Timed out: ${description}`)
 }
 
@@ -40,6 +46,7 @@ app.whenReady().then(async () => {
   let fixture
   let exitCode = 0
   let unregisterFixture
+  let sampleFixture
   const statePath = join(environment.root, 'state.json')
   const state = async () => {
     try { return JSON.parse(await readFile(statePath, 'utf8')) }
@@ -71,6 +78,10 @@ app.whenReady().then(async () => {
     const hash = path => createHash('sha256').update(readFileSync(path)).digest('hex')
     report.helperSha256 = hash(helper)
     report.fixtureSha256 = hash(source)
+    const identitySource = join(repo, 'native/computer/ProcessIdentity.swift')
+    const sampleSource = join(repo, 'test/fixtures/computer/ProcessSample.swift')
+    report.processIdentitySourceSha256 = hash(identitySource)
+    report.processSampleSourceSha256 = hash(sampleSource)
     report.os = execFileSync('/usr/bin/sw_vers', ['-productVersion'], { encoding: 'utf8' }).trim()
     host = new DesktopComputerHost({ executable: helper })
     const tool = createComputerTool(host)
@@ -81,7 +92,12 @@ app.whenReady().then(async () => {
       const result = await execute(input)
       if (!result.ok) report.failedCall = { operation: input.operation, errorDetails: result.errorDetails }
       assert.equal(result.ok, true, result.content)
-      return JSON.parse(result.content).data
+      const envelope = JSON.parse(result.content)
+      if (input.operation === 'press_key') report.lastKeyAction = envelope.diagnostics
+      if (['click', 'click_at', 'press_key', 'type_text', 'set_value', 'select_text', 'perform_action', 'scroll'].includes(input.operation)) {
+        report.lastAction = envelope.diagnostics
+      }
+      return envelope.data
     }
     report.permissions = await call({ operation: 'status' })
     passed('production Computer status')
@@ -104,9 +120,16 @@ app.whenReady().then(async () => {
 </dict></plist>`)
     execFileSync('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-O', '-target',
       `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macosx13.0`,
-      '-module-cache-path', join(environment.root, 'swift-cache'), source, '-o', executable],
+      '-module-cache-path', join(environment.root, 'swift-cache'), source, identitySource, '-o', executable],
       { env: environment.env, timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] })
     passed('compile isolated AppKit bundle')
+    const sampler = join(environment.root, 'process-sample')
+    execFileSync('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-O', '-target',
+      `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macosx13.0`,
+      '-module-cache-path', join(environment.root, 'swift-cache'), sampleSource, identitySource, '-o', sampler],
+      { env: environment.env, timeout: 120000, stdio: ['ignore', 'pipe', 'pipe'] })
+    sampleFixture = () => summarizeProcessSample(JSON.parse(execFileSync(sampler, [String(fixture.child.pid), executable],
+      { env: environment.env, timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })))
 
     const launch = async () => {
       const child = spawn(executable, [statePath], { env: environment.env, detached: true, stdio: 'ignore' })
@@ -120,15 +143,20 @@ app.whenReady().then(async () => {
         return state()
       }, s => s?.ready && s.pid === child.pid, 'fixture readiness')
       assert.equal(ready.bundleId, bundleId)
+      report.processSamples ??= []
+      const processSample = sampleFixture()
+      report.processSamples.push(processSample)
+      assert.equal(processSample.executableMatch, true, 'independent kernel image must be the owned fixture')
+      assert.equal(processSample.sampleStable, true, 'independent kernel birth sample must be complete')
       for (const name of ['A', 'B']) {
         assert.equal(ready.windows[name].visible, true)
         assert.equal(ready.windows[name].count, 0)
         assert.equal(ready.windows[name].text, '')
-        assert.equal(ready.windows[name].items.length, 80)
+        assert.deepEqual(ready.windows[name].items, compactItems)
         assert.equal(ready.windows[name].secureLength, 'FIXTURE_SECRET_DO_NOT_LOG_9X'.length)
         assert.equal(ready.windows[name].pendingSheet, false)
         assert.equal(ready.windows[name].sheetVisible, false)
-        assert.deepEqual(ready.windows[name].controls, ['busy', 'close', 'delay', 'increment', 'insert', 'move', 'replace', 'reverse', 'sheet'])
+        assert.deepEqual(ready.windows[name].controls, ['busy', 'close', 'compact', 'delay', 'increment', 'insert', 'long', 'move', 'replace', 'reverse', 'sheet'])
       }
       await until(() => call({ operation: 'list_apps' }), apps => apps.some(a => a.bundleId === bundleId && a.processId === child.pid),
         'fixture registration in production app discovery')
@@ -177,6 +205,11 @@ app.whenReady().then(async () => {
       assert.ok(Number.isInteger(current.revision) && current.revision > 0)
       return current
     }
+    const observeComplete = async () => {
+      const current = await observe()
+      assertCompleteFull(current)
+      return current
+    }
     const ref = (s, label, role) => {
       const matches = s.text.split('\n').filter(line => line.includes(label) && (!role || line.includes(role)))
         .map(line => line.match(/s[a-f0-9-]{36}:e[0-9]+/)?.[0]).filter(Boolean)
@@ -193,29 +226,80 @@ app.whenReady().then(async () => {
       }
       return after
     }
-    const initial = await observe()
-    const unchanged = await call({ operation: 'get_state', appId, windowId: a.id })
-    if (initial.complete && unchanged.complete) {
-      assert.equal(unchanged.mode, 'diff')
-      assert.equal(unchanged.baseRevision, initial.revision)
-      passed('native diff declares its published baseline revision')
-    } else {
-      report.unverified = ['Initial AX output incomplete; native diff baseline assertion skipped']
+    const rejectOldRef = async oldRef => {
+      const before = await state()
+      const stale = await execute({ operation: 'click', appId, ref: oldRef })
+      assert.equal(stale.ok, false)
+      assert.equal(stale.errorDetails?.code, 'STALE_SNAPSHOT')
+      assert.equal(stale.errorDetails?.disposition.delivery, 'not_delivered')
+      assert.deepEqual(fixtureBusinessWindows((await state()).windows), fixtureBusinessWindows(before.windows),
+        'Old refs must not mutate either fixture window business state')
+      // Even a refused action consumes the current snapshot; observe again before input.
     }
-    const refreshed = await observe()
+    const initial = await observeComplete()
+    const unchanged = await call({ operation: 'get_state', appId, windowId: a.id })
+    assert.deepEqual(restoreCompleteDiff(initial, unchanged), assertCompleteFull(initial))
+    assert.match(unchanged.text, /No AX tree changes\./)
+    passed('complete native full and unchanged diff declare the published baseline revision')
+    const unchangedRef = refFromCompleteDiff(initial, unchanged, 'Increment', 'AXButton')
+    const refreshed = await observeComplete()
     assert.notEqual(refreshed.snapshotId, initial.snapshotId)
-    passed('explicit full refresh revision metadata checked')
-    assert.match(refreshed.text, /\[secure field\]/)
-    assert.match(refreshed.text, /\[redacted\]/)
-    assert.doesNotMatch(refreshed.text, /FIXTURE_SECRET_DO_NOT_LOG_9X/)
+    assertRestoredDiff(initial, unchanged, refreshed)
+    await rejectOldRef(unchangedRef)
+    passed('full refresh reconstructs unchanged diff and rejects the previous snapshot ref')
+    const secure = await observeComplete()
+    assert.match(secure.text, /\[secure field\]/)
+    assert.match(secure.text, /\[redacted\]/)
+    assert.doesNotMatch(secure.text, /FIXTURE_SECRET_DO_NOT_LOG_9X/)
     passed('secure input redaction')
-    const oldRef = ref(refreshed, 'Increment', 'AXButton')
-    await call({ operation: 'click', appId, ref: oldRef })
+    const oldRef = ref(secure, 'Increment', 'AXButton')
+    const incremented = await call({ operation: 'click', appId, ref: oldRef })
     await until(state, s => s.windows.A.count === 1 && s.windows.B.count === 0, 'only window A increments')
-    const stale = await execute({ operation: 'click', appId, ref: oldRef })
-    assert.equal(stale.errorDetails?.code, 'STALE_SNAPSHOT')
-    assert.equal((await state()).windows.A.count, 1)
-    passed('selected-window click and stale reference refusal')
+    assertRestoredDiff(secure, incremented, await observeComplete())
+    await rejectOldRef(oldRef)
+    passed('selected-window value change reconstructs full tree and refuses old reference')
+
+    const verifyChange = async (label, expected, predicate, staleLabel = label) => {
+      const before = await observeComplete()
+      const after = await call({ operation: 'click', appId, ref: ref(before, label, 'AXButton') })
+      await until(state, predicate, label)
+      assertRestoredDiff(before, after, await observeComplete())
+      const actual = await state()
+      assert.deepEqual(actual.windows.A.items, expected)
+      assert.deepEqual(actual.windows.B.items, compactItems)
+      assert.equal(actual.windows.B.count, 0)
+      assert.equal(actual.windows.B.generation, 0)
+      await rejectOldRef(ref(before, staleLabel, 'AXButton'))
+      passed(`${label}: complete diff reconstructs fresh full and old ref is refused`)
+    }
+    const insertedItems = ['inserted-1', ...compactItems]
+    await verifyChange('Insert row', insertedItems, s => s.windows.A.items[0] === 'inserted-1')
+    const reversedItems = [...insertedItems].reverse()
+    await verifyChange('Reverse rows', reversedItems, s => s.windows.A.items.at(-1) === 'inserted-1')
+    await verifyChange('Replace control', reversedItems, s => s.windows.A.generation === 1, 'Increment')
+    await verifyChange('Increment', reversedItems, s => s.windows.A.count === 2)
+
+    // Keep the original 80-row stress case separate from mandatory complete diffs.
+    const beforeLongList = await observeComplete()
+    await call({ operation: 'click', appId, ref: ref(beforeLongList, 'Long list', 'AXButton') })
+    const expanded = await until(state, s => s.windows.A.items.length === 80, 'long list')
+    assert.deepEqual(expanded.windows.B.items, compactItems)
+    const longList = await call({ operation: 'get_state', appId, windowId: a.id, disableDiffing: true })
+    assertTruncatedFull(longList)
+    assert.match(longList.text, /:e\d+ AXTable /, 'Truncation must retain the table subtree entry')
+    ref(longList, 'Increment', 'AXButton')
+    const withoutBaseline = await call({ operation: 'get_state', appId, windowId: a.id })
+    assertTruncatedFull(withoutBaseline)
+    const reset = await call({ operation: 'click', appId, ref: ref(withoutBaseline, 'Reset compact list', 'AXButton') })
+    assertCompleteFull(reset)
+    const compact = await until(state, s => s.windows.A.items.length === compactItems.length, 'reset compact list')
+    assert.deepEqual(compact.windows.A.items, compactItems)
+    assert.deepEqual(compact.windows.B.items, compactItems)
+    assert.equal(compact.windows.A.count, 2)
+    assert.equal(compact.windows.A.generation, 1)
+    const recoveredDiff = await call({ operation: 'get_state', appId, windowId: a.id })
+    assertRestoredDiff(reset, recoveredDiff, await observeComplete())
+    passed('long list truncates within 28000 characters, retains shallow refs, clears baseline and recovers complete full/diff')
 
     const mixed = '中文 English 😀 e\u0301\nSecond line'
     const editor = await observe()
@@ -248,9 +332,11 @@ app.whenReady().then(async () => {
     const replaced = mixed.replace('English', '替换👩🏽‍💻')
     await until(state, s => s.windows.A.text === replaced && s.windows.B.text === '', 'keyboard replacement preserves surrounding text')
     const shortcut = await observe()
+    report.shortcutBefore = summarizeFixtureState(await state())
     await call({ operation: 'press_key', appId, snapshotId: shortcut.snapshotId,
       ref: ref(shortcut, 'Editable text', 'AXTextArea'), key: 'cmd+a' })
-    await until(state, s => s.windows.A.selection.start === 0 && s.windows.A.selection.length === replaced.length, 'explicit keyboard shortcut selection')
+    const shortcutAfter = await until(state, s => s.windows.A.selection.start === 0 && s.windows.A.selection.length === replaced.length, 'explicit keyboard shortcut selection')
+    report.shortcutAfter = summarizeFixtureState(shortcutAfter)
     const refusalState = await observe()
     const refused = await execute({ operation: 'type_text', appId, snapshotId: refusalState.snapshotId,
       ref: ref(refusalState, 'Refuses keyboard focus', 'AXTextArea'), text: 'MUST_NOT_BE_TYPED' })
@@ -272,15 +358,6 @@ app.whenReady().then(async () => {
     assert.ok(afterEmoji.snapshotId, 'AX output must stay within the UTF-16 protocol budget')
     await until(state, s => s.windows.A.text === emojiText && s.windows.B.text === '', 'long emoji input retained in the control')
     passed('emoji-rich AX output stays bounded without truncating actual input')
-    await click('Insert row')
-    await until(state, s => s.windows.A.items[0] === 'inserted-1', 'insert row')
-    await click('Reverse rows')
-    await until(state, s => s.windows.A.items.at(-1) === 'inserted-1', 'reverse rows')
-    await click('Replace control')
-    await until(state, s => s.windows.A.generation === 1, 'replace control')
-    await click('Increment')
-    await until(state, s => s.windows.A.count === 2, 'replacement button')
-    passed('list insertion, reorder and control replacement')
     await click('Delayed update')
     const delayed = await call({ operation: 'wait_for', appId, windowId: a.id, waitMs: 2000,
       condition: { kind: 'element', state: 'present', valueIncludes: 'Delayed: 1' } })
@@ -336,10 +413,15 @@ app.whenReady().then(async () => {
       const pixels = current.imageSizeInPixels
       const imageX = (control.x + control.width / 2 - origin.x) * pixels.width / origin.width
       const imageY = (control.y + control.height / 2 - origin.y) * pixels.height / origin.height
-      const beforeClick = (await state()).windows.A.count
+      const beforeClickState = await state()
+      const beforeClick = beforeClickState.windows.A.count
+      report.coordinateClick = { control, origin, pixels, imageX, imageY,
+        x: imageX * origin.width / pixels.width, y: imageY * origin.height / pixels.height,
+        before: summarizeFixtureState(beforeClickState) }
       await call({ operation: 'click_at', appId, snapshotId: current.snapshotId,
         x: imageX * origin.width / pixels.width, y: imageY * origin.height / pixels.height })
-      await until(state, s => s.windows.A.count === beforeClick + 1 && s.windows.B.count === 0, 'combined screenshot pixel-to-point click targets only window A')
+      const afterClickState = await until(state, s => s.windows.A.count === beforeClick + 1 && s.windows.B.count === 0, 'combined screenshot pixel-to-point click targets only window A')
+      report.coordinateClick.after = summarizeFixtureState(afterClickState)
       passed('native combined AX/PNG provenance and pixel-to-point coordinate click (not model vision/attachment resizing)')
     } else {
       report.unverified ??= []
@@ -373,8 +455,12 @@ app.whenReady().then(async () => {
     report.error = error?.stack ?? String(error)
     if (error?.stderr) report.compilerError = String(error.stderr)
     const last = await state()
-    if (last) report.failureState = Object.fromEntries(Object.entries(last.windows).map(([name, window]) =>
-      [name, { count: window.count, textUnits: window.text.length, sheetVisible: window.sheetVisible, sheetTextUnits: window.sheetText.length }]))
+    if (last) report.failureState = summarizeFixtureState(last)
+    if (fixture) {
+      report.failureProcess = { pid: fixture.child.pid, exitCode: fixture.child.exitCode, signalCode: fixture.child.signalCode }
+      try { if (sampleFixture) report.failureProcess.sample = sampleFixture() }
+      catch (sampleError) { report.processSampleError = String(sampleError) }
+    }
     exitCode = 1
   } finally {
     try { await host?.dispose() }

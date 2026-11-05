@@ -77,8 +77,7 @@ func requireAX() throws {
 }
 
 @MainActor final class AppSession {
-    var pinnedApp: NSRunningApplication?
-    var launchDate: Date?
+    private var binding: ApplicationBinding<NSRunningApplication>?
     var windows: [(String, AXUIElement)] = []
     var nextWindow = 1
     var revision = 0
@@ -93,27 +92,53 @@ func requireAX() throws {
     let identities = ElementIdentityRegistry()
 
     func invalidate() { elements.removeAll(); fingerprints.removeAll(); elementWindows.removeAll(); elementBounds.removeAll(); observedScope = nil; observedWindow = nil; observedBounds = nil; observedWindowID = nil }
+    private func targetChanged(_ error: ApplicationBindingFailure, binding: ApplicationBinding<NSRunningApplication>,
+                               sample: ProcessIdentitySample, terminated: Bool, live: NSRunningApplication?) -> BridgeFailure {
+        invalidate()
+        windows.removeAll()
+        var facts = sample.diagnostics(comparedWith: binding.identity)
+        facts["pinnedTerminated"] = terminated
+        facts["appKitRegistered"] = live != nil
+        if let live { facts["appKitTerminated"] = live.isTerminated }
+        let data = try? JSONSerialization.data(withJSONObject: facts, options: [.sortedKeys])
+        let detail = data.flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        return failure("TARGET_CHANGED", error.rawValue + " Target identity diagnostics: " + detail)
+    }
     func app() throws -> NSRunningApplication {
-        guard let app = pinnedApp else { throw failure("TARGET_CHANGED", "No target process is bound.") }
-        guard !app.isTerminated else { invalidate(); throw failure("TARGET_CHANGED", "The pinned target process terminated. Bind it again.") }
-        guard let live = NSRunningApplication(processIdentifier: app.processIdentifier) else { invalidate(); throw failure("TARGET_CHANGED", "The target process is no longer registered. Bind it again.") }
-        guard live.bundleIdentifier == app.bundleIdentifier else { invalidate(); throw failure("TARGET_CHANGED", "The target bundle identity changed. Bind it again.") }
-        guard live.launchDate == launchDate else {
-            invalidate()
-            throw failure("TARGET_CHANGED", "Target launch identity changed. Bind it again.")
+        guard let binding else { throw failure("TARGET_CHANGED", "No target process is bound.") }
+        // AppKit supplies a usable activation object when available. Neither its
+        // registry presence, launchDate nor bundle metadata proves birth identity.
+        let live = NSRunningApplication(processIdentifier: binding.identity.pid)
+        let terminated = binding.application.isTerminated
+        let registered = live.map { RegisteredApplication(application: $0, pid: $0.processIdentifier, terminated: $0.isTerminated) }
+        let sample = sampleProcessIdentity(binding.identity.pid)
+        do {
+            return try binding.validatedApplication(sample: sample, pinnedTerminated: terminated, registered: registered)
+        } catch let error as ApplicationBindingFailure {
+            throw targetChanged(error, binding: binding, sample: sample, terminated: terminated, live: live)
         }
-        return live
     }
     func bind(_ target: String) throws -> [String: Any] {
-        guard pinnedApp == nil, !target.isEmpty, target.utf16.count <= 1024 else { throw failure("INVALID_INPUT", "Invalid app binding.") }
+        guard binding == nil, !target.isEmpty, target.utf16.count <= 1024 else { throw failure("INVALID_INPUT", "Invalid app binding.") }
         let matches = NSWorkspace.shared.runningApplications.filter { app in
             guard !app.isTerminated, app.bundleIdentifier != nil else { return false }
             return app.bundleIdentifier == target || app.bundleURL?.standardizedFileURL.path == target || app.localizedName?.caseInsensitiveCompare(target) == .orderedSame
         }
-        guard matches.count == 1, let selected = matches.first else { throw failure("TARGET_CHANGED", "App must already be running and uniquely identified. Use list_apps and its bundleId.") }
-        pinnedApp = selected; launchDate = selected.launchDate
+        guard matches.count == 1, let selected = matches.first, let bundleID = selected.bundleIdentifier else { throw failure("TARGET_CHANGED", "App must already be running and uniquely identified. Use list_apps and its bundleId.") }
+        let pid = selected.processIdentifier
+        let name = boundedText(selected.localizedName ?? "", limit: 200)
+        let executable = canonicalExecutablePath(selected.executableURL?.path)
+        let sample = sampleProcessIdentity(pid)
+        do {
+            binding = try ApplicationBinding(application: selected, pid: pid, executable: executable, sample: sample)
+        } catch let error as ApplicationBindingFailure {
+            throw failure("TARGET_CHANGED", error.rawValue)
+        }
+        var succeeded = false
+        defer { if !succeeded { binding = nil; invalidate(); windows.removeAll() } }
         let rows = try listWindows()
-        return ["protocol": protocolVersion, "bundleId": selected.bundleIdentifier!, "name": boundedText(selected.localizedName ?? "", limit: 200), "processId": selected.processIdentifier, "windows": rows]
+        succeeded = true
+        return ["protocol": protocolVersion, "bundleId": bundleID, "name": name, "processId": pid, "windows": rows]
     }
     func listWindows() throws -> [[String: Any]] {
         try requireAX()
@@ -256,6 +281,9 @@ func requireAX() throws {
                 }
             }
             func foreground() throws {
+                // Recheck exact identity at every physical-input checkpoint.
+                // Paired input helpers account for any earlier dispatched input.
+                _ = try app()
                 // A top-level rename field resizes as text arrives. Keyboard
                 // delivery follows its exact focus/identity, never coordinates.
                 guard NSWorkspace.shared.frontmostApplication?.processIdentifier == target.processIdentifier,
@@ -289,16 +317,8 @@ func requireAX() throws {
             if keyboard { try keyboardFocus() }
             if method == "click_at" {
                 let button: CGMouseButton = input["button"] as? String == "right" ? .right : .left
-                let down: CGEventType = button == .right ? .rightMouseDown : .leftMouseDown
-                let up: CGEventType = button == .right ? .rightMouseUp : .leftMouseUp
                 let count = integer(input["clickCount"])!
-                for i in 1...count {
-                    try foreground()
-                    guard let d = CGEvent(mouseEventSource: nil, mouseType: down, mouseCursorPosition: point, mouseButton: button),
-                          let u = CGEvent(mouseEventSource: nil, mouseType: up, mouseCursorPosition: point, mouseButton: button) else { throw failure("NATIVE_ERROR", "Cannot create mouse events.", "unknown") }
-                    d.setIntegerValueField(.mouseEventClickState, value: Int64(i)); u.setIntegerValueField(.mouseEventClickState, value: Int64(i))
-                    d.post(tap: .cghidEventTap); u.post(tap: .cghidEventTap)
-                }
+                try sendMouseClicks(point: point, button: button, count: count, checkTarget: foreground)
             } else if method == "press_key", let (code, flags) = key {
                 guard let d = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true), let u = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else { throw failure("NATIVE_ERROR", "Cannot create key events.", "unknown") }
                 d.flags = flags; u.flags = flags
@@ -380,8 +400,11 @@ func parseKey(_ key: String) throws -> (CGKeyCode, CGEventFlags) {
             precondition(boundedText("e\u{301}x", limit: 1).isEmpty)
             testElementIdentities()
             testTextSelection()
+            testProcessIdentity()
+            testApplicationBinding()
             try! await testKeyboardInput()
-            print("{\"passed\":true,\"scope\":\"protocol helpers only; no GUI access\"}"); return
+            let mouseInputChecks = try! testMouseInput()
+            print("{\"passed\":true,\"scope\":\"protocol helpers only; no GUI access\",\"mouseInputChecks\":\(mouseInputChecks)}"); return
         }
         // ScreenCaptureKit window filters require AppKit/WindowServer initialization.
         let application = NSApplication.shared

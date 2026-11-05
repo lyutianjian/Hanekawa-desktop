@@ -15,7 +15,7 @@ export function copyComputerAssets(destRoot, run = execFileSync) {
   try {
     const executable = join(scratch, 'hanekawa-computer')
     run('/usr/bin/xcrun', ['swiftc', '-parse-as-library', '-O', '-target', `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macosx13.0`, '-module-cache-path', scratch,
-      join(root, 'native/computer/ComputerBridge.swift'), join(root, 'native/computer/ElementIdentity.swift'), join(root, 'native/computer/Observation.swift'), join(root, 'native/computer/TextSelection.swift'), join(root, 'native/computer/KeyboardInput.swift'), '-o', executable], { stdio: 'inherit', timeout: 120_000 })
+      join(root, 'native/computer/ComputerBridge.swift'), join(root, 'native/computer/ProcessIdentity.swift'), join(root, 'native/computer/ApplicationBinding.swift'), join(root, 'native/computer/ElementIdentity.swift'), join(root, 'native/computer/Observation.swift'), join(root, 'native/computer/TextSelection.swift'), join(root, 'native/computer/KeyboardInput.swift'), join(root, 'native/computer/MouseInput.swift'), '-o', executable], { stdio: 'inherit', timeout: 120_000 })
     chmodSync(executable, 0o755)
     const result = JSON.parse(run(executable, ['--self-test'], { encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] }))
     if (result.passed !== true || result.scope !== 'protocol helpers only; no GUI access') throw new Error('Computer helper self-test did not pass')

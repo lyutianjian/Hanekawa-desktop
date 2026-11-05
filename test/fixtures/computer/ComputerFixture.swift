@@ -6,12 +6,22 @@ final class FocusIgnoringTextView: NSTextView {
     override func setAccessibilityFocused(_ accessibilityFocused: Bool) {}
 }
 
+// Observe AppKit routing without changing the key-equivalent or responder path.
+final class DiagnosticTextView: NSTextView {
+    var selectAllCalls = 0
+    override func selectAll(_ sender: Any?) {
+        selectAllCalls += 1
+        super.selectAll(sender)
+    }
+}
+
 let secureSentinel = "FIXTURE_SECRET_DO_NOT_LOG_9X"
+let compactItems = (0..<4).map { "item-\($0)" }
 
 @MainActor final class FixtureWindow: NSObject, NSWindowDelegate, NSTableViewDataSource {
     let name: String
     let window: NSWindow
-    let text = NSTextView()
+    let text = DiagnosticTextView()
     let refusesFocus = FocusIgnoringTextView()
     let password = NSSecureTextField()
     let counter = NSTextField(labelWithString: "Count: 0")
@@ -19,11 +29,12 @@ let secureSentinel = "FIXTURE_SECRET_DO_NOT_LOG_9X"
     let table = NSTableView()
     var buttons: [String: NSButton] = [:]
     var count = 0
+    var incrementEvents: [[String: Any]] = []
     var delayedCount = 0
     var pendingDelay = false
     var busy = false
     var generation = 0
-    var items = (0..<80).map { "item-\($0)" }
+    var items = compactItems
     var insertions = 0
     var sheet: NSAlert?
     var pendingSheet = false
@@ -33,24 +44,25 @@ let secureSentinel = "FIXTURE_SECRET_DO_NOT_LOG_9X"
 
     init(name: String, origin: NSPoint) {
         self.name = name
-        window = NSWindow(contentRect: NSRect(origin: origin, size: NSSize(width: 660, height: 650)),
+        window = NSWindow(contentRect: NSRect(origin: origin, size: NSSize(width: 660, height: 688)),
                           styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         super.init()
         window.title = "Hanekawa Computer Fixture — \(name)"
         window.isReleasedWhenClosed = false
         window.delegate = self
         let content = window.contentView!
-        counter.frame = NSRect(x: 20, y: 610, width: 250, height: 24)
-        delayed.frame = NSRect(x: 300, y: 610, width: 250, height: 24)
+        counter.frame = NSRect(x: 20, y: 648, width: 250, height: 24)
+        delayed.frame = NSRect(x: 300, y: 648, width: 250, height: 24)
         content.addSubview(counter)
         content.addSubview(delayed)
 
         let commands = [("increment", "Increment"), ("delay", "Delayed update"), ("sheet", "Show sheet"),
                         ("insert", "Insert row"), ("reverse", "Reverse rows"), ("replace", "Replace control"),
-                        ("move", "Move window"), ("close", "Close window"), ("busy", "Block AX for two seconds")]
+                        ("move", "Move window"), ("close", "Close window"), ("busy", "Block AX for two seconds"),
+                        ("long", "Long list"), ("compact", "Reset compact list")]
         for (index, command) in commands.enumerated() {
             addButton(command.0, title: command.1,
-                      frame: NSRect(x: 20 + (index % 3) * 210, y: 567 - (index / 3) * 38, width: 200, height: 30))
+                      frame: NSRect(x: 20 + (index % 3) * 210, y: 605 - (index / 3) * 38, width: 200, height: 30))
         }
 
         let editor = NSScrollView(frame: NSRect(x: 20, y: 332, width: 620, height: 135))
@@ -105,6 +117,10 @@ let secureSentinel = "FIXTURE_SECRET_DO_NOT_LOG_9X"
         case "increment":
             count += 1
             counter.stringValue = "Count: \(count)"
+            var facts: [String: Any] = ["count": count, "timestamp": ProcessInfo.processInfo.systemUptime]
+            if let event = NSApp.currentEvent { facts["currentEventType"] = event.type.rawValue }
+            incrementEvents.append(facts)
+            if incrementEvents.count > 12 { incrementEvents.removeFirst() }
         case "delay":
             guard !pendingDelay else { return }
             pendingDelay = true
@@ -146,6 +162,12 @@ let secureSentinel = "FIXTURE_SECRET_DO_NOT_LOG_9X"
         case "reverse":
             items.reverse()
             table.reloadData()
+        case "long":
+            items = (0..<80).map { "item-\($0)" }
+            table.reloadData()
+        case "compact":
+            items = compactItems
+            table.reloadData()
         case "replace":
             let old = buttons["increment"]!
             let frame = old.frame
@@ -176,6 +198,10 @@ let secureSentinel = "FIXTURE_SECRET_DO_NOT_LOG_9X"
          "items": items, "selectedRow": table.selectedRow, "generation": generation,
          "delayedCount": delayedCount, "pendingDelay": pendingDelay, "busy": busy,
          "sheetVisible": sheet != nil, "pendingSheet": pendingSheet, "visible": window.isVisible,
+         "focus": ["keyWindow": window.isKeyWindow, "mainWindow": window.isMainWindow,
+                   "editable": window.firstResponder === text, "refusesFocus": window.firstResponder === refusesFocus,
+                   "secure": window.firstResponder === password],
+         "selectAllCalls": text.selectAllCalls,
          "frame": ["x": window.frame.minX, "y": window.frame.minY, "width": window.frame.width, "height": window.frame.height],
          "controls": buttons.keys.sorted()]
     }
@@ -183,6 +209,9 @@ let secureSentinel = "FIXTURE_SECRET_DO_NOT_LOG_9X"
 
 @MainActor final class FixtureApp: NSObject, NSApplicationDelegate {
     let stateURL: URL
+    var keyboardMonitor: Any?
+    var keyboardEvents: [[String: Any]] = []
+    var selectAllItem: NSMenuItem?
     var panels: [FixtureWindow] = []
     var timer: Timer?
     var previous: Data?
@@ -203,7 +232,7 @@ let secureSentinel = "FIXTURE_SECRET_DO_NOT_LOG_9X"
         menu.addItem(appItem)
         let edit = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
         let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        selectAllItem = editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         edit.submenu = editMenu
         menu.addItem(edit)
         let tests = NSMenuItem(title: "Fixture tests", action: nil, keyEquivalent: "")
@@ -214,6 +243,10 @@ let secureSentinel = "FIXTURE_SECRET_DO_NOT_LOG_9X"
         tests.submenu = testsMenu
         menu.addItem(tests)
         NSApp.mainMenu = menu
+        keyboardMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp, .flagsChanged]) { [weak self] event in
+            MainActor.assumeIsolated { self?.recordKeyboardEvent(event) }
+            return event
+        }
         persist()
         // AXValue changes need not send delegate callbacks. Read actual controls.
         timer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
@@ -221,10 +254,39 @@ let secureSentinel = "FIXTURE_SECRET_DO_NOT_LOG_9X"
         }
     }
     @objc func menuSheet() { panels[0].buttons["sheet"]?.performClick(nil) }
+    func recordKeyboardEvent(_ event: NSEvent) {
+        let keyEvent = event.type == .keyDown || event.type == .keyUp
+        let commandA = event.keyCode == 0 && event.modifierFlags.contains(.command)
+        let commandFlags = event.type == .flagsChanged && [54, 55].contains(event.keyCode)
+        guard keyEvent || commandFlags else { return }
+        var facts: [String: Any] = ["type": event.type.rawValue, "keyCode": event.keyCode,
+            "modifiers": event.modifierFlags.rawValue, "timestamp": event.timestamp,
+            "active": NSApp.isActive,
+            "editableFocus": panels.contains { $0.window.isKeyWindow && $0.window.firstResponder === $0.text }]
+        // NSEvent character accessors are valid only for keyDown/keyUp, never flagsChanged.
+        if keyEvent && commandA {
+            let ignoringModifiers = event.charactersIgnoringModifiers
+            facts["charactersUnits"] = event.characters?.utf16.count ?? 0
+            facts["ignoringModifiersUnits"] = ignoringModifiers?.utf16.count ?? 0
+            facts["selectAllEquivalent"] = ignoringModifiers?.lowercased() == "a"
+        }
+        keyboardEvents.append(facts)
+        if keyboardEvents.count > 12 { keyboardEvents.removeFirst() }
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
     func persist() {
+        let process = sampleProcessIdentity(ProcessInfo.processInfo.processIdentifier)
+        let selectAllTarget = NSApp.target(forAction: #selector(NSText.selectAll(_:))) as? NSTextView
         let state: [String: Any] = ["pid": ProcessInfo.processInfo.processIdentifier,
             "bundleId": Bundle.main.bundleIdentifier ?? "", "ready": true,
+            "sampledAt": Date().timeIntervalSince1970 * 1000,
+            "processIdentity": process.diagnostics(),
+            "kernelExecutableMatches": process.identity?.executable == Bundle.main.executableURL?.path,
+            "keyboardEvents": keyboardEvents,
+            "incrementEvents": Dictionary(uniqueKeysWithValues: panels.map { ($0.name, $0.incrementEvents) }),
+            "menuDiagnostics": ["selectAllEnabled": selectAllItem?.isEnabled ?? false,
+                "modifiers": selectAllItem?.keyEquivalentModifierMask.rawValue ?? 0,
+                "targetIsEditable": panels.contains { $0.text === selectAllTarget }],
             "windows": Dictionary(uniqueKeysWithValues: panels.map { ($0.name, $0.state()) })]
         do {
             let data = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])

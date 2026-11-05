@@ -1,0 +1,446 @@
+{
+  "date": "2026-11-05",
+  "timezone": "Asia/Shanghai",
+  "baseline": {
+    "head": "af085b1243f3bcad5239af27058c192505b94529",
+    "branch": "codex/rebuild-computer-use",
+    "os": "27.2",
+    "arch": "arm64",
+    "node": "v24.22.2",
+    "electron": "45.2.1",
+    "swift": "Apple Swift version 6.4.2 (swiftlang-6.4.2.1.9 clang-2100.4.1.1)\nTarget: arm64-apple-macosx27.2.0"
+  },
+  "helperSha256": "d4acf532f645442d5c019796e14422ce6e9a47f2c061097474ccb7b421171271",
+  "sourceSha256": {
+    "native/computer/ComputerBridge.swift": "bd1c539d367945483b2b6beec84a3413da6b07b4f4f8af266bd44bf57ba20e30",
+    "native/computer/ApplicationBinding.swift": "3d92e0fe86cf54ce00a2a47562a4790f87aa25e2d25c821ddda21d9a0679a132",
+    "native/computer/ProcessIdentity.swift": "7b7428dba83b11cd74d8cd6dd877dcbb11a26d323108301c0cd9c9e77d51ac5a",
+    "native/computer/MouseInput.swift": "c225b2bc68c96b190c5c9cb3eb30492d5a9c125563ab4f0729b30e5aa79221b9",
+    "scripts/copy-computer-assets.mjs": "2bc66b6b1e0686d8ea64ef62aa4b16180104e191f02ce2018ffaaa40f3935aff",
+    "scripts/test-computer-native.mjs": "68d0ad3bbff28fd0688461893920b60708e73187b536904816e71d8e669b2586",
+    "scripts/test-computer-apps.mjs": "76dcc52d5eea30b9b0eb765148dcffbb7156b5a65a374fa1664a8fb0ac811536",
+    "scripts/computer-native-observation.mjs": "aa882bc5cbbde36531d1edd568668ca502972f7ccf5c1eac3444581986e34ea1",
+    "scripts/computer-native-diagnostics.mjs": "c26f8e9731e4912e1f324bac4c4d42186f8f33c4c2bcfd6556575e63030d1f38",
+    "scripts/computer-finder-name-wait.mjs": "66eace72bc44508cf6dcdc098048e637b6563cd73c169922266b08bd85e66fb3",
+    "test/computerNativeAcceptance.test.ts": "b1f1289ba4af1321fc72784d28896d2a0a62fd5ca41126426c3fd0e987480030",
+    "test/computerNativeDiagnostics.test.ts": "baf501a68ca3a022df7bacb374066d58e712f89e2306750a1acc00eb059feac3",
+    "test/computerProcessIdentity.test.ts": "c1d8e7dc45a75938918ca48a2bb62c3c3c12f0cc076ba5019373dc2e35c1f346",
+    "test/computerMouseInput.test.ts": "76a816dcd573b42e726a5cf319d837cffc0963be24789c926a1786be35a448f5",
+    "test/computerFinderNameWait.test.ts": "e5d5720f6d1bfc8993c269a653f56c7dbf7653e4d932476e32f9722c436869cf",
+    "test/fixtures/computer/ComputerFixture.swift": "69dd1480940ef723980f6e0b4ae2b333eac318e9c2f189c271f24d75db9fbd0b",
+    "test/fixtures/computer/ProcessIdentityTests.swift": "91b1cf7d431e33f69bcbf3967eb07e4b6b3f0bab1c085581d581ac8d3cbb1b47",
+    "test/fixtures/computer/ProcessSample.swift": "2d5b27128016d8e5f2ff6e6b385d8690738b7352a30c05bffe754b6be8a8c741"
+  },
+  "permissions": {
+    "accessibility": true,
+    "screenRecording": true,
+    "scope": "isolated Electron -> production host -> native helper; user normal authorization, not complete product/installer three-state acceptance"
+  },
+  "nativeBeforeFix": [
+    {
+      "status": "passed",
+      "helperSha256": "021ad95c2db37f4e3740cbd0e4349ec38be71f49d894f5fd5f48449019b1e8f8",
+      "passedChecks": 25,
+      "cleanupPassed": true
+    },
+    {
+      "status": "failed",
+      "helperSha256": "021ad95c2db37f4e3740cbd0e4349ec38be71f49d894f5fd5f48449019b1e8f8",
+      "passedChecks": 16,
+      "cleanupPassed": true,
+      "error": "AssertionError [ERR_ASSERTION]: Action delivered, but fresh observation failed: The target process is no longer registered. Bind it again.",
+      "failureCode": "TARGET_CHANGED",
+      "delivery": "delivered_unverified",
+      "identityAtFailure": {
+        "appKitRegistered": false,
+        "bindStartMicroseconds": "472560",
+        "bindStartSeconds": "1793868148",
+        "bsdBytes": 136,
+        "bsdErrno": 0,
+        "executableMatches": true,
+        "kernelStartMicroseconds": "472560",
+        "kernelStartSeconds": "1793868148",
+        "kernelStatus": 2,
+        "pathBytes": 149,
+        "pathErrno": 0,
+        "pid": 77891,
+        "pinnedTerminated": false,
+        "sampleStable": true,
+        "startMatches": true,
+        "verifyBytes": 136,
+        "verifyErrno": 0
+      }
+    },
+    {
+      "status": "passed",
+      "helperSha256": "021ad95c2db37f4e3740cbd0e4349ec38be71f49d894f5fd5f48449019b1e8f8",
+      "passedChecks": 25,
+      "cleanupPassed": true
+    }
+  ],
+  "nativeAfterFix": [
+    {
+      "status": "passed",
+      "helperSha256": "d4acf532f645442d5c019796e14422ce6e9a47f2c061097474ccb7b421171271",
+      "passedChecks": 25,
+      "cleanupPassed": true
+    },
+    {
+      "status": "passed",
+      "helperSha256": "d4acf532f645442d5c019796e14422ce6e9a47f2c061097474ccb7b421171271",
+      "passedChecks": 25,
+      "cleanupPassed": true
+    },
+    {
+      "status": "passed",
+      "helperSha256": "d4acf532f645442d5c019796e14422ce6e9a47f2c061097474ccb7b421171271",
+      "passedChecks": 25,
+      "cleanupPassed": true
+    }
+  ],
+  "apps": {
+    "calculator": {
+      "status": "passed",
+      "helperSha256": "d4acf532f645442d5c019796e14422ce6e9a47f2c061097474ccb7b421171271",
+      "error": null,
+      "attempts": [
+        {
+          "run": 1,
+          "status": "passed",
+          "axResult": "46",
+          "screenshot": {
+            "sha256": "c72a091a95d705eacea086e50aa914f8d63d6a7f96c17192a4692d197626ea91",
+            "bytes": 85549
+          }
+        },
+        {
+          "run": 2,
+          "status": "passed",
+          "axResult": "46",
+          "screenshot": {
+            "sha256": "c72a091a95d705eacea086e50aa914f8d63d6a7f96c17192a4692d197626ea91",
+            "bytes": 85549
+          }
+        },
+        {
+          "run": 3,
+          "status": "passed",
+          "axResult": "46",
+          "screenshot": {
+            "sha256": "c72a091a95d705eacea086e50aa914f8d63d6a7f96c17192a4692d197626ea91",
+            "bytes": 85549
+          }
+        }
+      ],
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true
+    },
+    "textedit": {
+      "status": "passed",
+      "helperSha256": "d4acf532f645442d5c019796e14422ce6e9a47f2c061097474ccb7b421171271",
+      "error": null,
+      "attempts": [
+        {
+          "run": 1,
+          "status": "passed",
+          "file": {
+            "bytes": 37,
+            "sha256": "31498a576206459a943ac62dc3763adc147da55c3875a6ce158dedc621124ead"
+          }
+        },
+        {
+          "run": 2,
+          "status": "passed",
+          "file": {
+            "bytes": 37,
+            "sha256": "38bc3fbe77731a0e50139831b2b49170cfdb868ded9a11159d5b7ee662e87191"
+          }
+        },
+        {
+          "run": 3,
+          "status": "passed",
+          "file": {
+            "bytes": 37,
+            "sha256": "c1778229c80643cbb5bf4cd3bdc325e7c58bc8a9fa35668697f1b72789651275"
+          }
+        }
+      ],
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true
+    },
+    "finderInitial": {
+      "status": "failed",
+      "helperSha256": "d4acf532f645442d5c019796e14422ce6e9a47f2c061097474ccb7b421171271",
+      "error": "AssertionError [ERR_ASSERTION]: renamed folder must reach the AX tree",
+      "attempts": [
+        {
+          "run": 1,
+          "status": "failed"
+        }
+      ],
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true
+    },
+    "finderValueWait": {
+      "status": "failed",
+      "helperSha256": "d4acf532f645442d5c019796e14422ce6e9a47f2c061097474ccb7b421171271",
+      "error": "AssertionError [ERR_ASSERTION]: Finder name evidence requires a complete AX observation",
+      "attempts": [
+        {
+          "run": 1,
+          "status": "failed",
+          "finderName": {
+            "budgetMs": 3000,
+            "attempts": [
+              {
+                "field": "labelIncludes",
+                "waitMs": 1500,
+                "status": "timed_out",
+                "elapsedMs": 1501,
+                "complete": false,
+                "truncated": true
+              },
+              {
+                "field": "valueIncludes",
+                "waitMs": 1497,
+                "status": "matched",
+                "elapsedMs": 254,
+                "complete": false,
+                "truncated": true
+              }
+            ],
+            "remainingMsBeforeValue": 1497,
+            "observation": {
+              "complete": false,
+              "truncated": true,
+              "full": true,
+              "windowMatches": true,
+              "labelMatches": 0,
+              "valueMatches": 1,
+              "roles": [
+                {
+                  "role": "AXStaticText",
+                  "labelMatches": 0,
+                  "valueMatches": 1
+                }
+              ]
+            },
+            "disk": {
+              "entryCount": 1,
+              "exactNameMatches": 1,
+              "isDirectory": true
+            }
+          }
+        }
+      ],
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true
+    },
+    "finderLatest": {
+      "status": "failed",
+      "helperSha256": "d4acf532f645442d5c019796e14422ce6e9a47f2c061097474ccb7b421171271",
+      "error": "AssertionError [ERR_ASSERTION]: Finder windowObservation requires exactly one visible generated-name candidate; missing or ambiguous evidence",
+      "attempts": [
+        {
+          "run": 1,
+          "status": "passed",
+          "finderName": {
+            "budgetMs": 3000,
+            "attempts": [
+              {
+                "field": "labelIncludes",
+                "waitMs": 1500,
+                "status": "timed_out",
+                "elapsedMs": 1693,
+                "complete": false,
+                "truncated": true
+              },
+              {
+                "field": "valueIncludes",
+                "waitMs": 1306,
+                "status": "matched",
+                "elapsedMs": 234,
+                "complete": false,
+                "truncated": true
+              }
+            ],
+            "remainingMsBeforeValue": 1306,
+            "windowObservation": {
+              "complete": false,
+              "truncated": true,
+              "full": true,
+              "appMatches": true,
+              "windowMatches": true,
+              "candidateCount": 1,
+              "labelMatches": 0,
+              "valueMatches": 1,
+              "roles": [
+                {
+                  "role": "AXStaticText",
+                  "labelMatches": 0,
+                  "valueMatches": 1
+                }
+              ]
+            },
+            "targetSubtree": {
+              "complete": true,
+              "truncated": false,
+              "full": true,
+              "appMatches": true,
+              "windowMatches": true,
+              "candidateCount": 1,
+              "labelMatches": 0,
+              "valueMatches": 1,
+              "roles": [
+                {
+                  "role": "AXStaticText",
+                  "labelMatches": 0,
+                  "valueMatches": 1
+                }
+              ]
+            },
+            "disk": {
+              "entryCount": 1,
+              "exactNameMatches": 1,
+              "isDirectory": true
+            }
+          }
+        },
+        {
+          "run": 2,
+          "status": "failed",
+          "finderName": {
+            "budgetMs": 3000,
+            "attempts": [
+              {
+                "field": "labelIncludes",
+                "waitMs": 1500,
+                "status": "timed_out",
+                "elapsedMs": 1740,
+                "complete": false,
+                "truncated": true
+              },
+              {
+                "field": "valueIncludes",
+                "waitMs": 1259,
+                "status": "matched",
+                "elapsedMs": 236,
+                "complete": false,
+                "truncated": true
+              }
+            ],
+            "remainingMsBeforeValue": 1259,
+            "windowObservation": {
+              "complete": false,
+              "truncated": true,
+              "full": true,
+              "appMatches": true,
+              "windowMatches": true,
+              "candidateCount": 2,
+              "labelMatches": 0,
+              "valueMatches": 2,
+              "roles": [
+                {
+                  "role": "AXTextField",
+                  "labelMatches": 0,
+                  "valueMatches": 1
+                },
+                {
+                  "role": "AXStaticText",
+                  "labelMatches": 0,
+                  "valueMatches": 1
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "ownedApplicationsReaped": true,
+      "isolatedFilesRemoved": true
+    }
+  },
+  "remaining": [
+    "Finder repeated name representations (AXTextField + AXStaticText) need disambiguation; latest 1 run passed, run 2 correctly stopped; run 3 not reached",
+    "complete Hanekawa/installed app permission three-state and model-task acceptance",
+    "packaging/signing/notarization and other OS/architecture/display matrices; M0 overall remains incomplete"
+  ],
+  "verification": {
+    "coreFocused": {
+      "tests": 98,
+      "pass": 98,
+      "fail": 0,
+      "skip": 0
+    },
+    "finderFocused": {
+      "tests": 31,
+      "pass": 31,
+      "fail": 0
+    },
+    "finderRelated": {
+      "tests": 19,
+      "pass": 19,
+      "fail": 0
+    },
+    "typecheck": "passed after latest harness update",
+    "desktopBuild": "passed; helper unchanged since three post-fix native runs",
+    "previousFull": {
+      "tests": 4857,
+      "pass": 4853,
+      "fail": 2,
+      "skip": 2,
+      "failures": [
+        "known rendererOverlayView fixed-position assertion",
+        "coordination.integration automatic wake timeout"
+      ]
+    },
+    "wakeIsolated": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0
+    },
+    "finalFull": {
+      "tests": 4888,
+      "pass": 4883,
+      "fail": 3,
+      "cancelled": 0,
+      "skipped": 2,
+      "failedTestTitles": [
+        "delayed conditions use fresh samples while intermediate reads preserve the published diff baseline (1488.886458ms)",
+        "after 20 automatic wakes the coordinator waits for the user (6369.045208ms)",
+        "the scrims are positioned against the canvas and stack above every popover (11.417959ms)"
+      ],
+      "note": "Three failures: unchanged renderer assertion, coordinator full-run timeout, and a Computer wait timing failure not seen in the previous full run. Wake and Computer wait isolated reruns passed. Preserve full vs isolated differences; no full-green claim."
+    },
+    "computerWaitIsolated": {
+      "tests": 1,
+      "pass": 1,
+      "fail": 0,
+      "note": "Final full run timed_out instead of settled; source test and TS host/wait unchanged; isolated rerun result retained, not proof that every full-load run passes."
+    }
+  },
+  "calculatorVisualReview": {
+    "reviewedImages": 3,
+    "equation": "12+34",
+    "result": "46",
+    "retainedImage": "validation-assets/calculator-46-2026-11-05.png",
+    "sha256": "c72a091a95d705eacea086e50aa914f8d63d6a7f96c17192a4692d197626ea91"
+  },
+  "completion": {
+    "stoppedAtUserRequest": true,
+    "M0": "partial",
+    "CU-004": "partial",
+    "finder": "one latest successful round; second stopped on AXTextField/AXStaticText ambiguity; third not run",
+    "fullSuiteGreen": false
+  },
+  "historicalMissingReferences": [
+    "CU-002_303_VALIDATION_2026-11-04.md",
+    "CU-003_VALIDATION_2026-11-04.md",
+    "CU-101_IMPLEMENTATION_PLAN.md",
+    "CU-101_VALIDATION_2026-11-04.md",
+    "CU-102_IMPLEMENTATION_PLAN.md",
+    "CU-102_VALIDATION_2026-11-04.md",
+    "CU-103_104_106_203_VALIDATION_2026-11-04.md",
+    "CU-105_302_VALIDATION_2026-11-04.md",
+    "CU-BASELINE-2026-11-04.md"
+  ]
+}

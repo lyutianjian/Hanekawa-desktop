@@ -4,11 +4,12 @@ import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { readFile, readdir } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
 import { createTestEnvironment, onTestExit } from './test-environment.mjs'
+import { computerRows as rows, observeFinderName, waitForFinderName } from './computer-finder-name-wait.mjs'
 
 const args = process.argv.slice(2)
 const scenario = args.find(a => a.startsWith('--scenario='))?.slice(11) ?? 'all'
@@ -35,12 +36,6 @@ async function until(read, predicate, description, timeoutMs = 10000) {
     await delay(50)
   }
   throw new Error(`Timed out: ${description}`)
-}
-function rows(state) {
-  return (state.text ?? '').split('\n').flatMap(line => {
-    const match = line.match(/(s[a-f0-9-]{36}:e\d+) (AX\w+) ("(?:[^"\\]|\\.)*") value=("(?:[^"\\]|\\.)*")/)
-    return match ? [{ ref: match[1], role: match[2], label: JSON.parse(match[3]), value: JSON.parse(match[4]), line }] : []
-  })
 }
 function one(state, role, labels) {
   const matches = rows(state).filter(row => row.role === role && (!labels || labels.includes(row.label)))
@@ -185,10 +180,16 @@ app.whenReady().then(async () => {
       await key(appId, editorWindowId, 'return')
       await call({ operation: 'type_text', appId, snapshotId: obsolete.snapshotId, text: 'MUST_NOT_BE_TYPED' }, 'STALE_SNAPSHOT')
       await until(() => readdir(directory), names => names.length === 1 && names[0] === name, 'Finder folder creation/rename on disk')
-      state = await call({ operation: 'wait_for', appId, windowId, waitMs: 3000,
-        condition: { kind: 'element', state: 'present', labelIncludes: name } })
-      assert.equal(state.wait.status, 'matched', 'renamed folder must reach the AX tree')
-      assert.ok(rows(state).some(r => r.value.includes(name) || r.label.includes(name)), 'renamed folder visible in AX')
+      current.finderName = {}
+      const waited = await waitForFinderName(call, { appId, windowId, name }, current.finderName)
+      assert.equal(waited.wait.status, 'matched', 'renamed folder must reach the AX tree')
+      // Wait results may be diffs. Require a visible target in a fresh full window
+      // observation, then complete evidence for that target's subtree only.
+      await observeFinderName(call, { appId, windowId, name }, current.finderName)
+      const names = await readdir(directory)
+      current.finderName.disk = { entryCount: names.length, exactNameMatches: names.filter(n => n === name).length,
+        isDirectory: (await stat(join(directory, name))).isDirectory() }
+      assert.deepEqual(current.finderName.disk, { entryCount: 1, exactNameMatches: 1, isDirectory: true })
       await key(appId, windowId, 'cmd+down')
       state = await observe(appId, windowId)
       assert.equal(state.windows.find(w => w.id === windowId).title, name, 'opening the selected folder reaches the expected directory')
@@ -209,7 +210,7 @@ app.whenReady().then(async () => {
       catch { return { pid, alive: false } }
     })
     // Debug only control metadata; no arbitrary document/sidebar text is persisted.
-    if (lastState) report.lastControls = rows(lastState).filter(r => ['AXTextArea', 'AXTextField', 'AXButton'].includes(r.role))
+    if (lastState && current?.scenario !== 'FS-01') report.lastControls = rows(lastState).filter(r => ['AXTextArea', 'AXTextField', 'AXButton'].includes(r.role))
       .map(r => ({ role: r.role, label: r.label, writable: r.line.includes(' writable'), window: r.line.match(/windowId=w\d+/)?.[0] }))
     exitCode = 1
   } finally {
